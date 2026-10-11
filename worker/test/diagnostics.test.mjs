@@ -68,14 +68,14 @@ test('single-use consumption is enforced with expiry pruning', async () => {
   assert.throws(() => verifyCapabilityToken(token, {}), /already used/);
 });
 
-function entitiesDb({ order, estimates = [] }) {
+function entitiesDb({ order }) {
   return {
     prepare(sql) {
       return {
         bind() {
           return {
             first: async () => (sql.includes("'orders'") && order ? { data_json: JSON.stringify(order) } : null),
-            all: async () => ({ results: estimates.map((estimate) => ({ data_json: JSON.stringify(estimate) })) }),
+            all: async () => ({ results: [] }),
           };
         },
       };
@@ -83,16 +83,34 @@ function entitiesDb({ order, estimates = [] }) {
   };
 }
 
-test('live key authorization needs a signed repair order for the same VIN', async () => {
+test('live key authorization needs the order estimateApproval signature for the same VIN', async () => {
   const vin = '1C6SRFHT0LN123456';
-  const order = { id: 'RO-1', vin };
-  const signed = { id: 'E-1', workOrderId: 'RO-1', status: 'approved', signedAt: '2026-10-01T00:00:00Z', authorizationName: 'Pat Customer' };
-  const ok = await signedRepairOrderForKeys(entitiesDb({ order, estimates: [signed] }), 'shop-1', 'RO-1', vin);
+  const approval = {
+    status: 'approved',
+    type: 'signature',
+    signedAt: '2026-10-01T00:00:00Z',
+    authorizationName: 'Pat Customer',
+    signatureKey: 'shops/shop-1/signature/pat.png',
+  };
+  const order = { id: 'RO-1', vin, estimateApproval: approval };
+  const ok = await signedRepairOrderForKeys(entitiesDb({ order }), 'shop-1', 'RO-1', vin);
   assert.equal(ok.authorizationName, 'Pat Customer');
-  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [{ ...signed, signedAt: '' }] }), 'shop-1', 'RO-1', vin), null);
-  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [{ ...signed, status: 'sent' }] }), 'shop-1', 'RO-1', vin), null);
-  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order: { ...order, vin: '1C6SRFHT0LN999999' }, estimates: [signed] }), 'shop-1', 'RO-1', vin), null);
-  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [{ ...signed, workOrderId: 'RO-2' }] }), 'shop-1', 'RO-1', vin), null);
-  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order: null, estimates: [signed] }), 'shop-1', 'RO-1', vin), null);
-  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [signed] }), 'shop-1', '', vin), null);
+  assert.equal(ok.signatureKey, approval.signatureKey);
+
+  // Client-writable estimates register must not authorize live keys.
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { id: 'RO-1', vin },
+  }), 'shop-1', 'RO-1', vin), null);
+
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { ...order, estimateApproval: { ...approval, signedAt: '' } },
+  }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { ...order, estimateApproval: { ...approval, status: 'sent' } },
+  }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { ...order, vin: '1C6SRFHT0LN999999' },
+  }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order: null }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order }), 'shop-1', '', vin), null);
 });

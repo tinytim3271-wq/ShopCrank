@@ -57,7 +57,10 @@ export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, a
 /**
  * Live key programming is authorized by a signed repair order in the shop's own
  * records rather than an AutoAuth login: the order must carry this VIN and have
- * an approved, signed estimate. Returns the signature details or null.
+ * an approved, signed estimateApproval recorded through the Worker approval path.
+ *
+ * Do not trust the separate `estimates` entity register — those status/signedAt
+ * fields are client-writable without server validation and can forge this gate.
  */
 export async function signedRepairOrderForKeys(db, shopId, orderId, vin) {
   const id = String(orderId || '').trim();
@@ -70,16 +73,20 @@ export async function signedRepairOrderForKeys(db, shopId, orderId, vin) {
   let orderData = {};
   try { orderData = JSON.parse(order.data_json || '{}'); } catch { return null; }
   if (String(orderData.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') !== wanted) return null;
-  const { results = [] } = await db.prepare(
-    "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'estimates' AND json_extract(data_json, '$.workOrderId') = ?",
-  ).bind(shopId, id).all();
-  for (const row of results) {
-    let estimate = {};
-    try { estimate = JSON.parse(row.data_json || '{}'); } catch { continue; }
-    if (estimate.workOrderId !== id) continue;
-    if (estimate.status === 'approved' && estimate.signedAt && String(estimate.authorizationName || '').trim()) {
-      return { estimateId: estimate.id || '', authorizationName: estimate.authorizationName, signedAt: estimate.signedAt };
-    }
+  const approval = orderData.estimateApproval;
+  if (
+    approval
+    && approval.status === 'approved'
+    && approval.signedAt
+    && String(approval.authorizationName || '').trim()
+  ) {
+    return {
+      estimateId: String(orderData.id || id),
+      authorizationName: approval.authorizationName,
+      signedAt: approval.signedAt,
+      signatureKey: approval.signatureKey || null,
+      type: approval.type || null,
+    };
   }
   return null;
 }
