@@ -3585,6 +3585,34 @@ button{margin-top:12px;padding:8px 14px}
     }
   });
 
+  // src/runtime/shop-entity-load.js
+  function readableShopEntityTypes(entityTypes, readRoles, role) {
+    const types = Array.isArray(entityTypes) ? entityTypes : Object.keys(entityTypes || {});
+    const roles = readRoles && typeof readRoles === "object" ? readRoles : {};
+    const currentRole = String(role || "");
+    return types.filter((type) => !roles[type] || roles[type].includes(currentRole));
+  }
+  function applySettledShopEntityResults(types, results, apply, onRejected) {
+    let failed = 0;
+    types.forEach((type, index) => {
+      const result = results[index];
+      if (!result) return;
+      if (result.status === "fulfilled" && Array.isArray(result.value)) {
+        apply(type, result.value);
+        return;
+      }
+      if (result.status === "rejected") {
+        failed += 1;
+        if (typeof onRejected === "function") onRejected(type, result.reason);
+      }
+    });
+    return failed;
+  }
+  var init_shop_entity_load = __esm({
+    "src/runtime/shop-entity-load.js"() {
+    }
+  });
+
   // src/modules/payments.js
   function paymentMatchesTarget(payment, targetType, targetId, linkedTargetId = "") {
     if (!payment || payment.status !== "completed") return false;
@@ -5451,7 +5479,7 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
     }
     return null;
   }
-  function isRoAuthorizedForKeys2(order, estimates = []) {
+  function isRoAuthorizedForKeys(order, estimates = []) {
     return Boolean(signedEstimateForOrder(order, estimates));
   }
   function assertKeyJobAllowed({ order, estimates, operation, notes, liveProgrammer = false }) {
@@ -5462,7 +5490,7 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
     if (!KEY_OPERATIONS.some((item) => item.id === operation)) {
       throw new Error("Choose identify, add, program, or test.");
     }
-    if (!isRoAuthorizedForKeys2(order, estimates)) {
+    if (!isRoAuthorizedForKeys(order, estimates)) {
       throw new Error("A signed repair order for this vehicle is required before key programming.");
     }
     if (liveProgrammer) {
@@ -6677,17 +6705,16 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
   }
   async function loadShopEntities() {
     const role = currentUser()?.role || "";
-    const types = Object.keys(shopEntityCollections).filter((type) => !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role));
+    const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
     const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
-    let failed = 0;
-    types.forEach((type, index) => {
-      const result = results[index];
-      if (result.status === "fulfilled" && Array.isArray(result.value)) state[shopEntityCollections[type]] = result.value;
-      else if (result.status === "rejected") {
-        failed += 1;
-        console.error(`Failed to load ${type}; using local data`, result.reason);
-      }
-    });
+    const failed = applySettledShopEntityResults(
+      types,
+      results,
+      (type, records) => {
+        state[shopEntityCollections[type]] = records;
+      },
+      (type, reason) => console.error(`Failed to load ${type}; using local data`, reason)
+    );
     save();
     return failed === 0;
   }
@@ -11786,7 +11813,7 @@ ${catRows}
       try {
         assertKeyJobAllowed({ order, estimates: state.estimates, operation: data.operation, notes: data.notes });
         const result = simulateKeyJob({ operation: data.operation, vin: order.vin });
-        const authorization = state.estimates.find((estimate) => isRoAuthorizedForKeys(order, [estimate]));
+        const authorization = signedEstimateForOrder(order);
         await rememberBayRecord("keyprogrammingjobs", "keyJobs", {
           id: `key-${Date.now()}`,
           orderId: order.id,
@@ -11822,7 +11849,7 @@ ${catRows}
     }
     if (state.route === "settings") render();
   }
-  var buildHomeModel2, emptyState2, greetingForNow2, localIsoDate2, mergeRemoteCollection2, pendingCreateIdsForCollection2, visibleSidebar2, chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, loadShopEntitiesWithTaxSettingsCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
+  var buildHomeModel2, emptyState2, greetingForNow2, localIsoDate2, mergeRemoteCollection2, pendingCreateIdsForCollection2, visibleSidebar2, chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -11850,6 +11877,7 @@ ${catRows}
       init_catalog_inspection_ui();
       init_entity_persistence();
       init_mutation_queue_store();
+      init_shop_entity_load();
       init_payments();
       init_card_terminal();
       init_help_menu();
@@ -12567,27 +12595,14 @@ ${catRows}
       };
       loadShopEntities = async function() {
         const role = currentUser()?.role || "";
-        const types = Object.keys(shopEntityCollections).filter(
-          (type) => !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role)
+        const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const failed = applySettledShopEntityResults(
+          types,
+          results,
+          (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+          (type, reason) => console.error(`Failed to load ${type}; using local data`, reason)
         );
-        const results = await Promise.allSettled(
-          types.map((type) => apiFetch(`/entities/${type}`))
-        );
-        let failed = 0;
-        types.forEach((type, index) => {
-          const result = results[index];
-          if (result.status === "fulfilled" && Array.isArray(result.value)) {
-            try {
-              applyRemoteList(shopEntityCollections[type], result.value, type);
-            } catch (error) {
-              failed += 1;
-              console.error(`Failed to load ${type}; using local data`, error);
-            }
-          } else if (result.status === "rejected") {
-            failed += 1;
-            console.error(`Failed to load ${type}; using local data`, result.reason);
-          }
-        });
         try {
           const tax = state.shopSettingsRecords.find((item) => item.id === "tax");
           if (tax) {
@@ -13092,13 +13107,35 @@ ${catRows}
           if (invoice && !invoice.signature) onsiteSignatureModal("invoice", invoice);
         });
       };
-      loadShopEntitiesWithTaxSettingsCore = loadShopEntities;
       loadShopEntities = async function() {
-        const previousSettings = state.shopSettingsRecords;
-        await loadShopEntitiesWithTaxSettingsCore();
-        if (state.shopSettingsRecords === previousSettings) return;
-        const taxSettings = state.shopSettingsRecords.find((item) => item.id === "tax");
-        state.taxSettings = taxSettings ? { ...state.taxSettings, ...taxSettings } : { ...state.taxSettings, state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly" };
+        const role = currentUser()?.role || "";
+        const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const failed = applySettledShopEntityResults(
+          types,
+          results,
+          (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+          (type, reason) => console.error(`Failed to load ${type}; using local data`, reason)
+        );
+        try {
+          const tax = state.shopSettingsRecords.find((item) => item.id === "tax");
+          if (tax) {
+            state.taxSettings = {
+              state: tax.state || "TX",
+              taxId: String(tax.taxId || ""),
+              rate: Number(tax.rate) || 0,
+              filingFrequency: tax.filingFrequency || "Monthly",
+              ein: String(tax.ein || ""),
+              texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+              webfileNumber: String(tax.webfileNumber || ""),
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+            };
+          }
+        } catch (error) {
+          console.error("Failed to load shop operations; using local data", error);
+        }
+        await ensureCannedMenu();
+        return failed === 0;
       };
       bindDurableRecordsCore = bind;
       bind = function() {

@@ -33,6 +33,7 @@ import { applyShopSnapshot, ensureOfflineOwner, isOfflineDesktop, offlineLoginMa
 import { presentCatalogInspection, printCatalogInspection } from './catalog-inspection-ui.js';
 import { applyQueuedEntityMutations } from './entity-persistence.js';
 import { createMutationQueueStore } from './mutation-queue-store.js';
+import { applySettledShopEntityResults, readableShopEntityTypes } from './shop-entity-load.js';
 import { paymentSummary } from '../modules/payments.js';
 import { cardTerminalModel, recoveryWriteup } from '../modules/card-terminal.js';
 import { syncHelp } from '../modules/help-menu.js';
@@ -421,7 +422,19 @@ async function loadPayrollEntriesFromApi() { try { state.payrollEntries = await 
 const shopEntityCollections = { vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
 async function saveShopEntity(type, record) { const saved = await apiFetch(`/entities/${type}${record.updatedAt ? `/${encodeURIComponent(record.id)}` : ""}`, { method: record.updatedAt ? "PUT" : "POST", body: JSON.stringify(record) }), value = saved?.queued ? record : saved, collection = shopEntityCollections[type], index = state[collection].findIndex(item => item.id === value.id); if (index >= 0) state[collection][index] = value; else state[collection].push(value); save(); return value }
 const shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
-async function loadShopEntities() { const role = currentUser()?.role || ""; const types = Object.keys(shopEntityCollections).filter(type => !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role)); const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`))); let failed = 0; types.forEach((type, index) => { const result = results[index]; if (result.status === "fulfilled" && Array.isArray(result.value)) state[shopEntityCollections[type]] = result.value; else if (result.status === "rejected") { failed += 1; console.error(`Failed to load ${type}; using local data`, result.reason) } }); save(); return failed === 0 }
+async function loadShopEntities() {
+  const role = currentUser()?.role || "";
+  const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+  const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`)));
+  const failed = applySettledShopEntityResults(
+    types,
+    results,
+    (type, records) => { state[shopEntityCollections[type]] = records; },
+    (type, reason) => console.error(`Failed to load ${type}; using local data`, reason),
+  );
+  save();
+  return failed === 0;
+}
 function icon(name, size = 18) { return `<i data-lucide="${name}" style="width:${size}px;height:${size}px"></i>` }
 function money(value) { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value) }
 function initials(name) { return name.split(/\s+/).map(x => x[0]).slice(0, 2).join("").toUpperCase() }
@@ -1438,27 +1451,14 @@ loadInvoicesFromApi = async function () { try { applyRemoteList("invoices", awai
 loadExpensesFromApi = async function () { try { applyRemoteList("expenses", await apiFetch("/entities/expenses")) } catch (error) { console.error("Failed to load expenses from API; using local data", error) } };
 loadShopEntities = async function () {
   const role = currentUser()?.role || "";
-  const types = Object.keys(shopEntityCollections).filter(type =>
-    !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role),
+  const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+  const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`)));
+  const failed = applySettledShopEntityResults(
+    types,
+    results,
+    (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+    (type, reason) => console.error(`Failed to load ${type}; using local data`, reason),
   );
-  const results = await Promise.allSettled(
-    types.map(type => apiFetch(`/entities/${type}`)),
-  );
-  let failed = 0;
-  types.forEach((type, index) => {
-    const result = results[index];
-    if (result.status === "fulfilled" && Array.isArray(result.value)) {
-      try {
-        applyRemoteList(shopEntityCollections[type], result.value, type);
-      } catch (error) {
-        failed += 1;
-        console.error(`Failed to load ${type}; using local data`, error);
-      }
-    } else if (result.status === "rejected") {
-      failed += 1;
-      console.error(`Failed to load ${type}; using local data`, result.reason);
-    }
-  });
   try {
     const tax = state.shopSettingsRecords.find(item => item.id === "tax");
     if (tax) {
@@ -2687,13 +2687,34 @@ bindEstimateActions = function () {
 
 const loadShopEntitiesWithTaxSettingsCore = loadShopEntities;
 loadShopEntities = async function () {
-  const previousSettings = state.shopSettingsRecords;
-  await loadShopEntitiesWithTaxSettingsCore();
-  if (state.shopSettingsRecords === previousSettings) return;
-  const taxSettings = state.shopSettingsRecords.find(item => item.id === "tax");
-  state.taxSettings = taxSettings
-    ? { ...state.taxSettings, ...taxSettings }
-    : { ...state.taxSettings, state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly" };
+  const role = currentUser()?.role || "";
+  const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+  const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`)));
+  const failed = applySettledShopEntityResults(
+    types,
+    results,
+    (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+    (type, reason) => console.error(`Failed to load ${type}; using local data`, reason),
+  );
+  try {
+    const tax = state.shopSettingsRecords.find(item => item.id === "tax");
+    if (tax) {
+      state.taxSettings = {
+        state: tax.state || "TX",
+        taxId: String(tax.taxId || ""),
+        rate: Number(tax.rate) || 0,
+        filingFrequency: tax.filingFrequency || "Monthly",
+        ein: String(tax.ein || ""),
+        texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+        webfileNumber: String(tax.webfileNumber || ""),
+        jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+      };
+    }
+  } catch (error) {
+    console.error("Failed to load shop operations; using local data", error);
+  }
+  await ensureCannedMenu();
+  return failed === 0;
 };
 
 function readHelpSnapshot() {
