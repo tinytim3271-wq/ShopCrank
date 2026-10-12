@@ -26,8 +26,23 @@ android {
 }
 
 repositories {
-    flatDir{
-        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    ivy {
+        url file('../capacitor-cordova-android-plugins/src/main/libs')
+        patternLayout {
+            artifact '[artifact](-[revision]).[ext]'
+        }
+        metadataSources {
+            artifact()
+        }
+    }
+    ivy {
+        url file('libs')
+        patternLayout {
+            artifact '[artifact](-[revision]).[ext]'
+        }
+        metadataSources {
+            artifact()
+        }
     }
 }
 

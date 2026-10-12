@@ -47,6 +47,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CLOUDFLARE_DEPLOY_ENABLED: 'true'
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -57,6 +60,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - run: npm ci
       - run: npm run build:web
       - run: npm run test:config
@@ -71,7 +78,7 @@ jobs:
       - run: npx --no-install wrangler deploy --dry-run
 
   publish:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && vars.CLOUDFLARE_DEPLOY_ENABLED != 'false'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && vars['CLOUDFLARE_DEPLOY_ENABLED'] != 'false'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -82,6 +89,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - run: npm ci
       - name: Check Cloudflare credentials
         id: creds

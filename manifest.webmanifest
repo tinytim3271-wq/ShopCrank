@@ -6,7 +6,7 @@
   "scope": "./",
   "display": "standalone",
   "background_color": "#fffefb",
-  "theme_color": "#162c24",
+  "theme_color": "#032f3b",
   "icons": [
     {
       "src": "./shopcrank-icon.svg",
