@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.vs/
 downloads/*.exe
 downloads/*.zip
 shop_pages_demo.mp4

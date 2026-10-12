@@ -12533,15 +12533,47 @@ ${catRows}
         }
       };
       loadShopEntities = async function() {
+        const role = currentUser()?.role || "";
+        const types = Object.keys(shopEntityCollections).filter(
+          (type) => !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role)
+        );
+        const results = await Promise.allSettled(
+          types.map((type) => apiFetch(`/entities/${type}`))
+        );
+        let failed = 0;
+        types.forEach((type, index) => {
+          const result = results[index];
+          if (result.status === "fulfilled" && Array.isArray(result.value)) {
+            try {
+              applyRemoteList(shopEntityCollections[type], result.value, type);
+            } catch (error) {
+              failed += 1;
+              console.error(`Failed to load ${type}; using local data`, error);
+            }
+          } else if (result.status === "rejected") {
+            failed += 1;
+            console.error(`Failed to load ${type}; using local data`, result.reason);
+          }
+        });
         try {
-          const types = Object.keys(shopEntityCollections), results = await Promise.all(types.map((type) => apiFetch(`/entities/${type}`)));
-          types.forEach((type, index) => applyRemoteList(shopEntityCollections[type], results[index], type));
           const tax = state.shopSettingsRecords.find((item) => item.id === "tax");
-          if (tax) state.taxSettings = { state: tax.state || "TX", taxId: String(tax.taxId || ""), rate: Number(tax.rate) || 0, filingFrequency: tax.filingFrequency || "Monthly", ein: String(tax.ein || ""), texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""), webfileNumber: String(tax.webfileNumber || ""), jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null };
+          if (tax) {
+            state.taxSettings = {
+              state: tax.state || "TX",
+              taxId: String(tax.taxId || ""),
+              rate: Number(tax.rate) || 0,
+              filingFrequency: tax.filingFrequency || "Monthly",
+              ein: String(tax.ein || ""),
+              texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+              webfileNumber: String(tax.webfileNumber || ""),
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+            };
+          }
         } catch (error) {
           console.error("Failed to load shop operations; using local data", error);
         }
         await ensureCannedMenu();
+        return failed === 0;
       };
       stampDemoAppointments();
       employees = function() {
