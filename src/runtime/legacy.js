@@ -33,6 +33,7 @@ import { applyShopSnapshot, ensureOfflineOwner, isOfflineDesktop, offlineLoginMa
 import { presentCatalogInspection, printCatalogInspection } from './catalog-inspection-ui.js';
 import { applyQueuedEntityMutations } from './entity-persistence.js';
 import { createMutationQueueStore } from './mutation-queue-store.js';
+import { applySettledShopEntityResults, readableShopEntityTypes } from './shop-entity-load.js';
 import { paymentSummary } from '../modules/payments.js';
 import { cardTerminalModel, recoveryWriteup } from '../modules/card-terminal.js';
 import { syncHelp } from '../modules/help-menu.js';
@@ -52,6 +53,7 @@ import {
 import {
   INTAKE_STORAGE_KEY,
   emptyIntakeDraft,
+  findIntakeCustomer,
   intakeOrderPayload,
   localDiagnosticChecklist,
   mountIntakeWizard,
@@ -84,7 +86,7 @@ import {
   estimateFromAssistantDraft,
   workOrderDraftFromEstimate,
 } from '../modules/estimate-templates.js';
-import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, isRoAuthorizedForKeys, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
+import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, signedEstimateForOrder, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
 import {
   APPROVAL_CUSTOM_LABEL_MAX,
   APPROVAL_NOTE_MAX,
@@ -420,7 +422,19 @@ async function loadPayrollEntriesFromApi() { try { state.payrollEntries = await 
 const shopEntityCollections = { vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
 async function saveShopEntity(type, record) { const saved = await apiFetch(`/entities/${type}${record.updatedAt ? `/${encodeURIComponent(record.id)}` : ""}`, { method: record.updatedAt ? "PUT" : "POST", body: JSON.stringify(record) }), value = saved?.queued ? record : saved, collection = shopEntityCollections[type], index = state[collection].findIndex(item => item.id === value.id); if (index >= 0) state[collection][index] = value; else state[collection].push(value); save(); return value }
 const shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
-async function loadShopEntities() { const role = currentUser()?.role || ""; const types = Object.keys(shopEntityCollections).filter(type => !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role)); const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`))); let failed = 0; types.forEach((type, index) => { const result = results[index]; if (result.status === "fulfilled" && Array.isArray(result.value)) state[shopEntityCollections[type]] = result.value; else if (result.status === "rejected") { failed += 1; console.error(`Failed to load ${type}; using local data`, result.reason) } }); save(); return failed === 0 }
+async function loadShopEntities() {
+  const role = currentUser()?.role || "";
+  const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+  const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`)));
+  const failed = applySettledShopEntityResults(
+    types,
+    results,
+    (type, records) => { state[shopEntityCollections[type]] = records; },
+    (type, reason) => console.error(`Failed to load ${type}; using local data`, reason),
+  );
+  save();
+  return failed === 0;
+}
 function icon(name, size = 18) { return `<i data-lucide="${name}" style="width:${size}px;height:${size}px"></i>` }
 function money(value) { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value) }
 function initials(name) { return name.split(/\s+/).map(x => x[0]).slice(0, 2).join("").toUpperCase() }
@@ -1373,13 +1387,23 @@ function openCustomerIntake() {
       const name = [current.customer.firstName, current.customer.lastName].filter(Boolean).join(" ");
       const display = current.customer.company ? `${name} (${current.customer.company})` : name;
       const address = [current.customer.address, [current.customer.city, current.customer.state, current.customer.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
-      const existing = state.customers.find(item => item.phone === current.customer.phone || (current.customer.email && item.email === current.customer.email));
-      await saveCustomerRecord(existing, { name: display, phone: current.customer.phone, email: current.customer.email, billingAddress: address, billingNotes: `Intake ${current.id}` });
+      const existing = findIntakeCustomer(state.customers, current);
+      const customer = await saveCustomerRecord(existing, { name: display, phone: current.customer.phone, email: current.customer.email, billingAddress: address, billingNotes: `Intake ${current.id}` });
       const vehicleId = `veh-${Date.now()}`;
-      await saveShopEntity("vehicles", { id: vehicleId, customer: display, vin: current.vehicle.vin, year: current.vehicle.year, make: current.vehicle.make, model: current.vehicle.model, plate: current.vehicle.plate, mileage: current.vehicle.mileage, color: current.vehicle.color });
+      await saveShopEntity("vehicles", { id: vehicleId, customerId: customer.id, customer: customer.name || display, vin: current.vehicle.vin, year: current.vehicle.year, make: current.vehicle.make, model: current.vehicle.model, plate: current.vehicle.plate, mileage: current.vehicle.mileage, color: current.vehicle.color });
       const max = state.orders.reduce((highest, order) => Math.max(highest, Number(String(order.id).replace(/\D/g, "")) || 0), 1040);
-      const record = intakeOrderPayload(current, { id: `RO-${max + 1}`, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users });
-      record.intake.photos = [];
+      // Prefer sequential ids, but never reuse an id already in local state. On a
+      // 409 from the Worker (concurrent convert), retry with a time-based id so
+      // the first intake is not overwritten (POST used to upsert on conflict).
+      let orderId = `RO-${max + 1}`;
+      let taken = new Set(state.orders.map(order => order.id));
+      if (taken.has(orderId)) orderId = `RO-${Date.now()}`;
+      const buildRecord = (id) => {
+        const record = intakeOrderPayload(current, { id, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users, customer });
+        record.intake.photos = [];
+        return record;
+      };
+      let record = buildRecord(orderId);
       for (const photo of current.photos || []) {
         if (!photo.file) { record.intake.photos.push(photo); continue }
         try {
@@ -1389,10 +1413,24 @@ function openCustomerIntake() {
           record.intake.photos.push({ id: photo.id, slot: photo.slot, name: photo.name, takenAt: photo.takenAt, uploadError: error.message || "Upload failed" });
         }
       }
+      const photos = record.intake.photos;
       let saved = record;
       if (!isOfflineDesktop()) {
-        const response = await apiFetch("/entities/orders", { method: "POST", body: JSON.stringify(record) });
-        saved = response?.queued ? record : response;
+        let attempts = 0;
+        while (attempts < 4) {
+          try {
+            const response = await apiFetch("/entities/orders", { method: "POST", body: JSON.stringify(record) });
+            saved = response?.queued ? record : (response || record);
+            break;
+          } catch (error) {
+            const conflict = Number(error?.status) === 409 || /already exists/i.test(String(error?.message || ""));
+            if (!conflict || attempts === 3) throw error;
+            attempts += 1;
+            orderId = `RO-${Date.now()}-${attempts}`;
+            record = buildRecord(orderId);
+            record.intake.photos = photos;
+          }
+        }
       }
       state.orders.unshift(saved);
       localStorage.removeItem(INTAKE_STORAGE_KEY);
@@ -1411,7 +1449,36 @@ loadOrdersFromApi = async function () { try { applyRemoteList("orders", await ap
 loadCustomersFromApi = async function () { const epoch = customerListEpoch; try { const records = await apiFetch("/entities/customers"); if (epoch !== customerListEpoch) return; applyRemoteList("customers", records) } catch (error) { console.error("Failed to load customers from API; using local data", error) } };
 loadInvoicesFromApi = async function () { try { applyRemoteList("invoices", await apiFetch("/entities/invoices")) } catch (error) { console.error("Failed to load invoices from API; using local data", error) } };
 loadExpensesFromApi = async function () { try { applyRemoteList("expenses", await apiFetch("/entities/expenses")) } catch (error) { console.error("Failed to load expenses from API; using local data", error) } };
-loadShopEntities = async function () { try { const types = Object.keys(shopEntityCollections), results = await Promise.all(types.map(type => apiFetch(`/entities/${type}`))); types.forEach((type, index) => applyRemoteList(shopEntityCollections[type], results[index], type)); const tax = state.shopSettingsRecords.find(item => item.id === "tax"); if (tax) state.taxSettings = { state: tax.state || "TX", taxId: String(tax.taxId || ""), rate: Number(tax.rate) || 0, filingFrequency: tax.filingFrequency || "Monthly", ein: String(tax.ein || ""), texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""), webfileNumber: String(tax.webfileNumber || ""), jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null } } catch (error) { console.error("Failed to load shop operations; using local data", error) } await ensureCannedMenu() };
+loadShopEntities = async function () {
+  const role = currentUser()?.role || "";
+  const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+  const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`)));
+  const failed = applySettledShopEntityResults(
+    types,
+    results,
+    (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+    (type, reason) => console.error(`Failed to load ${type}; using local data`, reason),
+  );
+  try {
+    const tax = state.shopSettingsRecords.find(item => item.id === "tax");
+    if (tax) {
+      state.taxSettings = {
+        state: tax.state || "TX",
+        taxId: String(tax.taxId || ""),
+        rate: Number(tax.rate) || 0,
+        filingFrequency: tax.filingFrequency || "Monthly",
+        ein: String(tax.ein || ""),
+        texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+        webfileNumber: String(tax.webfileNumber || ""),
+        jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+      };
+    }
+  } catch (error) {
+    console.error("Failed to load shop operations; using local data", error);
+  }
+  await ensureCannedMenu();
+  return failed === 0;
+};
 function stampDemoAppointments() { const samples = new Set(["apt-1048", "apt-1049", "apt-1052"]); if (!(state.appointments || []).some(item => samples.has(item.id))) return; const today = new Date(), iso = localIsoDate(today), tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1); const next = localIsoDate(tomorrow); state.appointments = state.appointments.map(item => item.id === "apt-1048" || item.id === "apt-1049" ? { ...item, date: iso } : item.id === "apt-1052" ? { ...item, date: next } : item) }
 stampDemoAppointments();
 
@@ -2620,13 +2687,34 @@ bindEstimateActions = function () {
 
 const loadShopEntitiesWithTaxSettingsCore = loadShopEntities;
 loadShopEntities = async function () {
-  const previousSettings = state.shopSettingsRecords;
-  await loadShopEntitiesWithTaxSettingsCore();
-  if (state.shopSettingsRecords === previousSettings) return;
-  const taxSettings = state.shopSettingsRecords.find(item => item.id === "tax");
-  state.taxSettings = taxSettings
-    ? { ...state.taxSettings, ...taxSettings }
-    : { ...state.taxSettings, state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly" };
+  const role = currentUser()?.role || "";
+  const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+  const results = await Promise.allSettled(types.map(type => apiFetch(`/entities/${type}`)));
+  const failed = applySettledShopEntityResults(
+    types,
+    results,
+    (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+    (type, reason) => console.error(`Failed to load ${type}; using local data`, reason),
+  );
+  try {
+    const tax = state.shopSettingsRecords.find(item => item.id === "tax");
+    if (tax) {
+      state.taxSettings = {
+        state: tax.state || "TX",
+        taxId: String(tax.taxId || ""),
+        rate: Number(tax.rate) || 0,
+        filingFrequency: tax.filingFrequency || "Monthly",
+        ein: String(tax.ein || ""),
+        texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+        webfileNumber: String(tax.webfileNumber || ""),
+        jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+      };
+    }
+  } catch (error) {
+    console.error("Failed to load shop operations; using local data", error);
+  }
+  await ensureCannedMenu();
+  return failed === 0;
 };
 
 function readHelpSnapshot() {
@@ -4486,7 +4574,7 @@ function bindShopOs() {
     try {
       assertKeyJobAllowed({ order, estimates: state.estimates, operation: data.operation, notes: data.notes });
       const result = simulateKeyJob({ operation: data.operation, vin: order.vin });
-      const authorization = state.estimates.find(estimate => isRoAuthorizedForKeys(order, [estimate]));
+      const authorization = signedEstimateForOrder(order);
       await rememberBayRecord("keyprogrammingjobs", "keyJobs", {
         id: `key-${Date.now()}`,
         orderId: order.id,

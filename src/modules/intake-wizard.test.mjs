@@ -6,6 +6,7 @@ import {
   canConvertIntake,
   customerDisplayName,
   emptyIntakeDraft,
+  findIntakeCustomer,
   intakeOrderPayload,
   localDiagnosticChecklist,
   missingRequiredPhotos,
@@ -77,4 +78,55 @@ test('local analysis does not pretend to be the cloud assistant', () => {
   assert.match(result.notice, /not a remote diagnosis/);
   const priced = priceIntakeEstimate(draft, { laborRate: 100, taxRate: 8.25 });
   assert.equal(priced.disclaimer, INTAKE_DISCLAIMER);
+});
+
+function buickIntake() {
+  const draft = emptyIntakeDraft();
+  draft.customer = { ...draft.customer, firstName: 'Lauren', lastName: 'Glover', phone: '8063825466', email: 'lauren@example.com' };
+  draft.vehicle = { ...draft.vehicle, vin: 'KL4CJBSB9GB678193', year: '2016', make: 'Buick', model: 'Encore' };
+  draft.concern.description = 'Rough idle, P0234 overboost';
+  draft.estimate = { lines: [{ type: 'labor', description: 'Diagnose overboost', quantity: 1, source: 'Shop' }], diagnosticCharge: 75, approval: 'approved' };
+  return draft;
+}
+
+test('an intake with no photos converts only after the writer waives them, and the RO records it', () => {
+  const draft = buickIntake();
+  const blocked = canConvertIntake(draft);
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.problems.join(' '), /Required photos: Front, Rear, Driver side, Passenger side/);
+  draft.photosWaived = true;
+  assert.deepEqual(canConvertIntake(draft), { ok: true, problems: [] });
+  const order = intakeOrderPayload(draft, { id: 'RO-1300' });
+  assert.equal(order.intake.photosWaived, true);
+  assert.deepEqual(order.intake.missingPhotos, ['Front', 'Rear', 'Driver side', 'Passenger side']);
+  assert.equal(order.status, 'approved');
+  assert.equal(order.estimateApproval, undefined);
+});
+
+test('the converted work order is linked to the intake customer', () => {
+  const draft = buickIntake();
+  draft.photosWaived = true;
+  const customer = { id: 'cust-77', name: 'Lauren Glover', phone: '(806) 382-5466', email: 'lauren@example.com' };
+  const order = intakeOrderPayload(draft, { id: 'RO-1301', customer });
+  assert.equal(order.customerId, 'cust-77');
+  assert.equal(order.customer, 'Lauren Glover');
+  assert.equal(order.phone, '(806) 382-5466');
+  assert.equal(order.email, 'lauren@example.com');
+  const unlinked = intakeOrderPayload(draft, { id: 'RO-1302' });
+  assert.equal(unlinked.customerId, '');
+  assert.equal(unlinked.customer, 'Lauren Glover');
+  assert.equal(unlinked.phone, '8063825466');
+});
+
+test('intake customer matching ignores phone formatting and never matches on blanks', () => {
+  const draft = buickIntake();
+  const customers = [
+    { id: 'blank', name: 'No contact', phone: '', email: '' },
+    { id: 'match', name: 'Lauren Glover', phone: '+1 (806) 382-5466', email: '' },
+  ];
+  assert.equal(findIntakeCustomer(customers, draft)?.id, 'match');
+  assert.equal(findIntakeCustomer([{ id: 'mail', email: 'LAUREN@example.com' }], draft)?.id, 'mail');
+  draft.customer.phone = '';
+  draft.customer.email = '';
+  assert.equal(findIntakeCustomer(customers, draft), null);
 });

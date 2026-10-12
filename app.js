@@ -2680,10 +2680,10 @@
     return saved;
   }
   function likelyDuplicateCustomers({ phone = "", email = "" }, customers2 = [], vehicles = []) {
-    const phoneDigits = String(phone || "").replace(/\D/g, "");
+    const phoneDigits2 = String(phone || "").replace(/\D/g, "");
     const normalizedEmail = String(email || "").trim().toLocaleLowerCase();
-    if (!phoneDigits && !normalizedEmail) return [];
-    return uniqueCustomers(customers2).filter((customer) => phoneDigits && String(customer.phone || "").replace(/\D/g, "") === phoneDigits || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
+    if (!phoneDigits2 && !normalizedEmail) return [];
+    return uniqueCustomers(customers2).filter((customer) => phoneDigits2 && String(customer.phone || "").replace(/\D/g, "") === phoneDigits2 || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
   }
   var CUSTOMER_SEARCH_MIN_LENGTH, CUSTOMER_SEARCH_DEBOUNCE_MS, CUSTOMER_SEARCH_RESULT_LIMIT, CONTACT_FIELDS;
   var init_customer_intake = __esm({
@@ -3582,6 +3582,34 @@ button{margin-top:12px;padding:8px 14px}
   }
   var init_mutation_queue_store = __esm({
     "src/runtime/mutation-queue-store.js"() {
+    }
+  });
+
+  // src/runtime/shop-entity-load.js
+  function readableShopEntityTypes(entityTypes, readRoles, role) {
+    const types = Array.isArray(entityTypes) ? entityTypes : Object.keys(entityTypes || {});
+    const roles = readRoles && typeof readRoles === "object" ? readRoles : {};
+    const currentRole = String(role || "");
+    return types.filter((type) => !roles[type] || roles[type].includes(currentRole));
+  }
+  function applySettledShopEntityResults(types, results, apply, onRejected) {
+    let failed = 0;
+    types.forEach((type, index) => {
+      const result = results[index];
+      if (!result) return;
+      if (result.status === "fulfilled" && Array.isArray(result.value)) {
+        apply(type, result.value);
+        return;
+      }
+      if (result.status === "rejected") {
+        failed += 1;
+        if (typeof onRejected === "function") onRejected(type, result.reason);
+      }
+    });
+    return failed;
+  }
+  var init_shop_entity_load = __esm({
+    "src/runtime/shop-entity-load.js"() {
     }
   });
 
@@ -4953,15 +4981,27 @@ button{margin-top:12px;padding:8px 14px}
       causes
     };
   }
-  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
+  function phoneDigits(value2) {
+    const digits = String(value2 || "").replace(/\D/g, "");
+    return digits.length > 10 ? digits.slice(-10) : digits;
+  }
+  function findIntakeCustomer(customers2 = [], draft = {}) {
+    const phone = phoneDigits(draft.customer?.phone);
+    const email = String(draft.customer?.email || "").trim().toLowerCase();
+    return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
+  }
+  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [], customer = null } = {}) {
     const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
     const approval = draft.estimate?.approval || "pending";
     const status = approval === "approved" ? "approved" : "estimate";
     const assigned = applyAssignments({ id }, draft.assignments || [], users);
+    const missingPhotos = missingRequiredPhotos(draft);
     return {
       id,
-      customer: customerDisplayName(draft),
-      phone: String(draft.customer?.phone || "").trim(),
+      customerId: customer?.id || "",
+      customer: String(customer?.name || "").trim() || customerDisplayName(draft),
+      phone: String(customer?.phone || draft.customer?.phone || "").trim(),
+      email: String(customer?.email || draft.customer?.email || "").trim(),
       vehicle: vehicleLabel2(draft) || "Vehicle pending",
       vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
       complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
@@ -4993,7 +5033,9 @@ button{margin-top:12px;padding:8px 14px}
         concern: draft.concern,
         diagnosis: draft.diagnosis,
         disclaimer: INTAKE_DISCLAIMER,
-        approval
+        approval,
+        photosWaived: missingPhotos.length > 0 && draft.photosWaived === true,
+        missingPhotos
       }
     };
   }
@@ -5011,7 +5053,8 @@ button{margin-top:12px;padding:8px 14px}
     const problems = [];
     if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
     if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
+    const missingPhotos = missingRequiredPhotos(draft);
+    if (missingPhotos.length && draft.photosWaived !== true) problems.push(`Required photos: ${missingPhotos.join(", ")}. Add them on the Photos step, or tick "Convert without the required photos" below.`);
     if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
     return { ok: problems.length === 0, problems };
   }
@@ -5089,7 +5132,9 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
     }).join("")}`;
     return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel2(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
+${missingRequiredPhotos(draft).length ? `<label class="intake-waiver"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without the required photos (${escapeHtml3(missingRequiredPhotos(draft).join(", "))}). The work order notes they are missing.</label>` : ""}
 ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+${draft.convertError ? `<div class="import-errors"><span>Could not create the work order: ${escapeHtml3(draft.convertError)}</span></div>` : ""}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
   }
   function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
@@ -5155,6 +5200,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       next.estimate.approval = data.approval || "pending";
     }
     if (step === "review") {
+      next.photosWaived = Boolean(form.querySelector('[name="photosWaived"]')?.checked);
       next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
         const employeeId = data[`assign-${role}`];
         if (!employeeId) return [];
@@ -5219,11 +5265,26 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         if (form) current = readForm(current, form);
         const check2 = canConvertIntake(current);
         if (!check2.ok) {
+          current.convertError = "";
           persist("blocked");
           paint();
+          host.querySelector(".import-errors")?.scrollIntoView?.({ block: "nearest" });
           return;
         }
-        await onConvert?.(current);
+        const button = host.querySelector("#intake-convert");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Creating work order...";
+        }
+        try {
+          current.convertError = "";
+          await onConvert?.(current);
+        } catch (error) {
+          current.convertError = error?.message || "The work order could not be saved. Your intake is still saved on this device.";
+          persist("convert-failed");
+          paint();
+          host.querySelector(".import-errors")?.scrollIntoView?.({ block: "nearest" });
+        }
       });
       host.querySelector("#intake-decode")?.addEventListener("click", async () => {
         if (form) current = readForm(current, form);
@@ -5402,9 +5463,21 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   });
 
   // src/modules/shop-os/bay.js
-  function signedEstimateForOrder(order, estimates = []) {
+  function signedEstimateForOrder(order, _estimates = []) {
     if (!order?.id) return null;
-    return estimates.find((estimate) => estimate.workOrderId === order.id && estimate.status === "approved" && estimate.signedAt && String(estimate.authorizationName || "").trim()) || null;
+    const approval = order.estimateApproval;
+    if (approval && approval.status === "approved" && approval.signedAt && String(approval.authorizationName || "").trim()) {
+      return {
+        id: order.id,
+        workOrderId: order.id,
+        status: "approved",
+        signedAt: approval.signedAt,
+        authorizationName: approval.authorizationName,
+        signatureKey: approval.signatureKey || null,
+        type: approval.type || "signature"
+      };
+    }
+    return null;
   }
   function isRoAuthorizedForKeys(order, estimates = []) {
     return Boolean(signedEstimateForOrder(order, estimates));
@@ -6632,17 +6705,16 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   }
   async function loadShopEntities() {
     const role = currentUser()?.role || "";
-    const types = Object.keys(shopEntityCollections).filter((type) => !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role));
+    const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
     const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
-    let failed = 0;
-    types.forEach((type, index) => {
-      const result = results[index];
-      if (result.status === "fulfilled" && Array.isArray(result.value)) state[shopEntityCollections[type]] = result.value;
-      else if (result.status === "rejected") {
-        failed += 1;
-        console.error(`Failed to load ${type}; using local data`, result.reason);
-      }
-    });
+    const failed = applySettledShopEntityResults(
+      types,
+      results,
+      (type, records) => {
+        state[shopEntityCollections[type]] = records;
+      },
+      (type, reason) => console.error(`Failed to load ${type}; using local data`, reason)
+    );
     save();
     return failed === 0;
   }
@@ -9856,13 +9928,20 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         const name = [current.customer.firstName, current.customer.lastName].filter(Boolean).join(" ");
         const display = current.customer.company ? `${name} (${current.customer.company})` : name;
         const address = [current.customer.address, [current.customer.city, current.customer.state, current.customer.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
-        const existing = state.customers.find((item) => item.phone === current.customer.phone || current.customer.email && item.email === current.customer.email);
-        await saveCustomerRecord(existing, { name: display, phone: current.customer.phone, email: current.customer.email, billingAddress: address, billingNotes: `Intake ${current.id}` });
+        const existing = findIntakeCustomer(state.customers, current);
+        const customer = await saveCustomerRecord(existing, { name: display, phone: current.customer.phone, email: current.customer.email, billingAddress: address, billingNotes: `Intake ${current.id}` });
         const vehicleId = `veh-${Date.now()}`;
-        await saveShopEntity("vehicles", { id: vehicleId, customer: display, vin: current.vehicle.vin, year: current.vehicle.year, make: current.vehicle.make, model: current.vehicle.model, plate: current.vehicle.plate, mileage: current.vehicle.mileage, color: current.vehicle.color });
+        await saveShopEntity("vehicles", { id: vehicleId, customerId: customer.id, customer: customer.name || display, vin: current.vehicle.vin, year: current.vehicle.year, make: current.vehicle.make, model: current.vehicle.model, plate: current.vehicle.plate, mileage: current.vehicle.mileage, color: current.vehicle.color });
         const max = state.orders.reduce((highest, order) => Math.max(highest, Number(String(order.id).replace(/\D/g, "")) || 0), 1040);
-        const record = intakeOrderPayload(current, { id: `RO-${max + 1}`, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users });
-        record.intake.photos = [];
+        let orderId = `RO-${max + 1}`;
+        let taken = new Set(state.orders.map((order) => order.id));
+        if (taken.has(orderId)) orderId = `RO-${Date.now()}`;
+        const buildRecord = (id) => {
+          const record2 = intakeOrderPayload(current, { id, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users, customer });
+          record2.intake.photos = [];
+          return record2;
+        };
+        let record = buildRecord(orderId);
         for (const photo of current.photos || []) {
           if (!photo.file) {
             record.intake.photos.push(photo);
@@ -9875,10 +9954,24 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
             record.intake.photos.push({ id: photo.id, slot: photo.slot, name: photo.name, takenAt: photo.takenAt, uploadError: error.message || "Upload failed" });
           }
         }
+        const photos = record.intake.photos;
         let saved = record;
         if (!isOfflineDesktop()) {
-          const response = await apiFetch("/entities/orders", { method: "POST", body: JSON.stringify(record) });
-          saved = response?.queued ? record : response;
+          let attempts = 0;
+          while (attempts < 4) {
+            try {
+              const response = await apiFetch("/entities/orders", { method: "POST", body: JSON.stringify(record) });
+              saved = response?.queued ? record : response || record;
+              break;
+            } catch (error) {
+              const conflict = Number(error?.status) === 409 || /already exists/i.test(String(error?.message || ""));
+              if (!conflict || attempts === 3) throw error;
+              attempts += 1;
+              orderId = `RO-${Date.now()}-${attempts}`;
+              record = buildRecord(orderId);
+              record.intake.photos = photos;
+            }
+          }
         }
         state.orders.unshift(saved);
         localStorage.removeItem(INTAKE_STORAGE_KEY);
@@ -11720,7 +11813,7 @@ ${catRows}
       try {
         assertKeyJobAllowed({ order, estimates: state.estimates, operation: data.operation, notes: data.notes });
         const result = simulateKeyJob({ operation: data.operation, vin: order.vin });
-        const authorization = state.estimates.find((estimate) => isRoAuthorizedForKeys(order, [estimate]));
+        const authorization = signedEstimateForOrder(order);
         await rememberBayRecord("keyprogrammingjobs", "keyJobs", {
           id: `key-${Date.now()}`,
           orderId: order.id,
@@ -11756,7 +11849,7 @@ ${catRows}
     }
     if (state.route === "settings") render();
   }
-  var buildHomeModel2, emptyState2, greetingForNow2, localIsoDate2, mergeRemoteCollection2, pendingCreateIdsForCollection2, visibleSidebar2, chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, loadShopEntitiesWithTaxSettingsCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
+  var buildHomeModel2, emptyState2, greetingForNow2, localIsoDate2, mergeRemoteCollection2, pendingCreateIdsForCollection2, visibleSidebar2, chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -11784,6 +11877,7 @@ ${catRows}
       init_catalog_inspection_ui();
       init_entity_persistence();
       init_mutation_queue_store();
+      init_shop_entity_load();
       init_payments();
       init_card_terminal();
       init_help_menu();
@@ -12500,15 +12594,34 @@ ${catRows}
         }
       };
       loadShopEntities = async function() {
+        const role = currentUser()?.role || "";
+        const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const failed = applySettledShopEntityResults(
+          types,
+          results,
+          (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+          (type, reason) => console.error(`Failed to load ${type}; using local data`, reason)
+        );
         try {
-          const types = Object.keys(shopEntityCollections), results = await Promise.all(types.map((type) => apiFetch(`/entities/${type}`)));
-          types.forEach((type, index) => applyRemoteList(shopEntityCollections[type], results[index], type));
           const tax = state.shopSettingsRecords.find((item) => item.id === "tax");
-          if (tax) state.taxSettings = { state: tax.state || "TX", taxId: String(tax.taxId || ""), rate: Number(tax.rate) || 0, filingFrequency: tax.filingFrequency || "Monthly", ein: String(tax.ein || ""), texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""), webfileNumber: String(tax.webfileNumber || ""), jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null };
+          if (tax) {
+            state.taxSettings = {
+              state: tax.state || "TX",
+              taxId: String(tax.taxId || ""),
+              rate: Number(tax.rate) || 0,
+              filingFrequency: tax.filingFrequency || "Monthly",
+              ein: String(tax.ein || ""),
+              texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+              webfileNumber: String(tax.webfileNumber || ""),
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+            };
+          }
         } catch (error) {
           console.error("Failed to load shop operations; using local data", error);
         }
         await ensureCannedMenu();
+        return failed === 0;
       };
       stampDemoAppointments();
       employees = function() {
@@ -12994,13 +13107,35 @@ ${catRows}
           if (invoice && !invoice.signature) onsiteSignatureModal("invoice", invoice);
         });
       };
-      loadShopEntitiesWithTaxSettingsCore = loadShopEntities;
       loadShopEntities = async function() {
-        const previousSettings = state.shopSettingsRecords;
-        await loadShopEntitiesWithTaxSettingsCore();
-        if (state.shopSettingsRecords === previousSettings) return;
-        const taxSettings = state.shopSettingsRecords.find((item) => item.id === "tax");
-        state.taxSettings = taxSettings ? { ...state.taxSettings, ...taxSettings } : { ...state.taxSettings, state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly" };
+        const role = currentUser()?.role || "";
+        const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const failed = applySettledShopEntityResults(
+          types,
+          results,
+          (type, records) => applyRemoteList(shopEntityCollections[type], records, type),
+          (type, reason) => console.error(`Failed to load ${type}; using local data`, reason)
+        );
+        try {
+          const tax = state.shopSettingsRecords.find((item) => item.id === "tax");
+          if (tax) {
+            state.taxSettings = {
+              state: tax.state || "TX",
+              taxId: String(tax.taxId || ""),
+              rate: Number(tax.rate) || 0,
+              filingFrequency: tax.filingFrequency || "Monthly",
+              ein: String(tax.ein || ""),
+              texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+              webfileNumber: String(tax.webfileNumber || ""),
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+            };
+          }
+        } catch (error) {
+          console.error("Failed to load shop operations; using local data", error);
+        }
+        await ensureCannedMenu();
+        return failed === 0;
       };
       bindDurableRecordsCore = bind;
       bind = function() {

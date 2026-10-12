@@ -809,6 +809,11 @@ async function handleEntities(request, env, context, segments, analytics) {
     // Sync access before writing the entity so a cross-tenant email conflict
     // cannot leave an orphan employee row behind.
     if (type === 'employees') await syncAccessUser(env, context, body);
+    // Orders must not silently overwrite on POST — intake/new-RO id races
+    // previously lost the first work order via ON CONFLICT DO UPDATE.
+    if (type === 'orders' && await getEntity(env, context.shopId, type, newId)) {
+      throw new HttpError(409, `Work order ${newId} already exists`);
+    }
     const saved = await putEntity(env, context, type, newId, body);
     captureForContext(analytics, context, 'entity_created', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_created', {
@@ -1122,12 +1127,20 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
     let signedOrder = null;
     if (mode === 'live' && spec.klass === 'immobilizer') {
       // The shop's signed repair order is the authorization for live key work.
+      // Approval must live on the order (estimateApproval), not a forgeable estimates row.
       signedOrder = await signedRepairOrderForKeys(env.DB, context.shopId, body.orderId, vin);
       if (!signedOrder) {
         return json({
           authorized: false,
           message: 'Live key programming needs a signed repair order whose VIN matches this vehicle.',
         }, 403);
+      }
+      if (signedOrder.signatureKey) {
+        await verifyOrderApprovalSignature(env, context, {
+          status: 'approved',
+          type: 'signature',
+          signatureKey: signedOrder.signatureKey,
+        });
       }
     } else if (mode === 'live' && spec.autoAuth) {
       const login = await readAutoAuthLogin(env, context.shopId);
@@ -1343,6 +1356,7 @@ async function handleVoiceSession(request, env, context) {
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
   if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
+  await enforceAiRateLimit(env, context);
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
   const headers = new Headers(request.headers);
@@ -2604,12 +2618,15 @@ async function handleBilling(request, env, context, segments) {
             ? rawStatus : 'inactive';
         const periodEndSeconds = Number(object.current_period_end || 0);
         const periodStartSeconds = Number(object.current_period_start || 0);
-        const periodEnd = paymentFailed
-          ? existing?.current_period_end || null
-          : periodEndSeconds > 0 ? new Date(periodEndSeconds * 1000).toISOString() : null;
-        const periodStart = paymentFailed
-          ? existing?.current_period_start || null
-          : periodStartSeconds > 0 ? new Date(periodStartSeconds * 1000).toISOString() : null;
+        // Checkout Session objects have no current_period_*; writing null here
+        // used to wipe a real subscription period and leave status=active with
+        // no expiry (hasPlanCapability treats null period as never-expires).
+        const periodEnd = periodEndSeconds > 0
+          ? new Date(periodEndSeconds * 1000).toISOString()
+          : (paymentFailed || checkoutEvent ? existing?.current_period_end || null : null);
+        const periodStart = periodStartSeconds > 0
+          ? new Date(periodStartSeconds * 1000).toISOString()
+          : (paymentFailed || checkoutEvent ? existing?.current_period_start || null : null);
         const invoiceSubscription = typeof object.subscription === 'string'
           ? object.subscription
           : object.subscription?.id;
