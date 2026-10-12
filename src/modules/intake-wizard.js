@@ -206,6 +206,20 @@ export function localDiagnosticChecklist(draft = {}) {
   };
 }
 
+function phoneDigits(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+export function findIntakeCustomer(customers = [], draft = {}) {
+  const phone = phoneDigits(draft.customer?.phone);
+  const email = String(draft.customer?.email || '').trim().toLowerCase();
+  return customers.find(item => (
+    phone.length >= 7 && phoneDigits(item?.phone) === phone
+    || email && String(item?.email || '').trim().toLowerCase() === email
+  )) || null;
+}
+
 export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
   const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
   const approval = draft.estimate?.approval || 'pending';

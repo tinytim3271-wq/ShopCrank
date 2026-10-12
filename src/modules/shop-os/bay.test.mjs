@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertLiveKeySession,
   assertKeyJobAllowed,
+  keyConfirmationMatches,
+  keyAuditRecord,
+  liveKeyProcedureFor,
   isRoAuthorizedForKeys,
+  normalizeVin,
   simulateKeyJob,
   simulateObdScan,
 } from "./bay.js";
@@ -71,4 +76,45 @@ test("simulator results are labeled and do not claim a live tool", () => {
   const job = simulateKeyJob({ operation: "test", vin: order.vin });
   assert.equal(job.simulated, true);
   assert.match(job.message, /not a live programmer/i);
+});
+
+test("live key sessions require an authorized order, connected adapter, and matching VIN", () => {
+  const liveOrder = { ...order, vin: "1HGCM82633A004352" };
+  assert.equal(liveKeyProcedureFor("add"), "add_key");
+  assert.equal(liveKeyProcedureFor("identify"), null);
+  assert.throws(
+    () => assertLiveKeySession({ order: liveOrder, estimates: signed, operation: "add", vehicleVin: liveOrder.vin, deviceConnected: false }),
+    /Connect the J2534 adapter/,
+  );
+  assert.throws(
+    () => assertLiveKeySession({ order: liveOrder, estimates: signed, operation: "add", vehicleVin: "1HGCM82633A004353", deviceConnected: true }),
+    /does not match/,
+  );
+  assert.equal(
+    assertLiveKeySession({ order: liveOrder, estimates: signed, operation: "add", vehicleVin: liveOrder.vin, deviceConnected: true }),
+    signed[0],
+  );
+});
+
+test("VIN confirmation and live key audit records normalize sensitive identifiers", () => {
+  assert.equal(normalizeVin("1hg-cm82633a004352"), "1HGCM82633A004352");
+  assert.equal(keyConfirmationMatches("1HGCM82633A004352", "004352"), true);
+  assert.equal(keyConfirmationMatches(order.vin, "not-it"), false);
+  const record = keyAuditRecord({
+    id: "audit-1",
+    order,
+    vehicleVin: "demovin000000001",
+    user: { id: "tech-1", name: "Tech", role: "technician" },
+    operation: "add",
+    authorization: { id: "estimate-1", authorizationName: "Customer", signedAt: "2026-10-01" },
+    notes: "  verified  ",
+    steps: [{ at: "2026-10-01", step: "identify", detail: " VIN confirmed " }],
+    now: "2026-10-01",
+  });
+
+  assert.equal(record.vin, "DEMOVIN000000001");
+  assert.equal(record.vehicleVin, "DEMOVIN000000001");
+  assert.equal(record.notes, "verified");
+  assert.equal(record.authorizationName, "Customer");
+  assert.equal(record.steps[0].detail, " VIN confirmed ");
 });

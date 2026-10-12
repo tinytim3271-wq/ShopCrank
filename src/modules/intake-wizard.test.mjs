@@ -6,6 +6,7 @@ import {
   canConvertIntake,
   customerDisplayName,
   emptyIntakeDraft,
+  findIntakeCustomer,
   intakeOrderPayload,
   localDiagnosticChecklist,
   missingRequiredPhotos,
@@ -13,6 +14,17 @@ import {
   searchLaborGuide,
   unavailableLaborSources,
 } from './intake-wizard.js';
+
+test('findIntakeCustomer matches normalized phone numbers or email addresses', () => {
+  const customers = [
+    { id: 'phone-match', phone: '(555) 555-1234', email: 'phone@example.com' },
+    { id: 'email-match', phone: '555-555-9999', email: 'ADA@example.com' },
+  ];
+
+  assert.equal(findIntakeCustomer(customers, { customer: { phone: '+1 555-555-1234' } })?.id, 'phone-match');
+  assert.equal(findIntakeCustomer(customers, { customer: { email: 'ada@example.com' } })?.id, 'email-match');
+  assert.equal(findIntakeCustomer(customers, { customer: { phone: '555' } }), null);
+});
 
 test('customer name keeps the company when both are present', () => {
   const draft = emptyIntakeDraft();
