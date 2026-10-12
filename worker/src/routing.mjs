@@ -1,4 +1,4 @@
-export const DEFAULT_PAGES_ORIGIN = 'https://shopcrank-dispatch.pages.dev';
+export const DEFAULT_PAGES_ORIGIN = 'https://mechpro-dispatch.pages.dev';
 
 export function isApiPath(pathname) {
   return pathname === '/api' || pathname.startsWith('/api/');

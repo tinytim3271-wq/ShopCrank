@@ -60,7 +60,7 @@ export function mapInvoiceToQbo(invoice = {}, customerRef) {
     Line: lines,
     CustomerRef: { value: String(customerRef) },
     DocNumber: String(invoice.number || invoice.id || '').slice(0, 21) || undefined,
-    PrivateNote: invoice.ro ? `Shop Crank RO ${invoice.ro}` : undefined,
+    PrivateNote: invoice.ro ? `MechPro RO ${invoice.ro}` : undefined,
     ...(invoice.qboId ? { Id: String(invoice.qboId), SyncToken: String(invoice.qboSyncToken || '0') } : {}),
   };
 }
@@ -76,7 +76,7 @@ export function mapPaymentToQbo(payment = {}, customerRef, invoiceRef) {
     TotalAmt: amount,
     CustomerRef: { value: String(customerRef) },
     Line: line,
-    PrivateNote: payment.id ? `Shop Crank payment ${payment.id}` : undefined,
+    PrivateNote: payment.id ? `MechPro payment ${payment.id}` : undefined,
     ...(payment.qboId ? { Id: String(payment.qboId), SyncToken: String(payment.qboSyncToken || '0') } : {}),
   };
 }

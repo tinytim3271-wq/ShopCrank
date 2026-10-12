@@ -1,0 +1,7 @@
+{
+  "name": "MechPro",
+  "description": "MechPro dispatch board, scheduling, and work order management for mobile and in-shop mechanic service.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

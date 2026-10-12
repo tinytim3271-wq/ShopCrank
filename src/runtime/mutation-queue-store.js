@@ -6,7 +6,7 @@
  */
 export function createMutationQueueStore({
   storage,
-  storeKey = 'shopcrank-mutation-queue-v1',
+  storeKey = 'mechpro-mutation-queue-v1',
 } = {}) {
   if (!storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') {
     throw new TypeError('createMutationQueueStore requires a Web Storage-compatible storage');

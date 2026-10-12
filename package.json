@@ -6,14 +6,14 @@
   "author": "Shop Crank",
   "license": "UNLICENSED",
   "scripts": {
-    "dev": "npm run dev:web",
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
     "build": "npm run build:web",
     "lint": "eslint \"src/main.js\" \"src/shared/**/*.js\" \"src/modules/**/*.js\" \"src/runtime/home.js\" \"src/**/*.test.mjs\"",
     "test": "npm run test:modules",
     "sync:config": "node scripts/sync-frontend-config.mjs",
     "test:config": "node scripts/sync-frontend-config.test.mjs && node scripts/resolve-r2-upload-env.test.mjs && node --test scripts/setup-email-signin.test.mjs",
     "build:web": "node scripts/sync-frontend-config.mjs && node scripts/build-web.mjs",
-    "check:java": "node scripts/require-java21.mjs",
     "dev:web": "node scripts/build-web.mjs --watch",
     "copy:web": "node scripts/copy-web.mjs",
     "dev:worker": "wrangler dev",
@@ -28,9 +28,9 @@
     "deploy:pages": "npm run build:web && npm run stage:pages && wrangler pages deploy .pages-dist --project-name=shopcrank-dispatch --branch=main --commit-dirty=true",
     "validate:worker": "npm run test:worker && wrangler deploy --dry-run",
     "validate": "npm run build:web && npm run test:config && npm run test:modules && npm run validate:worker && npm run test:j2534",
-    "sync": "npm run check:java && npm run build:web && npm run copy:web && npx cap sync android",
+    "sync": "npm run build:web && npm run copy:web && npx cap sync android",
     "open:android": "npx cap open android",
-    "build:android": "npm run check:java && npm run sync",
+    "build:android": "npm run sync",
     "desktop": "electron .",
     "build:j2534": "node scripts/build-j2534.mjs",
     "build:windows": "npm run build:web && npm run build:j2534 && node scripts/bake-diagnostics-secret.mjs && electron-builder --win nsis --publish never",
@@ -150,7 +150,10 @@
   "dependencies": {
     "@capacitor/android": "^7.0.0",
     "@capacitor/core": "^7.0.0",
+    "@google/genai": "^2.28.0",
     "dompurify": "^3.4.16",
+    "express": "^5.2.1",
+    "leaflet": "^1.9.4",
     "posthog-node": "^5.52.4"
   },
   "overrides": {
@@ -163,6 +166,6 @@
     "esbuild@0.28.2": true
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   }
 }

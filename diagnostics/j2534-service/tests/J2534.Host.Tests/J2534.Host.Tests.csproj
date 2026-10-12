@@ -15,9 +15,6 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\J2534.Host\J2534.Host.csproj" />
-    <ProjectReference Include="..\..\src\J2534.Core\J2534.Core.csproj" />
-    <ProjectReference Include="..\..\src\J2534.Native\J2534.Native.csproj" />
-    <ProjectReference Include="..\..\src\J2534.Uds\J2534.Uds.csproj" />
+    <ProjectReference Include="../../src/J2534.Host/J2534.Host.csproj" />
   </ItemGroup>
 </Project>

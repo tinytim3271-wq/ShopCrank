@@ -106,7 +106,7 @@ export function phonePaymentIntentBody({
 export function rejectRawCardFields(body) {
   const raw = JSON.stringify(body ?? {});
   if (/"[^"]*(?:card|cvc|cvv|pan|expir)[^"]*"\s*:/i.test(raw) || /\b(?:\d[ -]?){13,19}\b/.test(raw)) {
-    throw new HttpError(400, "Card numbers stay in the secure card form. Do not send them to Shop Crank.");
+    throw new HttpError(400, "Card numbers stay in the secure card form. Do not send them to MechPro.");
   }
 }
 

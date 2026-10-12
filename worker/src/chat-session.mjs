@@ -21,15 +21,15 @@ export class AiChatSession {
       // stub boundary, so return them as JSON the Worker can pass through.
       if (error instanceof HttpError) return json({ message: error.message }, error.status);
       console.error(JSON.stringify({ message: 'AI chat session failed', error: String(error?.message || error).slice(0, 300) }));
-      return json({ message: 'The Shop Crank assistant is unavailable' }, 500);
+      return json({ message: 'The MechPro assistant is unavailable' }, 500);
     }
   }
 
   async handleTurn(request) {
     if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
-    const shopId = request.headers.get('X-ShopCrank-Shop-Id');
-    const userId = request.headers.get('X-ShopCrank-User-Id');
-    const sessionId = request.headers.get('X-ShopCrank-Ai-Session-Id');
+    const shopId = request.headers.get('X-MechPro-Shop-Id');
+    const userId = request.headers.get('X-MechPro-User-Id');
+    const sessionId = request.headers.get('X-MechPro-Ai-Session-Id');
     if (!shopId || !userId || !sessionId) throw new HttpError(401, 'Authenticated shop context is required');
 
     const ownerShopId = await this.state.storage.get('shopId');

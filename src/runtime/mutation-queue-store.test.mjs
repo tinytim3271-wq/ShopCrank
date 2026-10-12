@@ -52,7 +52,7 @@ test('write replaces prior queue and empty write clears durable storage', () => 
 
 test('corrupt storage yields an empty queue instead of throwing', () => {
   const storage = memoryStorage();
-  storage.setItem('shopcrank-mutation-queue-v1', '{not-json');
+  storage.setItem('mechpro-mutation-queue-v1', '{not-json');
   const store = createMutationQueueStore({ storage });
   assert.deepEqual(store.read(), []);
 });

@@ -87,3 +87,159 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .job-details-editor .autosave-hint{font:600 11px "JetBrains Mono",monospace;color:var(--muted);white-space:nowrap}
 .job-card-modal .reference-estimate-document{opacity:.92}
 @media(max-width:760px){.customer-search-option{grid-template-columns:1fr;gap:5px;min-height:68px}.customer-search-vehicle{text-align:left}.customer-search-dismiss{min-height:34px}.duplicate-customer-use,.duplicate-customer-continue{width:100%;margin:4px 0}}
+
+/* ====================================================
+   GEMINI VOICE & CHAT ASSISTANT (UNIVERSAL BUTTON & DRAWER)
+   ==================================================== */
+.gemini-universal-launcher{position:fixed;right:22px;bottom:22px;z-index:9999;display:flex;align-items:center}
+.gemini-float-btn{display:inline-flex;align-items:center;gap:8px;height:46px;padding:0 18px 0 14px;border:1px solid #ffd34e;border-radius:28px;color:#18252b;background:linear-gradient(135deg,#ffd34e 0%,#ffbe1a 100%);box-shadow:0 8px 24px rgba(24,37,43,.25),0 0 0 1px rgba(255,211,78,.4);font-weight:800;font-size:13px;letter-spacing:.3px;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease}
+.gemini-float-btn:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 12px 30px rgba(24,37,43,.35),0 0 15px rgba(255,211,78,.6)}
+.gemini-fab-sparkle{display:grid;place-items:center;color:#18252b;animation:geminiPulse 2.8s infinite ease-in-out}
+.gemini-fab-voice-icon{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#18252b;color:#ffd34e;margin-left:2px}
+
+@keyframes geminiPulse{0%,100%{transform:scale(1) rotate(0deg)}50%{transform:scale(1.15) rotate(8deg)}}
+
+.gemini-topbar-button{height:36px;display:inline-flex;align-items:center;gap:7px;padding:0 13px;border:1px solid #1f654b;border-radius:4px;color:#fff;background:linear-gradient(135deg,#087e6a 0%,#165040 100%);font-size:11px;font-weight:700;box-shadow:0 3px 10px rgba(8,126,106,.2);cursor:pointer;transition:all .16s ease}
+.gemini-topbar-button:hover{background:linear-gradient(135deg,#0aa38a 0%,#1c634f 100%);box-shadow:0 6px 16px rgba(8,126,106,.3);transform:translateY(-1px)}
+.gemini-topbar-button svg{color:#ffd34e}
+.live-voice-pulse{width:7px;height:7px;border-radius:50%;background:#ffd34e;box-shadow:0 0 8px #ffd34e;animation:voiceBlink 1.6s infinite ease-in-out}
+@keyframes voiceBlink{0%,100%{opacity:.4;transform:scale(.9)}50%{opacity:1;transform:scale(1.3)}}
+
+/* Gemini Modal / Drawer */
+.gemini-modal-backdrop{position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:flex-end;background:rgba(12,25,20,.65);backdrop-filter:blur(4px);animation:fade .16s ease-out}
+.gemini-drawer{width:min(580px,100vw);height:100vh;max-height:100vh;display:flex;flex-direction:column;background:var(--paper);border-left:1px solid var(--line);box-shadow:-12px 0 40px rgba(0,0,0,.22);animation:slideLeft .2s ease-out}
+@keyframes slideLeft{from{transform:translateX(100%)}to{transform:translateX(0)}}
+
+.gemini-drawer-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#18252b 0%,#1d2d34 100%);color:#fff}
+.gemini-brand-box{display:flex;align-items:center;gap:12px}
+.gemini-sparkle-icon{width:36px;height:36px;display:grid;place-items:center;border-radius:8px;background:var(--lime);color:#18252b}
+.gemini-brand-box h2{margin:0;font-size:18px;text-transform:uppercase;color:#fff;letter-spacing:.5px}
+.gemini-status-tag{display:flex;align-items:center;gap:6px;margin-top:3px;font-size:10px;color:#a9b8b2}
+.pulse-indicator{width:6px;height:6px;border-radius:50%;background:#48bb78;box-shadow:0 0 6px #48bb78;animation:voiceBlink 1.4s infinite}
+
+.gemini-head-actions{display:flex;align-items:center;gap:8px}
+.gemini-icon-btn,.gemini-close-btn{width:34px;height:34px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.15);border-radius:4px;background:rgba(255,255,255,.08);color:#fff;cursor:pointer}
+.gemini-icon-btn.active{background:var(--lime);color:#18252b;border-color:var(--lime)}
+.gemini-close-btn:hover,.gemini-icon-btn:hover{background:rgba(255,255,255,.18)}
+
+.gemini-messages-wrapper{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;background:var(--canvas)}
+.gemini-msg{max-width:88%;padding:12px 14px;border-radius:7px;border:1px solid var(--line);box-shadow:0 3px 10px rgba(0,0,0,.04);line-height:1.55;font-size:12px}
+.gemini-msg.user{align-self:flex-end;background:#e6f1ec;border-color:#b9d5c8;color:#14201c}
+.gemini-msg.assistant{align-self:flex-start;background:#fff;border-color:#d4dbd6;color:#18252b}
+.gemini-msg-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:9px;text-transform:uppercase;font-weight:700;color:var(--muted)}
+.gemini-msg.user .gemini-msg-author{color:var(--green)}
+.gemini-msg.assistant .gemini-msg-author{color:#0b7285}
+.gemini-msg-body{word-break:break-word}
+
+/* Grounding Box */
+.gemini-grounding-box{margin-top:10px;padding:10px 12px;border-radius:5px;background:#f3f6fa;border:1px solid #d0deee;font-size:11px}
+.grounding-header{display:flex;align-items:center;gap:6px;color:#1971c2;font-weight:700;font-size:10px;text-transform:uppercase;margin-bottom:6px}
+.grounding-queries{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.grounding-label{font-size:10px;color:var(--muted);font-weight:700}
+.search-query-chip{padding:2px 7px;border-radius:12px;background:#e7f1ff;color:#1864ab;border:1px solid #c5dcfa;font-size:10px}
+.grounding-sources{margin-top:6px;padding-top:6px;border-top:1px dashed #d0deee}
+.grounding-links-list{margin:4px 0 0;padding-left:18px;display:grid;gap:3px}
+.grounding-link{color:#1971c2;text-decoration:none;font-weight:600}
+.grounding-link:hover{text-decoration:underline}
+
+/* Gemini Empty / Welcome */
+.gemini-welcome-empty{text-align:center;padding:32px 16px;color:var(--muted);margin:auto 0}
+.gemini-empty-badge{width:50px;height:50px;margin:0 auto 14px;display:grid;place-items:center;border-radius:50%;background:#ffd34e;color:#18252b}
+.gemini-welcome-empty h3{font-size:18px;color:var(--ink);margin:0 0 8px;text-transform:uppercase}
+.gemini-welcome-empty p{font-size:12px;line-height:1.6;max-width:420px;margin:0 auto 18px}
+.gemini-quick-prompts{display:flex;flex-wrap:wrap;gap:7px;justify-content:center}
+.gemini-chip{padding:6px 11px;border:1px solid var(--line);border-radius:16px;background:#fff;color:var(--ink);font-size:11px;cursor:pointer;transition:all .15s ease}
+.gemini-chip:hover{border-color:var(--green);color:var(--green);transform:translateY(-1px)}
+
+/* Gemini Footer / Controls */
+.gemini-footer{padding:14px 18px;border-top:1px solid var(--line);background:#fff}
+.gemini-status-text{font-size:11px;color:#0b7285;font-weight:600;min-height:16px;margin-bottom:4px}
+.gemini-chat-form textarea{width:100%;resize:none;min-height:56px;padding:10px 12px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+.gemini-controls-row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.gemini-mic-btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 13px;border:1px solid var(--line);border-radius:4px;background:#f5f6f4;color:var(--ink);font-size:11px;font-weight:700;cursor:pointer}
+.gemini-mic-btn.recording{background:#fde8e8;border-color:#f8b4b4;color:#c81e1e}
+.rec-dot{width:8px;height:8px;border-radius:50%;background:#e02424;animation:voiceBlink 1s infinite}
+.gemini-stop-speech-btn{width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--muted);cursor:pointer}
+.gemini-send-btn{margin-left:auto;min-height:36px;display:inline-flex;align-items:center;gap:6px;padding:0 16px;border:1px solid var(--green);border-radius:4px;background:var(--green);color:#fff;font-size:11px;font-weight:700;cursor:pointer}
+.gemini-send-btn:hover{background:#0e6a57}
+
+/* ====================================================
+   DISPATCH WORK ORDER LOCATION MAPPING (LEAFLET / OSM)
+   ==================================================== */
+.card-map-pin-btn{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--green);cursor:pointer;transition:all .15s}
+.card-map-pin-btn:hover{background:var(--green);color:#fff;border-color:var(--green)}
+
+.dispatch-map-workspace{display:grid;gap:14px;margin-top:8px}
+.dispatch-map-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:12px 16px;border:1px solid var(--line);border-radius:6px;background:var(--paper)}
+.map-kpis{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.map-kpi{display:grid;gap:2px}
+.map-kpi span{font-size:9px;text-transform:uppercase;font-weight:700;color:var(--muted)}
+.map-kpi strong{font:700 20px/1 "Barlow Condensed",sans-serif;color:var(--ink)}
+.map-kpi.mobile strong{color:#2563eb}
+.map-kpi.in-progress strong{color:#ea580c}
+.map-kpi.approved strong{color:#1f654b}
+
+.map-filter-tabs{display:inline-flex;padding:3px;border:1px solid var(--line);border-radius:5px;background:#e9e9e3}
+
+.dispatch-map-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;align-items:stretch}
+.dispatch-map-panel{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#e5e9ec}
+.dispatch-map-sidebar{border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;max-height:calc(100vh - 240px)}
+.dispatch-map-sidebar .sidebar-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line);background:#ecece6}
+.dispatch-map-sidebar .sidebar-head h3{font-size:13px;text-transform:uppercase;margin:0}
+.dispatch-map-sidebar .count{font:600 10px "JetBrains Mono",monospace;color:var(--muted)}
+.sidebar-order-list{flex:1;overflow-y:auto;padding:8px;display:grid;gap:8px}
+
+.map-order-card{padding:10px 12px;border:1px solid var(--line);border-radius:5px;background:#fff;cursor:pointer;transition:all .15s ease}
+.map-order-card:hover{border-color:var(--green);box-shadow:0 4px 14px rgba(0,0,0,.08);transform:translateY(-1px)}
+.map-order-card.mobile{border-left:4px solid #2563eb}
+.map-order-card.in_progress{border-left:4px solid #ea580c}
+.map-order-card.approved{border-left:4px solid #1f654b}
+.map-order-card .card-head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px}
+.map-order-card .card-customer{font-weight:700;font-size:12px}
+.map-order-card .card-vehicle{font-size:10px;color:var(--muted);margin-top:2px}
+.map-order-card .card-location{font-size:10px;color:#3d4a44;margin-top:4px}
+.map-order-card .card-footer{display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:6px;border-top:1px solid #f0f2f0;font-size:10px;color:var(--muted)}
+
+/* Leaflet Custom Marker Pins */
+.custom-leaflet-marker-wrapper{background:none!important;border:none!important}
+.custom-map-pin{position:relative;display:flex;flex-direction:column;align-items:center;cursor:pointer}
+.pin-badge{width:32px;height:32px;border-radius:50%;background:var(--pin-color,#1f654b);border:2px solid var(--pin-border,#fff);color:#fff;display:grid;place-items:center;box-shadow:0 4px 12px rgba(0,0,0,.35);transition:transform .18s}
+.custom-map-pin:hover .pin-badge{transform:scale(1.15)}
+.custom-map-pin:after{content:"";display:block;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid var(--pin-color,#1f654b);margin-top:-2px}
+.pin-label{font:700 9px "JetBrains Mono",monospace;background:#18252b;color:#fff;padding:2px 5px;border-radius:3px;margin-top:2px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+.custom-map-pin.pulse-pin .pin-badge{animation:pinPulse 2s infinite}
+@keyframes pinPulse{0%{box-shadow:0 0 0 0 rgba(37,99,235,.6)}70%{box-shadow:0 0 0 10px rgba(37,99,235,0)}100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}}
+
+/* Leaflet Popups */
+.map-popup{min-width:240px;padding:4px}
+.map-popup .popup-head{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.popup-ro-id{font:700 11px "JetBrains Mono",monospace}
+.popup-status-badge{font-size:8px;font-weight:700;text-transform:uppercase;padding:2px 5px;border-radius:3px;background:#e2e8f0;color:#334155}
+.popup-status-badge.in_progress{background:#ffedd5;color:#9a3412}
+.popup-status-badge.approved{background:#dcfce7;color:#166534}
+.popup-mobile-badge{font-size:8px;font-weight:700;text-transform:uppercase;padding:2px 5px;border-radius:3px;background:#dbeafe;color:#1e40af}
+.popup-customer{margin:0 0 2px;font-size:14px;color:var(--ink)}
+.popup-vehicle{font-size:11px;color:var(--muted);margin-bottom:6px}
+.popup-location{display:flex;align-items:center;gap:5px;font-size:10px;color:#334155;margin-bottom:6px}
+.popup-meta{font-size:10px;color:var(--muted);margin-bottom:6px}
+.popup-phone-link{display:block;margin-top:2px;color:var(--green);font-weight:700;text-decoration:none}
+.popup-complaint{font-size:10px;font-style:italic;color:#475569;margin:6px 0;padding:6px;border-left:2px solid var(--green);background:#f8fafc}
+.popup-actions{display:flex;gap:6px;margin-top:10px}
+.popup-btn{padding:5px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.popup-btn.primary{background:var(--green);color:#fff;border:1px solid var(--green)}
+.popup-btn.secondary{background:#fff;color:#18252b;border:1px solid var(--line)}
+
+/* Single Order Location Modal */
+.map-location-modal .map-modal-body{padding:16px 20px 20px}
+.map-modal-info-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;padding:12px 16px;border:1px solid var(--line);border-radius:6px;background:#f7faf8}
+.map-info-item{display:grid;gap:2px}
+.info-label{font-size:9px;text-transform:uppercase;font-weight:700;color:var(--muted)}
+.map-info-item strong{font-size:13px;color:var(--ink)}
+.map-info-actions{display:flex;align-items:center;gap:8px}
+
+@media(max-width:850px){
+  .dispatch-map-layout{grid-template-columns:1fr}
+  .dispatch-map-sidebar{max-height:280px}
+  .gemini-drawer{width:100vw}
+}
+

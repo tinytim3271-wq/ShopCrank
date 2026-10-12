@@ -25,7 +25,7 @@ export function combinedSalesTaxRate(jurisdictions) {
 /**
  * Allocate taxable sales across jurisdictions for a Texas list-filer style supplement.
  * Local tax applies to the same taxable base (subject to local caps in real returns —
- * Shop Crank reports the taxable amount against each active jurisdiction for WebFile entry).
+ * MechPro reports the taxable amount against each active jurisdiction for WebFile entry).
  *
  * @param {number} taxableSales
  * @param {Array<{ code: string, name: string, kind: string, rate: number, required?: boolean }>} jurisdictions

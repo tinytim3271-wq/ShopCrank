@@ -12,6 +12,12 @@ copyFileSync(
   join(root, 'node_modules', 'dompurify', 'dist', 'purify.min.js'),
   join(vendorDirectory, 'dompurify.min.js'),
 );
+if (existsSync(join(root, 'node_modules', 'leaflet', 'dist', 'leaflet.css'))) {
+  copyFileSync(
+    join(root, 'node_modules', 'leaflet', 'dist', 'leaflet.css'),
+    join(vendorDirectory, 'leaflet.css'),
+  );
+}
 
 /** @type {import('esbuild').BuildOptions} */
 const options = {

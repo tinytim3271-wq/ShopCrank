@@ -1,23 +1,14 @@
 #!/usr/bin/env node
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, delimiter } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = join(repoRoot, 'scripts/merge-open-prs.sh');
-
-function getBashPath() {
-  if (process.env.BASH_PATH) return process.env.BASH_PATH;
-  if (process.platform === 'win32') {
-    const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
-    if (existsSync(gitBash)) return gitBash;
-  }
-  return 'bash';
-}
 
 function createMockCurl(dir) {
   const mockCurlPath = join(dir, 'curl');
@@ -102,20 +93,17 @@ printf '%s' \"$status\"
 `,
   );
   chmodSync(mockCurlPath, 0o755);
-  if (process.platform === 'win32') {
-    spawnSync(getBashPath(), ['-c', `chmod +x "${mockCurlPath.replace(/\\/g, '/')}"`]);
-  }
   return mockCurlPath;
 }
 
 function runScript({ extraEnv = {}, draftPrs = '3', mergePrs = '3', dryRun = false } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), 'merge-open-prs-test-'));
-  const mockCurlPath = createMockCurl(sandbox);
+  createMockCurl(sandbox);
 
   const result = spawnSync(
-    getBashPath(),
+    'bash',
     [
-      scriptPath.replace(/\\/g, '/'),
+      scriptPath,
       '--owner',
       'test-owner',
       '--repo',
@@ -137,8 +125,7 @@ function runScript({ extraEnv = {}, draftPrs = '3', mergePrs = '3', dryRun = fal
       encoding: 'utf8',
       env: {
         ...process.env,
-        CURL_BIN: mockCurlPath.replace(/\\/g, '/'),
-        PATH: `${sandbox}${delimiter}${process.env.PATH}`,
+        PATH: `${sandbox}:${process.env.PATH}`,
         ...extraEnv,
       },
     },

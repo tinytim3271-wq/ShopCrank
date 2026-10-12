@@ -130,7 +130,7 @@ test('worker email binding sends the login link and ignores a broken webhook', a
   assert.equal(sent.length, 1);
   assert.equal(sent[0].from, 'noreply@yourcarguy806.com');
   assert.equal(sent[0].to, 'owner@example.test');
-  assert.equal(sent[0].subject, 'Sign in to Shop Crank');
+  assert.equal(sent[0].subject, 'Sign in to MechPro');
   assert.match(sent[0].text, /https:\/\/app\.example\.test\/api\/auth\/callback\?token=[a-f0-9]{32}/);
   assert.equal(fetched.mock.callCount(), 0);
 });
@@ -300,7 +300,7 @@ test('magic-link callback creates a session when optional founding tables are ab
 
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('Location'), 'https://app.example.test/app');
-  assert.match(response.headers.get('Set-Cookie') || '', /^shopcrank_session=/);
+  assert.match(response.headers.get('Set-Cookie') || '', /^mechpro_session=/);
   assert.equal(DB.batchCalls, 1);
 });
 
@@ -360,7 +360,7 @@ test('cookie sessions for disabled users are rejected on API routes', async (t) 
     },
   };
   const response = await worker.fetch(new Request('https://app.example.test/api/entities/orders', {
-    headers: { Cookie: `shopcrank_session=${sessionToken}` },
+    headers: { Cookie: `mechpro_session=${sessionToken}` },
   }), env);
   assert.equal(response.status, 401);
   assert.match((await response.json()).message, /Authentication is required/i);
@@ -461,8 +461,8 @@ test('Google sign-in validates the ID token and creates a one-time desktop hando
     { headers: { Cookie: cookies } },
   ), env);
   assert.equal(callback.status, 200);
-  assert.match(await callback.text(), /href="shopcrank:\/\/auth\?token=[a-f0-9]{32}"/);
-  assert.doesNotMatch(callback.headers.getSetCookie().join('\n'), /shopcrank_session=/);
+  assert.match(await callback.text(), /href="mechpro:\/\/auth\?token=[a-f0-9]{32}"/);
+  assert.doesNotMatch(callback.headers.getSetCookie().join('\n'), /mechpro_session=/);
   assert.equal(requests.length, 2);
 });
 
@@ -492,7 +492,7 @@ test('Google callback rejects a mismatched OAuth state before token exchange', a
   });
   const response = await worker.fetch(new Request(
     'https://app.example.test/api/auth/google/callback?code=code&state=attacker-state',
-    { headers: { Cookie: '__Host-shopcrank_google_state=expected; __Host-shopcrank_google_nonce=nonce; __Host-shopcrank_google_verifier=verifier' } },
+    { headers: { Cookie: '__Host-mechpro_google_state=expected; __Host-mechpro_google_nonce=nonce; __Host-mechpro_google_verifier=verifier' } },
   ), {
     GOOGLE_CLIENT_ID: 'client-id',
     GOOGLE_CLIENT_SECRET: 'client-secret',
