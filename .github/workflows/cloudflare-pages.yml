@@ -215,11 +215,11 @@ jobs:
         run: npm run build:web && npm run stage:pages
       - name: Ensure Pages project exists
         if: steps.verify-creds.outputs.valid == 'true'
-        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
-        with:
-          apiToken: ${{ secrets.YOUR_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages project create ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'shopcrank-dispatch' }} --production-branch=main || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.YOUR_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          ./node_modules/.bin/wrangler pages project create "${{ vars.CLOUDFLARE_PAGES_PROJECT || 'shopcrank-dispatch' }}" --production-branch=main 2>/dev/null || true
       - name: Deploy Pages
         if: steps.verify-creds.outputs.valid == 'true'
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3

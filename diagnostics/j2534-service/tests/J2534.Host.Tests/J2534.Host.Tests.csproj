@@ -14,7 +14,4 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="../../src/J2534.Host/J2534.Host.csproj" />
-  </ItemGroup>
 </Project>
