@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Convert ARI (Auto Repair Software) CSV exports into MechPro import CSVs.
+ * Convert ARI (Auto Repair Software) CSV exports into Shop Crank import CSVs.
  *
  * Usage:
  *   node scripts/convert-ari-exports.mjs
@@ -171,7 +171,7 @@ function resolvePaths(args) {
       || findLatestMtime([/ari estimates/, /^estimates\.csv$/]),
     outDir:
       args.outDir
-      || join(process.env.USERPROFILE || ROOT, 'OneDrive', 'Reliable Automotive Services', 'ari', 'mechpro-import'),
+      || join(process.env.USERPROFILE || ROOT, 'OneDrive', 'Reliable Automotive Services', 'ari', 'shopcrank-import'),
   };
 }
 
@@ -179,7 +179,7 @@ async function main() {
   const paths = resolvePaths(parseArgs(process.argv));
   mkdirSync(paths.outDir, { recursive: true });
 
-  console.log('ARI → MechPro converter');
+  console.log('ARI → Shop Crank converter');
   console.log('clients:   ', paths.clients || '(missing)');
   console.log('vehicles:  ', paths.vehicles || '(missing)');
   console.log('orders:    ', paths.orders || '(missing)');
@@ -216,7 +216,7 @@ async function main() {
   }
 
   writeFileSync(
-    join(paths.outDir, 'mechpro-customers.csv'),
+    join(paths.outDir, 'shopcrank-customers.csv'),
     toCsv(['name', 'phone', 'email', 'address', 'notes', 'ari_id'], customerRows),
   );
 
@@ -247,7 +247,7 @@ async function main() {
       });
     }
     writeFileSync(
-      join(paths.outDir, 'mechpro-vehicles.csv'),
+      join(paths.outDir, 'shopcrank-vehicles.csv'),
       toCsv(['customer', 'year', 'make', 'model', 'vin', 'plate', 'mileage', 'color', 'ari_id'], vehicleRows),
     );
   }
@@ -294,7 +294,7 @@ async function main() {
   }
   if (uniqueOrders.length) {
     writeFileSync(
-      join(paths.outDir, 'mechpro-orders.csv'),
+      join(paths.outDir, 'shopcrank-orders.csv'),
       toCsv(['ro_number', 'customer', 'vehicle', 'complaint', 'status', 'total', 'notes', 'promise'], uniqueOrders),
     );
   }
@@ -305,11 +305,11 @@ async function main() {
     vehiclesSkipped,
     orders: uniqueOrders.length,
     outDir: paths.outDir,
-    files: readdirSync(paths.outDir).filter((name) => name.startsWith('mechpro-')),
+    files: readdirSync(paths.outDir).filter((name) => name.startsWith('shopcrank-')),
   };
   writeFileSync(join(paths.outDir, 'import-summary.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify(summary, null, 2));
-  console.log('\nIn MechPro: Imports → upload customers, then vehicles, then work orders.');
+  console.log('\nIn Shop Crank: Imports → upload customers, then vehicles, then work orders.');
 }
 
 main().catch((error) => {

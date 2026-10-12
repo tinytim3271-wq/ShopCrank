@@ -1,4 +1,4 @@
-namespace MechPro.J2534.IsoTp;
+namespace ShopCrank.J2534.IsoTp;
 
 public static class CanAddress
 {

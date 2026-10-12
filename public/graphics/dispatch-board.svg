@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" role="img" aria-labelledby="boardTitle boardDesc">
-  <title id="boardTitle">MechPro dispatch board</title>
+  <title id="boardTitle">Shop Crank dispatch board</title>
   <desc id="boardDesc">Four shop columns: estimate, approved, in the bay, and invoice, with sample repair cards.</desc>
   <rect width="640" height="420" rx="28" fill="#162c24"/>
   <rect x="24" y="24" width="592" height="56" rx="14" fill="#1f3b31"/>
   <circle cx="52" cy="52" r="12" fill="#c8df59"/>
-  <text x="76" y="58" fill="#fffefb" font-family="Arial Narrow, Arial, sans-serif" font-size="22" font-weight="700" letter-spacing="1.5">MECHPRO</text>
+  <text x="76" y="58" fill="#fffefb" font-family="Arial Narrow, Arial, sans-serif" font-size="22" font-weight="700" letter-spacing="1.5">SHOP_CRANK</text>
   <text x="430" y="58" fill="#c8df59" font-family="Arial, sans-serif" font-size="14">Today / 6 jobs on the board</text>
   <g font-family="Arial, sans-serif">
     <g>

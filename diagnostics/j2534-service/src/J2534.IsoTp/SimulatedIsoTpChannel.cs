@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace MechPro.J2534.IsoTp;
+namespace ShopCrank.J2534.IsoTp;
 
 /// <summary>Bench simulator for development without a J2534 adapter.</summary>
 public sealed class SimulatedIsoTpChannel : IIsoTpChannel

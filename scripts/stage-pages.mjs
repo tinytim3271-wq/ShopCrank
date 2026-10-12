@@ -15,7 +15,7 @@ for (const file of [
   'service-worker.js',
   'diagnostics-ui.js',
   'manifest.webmanifest',
-  'mechpro-icon.svg',
+  'shopcrank-icon.svg',
 ]) cpSync(file, `${destination}/${file}`);
 cpSync('assets', `${destination}/assets`, { recursive: true });
 cpSync('public', destination, { recursive: true });

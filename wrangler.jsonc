@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "mechpro-api",
+  "name": "shopcrank-api",
   "main": "worker/src/index.js",
   "compatibility_date": "2026-09-08",
   "compatibility_flags": ["nodejs_compat"],
@@ -18,9 +18,11 @@
     "ANTHROPIC_OPUS_MODEL": "claude-opus-5",
     "DEEPGRAM_LISTEN_MODEL": "nova-3",
     "DEEPGRAM_SPEAK_MODEL": "flux-kit-en",
-    "ALLOWED_ORIGINS": "https://www.yourcarguy806.com,https://mechpro-dispatch.pages.dev",
-    "PAGES_ORIGIN": "https://mechpro-dispatch.pages.dev",
-    "AUTH_EMAIL_FROM": "noreply@yourcarguy806.com"
+    "ALLOWED_ORIGINS": "https://www.yourcarguy806.com,https://shopcrank-dispatch.pages.dev",
+    "PAGES_ORIGIN": "https://shopcrank-dispatch.pages.dev",
+    "AUTH_EMAIL_FROM": "noreply@yourcarguy806.com",
+    "SUPPORT_EMAIL_TO": "support@yourcarguy806.com",
+    "SUPPORT_EMAIL_FROM": "support@yourcarguy806.com"
   },
   "send_email": [
     {
@@ -31,7 +33,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "mechpro",
+      "database_name": "shopcrank",
       "database_id": "aa5434b8-9fe9-44ed-8e98-8f5b40bb2c26",
       "migrations_dir": "worker/migrations"
     }
@@ -39,8 +41,8 @@
   "r2_buckets": [
     {
       "binding": "FILES",
-      "bucket_name": "mechpro-files",
-      "preview_bucket_name": "mechpro-files-preview"
+      "bucket_name": "shopcrank-files",
+      "preview_bucket_name": "shopcrank-files-preview"
     }
   ],
   "ai": {

@@ -82,12 +82,12 @@ import {
 export { AiChatSession, AiVoiceSession };
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
-const APP_SESSION_COOKIE = 'mechpro_session';
-const GOOGLE_STATE_COOKIE = '__Host-mechpro_google_state';
-const GOOGLE_NONCE_COOKIE = '__Host-mechpro_google_nonce';
-const GOOGLE_VERIFIER_COOKIE = '__Host-mechpro_google_verifier';
-const GOOGLE_RETURN_COOKIE = '__Host-mechpro_google_return';
-const GOOGLE_DESKTOP_COOKIE = '__Host-mechpro_google_desktop';
+const APP_SESSION_COOKIE = 'shopcrank_session';
+const GOOGLE_STATE_COOKIE = '__Host-shopcrank_google_state';
+const GOOGLE_NONCE_COOKIE = '__Host-shopcrank_google_nonce';
+const GOOGLE_VERIFIER_COOKIE = '__Host-shopcrank_google_verifier';
+const GOOGLE_RETURN_COOKIE = '__Host-shopcrank_google_return';
+const GOOGLE_DESKTOP_COOKIE = '__Host-shopcrank_google_desktop';
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
@@ -253,8 +253,8 @@ function safeReturnPath(value, fallback = '/app') {
   const candidate = String(value || '').trim();
   if (!candidate || !candidate.startsWith('/') || candidate.startsWith('//')) return fallback;
   try {
-    const parsed = new URL(candidate, 'https://mechpro.invalid');
-    return parsed.origin === 'https://mechpro.invalid' ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
+    const parsed = new URL(candidate, 'https://shopcrank.invalid');
+    return parsed.origin === 'https://shopcrank.invalid' ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
   } catch {
     return fallback;
   }
@@ -358,11 +358,11 @@ async function resolveContext(request, env) {
     };
   }
   let claims;
-  if (env.DEV_AUTH_BYPASS === '1' && request.headers.get('X-MechPro-Dev-Email')) {
+  if (env.DEV_AUTH_BYPASS === '1' && request.headers.get('X-ShopCrank-Dev-Email')) {
     claims = {
-      sub: request.headers.get('X-MechPro-Dev-Sub') || 'local-development',
-      email: request.headers.get('X-MechPro-Dev-Email'),
-      name: request.headers.get('X-MechPro-Dev-Name') || 'Local Developer',
+      sub: request.headers.get('X-ShopCrank-Dev-Sub') || 'local-development',
+      email: request.headers.get('X-ShopCrank-Dev-Email'),
+      name: request.headers.get('X-ShopCrank-Dev-Name') || 'Local Developer',
     };
   } else {
     const token = request.headers.get('Cf-Access-Jwt-Assertion');
@@ -381,7 +381,7 @@ async function resolveContext(request, env) {
   const mapping = await env.DB.prepare(
     'SELECT shop_id, role, name, enabled FROM users WHERE email = ? COLLATE NOCASE',
   ).bind(email).first();
-  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active MechPro account is mapped to this Access identity');
+  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active Shop Crank account is mapped to this Access identity');
   return {
     shopId: mapping.shop_id,
     role: mapping.role,
@@ -410,7 +410,7 @@ async function requirePlanCapability(context, env, capability) {
     'SELECT plan_id, status, current_period_end FROM subscriptions WHERE shop_id = ? LIMIT 1',
   ).bind(context.shopId).first();
   if (!hasPlanCapability(subscription, capability)) {
-    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active MechPro plan`);
+    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active Shop Crank plan`);
   }
 }
 
@@ -986,7 +986,7 @@ export async function geocodeAddress(address, env) {
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
-      'User-Agent': 'MechProShopOS/1.0 (mileage; https://www.yourcarguy806.com)',
+      'User-Agent': 'Shop CrankShopOS/1.0 (mileage; https://www.yourcarguy806.com)',
     },
   });
   if (!response.ok) throw new HttpError(502, 'Address lookup is unavailable');
@@ -1305,8 +1305,8 @@ async function aiAnswer(env, shopId, message, history = [], options = {}) {
 async function handleAssistant(request, env, context, analytics) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'MechPro AI is not enabled');
-  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'MechPro AI chat sessions are not configured');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
+  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'Shop Crank AI chat sessions are not configured');
   await enforceAiRateLimit(env, context);
   const body = await requestJson(request);
   const message = String(body.message || '').trim().slice(0, 4000);
@@ -1319,9 +1319,9 @@ async function handleAssistant(request, env, context, analytics) {
   const id = env.AI_CHAT_SESSIONS.idFromName(`${context.shopId}:${sessionId}`);
   const stub = env.AI_CHAT_SESSIONS.get(id);
   const headers = new Headers({ 'Content-Type': 'application/json' });
-  headers.set('X-MechPro-Shop-Id', context.shopId);
-  headers.set('X-MechPro-User-Id', context.userId);
-  headers.set('X-MechPro-Ai-Session-Id', sessionId);
+  headers.set('X-ShopCrank-Shop-Id', context.shopId);
+  headers.set('X-ShopCrank-User-Id', context.userId);
+  headers.set('X-ShopCrank-Ai-Session-Id', sessionId);
   const sessionResponse = await stub.fetch(new Request('https://ai-session.internal/turn', {
     method: 'POST',
     headers,
@@ -1341,13 +1341,13 @@ async function handleVoiceSession(request, env, context) {
     throw new HttpError(426, 'A WebSocket upgrade is required');
   }
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'MechPro AI is not enabled');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
   const headers = new Headers(request.headers);
-  headers.set('X-MechPro-Shop-Id', context.shopId);
-  headers.set('X-MechPro-User-Id', context.userId);
+  headers.set('X-ShopCrank-Shop-Id', context.shopId);
+  headers.set('X-ShopCrank-User-Id', context.userId);
   headers.delete('Cookie');
   headers.delete('Cf-Access-Jwt-Assertion');
   return stub.fetch(new Request(request, { headers }));
@@ -2071,13 +2071,13 @@ async function pkceChallenge(verifier) {
 }
 
 function desktopHandoffPage(token) {
-  const link = `mechpro://auth?token=${encodeURIComponent(token)}`;
+  const link = `shopcrank://auth?token=${encodeURIComponent(token)}`;
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="referrer" content="no-referrer">
-  <title>Return to MechPro</title>
+  <title>Return to Shop Crank</title>
   <style>
     body { font-family: "Segoe UI", sans-serif; background: #18252b; color: #f4f7f8; margin: 0; min-height: 100vh; display: grid; place-items: center; }
     main { max-width: 28rem; padding: 2rem; }
@@ -2088,8 +2088,8 @@ function desktopHandoffPage(token) {
 <body>
   <main>
     <h1>Google sign-in succeeded</h1>
-    <p>Open MechPro to finish signing in. If Windows asks which app to use, choose MechPro.</p>
-    <a href="${link}">Open MechPro</a>
+    <p>Open Shop Crank to finish signing in. If Windows asks which app to use, choose Shop Crank.</p>
+    <a href="${link}">Open Shop Crank</a>
   </main>
 </body>
 </html>`;
@@ -2767,7 +2767,7 @@ async function route(request, env, analytics) {
       },
     });
   }
-  if (path === '/healthz') return json({ ok: true, service: 'mechpro-cloudflare-api' });
+  if (path === '/healthz') return json({ ok: true, service: 'shopcrank-cloudflare-api' });
   if (segments[0] === 'founding') return handleFounding(request, env);
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
   if (segments[0] === 'customer-documents') {

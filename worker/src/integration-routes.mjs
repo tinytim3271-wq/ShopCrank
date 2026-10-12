@@ -356,7 +356,7 @@ export async function handleQuickBooks(request, env, context, segments, dependen
                 quickBooksItemId: line.quickBooksItemId || defaultItemId || undefined,
               }))
             : [{
-                description: `MechPro invoice ${payload.number || entityId}`,
+                description: `Shop Crank invoice ${payload.number || entityId}`,
                 quantity: 1,
                 unitPrice: amount,
                 amount,

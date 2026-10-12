@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace MechPro.J2534.Native;
+namespace ShopCrank.J2534.Native;
 
 /// <summary>SAE J2534-1 Pass-Thru API P/Invoke definitions.</summary>
 public static class PassThruApi

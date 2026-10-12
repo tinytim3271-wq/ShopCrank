@@ -10,7 +10,7 @@ const { configurePortableData } = require('./portable-data');
 try {
   configurePortableData(app, edition);
 } catch {
-  dialog.showErrorBox('MechPro Demo needs a writable drive', 'Extract the entire demo ZIP to a writable folder on your flash drive. MechPro cannot create its data folder beside the executable.');
+  dialog.showErrorBox('Shop Crank Demo needs a writable drive', 'Extract the entire demo ZIP to a writable folder on your flash drive. Shop Crank cannot create its data folder beside the executable.');
   app.exit(1);
 }
 
@@ -18,7 +18,7 @@ let mainWindow = null;
 
 const trustedOrigins = new Set([
   'https://www.yourcarguy806.com',
-  'https://mechpro-dispatch.pages.dev',
+  'https://shopcrank-dispatch.pages.dev',
   'https://accounts.google.com',
 ]);
 
@@ -101,9 +101,9 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       additionalArguments: [
-        ...(edition.offline === true ? ['--mechpro-offline'] : []),
-        ...(edition.portable === true ? ['--mechpro-portable'] : []),
-        ...(edition.demo === true ? ['--mechpro-demo'] : []),
+        ...(edition.offline === true ? ['--shopcrank-offline'] : []),
+        ...(edition.portable === true ? ['--shopcrank-portable'] : []),
+        ...(edition.demo === true ? ['--shopcrank-demo'] : []),
       ],
     },
   });
@@ -137,16 +137,16 @@ function createWindow() {
           observer.observe(document.getElementById('root'), { childList: true, subtree: true });
         })`);
         const result = await window.webContents.executeJavaScript(`({
-          desktop: Boolean(window.mechproDesktop),
-          diagnostics: Boolean(window.mechproDiagnostics),
+          desktop: Boolean(window.shopcrankDesktop),
+          diagnostics: Boolean(window.shopcrankDiagnostics),
           title: document.title,
           authenticated: Boolean(document.querySelector('.app-shell')),
           loginText: document.querySelector('.login-panel')?.innerText || ''
         })`);
-        const portableData = !edition.portable || app.getPath('userData') === path.join(path.dirname(process.execPath), 'MechPro Demo Data');
+        const portableData = !edition.portable || app.getPath('userData') === path.join(path.dirname(process.execPath), 'Shop Crank Demo Data');
         const passed = portableData && result.desktop
           && result.diagnostics
-          && result.title.includes('MechPro')
+          && result.title.includes('Shop Crank')
           && (result.authenticated
             || /work email|continue securely|sign in/i.test(result.loginText));
         console.log(JSON.stringify({ smokeTest: passed ? 'passed' : 'failed', portableData, ...result }));
@@ -179,7 +179,7 @@ function createWindow() {
 }
 
 function findAuthDeepLink(argv) {
-  return (argv || []).map(value => String(value).trim().replace(/^"|"$/g, '')).find(value => value.includes('mechpro://')) || '';
+  return (argv || []).map(value => String(value).trim().replace(/^"|"$/g, '')).find(value => value.includes('shopcrank://')) || '';
 }
 
 function handleAuthDeepLink(rawUrl) {
@@ -207,16 +207,16 @@ function registerWindowsProtocol() {
   if (process.platform !== 'win32' || edition.offline === true) return;
   const { spawnSync } = require('node:child_process');
   const command = `"${process.execPath}" "%1"`;
-  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\mechpro', '/ve', '/d', 'URL:MechPro authentication', '/f'], { windowsHide: true });
-  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\mechpro', '/v', 'URL Protocol', '/d', '', '/f'], { windowsHide: true });
-  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\mechpro\\shell\\open\\command', '/ve', '/d', command, '/f'], { windowsHide: true });
+  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank', '/ve', '/d', 'URL:Shop Crank authentication', '/f'], { windowsHide: true });
+  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank', '/v', 'URL Protocol', '/d', '', '/f'], { windowsHide: true });
+  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank\\shell\\open\\command', '/ve', '/d', command, '/f'], { windowsHide: true });
 }
 
 if (edition.offline !== true) {
   if (process.defaultApp) {
-    app.setAsDefaultProtocolClient('mechpro', process.execPath, [path.resolve(process.argv[1] || '.')]);
+    app.setAsDefaultProtocolClient('shopcrank', process.execPath, [path.resolve(process.argv[1] || '.')]);
   } else {
-    app.setAsDefaultProtocolClient('mechpro');
+    app.setAsDefaultProtocolClient('shopcrank');
   }
   registerWindowsProtocol();
 }

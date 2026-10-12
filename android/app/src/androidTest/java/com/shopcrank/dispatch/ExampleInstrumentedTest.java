@@ -1,4 +1,4 @@
-package com.mechpro.dispatch;
+package com.shopcrank.dispatch;
 
 import static org.junit.Assert.*;
 
@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
 
-        assertEquals("com.mechpro.dispatch", appContext.getPackageName());
+        assertEquals("com.shopcrank.dispatch", appContext.getPackageName());
     }
 }

@@ -1,11 +1,11 @@
 using System.Text.Json;
-using MechPro.J2534.Core;
+using ShopCrank.J2534.Core;
 
-namespace MechPro.J2534.Host;
+namespace ShopCrank.J2534.Host;
 
 public static class RpcDispatcher
 {
-    static readonly string? HostToken = Environment.GetEnvironmentVariable("MECHPRO_J2534_TOKEN");
+    static readonly string? HostToken = Environment.GetEnvironmentVariable("SHOP_CRANK_J2534_TOKEN");
 
     public static async Task<JsonRpcResponse> DispatchAsync(JsonRpcRequest request, DiagnosticSession session)
     {
@@ -157,7 +157,7 @@ public static class RpcDispatcher
         // Fail closed unless explicitly opted into unauthenticated local/dev hosts.
         if (string.IsNullOrEmpty(HostToken))
         {
-            if (Environment.GetEnvironmentVariable("MECHPRO_ALLOW_UNAUTHENTICATED_HOST") == "1") return;
+            if (Environment.GetEnvironmentVariable("SHOP_CRANK_ALLOW_UNAUTHENTICATED_HOST") == "1") return;
             throw new UnauthorizedAccessException("Unauthorized J2534 RPC — host token not configured");
         }
         if (element is null || !element.Value.TryGetProperty("authToken", out var token)

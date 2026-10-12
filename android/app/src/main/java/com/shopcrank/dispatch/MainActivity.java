@@ -1,4 +1,4 @@
-package com.mechpro.dispatch;
+package com.shopcrank.dispatch;
 
 import com.getcapacitor.BridgeActivity;
 

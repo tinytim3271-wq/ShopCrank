@@ -208,7 +208,7 @@ jobs:
         with:
           apiToken: ${{ secrets.YOUR_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy .pages-dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'mechpro-dispatch' }} --commit-dirty=true
+          command: pages deploy .pages-dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'shopcrank-dispatch' }} --commit-dirty=true
       - name: Verify diagnostics signing key secret
         if: steps.verify-creds.outputs.valid == 'true'
         env:
@@ -232,9 +232,9 @@ jobs:
       - name: Post-deploy smoke checks
         if: steps.verify-creds.outputs.valid == 'true'
         env:
-          APP_ORIGIN: ${{ vars.CLOUDFLARE_APP_ORIGIN || 'https://mechpro-dispatch.pages.dev' }}
+          APP_ORIGIN: ${{ vars.CLOUDFLARE_APP_ORIGIN || 'https://shopcrank-dispatch.pages.dev' }}
           # Pages does not serve /api/*; it answers with the SPA shell. Only the
-          # mechpro-api Worker hostname serves the health endpoint.
+          # shopcrank-api Worker hostname serves the health endpoint.
           API_ORIGIN: ${{ vars.CLOUDFLARE_API_ORIGIN || 'https://www.yourcarguy806.com' }}
         run: |
           set -euo pipefail
@@ -242,7 +242,7 @@ jobs:
           # a freshly deployed alias can 403 during propagation. Retry with a
           # browser-ish user agent, but never fail an otherwise-successful
           # publish: warn so operators can verify manually instead of red CI.
-          UA='Mozilla/5.0 (compatible; MechPro-deploy-smoke; +https://github.com/tinytim3271-wq/cloudflare)'
+          UA='Mozilla/5.0 (compatible; ShopCrank-deploy-smoke; +https://github.com/tinytim3271-wq/cloudflare)'
           check() {
             local name="$1" url="$2" pattern="$3"
             if curl -fsS --retry 3 --retry-all-errors -m 30 -A "$UA" "$url" | grep -Eiq "$pattern"; then
@@ -252,7 +252,7 @@ jobs:
             fi
           }
           check "API healthz" "$API_ORIGIN/api/healthz" '"ok":true'
-          check "Pages shell" "$APP_ORIGIN/" 'MechPro|Dispatch'
+          check "Pages shell" "$APP_ORIGIN/" 'Shop Crank|Dispatch'
       - name: Require Google sign-in secrets
         if: steps.verify-creds.outputs.valid == 'true' && steps.google-secrets.outputs.present != 'true'
         run: |

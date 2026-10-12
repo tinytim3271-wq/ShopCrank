@@ -14,7 +14,7 @@ DIAGNOSTICS_SIGNING_PRIVATE_KEY=replace-with-base64-pkcs8-p256-private-key
 AI_ENABLED=1
 # Shops can add their own Anthropic key in Shop settings > AI (encrypted with
 # INTEGRATION_ENCRYPTION_KEY). ANTHROPIC_API_KEY is only an optional platform-wide
-# override that makes MechPro pay for Claude for every shop without its own key.
+# override that makes Shop Crank pay for Claude for every shop without its own key.
 # ANTHROPIC_API_KEY=replace-with-your-anthropic-api-key
 # SHOP_ANTHROPIC_MODEL=claude-sonnet-5
 # DEEPGRAM_API_KEY=replace-with-your-deepgram-api-key
@@ -79,7 +79,7 @@ AI_ENABLED=1
 # INTUIT_ENVIRONMENT=sandbox
 # INTUIT_DEFAULT_ITEM_ID=1
 
-# MechPro SaaS subscription billing. Create recurring monthly and annual prices.
+# Shop Crank SaaS subscription billing. Create recurring monthly and annual prices.
 # STRIPE_SECRET_KEY=sk_test_...
 # STRIPE_BILLING_WEBHOOK_SECRET=whsec_...
 # STRIPE_PRICE_SOLO_MONTHLY=price_...
@@ -99,7 +99,7 @@ AI_ENABLED=1
 
 # Support notifications and public service status.
 # SUPPORT_EMAIL_TO=support@yourcarguy806.com
-# SUPPORT_EMAIL_FROM=noreply@yourcarguy806.com
+# SUPPORT_EMAIL_FROM=support@yourcarguy806.com
 # STATUS_PAGE_URL=https://status.yourcarguy806.com
 # PartsTech / MOTOR labor (per-shop credentials are stored encrypted in D1;
 # these optional overrides are only for local stubbing of the API base URL).

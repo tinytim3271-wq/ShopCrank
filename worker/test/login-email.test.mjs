@@ -68,7 +68,7 @@ test('send-login returns 202 only after the provider accepts the message', async
   assert.match(EMAIL.sent[0].text, new RegExp(TOKEN));
   assert.equal(EMAIL.sent[0].from, 'noreply@yourcarguy806.com');
   assert.equal(EMAIL.sent[0].to, 'owner@example.test');
-  assert.equal(EMAIL.sent[0].subject, 'Sign in to MechPro');
+  assert.equal(EMAIL.sent[0].subject, 'Sign in to Shop Crank');
 });
 
 test('send-login rejects a missing or wrong bearer secret before sending', async (t) => {
@@ -108,7 +108,7 @@ test('send-login names the provider rejection when Email Sending cannot reach th
     EMAIL: emailBinding(async () => { throw rejected; }),
   });
   assert.equal(response.status, 502);
-  assert.match((await response.json()).message, /cannot receive a MechPro sign-in link yet/);
+  assert.match((await response.json()).message, /cannot receive a Shop Crank sign-in link yet/);
 });
 
 test('send-login returns 502 when the provider rejects the message', async (t) => {

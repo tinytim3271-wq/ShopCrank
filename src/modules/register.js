@@ -3,7 +3,7 @@
  *
  * Platform modules wire the three repo surfaces together:
  *   - src/ (web PWA bundle)
- *   - desktop/ (Electron shell via window.mechproDesktop)
+ *   - desktop/ (Electron shell via window.shopcrankDesktop)
  *   - worker/ (Workers API + D1/R2/Workers AI; see src/shared/config.js)
  */
 import './platform/index.js';
@@ -13,7 +13,7 @@ import { platform } from './platform/detect.js';
 import { escapeAttr, escapeHtml } from '../shared/html.js';
 
 export function registerModules() {
-  window.__MECHPRO_MODULES__ = {
+  window.__SHOP_CRANK_MODULES__ = {
     storage,
     mileage,
     platform,

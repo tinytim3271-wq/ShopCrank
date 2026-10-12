@@ -1,7 +1,7 @@
-# MechPro Voice Intake Service
+# Shop Crank Voice Intake Service
 
 Converts inbound-call transcripts into structured work orders that import
-directly into the MechPro dispatch board.
+directly into the Shop Crank dispatch board.
 
 **Source:** ported from [`tinytim3271-wq/Reliable-Voice-`](https://github.com/tinytim3271-wq/Reliable-Voice-)  
 **Dependencies:** Python 3.9+ standard library only — no `pip install` required.
@@ -12,7 +12,7 @@ directly into the MechPro dispatch board.
 
 ```bash
 python3 diagnostics/voice-service/voice_service.py
-# MechPro voice-intake service listening on http://127.0.0.1:8080
+# Shop Crank voice-intake service listening on http://127.0.0.1:8080
 ```
 
 ## API
@@ -70,7 +70,7 @@ Returns `{"status": "ok", "service": "voice-intake"}` — use for liveness probe
 | A/C & Heat | air conditioning, a/c, no heat, hvac |
 | Default | (anything else) |
 
-## Integration with MechPro app
+## Integration with Shop Crank app
 
 The JSON schema returned by `/intake-call` mirrors the work-order structure
 used by `app.js` (see the `aiPhoneForm` and `aiWorkflowForm` functions). To

@@ -6,7 +6,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function loginText(loginUrl) {
   return [
-    'Sign in to MechPro by opening this link:',
+    'Sign in to Shop Crank by opening this link:',
     '',
     loginUrl,
     '',
@@ -40,7 +40,7 @@ export function signInDeliveryFailure(error) {
   if (UNSENDABLE_CODES.has(code)) {
     return new HttpError(
       502,
-      'That address cannot receive a MechPro sign-in link yet. Email Sending is turned off for yourcarguy806.com, so only an address already verified in Cloudflare can be used.',
+      'That address cannot receive a Shop Crank sign-in link yet. Email Sending is turned off for yourcarguy806.com, so only an address already verified in Cloudflare can be used.',
     );
   }
   if (code) return new HttpError(502, `Unable to deliver the sign-in email (${code}).`);
@@ -54,7 +54,7 @@ export async function deliverLoginEmail(env, { email, loginUrl }) {
   await env.EMAIL.send({
     to: email,
     from,
-    subject: 'Sign in to MechPro',
+    subject: 'Sign in to Shop Crank',
     text: loginText(loginUrl),
   });
 }

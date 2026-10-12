@@ -1,17 +1,17 @@
-# 04 — Cloud agent: MechPro AWS shop OS
+# 04 — Cloud agent: Shop Crank AWS shop OS
 
 **Source:** `/workspace/cloud-agent-transcripts/bc-d1104827-55b4-4565-a1d7-0b699a6661e6.jsonl`  
 **Size:** 1,484,542 bytes / 962 lines  
 **Agent ID:** `bc-d1104827-55b4-4565-a1d7-0b699a6661e6`  
 **URL:** https://cursor.com/agents/bc-d1104827-55b4-4565-a1d7-0b699a6661e6  
 **Approx. date:** launched ~2026-09-01 from Timothy Grok Bot chat  
-**Outputs:** Branch `cursor/shop-os-payroll-obd-keys-61e6` · PR https://github.com/tinytim3271-wq/MechPro/pull/9 (+4925/-163, 50 files)
+**Outputs:** Branch `cursor/shop-os-payroll-obd-keys-61e6` · PR https://github.com/tinytim3271-wq/Shop Crank/pull/9 (+4925/-163, 50 files)
 
 ---
 
 ## Launch prompt (summary)
 
-Build MechPro into one auto shop OS: shop management + employees/payroll + diagnostics/OBD + authorized key programming. Cloud-hosted features MUST run on AWS. Base repo `tinytim3271-wq/MechPro`. Port behavior from `reliable-shop-management1` / reference `reliable-shop-standalone`. Skip bypass/theft tools. Hardware at bay; sessions sync to AWS.
+Build Shop Crank into one auto shop OS: shop management + employees/payroll + diagnostics/OBD + authorized key programming. Cloud-hosted features MUST run on AWS. Base repo `tinytim3271-wq/Shop Crank`. Port behavior from `reliable-shop-management1` / reference `reliable-shop-standalone`. Skip bypass/theft tools. Hardware at bay; sessions sync to AWS.
 
 *(Full prompt length: 4719 chars in transcript line 0.)*
 
@@ -19,7 +19,7 @@ Build MechPro into one auto shop OS: shop management + employees/payroll + diagn
 
 ## Final product report (verbatim)
 
-MechPro is now one shop OS on the existing AWS stack: shop ops, employees, payroll, OBD bay, and authorized key programming share one nav and persist through the Lambda → Aurora path.
+Shop Crank is now one shop OS on the existing AWS stack: shop ops, employees, payroll, OBD bay, and authorized key programming share one nav and persist through the Lambda → Aurora path.
 
 **Shop.** Customers, vehicles, ROs, estimates, invoices, parts/POs, and schedule stay as they were. Added shop expenses (vendors/overhead) on Payroll, and inspection templates on the RO inspection panel.
 
@@ -33,7 +33,7 @@ MechPro is now one shop OS on the existing AWS stack: shop ops, employees, payro
 
 **AWS.** New Aurora tables (`payrollRuns`, `payStubs`, `shopExpenses`, `inspectionTemplates`, `diagnosticSessions`, `keyProgrammingJobs`) plus org-member pay fields. Same CDK stack; apply `aws/db/schema.sql` on a new cluster or `aws/db/migrate/002_shop_os.sql` on an existing one. README covers local run and `cdk:deploy`.
 
-Donor `reliable-shop-management1` was not available (404). Payroll/stub behavior came from `reliable-shop-standalone` plus MechPro’s timeclock/deductions. QuickBooks stays CSV export. Hardware stays at the bay; sessions and jobs sync to AWS.
+Donor `reliable-shop-management1` was not available (404). Payroll/stub behavior came from `reliable-shop-standalone` plus Shop Crank’s timeclock/deductions. QuickBooks stays CSV export. Hardware stays at the bay; sessions and jobs sync to AWS.
 
 **Tests**
 - `pnpm test`: 33 passed (payroll calc, RO/invoice totals, diagnostic session, key authorization)

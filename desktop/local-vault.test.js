@@ -8,7 +8,7 @@ const path = require('node:path');
 const { accountStatus, createAccount, loadShop, saveShop, signIn } = require('./local-vault');
 
 function tempDir() {
-  return mkdtempSync(path.join(tmpdir(), 'mechpro-offline-'));
+  return mkdtempSync(path.join(tmpdir(), 'shopcrank-offline-'));
 }
 
 describe('local vault', () => {

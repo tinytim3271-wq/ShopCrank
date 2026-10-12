@@ -19,7 +19,7 @@ export function buildDeepgramSettings(env, shopContext = [], pricing) {
     : '\n\nNo shop records were available for this session. Ask for the record or diagnostic data needed to answer accurately.';
   return {
     type: 'Settings',
-    tags: ['mechpro', 'shop-assistant'],
+    tags: ['shopcrank', 'shop-assistant'],
     mip_opt_out: true,
     audio: {
       input: { encoding: 'linear16', sample_rate: INPUT_SAMPLE_RATE },
@@ -76,8 +76,8 @@ export class AiVoiceSession {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       throw new HttpError(426, 'A WebSocket upgrade is required');
     }
-    const shopId = request.headers.get('X-MechPro-Shop-Id');
-    const userId = request.headers.get('X-MechPro-User-Id');
+    const shopId = request.headers.get('X-ShopCrank-Shop-Id');
+    const userId = request.headers.get('X-ShopCrank-User-Id');
     if (!shopId || !userId) throw new HttpError(401, 'Authenticated shop context is required');
     if (!String(this.env.DEEPGRAM_API_KEY || '').trim() || !String(this.env.ANTHROPIC_API_KEY || '').trim()) {
       throw new HttpError(503, 'Voice AI is not configured');

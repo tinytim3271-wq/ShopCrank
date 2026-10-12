@@ -1,4 +1,4 @@
-namespace MechPro.J2534.Core;
+namespace ShopCrank.J2534.Core;
 
 public sealed class ConnectParams
 {

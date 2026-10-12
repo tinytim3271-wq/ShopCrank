@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace MechPro.J2534.Host;
+namespace ShopCrank.J2534.Host;
 
 /// <summary>
 /// ECDSA P-256 (ES256) capability tokens (format v2.&lt;payload&gt;.&lt;sig&gt;).

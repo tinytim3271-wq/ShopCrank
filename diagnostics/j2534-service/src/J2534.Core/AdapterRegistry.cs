@@ -1,7 +1,7 @@
 using Microsoft.Win32;
 using System.Runtime.Versioning;
 
-namespace MechPro.J2534.Core;
+namespace ShopCrank.J2534.Core;
 
 /// <summary>Enumerates registered J2534 Pass-Thru devices from the Windows registry.</summary>
 public static class AdapterRegistry
@@ -152,7 +152,7 @@ public static class AdapterRegistry
                 Usable = usable,
                 UsabilityNote = usable
                     ? ""
-                    : $"{displayName} only registered a {bitness}-bit J2534 driver here. MechPro's diagnostics host is {(Environment.Is64BitProcess ? 64 : 32)}-bit, so pick the same adapter's {(Environment.Is64BitProcess ? 64 : 32)}-bit entry or install that driver from the vendor's software.",
+                    : $"{displayName} only registered a {bitness}-bit J2534 driver here. Shop Crank's diagnostics host is {(Environment.Is64BitProcess ? 64 : 32)}-bit, so pick the same adapter's {(Environment.Is64BitProcess ? 64 : 32)}-bit entry or install that driver from the vendor's software.",
                 Id = BuildAdapterId(root, subKeyName, dll),
                 Name = displayName,
                 Vendor = vendor,
@@ -215,8 +215,8 @@ public static class AdapterRegistry
     static AdapterInfo CreateSimulatorAdapter() => new()
     {
         Id = SimulatorId,
-        Name = "MechPro CAN Simulator (Dodge/Ram bench)",
-        Vendor = "MechPro",
+        Name = "Shop Crank CAN Simulator (Dodge/Ram bench)",
+        Vendor = "Shop Crank",
         DllPath = "builtin-simulator",
         Protocols = ["CAN", "ISO15765"],
         Firmware = "1.0.0-sim",

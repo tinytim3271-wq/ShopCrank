@@ -1,5 +1,5 @@
 /**
- * Home dashboard model for MechPro.
+ * Home dashboard model for Shop Crank.
  * Pure data assembly so the landing view always has metrics, attention
  * items, today's work, and recent activity — even when the shop is empty.
  */
@@ -219,7 +219,7 @@ export function visibleSidebar(canAccess, { oem = false } = {}) {
 }
 
 if (typeof globalThis !== 'undefined') {
-  globalThis.__MECHPRO_HOME__ = {
+  globalThis.__SHOP_CRANK_HOME__ = {
     buildHomeModel,
     emptyState,
     escapeHtml,

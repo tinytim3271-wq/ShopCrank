@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace MechPro.J2534.Native;
+namespace ShopCrank.J2534.Native;
 
 /// <summary>Loads a vendor J2534 DLL and exposes Pass-Thru function delegates.</summary>
 public sealed class PassThruLibrary : IDisposable

@@ -1,8 +1,8 @@
-using MechPro.J2534.IsoTp;
-using MechPro.J2534.Native;
-using MechPro.J2534.Uds;
+using ShopCrank.J2534.IsoTp;
+using ShopCrank.J2534.Native;
+using ShopCrank.J2534.Uds;
 
-namespace MechPro.J2534.Core;
+namespace ShopCrank.J2534.Core;
 
 /// <summary>Manages a single J2534 diagnostic session with ISO-TP and UDS services.</summary>
 public sealed class DiagnosticSession : IDisposable
@@ -44,7 +44,7 @@ public sealed class DiagnosticSession : IDisposable
         if (_simulator)
         {
             _connected = true;
-            _adapterName = "MechPro CAN Simulator";
+            _adapterName = "Shop Crank CAN Simulator";
             _dllPath = "builtin-simulator";
             _voltage = 12.6;
             Log("tx", "0x7E0", "1003", "Diagnostic session start (simulator)");
@@ -257,7 +257,7 @@ public sealed class DiagnosticSession : IDisposable
             if (!support.Supported) throw new NotSupportedException(support.Reason);
             var definition = _keyCatalog.Find(procedure, vin)!;
             if (definition.RequiresVehiclePin && string.IsNullOrWhiteSpace(pin))
-                throw new InvalidOperationException("This vehicle asks for its immobilizer PIN for this procedure. Enter the PIN to continue, or stop here. MechPro does not work around vehicle security.");
+                throw new InvalidOperationException("This vehicle asks for its immobilizer PIN for this procedure. Enter the PIN to continue, or stop here. Shop Crank does not work around vehicle security.");
             Log("tx", "-", "", $"Live key procedure start: {procedure} for {vin}");
             var result = definition.Execute!(new KeyProcedureContext { Vin = vin, Procedure = procedure, Pin = pin, Log = Log, Channel = CreateChannel() });
             Log("rx", "-", "", $"Live key procedure finished: {procedure}");
@@ -490,7 +490,7 @@ public sealed class DiagnosticSession : IDisposable
             identifiedAt = DateTime.UtcNow.ToString("o"),
             adapterInfo = new
             {
-                vendor = _simulator ? "MechPro" : _adapterName,
+                vendor = _simulator ? "Shop Crank" : _adapterName,
                 dll = _dllPath,
                 firmware = _simulator ? "1.0.0-sim" : "J2534",
             },
