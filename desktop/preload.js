@@ -51,4 +51,7 @@ contextBridge.exposeInMainWorld('mechproDiagnostics', Object.freeze({
   stopLiveLog: () => invoke('diagnostics:stopLiveLog'),
   pollLiveLog: (since) => invoke('diagnostics:pollLiveLog', since),
   identifyVehicle: () => invoke('diagnostics:identifyVehicle'),
+  obdSnapshot: () => invoke('diagnostics:obdSnapshot'),
+  obdClearDtcs: (params) => invoke('diagnostics:obdClearDtcs', params),
+  keyProcedureSupport: (params) => invoke('diagnostics:keyProcedureSupport', params),
 }));

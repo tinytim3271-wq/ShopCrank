@@ -79,6 +79,19 @@ async function run() {
   assert.equal(vehicle.vin, vin.vin);
   assert.ok(Array.isArray((await rpc('readDtcs')).dtcs));
 
+  // --- generic OBD-II for the OBD bay (simulator) ---
+  const snapshot = await rpc('obdSnapshot');
+  assert.equal(snapshot.source, 'simulator');
+  assert.equal(snapshot.vin, vin.vin);
+  assert.ok(snapshot.readings.length > 0);
+  await assert.rejects(() => rpc('obdClearDtcs'), /Confirm before clearing/);
+  assert.equal((await rpc('obdClearDtcs', { confirmed: true })).cleared, true);
+  assert.deepEqual((await rpc('obdSnapshot')).storedDtcs, []);
+  const keySupport = await rpc('keyProcedureSupport', { procedure: 'add_key' });
+  assert.equal(keySupport.supported, true);
+  assert.equal(keySupport.simulator, true);
+  assert.equal((await rpc('keyProcedureSupport', { procedure: 'bypass' })).supported, false);
+
   // --- clear DTCs capability-token gating ---
   await assert.rejects(() => rpc('clearDtcs'), /capability token/i);
   await assert.rejects(() => rpc('clearDtcs', { authorizationToken: 'not-a-real-token' }), /capability token/i);

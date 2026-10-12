@@ -66,3 +66,61 @@ export function simulateKeyJob({ operation, vin }) {
     message: `Simulator recorded ${label} for ${vin || "the selected vehicle"}. This is not a live programmer.`,
   };
 }
+
+/** Live procedures the key bay can request from the J2534 host. Identify and test are read-only. */
+export const LIVE_KEY_PROCEDURES = Object.freeze({ add: "add_key", program: "program_remote" });
+
+export function liveKeyProcedureFor(operation) {
+  return LIVE_KEY_PROCEDURES[operation] || null;
+}
+
+export function normalizeVin(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+/**
+ * Gate for a live key session: signed repair order, a connected adapter, and the
+ * VIN read from the vehicle matching the repair order. Returns the signed estimate.
+ */
+export function assertLiveKeySession({ order, estimates = [], operation, notes, vehicleVin, deviceConnected }) {
+  assertKeyJobAllowed({ order, estimates, operation, notes });
+  if (!deviceConnected) throw new Error("Connect the J2534 adapter in the MechPro desktop app before a live key job.");
+  const roVin = normalizeVin(order?.vin);
+  if (roVin.length !== 17) throw new Error("Add the 17-character VIN to this repair order before a live key job.");
+  const carVin = normalizeVin(vehicleVin);
+  if (carVin.length !== 17) throw new Error("Could not read the VIN from the vehicle. Check the adapter and that the ignition is on.");
+  if (carVin !== roVin) throw new Error(`The connected vehicle (${carVin}) does not match the repair order VIN (${roVin}).`);
+  return signedEstimateForOrder(order, estimates);
+}
+
+export function keyConfirmationMatches(vin, typed) {
+  const full = normalizeVin(vin);
+  return full.length === 17 && normalizeVin(typed) === full.slice(-6);
+}
+
+/** Audit record for one live key session. Never stores the immobilizer PIN. */
+export function keyAuditRecord({ id, order, user, operation, procedure, vehicleVin, adapter, authorization, notes, steps = [], result, message, now }) {
+  return {
+    id,
+    orderId: order?.id || "",
+    roNumber: order?.id || "",
+    customer: order?.customer || "",
+    vehicle: order?.vehicle || "",
+    vin: normalizeVin(order?.vin),
+    vehicleVin: normalizeVin(vehicleVin),
+    operation,
+    procedure: procedure || "",
+    notes: String(notes || "").trim(),
+    simulated: false,
+    mode: "live",
+    adapter: adapter || "",
+    performedBy: { id: user?.id || "", name: user?.name || "", email: user?.email || "", role: user?.role || "" },
+    authorizationName: authorization?.authorizationName || "",
+    authorizationSignedAt: authorization?.signedAt || "",
+    estimateId: authorization?.id || "",
+    steps: steps.map((item) => ({ at: item.at, step: item.step, detail: String(item.detail || "") })),
+    result,
+    message: message || "",
+    createdAt: now,
+  };
+}

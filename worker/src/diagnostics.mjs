@@ -53,3 +53,33 @@ export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, a
   const signature = await ecdsaP256SignBase64Url(privateKey, signingInput);
   return { token: `${signingInput}.${signature}`, payload };
 }
+
+/**
+ * Live key programming is authorized by a signed repair order in the shop's own
+ * records rather than an AutoAuth login: the order must carry this VIN and have
+ * an approved, signed estimate. Returns the signature details or null.
+ */
+export async function signedRepairOrderForKeys(db, shopId, orderId, vin) {
+  const id = String(orderId || '').trim();
+  const wanted = String(vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!id || !shopId || wanted.length !== 17) return null;
+  const order = await db.prepare(
+    "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'orders' AND entity_id = ?",
+  ).bind(shopId, id).first();
+  if (!order) return null;
+  let orderData = {};
+  try { orderData = JSON.parse(order.data_json || '{}'); } catch { return null; }
+  if (String(orderData.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') !== wanted) return null;
+  const { results = [] } = await db.prepare(
+    "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'estimates' AND json_extract(data_json, '$.workOrderId') = ?",
+  ).bind(shopId, id).all();
+  for (const row of results) {
+    let estimate = {};
+    try { estimate = JSON.parse(row.data_json || '{}'); } catch { continue; }
+    if (estimate.workOrderId !== id) continue;
+    if (estimate.status === 'approved' && estimate.signedAt && String(estimate.authorizationName || '').trim()) {
+      return { estimateId: estimate.id || '', authorizationName: estimate.authorizationName, signedAt: estimate.signedAt };
+    }
+  }
+  return null;
+}

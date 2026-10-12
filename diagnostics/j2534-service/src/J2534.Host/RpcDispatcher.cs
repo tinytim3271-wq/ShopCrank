@@ -36,6 +36,9 @@ public static class RpcDispatcher
                 "stopLiveLog" => session.StopLiveLog(),
                 "pollLiveLog" => session.PollLiveLog(ParseSince(request.Params)),
                 "identifyVehicle" => await session.IdentifyVehicleAsync(),
+                "obdSnapshot" => session.ObdSnapshot(),
+                "obdClearDtcs" => session.ObdClearDtcs(GetBool(request.Params, "confirmed")),
+                "keyProcedureSupport" => await session.KeyProcedureSupportAsync(GetString(request.Params, "procedure") ?? ""),
                 _ => throw new InvalidOperationException($"Unknown method: {request.Method}"),
             };
             return JsonRpcResponse.Ok(request.Id, result);
@@ -67,8 +70,14 @@ public static class RpcDispatcher
 
     static async Task<object> ProgramKey(string procedure, JsonElement? element, DiagnosticSession session)
     {
+        if (!session.IsSimulator)
+        {
+            // Refuse before any token or bus work when no verified live procedure exists.
+            var support = await session.KeyProcedureSupportAsync(procedure);
+            if (!support.Supported) throw new NotSupportedException(support.Reason);
+        }
         var payload = await VerifyForConnectedVehicle(GetString(element, "authorizationToken"), procedure, session);
-        return await session.ProgramKeyAsync(procedure, payload.Vin);
+        return await session.ProgramKeyAsync(procedure, payload.Vin, GetString(element, "pin"));
     }
 
     static async Task<object> FlashModule(JsonElement? element, DiagnosticSession session)
@@ -137,6 +146,11 @@ public static class RpcDispatcher
         }
         return null;
     }
+
+    static bool GetBool(JsonElement? element, string name) =>
+        element is not null
+        && element.Value.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.True;
 
     static void AssertAuth(JsonElement? element)
     {

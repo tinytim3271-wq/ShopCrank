@@ -108,9 +108,66 @@ function dispatch(method, params) {
       return pollLiveLog(params.since);
     case 'identifyVehicle':
       return identifyVehicle();
+    case 'obdSnapshot':
+      return obdSnapshot();
+    case 'obdClearDtcs':
+      return obdClearDtcs(params);
+    case 'keyProcedureSupport':
+      return keyProcedureSupport(params);
     default:
       throw new Error(`Unknown method: ${method}`);
   }
+}
+
+const KEY_PROCEDURES = ['add_key', 'all_keys_lost', 'program_remote', 'erase_keys'];
+
+/** Generic OBD-II snapshot from the bench simulator (same shape as the .NET host). */
+function obdSnapshot() {
+  requireConnection();
+  logEntry('tx', '0x7E0', '0902', 'OBD mode 09 VIN (simulator)');
+  const stored = (sim.dtcs || []).map((dtc) => dtc.code);
+  return {
+    source: 'simulator',
+    simulator: true,
+    adapterName: 'MechPro CAN Simulator',
+    protocol: 'ISO 15765-4 CAN 11-bit 500 kbps (engine ECU 0x7E0)',
+    responded: true,
+    vin: SIM_VIN,
+    milOn: stored.length > 0,
+    reportedDtcCount: stored.length,
+    supportedPids: ['0x01', '0x05', '0x0C', '0x42'],
+    readings: [
+      { pid: '0x05', name: 'Coolant temperature', value: 90, unit: 'C', raw: '82' },
+      { pid: '0x0C', name: 'Engine speed', value: 780, unit: 'rpm', raw: '0C30' },
+      { pid: '0x42', name: 'Control module voltage', value: 14, unit: 'V', raw: '36B0' },
+    ],
+    storedDtcs: stored,
+    pendingDtcs: [],
+    permanentDtcs: [],
+    errors: [],
+    voltage: sim.voltage,
+    readAt: new Date().toISOString(),
+  };
+}
+
+function obdClearDtcs(params = {}) {
+  requireConnection();
+  if (params.confirmed !== true) {
+    throw new Error('Clearing codes also erases freeze-frame data and readiness monitors. Confirm before clearing.');
+  }
+  sim.dtcs = [];
+  logEntry('tx', '0x7E0', '04', 'OBD mode 04 clear (simulator)');
+  logEntry('rx', '0x7E8', '44', 'Codes cleared (simulator)');
+  return { cleared: true, simulator: true, clearedAt: new Date().toISOString() };
+}
+
+function keyProcedureSupport(params = {}) {
+  requireConnection();
+  const procedure = String(params.procedure || '').trim();
+  if (!KEY_PROCEDURES.includes(procedure)) {
+    return { supported: false, simulator: true, procedure, vin: SIM_VIN, requiresVehiclePin: false, reason: `Unknown key procedure '${procedure}'.` };
+  }
+  return { supported: true, simulator: true, procedure, vin: SIM_VIN, requiresVehiclePin: false, reason: 'Bench simulator. Nothing is written to a vehicle.' };
 }
 
 function listAdapters() {

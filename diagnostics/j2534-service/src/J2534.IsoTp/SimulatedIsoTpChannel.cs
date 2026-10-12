@@ -33,6 +33,7 @@ public sealed class SimulatedIsoTpChannel : IIsoTpChannel
                 _ => [0x7F, request[0], 0x31],
             };
         }
+        if (request.Length >= 1 && SimulatedObd.Handles(request[0])) return SimulatedObd.Respond(request);
         if (request.Length >= 1 && request[0] == 0x19) return [0x59, 0x02, 0xFF];
         if (request.Length >= 1 && request[0] == 0x14) return [0x54];
         if (request.Length >= 1 && request[0] == 0x10) return [0x50, request[1], 0x00, 0x32, 0x01, 0xF4];

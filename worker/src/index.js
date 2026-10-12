@@ -29,7 +29,7 @@ import { createLaborGuideHandlers } from './integrations/labor-guide.mjs';
 import { createQuickbooksHandlers } from './integrations/quickbooks.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
 import { storeUploadedFile } from './routes/files.mjs';
-import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec } from './diagnostics.mjs';
+import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, signedRepairOrderForKeys } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
@@ -1119,7 +1119,17 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
         }, 402);
       }
     }
-    if (mode === 'live' && spec.autoAuth) {
+    let signedOrder = null;
+    if (mode === 'live' && spec.klass === 'immobilizer') {
+      // The shop's signed repair order is the authorization for live key work.
+      signedOrder = await signedRepairOrderForKeys(env.DB, context.shopId, body.orderId, vin);
+      if (!signedOrder) {
+        return json({
+          authorized: false,
+          message: 'Live key programming needs a signed repair order whose VIN matches this vehicle.',
+        }, 403);
+      }
+    } else if (mode === 'live' && spec.autoAuth) {
       const login = await readAutoAuthLogin(env, context.shopId);
       if (!login) {
         return json({
@@ -1138,6 +1148,9 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
     });
     await recordDiagnosticAudit(env, context, {
       kind: 'diagnostics.authorize', procedure, scope: spec.klass, vin, mode, jti: payload.jti,
+      orderId: signedOrder ? String(body.orderId || '') : undefined,
+      authorizationName: signedOrder?.authorizationName,
+      signedAt: signedOrder?.signedAt,
     });
     capturePostHogEvent(env, context, 'diagnostics_authorized', {
       procedure,

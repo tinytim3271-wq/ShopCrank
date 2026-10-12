@@ -42,6 +42,22 @@ public sealed class PassThruLibrary : IDisposable
         PassThruIoctl = ioctl;
     }
 
+    /// <summary>
+    /// Build a library from already-resolved entry points. Used by tests to stand in
+    /// for a vendor J2534 DLL without loading native code.
+    /// </summary>
+    public static PassThruLibrary FromDelegates(
+        PassThruApi.PassThruOpenDelegate open,
+        PassThruApi.PassThruCloseDelegate close,
+        PassThruApi.PassThruConnectDelegate connect,
+        PassThruApi.PassThruDisconnectDelegate disconnect,
+        PassThruApi.PassThruReadMsgsDelegate readMsgs,
+        PassThruApi.PassThruWriteMsgsDelegate writeMsgs,
+        PassThruApi.PassThruStartMsgFilterDelegate startMsgFilter,
+        PassThruApi.PassThruStopMsgFilterDelegate stopMsgFilter,
+        PassThruApi.PassThruIoctlDelegate ioctl) =>
+        new(IntPtr.Zero, open, close, connect, disconnect, readMsgs, writeMsgs, startMsgFilter, stopMsgFilter, ioctl);
+
     public static PassThruLibrary Load(string dllPath)
     {
         if (!OperatingSystem.IsWindows())

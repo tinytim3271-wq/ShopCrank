@@ -21,6 +21,18 @@ public sealed class DiagnosticSession : IDisposable
 
     public bool IsSimulator => _simulator;
 
+    KeyProcedureCatalog _keyCatalog = KeyProcedureCatalog.Default;
+
+    /// <summary>Verified live key procedures. Defaults to the shipped (empty) catalog.</summary>
+    public KeyProcedureCatalog KeyCatalog
+    {
+        get => _keyCatalog;
+        set => _keyCatalog = value ?? KeyProcedureCatalog.Default;
+    }
+
+    /// <summary>Physical response CAN ID for a physical request ID (request + 8).</summary>
+    public static string ResponseId(string requestId) => $"0x{CanAddress.Parse(requestId) + 8:X3}";
+
     public object Connect(ConnectParams p)
     {
         DisconnectInternal();
@@ -46,10 +58,23 @@ public sealed class DiagnosticSession : IDisposable
         if (string.IsNullOrWhiteSpace(adapter.DllPath) || !File.Exists(adapter.DllPath))
             throw new InvalidOperationException($"J2534 DLL not found for adapter '{adapter.Name}'. Install the vendor driver.");
 
-        _device = PassThruDevice.Open(adapter.DllPath, adapter.Name);
-        _device.Connect(PassThruApi.PROTOCOL_ISO15765, (uint)(p.BaudRate ?? 500_000));
-        _adapterName = adapter.Name;
-        _dllPath = adapter.DllPath;
+        if (!adapter.Usable)
+            throw new InvalidOperationException(adapter.UsabilityNote);
+
+        return AttachDevice(PassThruDevice.Open(adapter.DllPath, adapter.Name), adapter.Id, adapter.Name, adapter.DllPath, (uint)(p.BaudRate ?? 500_000));
+    }
+
+    /// <summary>Attach an opened Pass-Thru device. Connect uses this; tests pass a device backed by a mocked J2534 DLL.</summary>
+    public object AttachDevice(PassThruDevice device, string adapterId, string adapterName, string dllPath, uint baudRate = 500_000)
+    {
+        DisconnectInternal();
+        _adapterId = adapterId;
+        _protocol = "ISO15765";
+        _simulator = false;
+        _device = device;
+        _device.Connect(PassThruApi.PROTOCOL_ISO15765, baudRate);
+        _adapterName = adapterName;
+        _dllPath = dllPath;
         _voltage = _device.ReadVoltage();
         if (_voltage <= 0) _voltage = 12.0;
         _connected = true;
@@ -111,8 +136,18 @@ public sealed class DiagnosticSession : IDisposable
     public async Task<string> ReadConnectedVinAsync()
     {
         RequireConnected();
-        var client = new UdsClient(CreateChannel());
-        return await client.ReadVinAsync("0x7E0", "0x7E8");
+        var channel = CreateChannel();
+        try
+        {
+            // Generic OBD-II mode 09 works on every CAN vehicle; fall back to UDS F190.
+            var vin = new ObdClient(channel).ReadVin();
+            if (vin.Length == 17) return vin;
+        }
+        catch
+        {
+            // Fall through to UDS.
+        }
+        return await new UdsClient(channel).ReadVinAsync("0x7E0", "0x7E8");
     }
 
     public async Task<object> ReadVinAsync()
@@ -131,7 +166,7 @@ public sealed class DiagnosticSession : IDisposable
         {
             try
             {
-                var info = await client.ReadEcuIdentificationAsync(addr, addr.Replace("0x7E", "0x7E8"));
+                var info = await client.ReadEcuIdentificationAsync(addr, ResponseId(addr));
                 ecus.Add(new { logicalAddress = addr, name, partNumber = info.PartNumber, softwareVersion = info.SoftwareVersion, calibrationId = info.CalibrationId });
             }
             catch (Exception ex)
@@ -211,9 +246,23 @@ public sealed class DiagnosticSession : IDisposable
         }
     }
 
-    public Task<object> ProgramKeyAsync(string procedure, string vin)
+    public Task<object> ProgramKeyAsync(string procedure, string vin, string? pin = null)
     {
         RequireConnected();
+        if (!_simulator)
+        {
+            // Live writes only run a procedure that has been verified for this vehicle.
+            // Nothing is sent to the vehicle when there isn't one.
+            var support = _keyCatalog.Evaluate(procedure, vin, simulator: false);
+            if (!support.Supported) throw new NotSupportedException(support.Reason);
+            var definition = _keyCatalog.Find(procedure, vin)!;
+            if (definition.RequiresVehiclePin && string.IsNullOrWhiteSpace(pin))
+                throw new InvalidOperationException("This vehicle asks for its immobilizer PIN for this procedure. Enter the PIN to continue, or stop here. MechPro does not work around vehicle security.");
+            Log("tx", "-", "", $"Live key procedure start: {procedure} for {vin}");
+            var result = definition.Execute!(new KeyProcedureContext { Vin = vin, Procedure = procedure, Pin = pin, Log = Log, Channel = CreateChannel() });
+            Log("rx", "-", "", $"Live key procedure finished: {procedure}");
+            return Task.FromResult(result);
+        }
         RequireSecurity("immobilizer");
         var routine = procedure switch
         {
@@ -223,12 +272,7 @@ public sealed class DiagnosticSession : IDisposable
             "erase_keys" => (Id: (ushort)0x0304, Label: "Erase and relearn keys"),
             _ => throw new InvalidOperationException($"Unsupported key procedure: {procedure}"),
         };
-        if (!_simulator)
-        {
-            var client = new UdsClient(CreateChannel());
-            client.StartRoutine(routine.Id, [], "0x7E4", "0x7EC");
-        }
-        Log("tx", "0x7E4", $"3101{routine.Id:X4}", $"RoutineControl: {routine.Label}");
+        Log("tx", "0x7E4", $"3101{routine.Id:X4}", $"RoutineControl: {routine.Label} (simulator)");
         Log("rx", "0x7EC", $"7101{routine.Id:X4}00", "Routine result: success");
         var now = DateTime.UtcNow.ToString("o");
         switch (procedure)
@@ -253,7 +297,7 @@ public sealed class DiagnosticSession : IDisposable
         if (!_simulator)
         {
             var client = new UdsClient(CreateChannel());
-            client.DownloadFirmware(firmware, target, target.Replace("0x7E", "0x7E8"),
+            client.DownloadFirmware(firmware, target, ResponseId(target),
                 (block, total) => Log("tx", target, $"36{block & 0xFF:X2}", $"TransferData block {block}/{total}"));
         }
         else
@@ -309,7 +353,7 @@ public sealed class DiagnosticSession : IDisposable
         if (!_simulator)
         {
             var client = new UdsClient(CreateChannel());
-            var rx = target.Replace("0x7E", "0x7E8", StringComparison.OrdinalIgnoreCase);
+            var rx = ResponseId(target);
             client.WriteDataByIdentifier(did, data, target, rx);
         }
         Log("tx", target, $"2E{did:X4}", "WriteDataByIdentifier");
@@ -322,6 +366,81 @@ public sealed class DiagnosticSession : IDisposable
             did = $"0x{did:X4}",
             bytes = data.Length,
         });
+    }
+
+    // --- Generic OBD-II (SAE J1979) for the OBD bay ---
+
+    public object ObdSnapshot()
+    {
+        RequireConnected();
+        var obd = new ObdClient(CreateChannel());
+        var errors = new List<string>();
+        var vin = "";
+        try { vin = obd.ReadVin(); } catch (Exception ex) { errors.Add($"VIN: {ex.Message}"); }
+        var supported = new HashSet<byte>();
+        try { supported = obd.ReadSupportedPids(); } catch (Exception ex) { errors.Add($"Supported PIDs: {ex.Message}"); }
+        var responded = vin.Length > 0 || supported.Count > 0;
+
+        ObdMonitorStatus? monitor = null;
+        var readings = new List<ObdPidReading>();
+        string[] stored = [], pending = [], permanent = [];
+        if (responded)
+        {
+            if (supported.Contains(0x01))
+            {
+                try { monitor = obd.ReadMonitorStatus(); } catch (Exception ex) { errors.Add($"Monitor status: {ex.Message}"); }
+            }
+            foreach (var pid in ObdClient.SnapshotPids.Where(supported.Contains))
+            {
+                try { readings.Add(obd.ReadPid(pid)); } catch (Exception ex) { errors.Add($"PID 0x{pid:X2}: {ex.Message}"); }
+            }
+            try { stored = obd.ReadDtcs(0x03); } catch (Exception ex) { errors.Add($"Stored codes: {ex.Message}"); }
+            try { pending = obd.ReadDtcs(0x07); } catch (Exception ex) { errors.Add($"Pending codes: {ex.Message}"); }
+            try { permanent = obd.ReadDtcs(0x0A); }
+            catch (ObdNegativeResponseException) { /* permanent codes are optional before 2010 */ }
+            catch (Exception ex) { errors.Add($"Permanent codes: {ex.Message}"); }
+        }
+        else
+        {
+            errors.Add("No reply from the engine ECU on 11-bit CAN at 500 kbps. Check ignition ON and the DLC connection. Pre-2008 vehicles on J1850, ISO 9141 or KWP2000, and 29-bit CAN vehicles, are not supported by the OBD bay yet.");
+        }
+
+        return new
+        {
+            source = _simulator ? "simulator" : "live",
+            simulator = _simulator,
+            adapterName = _adapterName,
+            protocol = "ISO 15765-4 CAN 11-bit 500 kbps (engine ECU 0x7E0)",
+            responded,
+            vin,
+            milOn = monitor?.MilOn,
+            reportedDtcCount = monitor?.DtcCount,
+            supportedPids = supported.OrderBy(p => p).Select(p => $"0x{p:X2}").ToArray(),
+            readings,
+            storedDtcs = stored,
+            pendingDtcs = pending,
+            permanentDtcs = permanent,
+            errors,
+            voltage = _voltage,
+            readAt = DateTime.UtcNow.ToString("o"),
+        };
+    }
+
+    public object ObdClearDtcs(bool confirmed)
+    {
+        RequireConnected();
+        if (!confirmed)
+            throw new InvalidOperationException("Clearing codes also erases freeze-frame data and readiness monitors. Confirm before clearing.");
+        new ObdClient(CreateChannel()).ClearDtcs();
+        return new { cleared = true, simulator = _simulator, clearedAt = DateTime.UtcNow.ToString("o") };
+    }
+
+    public async Task<KeyProcedureSupport> KeyProcedureSupportAsync(string procedure)
+    {
+        RequireConnected();
+        var vin = "";
+        try { vin = await ReadConnectedVinAsync(); } catch { /* reported as an unreadable VIN */ }
+        return _keyCatalog.Evaluate(procedure, vin, _simulator);
     }
 
     public object StartLiveLog()

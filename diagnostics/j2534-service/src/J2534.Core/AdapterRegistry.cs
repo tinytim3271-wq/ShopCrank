@@ -68,8 +68,18 @@ public static class AdapterRegistry
             }
         }
 
-        return adapters;
+        // Loadable drivers first so the default pick works.
+        return adapters.OrderByDescending(a => a.Usable).ToList();
     }
+
+    /// <summary>32-bit registrations live under WOW6432Node (or the 32-bit registry view).</summary>
+    public static string BitnessForRoot(string root) =>
+        root.Contains("WOW6432Node", StringComparison.OrdinalIgnoreCase) || root.StartsWith("registry32:", StringComparison.Ordinal)
+            ? "32"
+            : "64";
+
+    /// <summary>A process can only LoadLibrary a J2534 DLL built for its own bitness.</summary>
+    public static bool HostCanLoad(string bitness, bool hostIs64Bit) => hostIs64Bit ? bitness == "64" : bitness == "32";
 
     [SupportedOSPlatform("windows")]
     static IEnumerable<(string Root, RegistryKey Key)> OpenRegistryRoots()
@@ -134,8 +144,15 @@ public static class AdapterRegistry
             if (string.IsNullOrWhiteSpace(vendor))
                 vendor = displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? displayName;
 
+            var bitness = BitnessForRoot(root);
+            var usable = HostCanLoad(bitness, Environment.Is64BitProcess);
             yield return new AdapterInfo
             {
+                Bitness = bitness,
+                Usable = usable,
+                UsabilityNote = usable
+                    ? ""
+                    : $"{displayName} only registered a {bitness}-bit J2534 driver here. MechPro's diagnostics host is {(Environment.Is64BitProcess ? 64 : 32)}-bit, so pick the same adapter's {(Environment.Is64BitProcess ? 64 : 32)}-bit entry or install that driver from the vendor's software.",
                 Id = BuildAdapterId(root, subKeyName, dll),
                 Name = displayName,
                 Vendor = vendor,
@@ -203,6 +220,8 @@ public static class AdapterRegistry
         DllPath = "builtin-simulator",
         Protocols = ["CAN", "ISO15765"],
         Firmware = "1.0.0-sim",
+        Bitness = Environment.Is64BitProcess ? "64" : "32",
+        Usable = true,
     };
 }
 
@@ -214,4 +233,7 @@ public sealed class AdapterInfo
     public string DllPath { get; set; } = "";
     public string[] Protocols { get; set; } = [];
     public string Firmware { get; set; } = "";
+    public string Bitness { get; set; } = "";
+    public bool Usable { get; set; } = true;
+    public string UsabilityNote { get; set; } = "";
 }

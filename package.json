@@ -1,6 +1,6 @@
 {
   "name": "mechpro-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MechPro Dispatch & Work Orders Windows desktop client",
   "main": "desktop/main.js",
   "author": "MechPro",

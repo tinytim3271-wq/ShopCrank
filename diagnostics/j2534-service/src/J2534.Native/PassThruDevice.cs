@@ -23,9 +23,12 @@ public sealed class PassThruDevice : IDisposable
         AdapterName = adapterName;
     }
 
-    public static PassThruDevice Open(string dllPath, string adapterName)
+    public static PassThruDevice Open(string dllPath, string adapterName) =>
+        Open(PassThruLibrary.Load(dllPath), dllPath, adapterName);
+
+    /// <summary>Open a device from an already-loaded library (also used with a mocked J2534 DLL in tests).</summary>
+    public static PassThruDevice Open(PassThruLibrary library, string dllPath, string adapterName)
     {
-        var library = PassThruLibrary.Load(dllPath);
         var device = new PassThruDevice(library, dllPath, adapterName);
         device.OpenDevice();
         return device;
@@ -134,7 +137,6 @@ public sealed class PassThruDevice : IDisposable
     byte[] ReadIso15765Response(uint rxCanId, int timeoutMs)
     {
         var deadline = Environment.TickCount64 + timeoutMs;
-        var frames = new List<PassThruMsg>();
 
         while (Environment.TickCount64 < deadline)
         {
@@ -145,7 +147,7 @@ public sealed class PassThruDevice : IDisposable
             {
                 Marshal.StructureToPtr(readMsg, readPtr, false);
                 var status = _library.PassThruReadMsgs(_channelId, readPtr, ref readCount, 250);
-                if (status == J2534Status.ERR_BUFFER_EMPTY || status == J2534Status.ERR_TIMEOUT)
+                if (status == J2534Status.ERR_BUFFER_EMPTY || status == J2534Status.ERR_TIMEOUT || readCount == 0)
                     continue;
                 if (status != J2534Status.STATUS_NOERROR)
                     throw new InvalidOperationException($"PassThruReadMsgs failed: 0x{status:X2}");
@@ -157,22 +159,20 @@ public sealed class PassThruDevice : IDisposable
                 Marshal.FreeHGlobal(readPtr);
             }
 
-            if (readMsg.DataSize < 4) continue;
-            var canId = PassThruMsgHelper.ReadCanId(readMsg.Data.AsSpan(0, (int)readMsg.DataSize));
+            // Skip our own transmit indications and first-frame notifications.
+            if ((readMsg.RxStatus & (J2534Status.TX_MSG_TYPE | J2534Status.ISO15765_FIRST_FRAME)) != 0) continue;
+            if (readMsg.DataSize <= 4) continue;
+            var canId = PassThruMsgHelper.ReadCanId(readMsg.Data.AsSpan(0, 4));
             if (canId != rxCanId) continue;
 
-            frames.Add(readMsg);
-            var pci = readMsg.DataSize > 4 ? readMsg.Data[4] : (byte)0;
-            if ((pci & 0xF0) == 0x00)
-                return PassThruMsgHelper.ExtractIso15765Payload(readMsg.Data.AsSpan(0, (int)readMsg.DataSize));
-
-            if ((pci & 0xF0) == 0x10)
+            var payload = readMsg.Data.AsSpan(4, (int)readMsg.DataSize - 4).ToArray();
+            // 0x7F <sid> 0x78 = response pending; the ECU will answer later.
+            if (payload.Length >= 3 && payload[0] == 0x7F && payload[2] == 0x78)
             {
-                var expectedLength = ((pci & 0x0F) << 8) | readMsg.Data[5];
-                var payload = PassThruMsgHelper.ReassembleIso15765Frames(frames);
-                if (payload.Length >= expectedLength)
-                    return payload.AsSpan(0, expectedLength).ToArray();
+                deadline = Math.Max(deadline, Environment.TickCount64 + timeoutMs);
+                continue;
             }
+            return payload;
         }
 
         throw new TimeoutException($"No ISO15765 response from 0x{rxCanId:X} within {timeoutMs}ms.");

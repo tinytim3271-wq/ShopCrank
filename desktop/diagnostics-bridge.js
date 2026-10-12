@@ -121,7 +121,7 @@ async function waitForPipe(timeoutMs = 8000) {
   throw new Error('J2534 diagnostic host did not become ready');
 }
 
-function rpcCall(method, params = {}) {
+function rpcCall(method, params = {}, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(pipePath());
     const id = ++requestId;
@@ -131,7 +131,7 @@ function rpcCall(method, params = {}) {
     const timer = setTimeout(() => {
       socket.destroy();
       reject(new Error(`J2534 RPC timeout: ${method}`));
-    }, 15000);
+    }, timeoutMs);
 
     socket.on('connect', () => {
       socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params: payload })}\n`);
@@ -263,7 +263,8 @@ async function programKey(params = {}) {
   if (!method) throw new Error(`Unsupported key procedure: ${procedure}`);
   const authorizationToken = preflightAuthorization(procedure, params);
   await ensureHost();
-  return rpcCall(method, { authorizationToken });
+  const pin = params.pin ? String(params.pin) : undefined;
+  return rpcCall(method, { authorizationToken, pin }, 120000);
 }
 
 /** Module coding (WriteDataByIdentifier) — requires a module_coding token and programming security. */
@@ -320,6 +321,25 @@ async function identifyVehicle() {
   return rpcCall('identifyVehicle');
 }
 
+/** Generic OBD-II snapshot (VIN, mode 01 PIDs, mode 03/07/0A codes) for the OBD bay. */
+async function obdSnapshot() {
+  await ensureHost();
+  return rpcCall('obdSnapshot', {}, 45000);
+}
+
+/** OBD-II mode 04. The OBD bay asks the technician to confirm before calling this. */
+async function obdClearDtcs(params = {}) {
+  if (params.confirmed !== true) throw new Error('Clearing codes needs explicit confirmation.');
+  await ensureHost();
+  return rpcCall('obdClearDtcs', { confirmed: true }, 20000);
+}
+
+/** Read-only: does MechPro have a verified live key procedure for the connected vehicle? */
+async function keyProcedureSupport(params = {}) {
+  await ensureHost();
+  return rpcCall('keyProcedureSupport', { procedure: String(params.procedure || '') }, 20000);
+}
+
 function stopHost() {
   if (hostProcess) {
     hostProcess.kill();
@@ -353,5 +373,8 @@ module.exports = {
   stopLiveLog,
   pollLiveLog,
   identifyVehicle,
+  obdSnapshot,
+  obdClearDtcs,
+  keyProcedureSupport,
   stopHost,
 };

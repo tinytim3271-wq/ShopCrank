@@ -52,6 +52,7 @@ import {
 import {
   INTAKE_STORAGE_KEY,
   emptyIntakeDraft,
+  findIntakeCustomer,
   intakeOrderPayload,
   localDiagnosticChecklist,
   mountIntakeWizard,
@@ -84,7 +85,7 @@ import {
   estimateFromAssistantDraft,
   workOrderDraftFromEstimate,
 } from '../modules/estimate-templates.js';
-import { KEY_OPERATIONS, assertKeyJobAllowed, isRoAuthorizedForKeys, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
+import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, isRoAuthorizedForKeys, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
 import {
   APPROVAL_CUSTOM_LABEL_MAX,
   APPROVAL_NOTE_MAX,
@@ -451,7 +452,7 @@ function toast(message) { const node = document.createElement("div"); node.class
 let attentionDismissBound = false;
 let userMenuDismissBound = false;
 function nav(route, iconName, text, count = "") { if (!canAccess(route)) return ""; const current = state.route === route; return `<button class="nav-button ${current ? "active" : ""}" data-route="${route}"${current ? ' aria-current="page"' : ""}>${icon(iconName)}<span>${text}</span>${count !== "" && count !== "0" ? `<span class="count">${count}</span>` : ""}</button>` }
-function sidebarNavigation() { const counts = { active: visibleOrders().filter(x => !["completed", "invoiced"].includes(x.status)).length, orders: visibleOrders().length, overdue: state.invoices.filter(x => x.status === "overdue").length, unread: state.conversations.reduce((sum, item) => sum + chatUnread(item), 0) }; const oem = true; return visibleSidebar(canAccess, { oem }).map(section => `<div class="nav-label">${escapeHtml(section.label)}</div><nav class="nav" aria-label="${escapeHtml(section.label)}">${section.items.map(item => nav(item.route, item.icon, item.label, item.count ? String(counts[item.count] || "") : "")).join("")}</nav>`).join("") }
+function sidebarNavigation() { const counts = { active: visibleOrders().filter(x => !["completed", "invoiced"].includes(x.status)).length, orders: visibleOrders().length, overdue: state.invoices.filter(x => x.status === "overdue").length, unread: state.conversations.reduce((sum, item) => sum + chatUnread(item), 0) }; const oem = true; return visibleSidebar(canAccess, { oem }).map(section => `<div class="nav-label">${escapeHtml(section.label)}</div><nav class="nav" aria-label="${escapeHtml(section.label)}">${section.items.map(item => nav(item.route, item.icon, bayNavLabel(item), item.count ? String(counts[item.count] || "") : "")).join("")}</nav>`).join("") }
 function attentionMenu() { const model = buildHomeModel({ orders: visibleOrders(), invoices: canAccess("invoices") ? state.invoices : [], appointments: state.appointments || [], now: new Date() }); const count = model.attention.length; const rows = model.attention.slice(0, 6).map(item => { const detail = item.type === "overdue" ? `${String(item.detail || "").split(" · ")[0]} · ${money(item.amount || 0)}` : item.detail; return `<button type="button" class="attention-item" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : `data-route="invoices"`}><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail || "")}</small></button>` }).join(""); return `<div class="attention-menu"><button class="icon-button" id="attention-toggle" type="button" aria-label="Needs attention${count ? `, ${count} items` : ""}" aria-expanded="false" aria-controls="attention-panel" title="Needs attention">${icon("bell")}${count ? `<span class="attention-badge">${count}</span>` : ""}</button><div class="attention-panel" id="attention-panel" hidden role="dialog" aria-label="Needs attention"><div class="attention-panel-head"><strong>Needs attention</strong><span>${count ? `${count} open` : "All clear"}</span></div>${rows || `<p class="attention-empty">Nothing is waiting. Home shows the full shop snapshot.</p>`}<button class="mini-action attention-home" type="button" data-route="home">Open home</button></div></div>` }
 function bindAttentionPanel() { const toggle = document.querySelector("#attention-toggle"), panel = document.querySelector("#attention-panel"); if (!toggle || !panel) return; toggle.onclick = event => { event.stopPropagation(); const willOpen = panel.hidden; panel.hidden = !willOpen; toggle.setAttribute("aria-expanded", willOpen ? "true" : "false") }; if (attentionDismissBound) return; attentionDismissBound = true; document.addEventListener("click", event => { const openPanel = document.querySelector("#attention-panel"), openToggle = document.querySelector("#attention-toggle"); if (!openPanel || openPanel.hidden || event.target.closest(".attention-menu")) return; openPanel.hidden = true; openToggle?.setAttribute("aria-expanded", "false") }) }
 function syncStatusBadge() { const pending = readMutationQueue().filter(item => !item.conflict).length, conflicts = readMutationQueue().filter(item => item.conflict).length, online = navigator.onLine; if (conflicts) return `<span class="sync-pill conflict" title="Offline edits conflict with newer server data">${icon("triangle-alert", 14)} ${conflicts} conflict${conflicts === 1 ? "" : "s"}</span>`; if (!online) return `<span class="sync-pill offline" title="Working offline">${icon("wifi-off", 14)} Offline${pending ? ` · ${pending} queued` : ""}</span>`; if (pending) return `<span class="sync-pill pending" title="Waiting to sync offline changes">${icon("refresh-cw", 14)} Syncing ${pending}</span>`; return `<span class="sync-pill online" title="Connected">${icon("cloud-check", 14)} Online</span>` }
@@ -1373,12 +1374,12 @@ function openCustomerIntake() {
       const name = [current.customer.firstName, current.customer.lastName].filter(Boolean).join(" ");
       const display = current.customer.company ? `${name} (${current.customer.company})` : name;
       const address = [current.customer.address, [current.customer.city, current.customer.state, current.customer.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
-      const existing = state.customers.find(item => item.phone === current.customer.phone || (current.customer.email && item.email === current.customer.email));
-      await saveCustomerRecord(existing, { name: display, phone: current.customer.phone, email: current.customer.email, billingAddress: address, billingNotes: `Intake ${current.id}` });
+      const existing = findIntakeCustomer(state.customers, current);
+      const customer = await saveCustomerRecord(existing, { name: display, phone: current.customer.phone, email: current.customer.email, billingAddress: address, billingNotes: `Intake ${current.id}` });
       const vehicleId = `veh-${Date.now()}`;
-      await saveShopEntity("vehicles", { id: vehicleId, customer: display, vin: current.vehicle.vin, year: current.vehicle.year, make: current.vehicle.make, model: current.vehicle.model, plate: current.vehicle.plate, mileage: current.vehicle.mileage, color: current.vehicle.color });
+      await saveShopEntity("vehicles", { id: vehicleId, customerId: customer.id, customer: customer.name || display, vin: current.vehicle.vin, year: current.vehicle.year, make: current.vehicle.make, model: current.vehicle.model, plate: current.vehicle.plate, mileage: current.vehicle.mileage, color: current.vehicle.color });
       const max = state.orders.reduce((highest, order) => Math.max(highest, Number(String(order.id).replace(/\D/g, "")) || 0), 1040);
-      const record = intakeOrderPayload(current, { id: `RO-${max + 1}`, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users });
+      const record = intakeOrderPayload(current, { id: `RO-${max + 1}`, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users, customer });
       record.intake.photos = [];
       for (const photo of current.photos || []) {
         if (!photo.file) { record.intake.photos.push(photo); continue }
@@ -1392,7 +1393,7 @@ function openCustomerIntake() {
       let saved = record;
       if (!isOfflineDesktop()) {
         const response = await apiFetch("/entities/orders", { method: "POST", body: JSON.stringify(record) });
-        saved = response?.queued ? record : response;
+        saved = response?.queued ? record : (response || record);
       }
       state.orders.unshift(saved);
       localStorage.removeItem(INTAKE_STORAGE_KEY);
@@ -4144,15 +4145,92 @@ function orderChoices() {
   return state.orders.map(order => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} · ${escapeHtml(order.vehicle)} · ${escapeHtml(order.customer)}</option>`).join("");
 }
 
+function bayHw() {
+  if (!globalThis.__mechproBayHardware) globalThis.__mechproBayHardware = { adapters: null, status: null, snapshot: null, snapshotOrderId: "", busy: "", error: "", checked: false, refreshing: false };
+  const hw = globalThis.__mechproBayHardware;
+  hw.available = Boolean(window.mechproDesktop && window.mechproDiagnostics);
+  return hw;
+}
+
+function bayLive() {
+  const status = bayHw().status;
+  return Boolean(status?.connected && !status?.simulator);
+}
+
+function bayNavLabel(item) {
+  return (item.route === "obd" || item.route === "keys") && !bayLive() ? `${item.label} (Simulator)` : item.label;
+}
+
+async function refreshBayHardware(withAdapters = false) {
+  const hw = bayHw();
+  if (!hw.available) return;
+  try {
+    if (withAdapters || !hw.adapters) {
+      const listed = await window.mechproDiagnostics.listAdapters();
+      hw.adapters = (listed?.adapters || []).filter(adapter => adapter.id !== "simulator");
+    }
+    hw.status = await window.mechproDiagnostics.getConnectionStatus();
+    hw.error = "";
+  } catch (error) {
+    hw.error = error.message || "The diagnostics host is not available.";
+  }
+  hw.checked = true;
+}
+
+function bayPerformer() {
+  const user = currentUser() || {};
+  return { id: user.id || "", name: user.name || "", email: user.email || "", role: user.role || "" };
+}
+
+async function recordBayAudit(event) {
+  try { await apiFetch("/diagnostics/audit", { method: "POST", body: JSON.stringify(event) }); } catch (error) { console.error("Could not record diagnostics audit", error); }
+}
+
+function bayHardwarePanel() {
+  const hw = bayHw();
+  if (!hw.available) return `<div class="messaging-status idle">${icon("monitor", 17)}<div><strong>Simulator</strong><span>Live OBD-II and key work run in the MechPro Windows app with a J2534 adapter such as the TOPDON RLink X7. In the browser this bay uses the bench simulator.</span></div></div>`;
+  const status = hw.status || {};
+  if (bayLive()) return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Live: ${escapeHtml(status.adapterName || "J2534 adapter")}</strong><span>${escapeHtml(status.protocol || "ISO15765")} · ${escapeHtml(String(status.voltage ?? "?"))} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${hw.busy ? " disabled" : ""}>Disconnect</button></div>`;
+  const adapters = hw.adapters || [];
+  const choices = adapters.map(adapter => `<option value="${escapeAttr(adapter.id)}"${adapter.usable === false ? " disabled" : ""}>${escapeHtml(adapter.name)} · ${escapeHtml(adapter.vendor || "")}${adapter.bitness ? ` · ${escapeHtml(adapter.bitness)}-bit` : ""}${adapter.usable === false ? " (wrong driver bitness)" : ""}</option>`).join("");
+  const empty = `<p>No J2534 driver found. Install RLink Platform and the TOPDON J2534 driver, plug the RLink X7 into USB and the vehicle, then refresh.</p>`;
+  const canConnect = adapters.some(adapter => adapter.usable !== false) && !hw.busy;
+  return `<section class="data-panel bay-hardware"><h3>J2534 adapter</h3>${hw.error ? `<p class="form-error">${escapeHtml(hw.error)}</p>` : ""}${adapters.length ? `<div class="form-grid"><label class="full">Adapter<select id="bay-adapter">${choices}</select></label></div>` : empty}<div class="job-actions"><button class="primary" type="button" id="bay-connect"${canConnect ? "" : " disabled"}>${icon("plug", 14)} ${hw.busy === "connect" ? "Connecting..." : "Connect"}</button><button class="ghost" type="button" id="bay-refresh"${hw.busy ? " disabled" : ""}>${icon("refresh-cw", 14)} Refresh</button></div><p class="ledger-note">Until an adapter is connected, this bay runs the bench simulator.</p></section>`;
+}
+
+function obdLiveSection() {
+  const hw = bayHw();
+  const snap = hw.snapshot;
+  const order = state.orders.find(item => item.id === hw.snapshotOrderId);
+  const vinWarning = snap && order?.vin && snap.vin && normalizeVin(order.vin) !== normalizeVin(snap.vin)
+    ? `<div class="messaging-status idle">${icon("triangle-alert", 17)}<div><strong>VIN mismatch</strong><span>The vehicle reports ${escapeHtml(snap.vin)}, but ${escapeHtml(order.id)} lists ${escapeHtml(order.vin)}.</span></div></div>`
+    : "";
+  const codes = (label, list) => `<p><b>${label}:</b> ${list?.length ? list.map(code => `<span class="mono">${escapeHtml(code)}</span>`).join(", ") : "none"}</p>`;
+  const readings = (snap?.readings || []).map(reading => `<tr><td>${escapeHtml(reading.name)}</td><td class="mono">${escapeHtml(reading.value === null || reading.value === undefined ? "-" : String(reading.value))} ${escapeHtml(reading.unit || "")}</td></tr>`).join("");
+  const mil = snap?.milOn === true ? "ON" : snap?.milOn === false ? "off" : "unknown";
+  const result = snap
+    ? `<section class="data-panel"><h3>${snap.simulator ? "Simulator" : "Live"} scan · ${escapeHtml(snap.adapterName || "J2534 adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}</p><p>Check engine light: <b>${mil}</b>${snap.reportedDtcCount !== undefined && snap.reportedDtcCount !== null ? ` · ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : ""}</p>${codes("Stored", snap.storedDtcs)}${codes("Pending", snap.pendingDtcs)}${codes("Permanent", snap.permanentDtcs)}${readings ? `<table><thead><tr><th>Reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>` : ""}${(snap.errors || []).length ? `<ul class="ledger-note">${snap.errors.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}<p class="ledger-note">${escapeHtml(snap.protocol || "")} · read ${escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString())}</p><div class="job-actions"><button class="ghost" type="button" id="obd-live-clear"${hw.busy || !snap.responded ? " disabled" : ""}>${icon("eraser", 14)} Clear codes...</button></div></section>`
+    : "";
+  return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit"${hw.busy ? " disabled" : ""}>${icon("activity", 14)} ${hw.busy === "scan" ? "Reading vehicle..." : "Read vehicle"}</button></div></form>${result}`;
+}
+
 function obdBay() {
+  const live = bayLive();
   const latest = [...state.diagnosticSessions].reverse()[0];
-  const result = latest ? `<section class="data-panel"><h3>Latest simulated scan</h3><p>${escapeHtml(latest.label)}</p><p class="mono">${escapeHtml(latest.vin)} · ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description)}</li>`).join("")}</ul><p>Readiness: ${escapeHtml(Object.entries(latest.readiness || {}).map(([name, value]) => `${name} ${value}`).join(" · "))}</p></section>` : `<div class="home-empty"><p>No scans yet. Run the bench simulator against a repair order.</p></div>`;
-  return shell(`${heading("Diagnostics", "OBD bay", "Basic OBD-II from the bench simulator. Live ELM327 and OEM tools stay in Shop operations and OEM Diagnostics.", false)}<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>${result}`);
+  const latestTitle = latest?.mode === "live" ? "Latest live record" : "Latest simulated scan";
+  const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} · ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value]) => `${name} ${value}`).join(" · "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
+  const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
+  const subtitle = live
+    ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes."
+    : "Bench simulator until a J2534 adapter is connected in the MechPro Windows app.";
+  return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${result}`);
 }
 
 function keyProgrammingBay() {
-  const rows = [...state.keyJobs].reverse().map(job => `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${job.simulated ? "Simulator" : "Live"}</td><td>${escapeHtml(job.message || "")}</td></tr>`).join("");
-  return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Immobilizer bypass, cloning, and rolling-code requests are refused. Live tools need a shop-licensed programmer.</span></div></div><form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><label>Operation<select name="operation">${KEY_OPERATIONS.map(item => `<option value="${item.id}">${item.label}</option>`).join("")}</select></label><label>Mode<select name="mode"><option value="simulator">Simulator</option><option value="live">Licensed programmer</option></select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} Record key job</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>Result</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No key jobs recorded.</td></tr>`}</tbody></table></div>`);
+  const live = bayLive();
+  const rows = [...state.keyJobs].reverse().map(job => `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${job.simulated ? "Simulator" : "Live"}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(job.result ? `${job.result}: ${job.message || ""}` : job.message || "")}</td></tr>`).join("");
+  const modes = `<option value="simulator">Simulator</option><option value="live"${live ? "" : " disabled"}>Live (J2534 adapter)${live ? "" : " - connect an adapter first"}</option>`;
+  return shell(`${heading("Authorized keys", live ? "Key programming" : "Key programming (Simulator)", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs also need the connected vehicle's VIN to match the repair order and a confirmation before anything is written. Every live session is logged. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><label>Operation<select name="operation">${KEY_OPERATIONS.map(item => `<option value="${item.id}">${item.label}</option>`).join("")}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${live ? "Start key job" : "Record key job"}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No key jobs recorded.</td></tr>`}</tbody></table></div>`);
 }
 
 async function rememberBayRecord(type, collection, record) {
@@ -4164,22 +4242,247 @@ async function rememberBayRecord(type, collection, record) {
   try { await saveShopEntity(type, record); } catch (error) { console.error(`Could not sync ${type}`, error); }
 }
 
+async function runLiveObdScan(orderId) {
+  const hw = bayHw();
+  const order = state.orders.find(item => item.id === orderId);
+  if (!order) { toast("Select a repair order"); return; }
+  hw.busy = "scan";
+  render();
+  try {
+    const snap = await window.mechproDiagnostics.obdSnapshot();
+    hw.snapshot = snap;
+    hw.snapshotOrderId = order.id;
+    const dtcs = [
+      ...(snap.storedDtcs || []).map(code => ({ code, description: "Stored" })),
+      ...(snap.pendingDtcs || []).map(code => ({ code, description: "Pending" })),
+      ...(snap.permanentDtcs || []).map(code => ({ code, description: "Permanent" })),
+    ];
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
+      id: `scan-${Date.now()}`,
+      orderId: order.id,
+      customer: order.customer,
+      vehicle: order.vehicle,
+      mode: snap.simulator ? "simulator" : "live",
+      label: `${snap.simulator ? "Simulator" : "Live"} scan via ${snap.adapterName || "J2534 adapter"}`,
+      vin: snap.vin || "",
+      roVin: order.vin || "",
+      milOn: snap.milOn ?? null,
+      dtcs,
+      readings: snap.readings || [],
+      errors: snap.errors || [],
+      adapter: snap.adapterName || "",
+      performedBy: bayPerformer(),
+      scannedAt: snap.readAt || now(),
+    });
+    toast(snap.responded ? "Vehicle read" : "No reply from the vehicle");
+  } catch (error) {
+    hw.error = error.message || "Scan failed";
+    toast(hw.error);
+  }
+  hw.busy = "";
+  await refreshBayHardware();
+  render();
+}
+
+function openObdClearConfirm() {
+  const hw = bayHw();
+  const snap = hw.snapshot;
+  const order = state.orders.find(item => item.id === hw.snapshotOrderId);
+  if (!snap || !order) { toast("Read the vehicle first"); return; }
+  showModal(`<form class="modal" id="obd-clear-form"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Clear trouble codes?</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>This sends OBD-II mode 04 to <b>${escapeHtml(snap.vin || order.vehicle || "the vehicle")}</b>. It erases stored and pending codes, freeze-frame data and readiness monitors, so the vehicle may fail an emissions inspection until the monitors run again. Permanent codes are not cleared.</p><label class="check"><input type="checkbox" name="engineOff" required> Engine is off and ignition is on</label><label class="check"><input type="checkbox" name="understood" required> I understand what gets erased</label><div class="modal-actions"><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">Clear codes</button></div></form>`);
+  document.querySelector("#obd-clear-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    if (!form.get("engineOff") || !form.get("understood")) { toast("Tick both boxes to clear codes"); return; }
+    closeModal();
+    hw.busy = "clear";
+    render();
+    const before = [...(snap.storedDtcs || []), ...(snap.pendingDtcs || [])];
+    try {
+      await window.mechproDiagnostics.obdClearDtcs({ confirmed: true });
+      await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
+        id: `clear-${Date.now()}`,
+        kind: "clear",
+        orderId: order.id,
+        customer: order.customer,
+        vehicle: order.vehicle,
+        mode: snap.simulator ? "simulator" : "live",
+        label: "Codes cleared (OBD-II mode 04)",
+        vin: snap.vin || "",
+        dtcs: before.map(code => ({ code, description: "Cleared" })),
+        adapter: snap.adapterName || "",
+        performedBy: bayPerformer(),
+        scannedAt: now(),
+      });
+      await recordBayAudit({ kind: "obd.clear_dtcs", orderId: order.id, vin: snap.vin || "", cleared: before, adapter: snap.adapterName || "", simulator: Boolean(snap.simulator) });
+      toast("Codes cleared. Reading the vehicle again.");
+      hw.busy = "";
+      await runLiveObdScan(order.id);
+      return;
+    } catch (error) {
+      toast(error.message || "Could not clear codes");
+    }
+    hw.busy = "";
+    render();
+  });
+}
+
+async function startLiveKeyJob(data) {
+  const order = state.orders.find(item => item.id === data.orderId);
+  const hw = bayHw();
+  const steps = [];
+  const step = (name, detail = "") => steps.push({ at: now(), step: name, detail: String(detail || "").slice(0, 500) });
+  const procedure = liveKeyProcedureFor(data.operation);
+  let vehicleVin = "";
+  let authorization = null;
+  let saved = false;
+  const saveSession = async (result, message) => {
+    if (saved) return;
+    saved = true;
+    const record = keyAuditRecord({
+      id: `key-${Date.now()}`,
+      order,
+      user: bayPerformer(),
+      operation: data.operation,
+      procedure,
+      vehicleVin,
+      adapter: hw.status?.adapterName || "",
+      authorization,
+      notes: data.notes,
+      steps,
+      result,
+      message,
+      now: now(),
+    });
+    await rememberBayRecord("keyprogrammingjobs", "keyJobs", record);
+    await recordBayAudit({ kind: "keys.session", ...record });
+    render();
+  };
+  try {
+    step("Live key job started", `${data.operation} on ${order?.id || "no repair order"}`);
+    const vinResult = await window.mechproDiagnostics.readVin();
+    vehicleVin = vinResult?.vin || "";
+    step("Read VIN from vehicle", vehicleVin || "no VIN");
+    authorization = assertLiveKeySession({ order, estimates: state.estimates, operation: data.operation, notes: data.notes, vehicleVin, deviceConnected: bayLive() });
+    step("Signed repair order verified", `${authorization?.authorizationName || ""} ${authorization?.signedAt || ""}`.trim());
+    if (!procedure) {
+      if (data.operation === "identify") {
+        const checks = [];
+        for (const candidate of ["add_key", "program_remote", "all_keys_lost", "erase_keys"]) checks.push(await window.mechproDiagnostics.keyProcedureSupport({ procedure: candidate }));
+        const summary = checks.map(check => `${check.procedure.replace(/_/g, " ")}: ${check.supported ? "supported" : "not supported"}`).join("; ");
+        step("Checked live procedure support", summary);
+        await saveSession("identified", checks.some(check => check.supported) ? summary : checks[0]?.reason || summary);
+        toast("Vehicle identified. See the key job log for what is supported live.");
+        return;
+      }
+      step("Operation not available live");
+      await saveSession("not_supported", "Live key testing is not available yet. Use the manufacturer's software through the adapter.");
+      toast("Live key testing is not available yet");
+      return;
+    }
+    const support = await window.mechproDiagnostics.keyProcedureSupport({ procedure });
+    step("Checked live procedure support", support?.reason || "");
+    if (!support?.supported) {
+      await saveSession("not_supported", support?.reason || "This procedure is not supported for this vehicle.");
+      showModal(`<div class="modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Not supported for this vehicle</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>${escapeHtml(support?.reason || "MechPro cannot run this key procedure on this vehicle.")}</p><p class="ledger-note">Nothing was written to the vehicle. This attempt is in the key job log.</p><div class="modal-actions"><button class="primary" type="button" data-close>OK</button></div></div>`);
+      return;
+    }
+    openLiveKeyConfirm({ order, authorization, vehicleVin, procedure, support, step, saveSession });
+  } catch (error) {
+    step("Blocked", error.message);
+    await saveSession("blocked", error.message || "Key job blocked");
+    toast(error.message || "Key job blocked");
+  }
+}
+
+function openLiveKeyConfirm(ctx) {
+  const { order, authorization, vehicleVin, procedure, support, step, saveSession } = ctx;
+  showModal(`<form class="modal" id="key-live-confirm"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Confirm live key programming</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><dl class="detail-list"><dt>Procedure</dt><dd>${escapeHtml(procedure.replace(/_/g, " "))}</dd><dt>Vehicle</dt><dd>${escapeHtml(order.vehicle || "")}</dd><dt>VIN read from vehicle</dt><dd class="mono">${escapeHtml(vehicleVin)}</dd><dt>Customer</dt><dd>${escapeHtml(order.customer || "")}</dd><dt>Signed by</dt><dd>${escapeHtml(authorization?.authorizationName || "")}${authorization?.signedAt ? ` · ${escapeHtml(new Date(authorization.signedAt).toLocaleString())}` : ""}</dd></dl><p>This writes to the vehicle's immobilizer. Keep a battery maintainer connected and do not unplug the adapter until it finishes.</p><label class="full">Type the last 6 characters of the VIN<input name="vinTail" autocomplete="off" required maxlength="6"></label>${support.requiresVehiclePin ? `<label class="full">Immobilizer PIN the vehicle asks for<input name="pin" type="password" autocomplete="off" required></label>` : ""}<label class="check"><input type="checkbox" name="confirm" required> The customer authorized this key work on the signed repair order</label><div class="modal-actions"><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">${icon("key", 14)} Program key</button></div></form>`);
+  document.querySelectorAll("#key-live-confirm [data-close]").forEach(button => button.addEventListener("click", () => { step("Technician cancelled at confirmation"); void saveSession("cancelled", "Cancelled before anything was written."); }));
+  document.querySelector("#key-live-confirm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    if (!keyConfirmationMatches(vehicleVin, form.get("vinTail"))) { toast("The last 6 VIN characters do not match the vehicle"); return; }
+    if (!form.get("confirm")) { toast("Confirm the customer authorization"); return; }
+    const pin = String(form.get("pin") || "").trim();
+    closeModal();
+    step("Technician confirmed", `VIN ending ${normalizeVin(form.get("vinTail"))}${pin ? ", PIN entered" : ""}`);
+    try {
+      const grant = await apiFetch("/diagnostics/authorize", { method: "POST", body: JSON.stringify({ vin: vehicleVin, procedure, mode: "live", orderId: order.id }) });
+      if (!grant?.authorized || !grant.token) throw new Error(grant?.message || "Live key programming was not authorized");
+      step("Authorization issued", grant.expiresAt ? `expires ${grant.expiresAt}` : "");
+      const result = await window.mechproDiagnostics.programKey({ procedure, authorizationToken: grant.token, pin: pin || undefined });
+      step("Procedure finished", JSON.stringify(result || {}));
+      await saveSession("completed", `${procedure.replace(/_/g, " ")} completed`);
+      toast("Key procedure completed");
+    } catch (error) {
+      step("Failed", error.message);
+      await saveSession("failed", error.message || "Key procedure failed");
+      toast(error.message || "Key procedure failed");
+    }
+  });
+}
+
 function bindShopOs() {
+  document.querySelector("#bay-refresh")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    hw.busy = "refresh";
+    render();
+    await refreshBayHardware(true);
+    hw.busy = "";
+    render();
+  });
+  document.querySelector("#bay-connect")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    const adapterId = document.querySelector("#bay-adapter")?.value;
+    if (!adapterId) return;
+    hw.busy = "connect";
+    hw.snapshot = null;
+    render();
+    try {
+      await window.mechproDiagnostics.connect({ adapterId, protocol: "ISO15765" });
+      await refreshBayHardware();
+      toast("Adapter connected");
+    } catch (error) {
+      hw.error = error.message || "Could not connect to the adapter";
+    }
+    hw.busy = "";
+    render();
+  });
+  document.querySelector("#bay-disconnect")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    hw.busy = "disconnect";
+    render();
+    try { await window.mechproDiagnostics.disconnect(); } catch (error) { hw.error = error.message || "Could not disconnect"; }
+    hw.snapshot = null;
+    await refreshBayHardware();
+    hw.busy = "";
+    render();
+  });
+  document.querySelector("#obd-live-form")?.addEventListener("submit", event => {
+    event.preventDefault();
+    void runLiveObdScan(new FormData(event.target).get("orderId"));
+  });
+  document.querySelector("#obd-live-clear")?.addEventListener("click", openObdClearConfirm);
   document.querySelector("#obd-scan-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const order = state.orders.find(item => item.id === new FormData(event.target).get("orderId"));
     if (!order) { toast("Select a repair order"); return; }
     const scan = simulateObdScan(order);
-    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { id: `scan-${Date.now()}`, orderId: order.id, customer: order.customer, ...scan });
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { id: `scan-${Date.now()}`, orderId: order.id, customer: order.customer, performedBy: bayPerformer(), ...scan });
     toast("Simulated scan saved");
     render();
   });
   document.querySelector("#key-job-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
+    if (data.mode === "live") {
+      await startLiveKeyJob(data);
+      return;
+    }
     const order = state.orders.find(item => item.id === data.orderId);
     try {
-      assertKeyJobAllowed({ order, estimates: state.estimates, operation: data.operation, notes: data.notes, liveProgrammer: data.mode === "live" });
+      assertKeyJobAllowed({ order, estimates: state.estimates, operation: data.operation, notes: data.notes });
       const result = simulateKeyJob({ operation: data.operation, vin: order.vin });
       const authorization = state.estimates.find(estimate => isRoAuthorizedForKeys(order, [estimate]));
       await rememberBayRecord("keyprogrammingjobs", "keyJobs", {
@@ -4193,6 +4496,7 @@ function bindShopOs() {
         notes: String(data.notes || "").trim(),
         simulated: true,
         authorizationName: authorization?.authorizationName || "",
+        performedBy: bayPerformer(),
         message: result.message,
         createdAt: now(),
       });
@@ -4207,6 +4511,11 @@ function bindShopOs() {
 const renderShopOsCore = render;
 render = function () {
   if (currentUser() && (state.route === "obd" || state.route === "keys")) {
+    const hw = bayHw();
+    if (hw.available && !hw.checked && !hw.refreshing) {
+      hw.refreshing = true;
+      void refreshBayHardware(true).finally(() => { hw.refreshing = false; render(); });
+    }
     const root = document.querySelector("#root");
     const markup = state.route === "obd" ? obdBay() : keyProgrammingBay();
     root.innerHTML = safeHtml(markup);

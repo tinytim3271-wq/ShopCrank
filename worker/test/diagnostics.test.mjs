@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { DIAGNOSTIC_PROCEDURES, PROGRAMMING_MODES, mintCapabilityToken, procedureSpec } from '../src/diagnostics.mjs';
+import { DIAGNOSTIC_PROCEDURES, PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, signedRepairOrderForKeys } from '../src/diagnostics.mjs';
 
 const require = createRequire(import.meta.url);
 const { verifyCapabilityToken } = require('../../diagnostics/j2534-host-node/capability-token.js');
@@ -66,4 +66,33 @@ test('single-use consumption is enforced with expiry pruning', async () => {
   });
   assert.ok(verifyCapabilityToken(token, {}));
   assert.throws(() => verifyCapabilityToken(token, {}), /already used/);
+});
+
+function entitiesDb({ order, estimates = [] }) {
+  return {
+    prepare(sql) {
+      return {
+        bind() {
+          return {
+            first: async () => (sql.includes("'orders'") && order ? { data_json: JSON.stringify(order) } : null),
+            all: async () => ({ results: estimates.map((estimate) => ({ data_json: JSON.stringify(estimate) })) }),
+          };
+        },
+      };
+    },
+  };
+}
+
+test('live key authorization needs a signed repair order for the same VIN', async () => {
+  const vin = '1C6SRFHT0LN123456';
+  const order = { id: 'RO-1', vin };
+  const signed = { id: 'E-1', workOrderId: 'RO-1', status: 'approved', signedAt: '2026-10-01T00:00:00Z', authorizationName: 'Pat Customer' };
+  const ok = await signedRepairOrderForKeys(entitiesDb({ order, estimates: [signed] }), 'shop-1', 'RO-1', vin);
+  assert.equal(ok.authorizationName, 'Pat Customer');
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [{ ...signed, signedAt: '' }] }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [{ ...signed, status: 'sent' }] }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order: { ...order, vin: '1C6SRFHT0LN999999' }, estimates: [signed] }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [{ ...signed, workOrderId: 'RO-2' }] }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order: null, estimates: [signed] }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order, estimates: [signed] }), 'shop-1', '', vin), null);
 });
