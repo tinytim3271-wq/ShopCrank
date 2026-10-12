@@ -92,14 +92,14 @@
   var isDesktopApp, DESKTOP_ENTITLEMENT_INTERVAL, platform;
   var init_detect = __esm({
     "src/modules/platform/detect.js"() {
-      isDesktopApp = Boolean(window.shopcrankDesktop);
+      isDesktopApp = Boolean(window.mechproDesktop);
       DESKTOP_ENTITLEMENT_INTERVAL = 5 * 60 * 1e3;
       platform = Object.freeze({
         kind: isDesktopApp ? "desktop" : "web",
         isDesktop: isDesktopApp,
         isWeb: !isDesktopApp,
-        electronVersion: window.shopcrankDesktop?.version ?? null,
-        os: window.shopcrankDesktop?.platform ?? null
+        electronVersion: window.mechproDesktop?.version ?? null,
+        os: window.mechproDesktop?.platform ?? null
       });
     }
   });
@@ -1926,7 +1926,7 @@
   }
   function orderingPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4, icon: icon2 }) {
     const connected = Boolean(account.connected && account.username);
-    const status = connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>AutoZone Pro login saved</strong><span>${escapeHtml4(account.username)}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. Shop Crank encrypts them and does not put them on the work order.</span></div></div>`;
+    const status = connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>AutoZone Pro login saved</strong><span>${escapeHtml4(account.username)}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. MechPro encrypts them and does not put them on the work order.</span></div></div>`;
     const form = canSave ? `<form id="autozone-login-form" class="form-grid">
         <label>Username<input name="username" autocomplete="off" value="${escapeHtml4(account.username || "")}" required /></label>
         <label>Password<input name="password" type="password" autocomplete="new-password" required /></label>
@@ -1935,7 +1935,7 @@
       </form>` : '<p class="ops-note">Ask an owner or admin to save the shop AutoZone Pro login.</p>';
     const unavailable = account.unavailable ? '<p class="login-error">Sign in to the shop account to store or copy the AutoZone Pro login.</p>' : "";
     return `<section class="settings-panel autozone-ordering">
-      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from Shop Crank. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon2("shopping-cart", 20)}</div>
+      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from MechPro. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon2("shopping-cart", 20)}</div>
       ${status}
       ${unavailable}
       ${form}
@@ -2161,8 +2161,8 @@
     const errorHtml = keyError ? `<p class="form-help shop-ai-error" role="alert">${escapeHtml4(status.lastError || "Your Claude key stopped working.")} Answers use Cloudflare AI until the key is fixed or replaced.</p>` : "";
     const unavailableHtml = status.unavailable ? '<p class="form-help">AI settings could not be loaded right now.</p>' : "";
     const removeButton = status.hasKey ? `<button class="secondary" type="button" id="shop-ai-remove-key">${icon2("trash-2", 14)} Remove key</button>` : "";
-    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off"><label class="full">Anthropic API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-ant-..." required/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">Shop Crank tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
-    return `<section class="settings-panel shop-ai-settings" id="shop-ai-settings"><div class="statement-head"><div><div class="eyebrow">AI</div><h2>Shop Crank AI provider</h2><p>${escapeHtml4(SHOP_AI_PROMPT)}</p><p><a href="${ANTHROPIC_CONSOLE_URL}" target="_blank" rel="noopener noreferrer">Get an Anthropic API key at console.anthropic.com</a></p></div>${icon2("sparkles", 20)}</div>${statusHtml}${errorHtml}${unavailableHtml}${form}</section>`;
+    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off"><label class="full">Anthropic API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-ant-..." required/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">MechPro tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
+    return `<section class="settings-panel shop-ai-settings" id="shop-ai-settings"><div class="statement-head"><div><div class="eyebrow">AI</div><h2>MechPro AI provider</h2><p>${escapeHtml4(SHOP_AI_PROMPT)}</p><p><a href="${ANTHROPIC_CONSOLE_URL}" target="_blank" rel="noopener noreferrer">Get an Anthropic API key at console.anthropic.com</a></p></div>${icon2("sparkles", 20)}</div>${statusHtml}${errorHtml}${unavailableHtml}${form}</section>`;
   }
   var ANTHROPIC_CONSOLE_URL, SHOP_AI_PROMPT, MASK;
   var init_shop_ai_settings = __esm({
@@ -3047,7 +3047,7 @@ button{margin-top:12px;padding:8px 14px}
     const y = data.taxYear || (/* @__PURE__ */ new Date()).getFullYear();
     const body = `
 <h1>Form W-2 Wage and Tax Statement \u2014 ${y}</h1>
-<p class="meta">Copy B \u2014 To Be Filed With Employee\u2019s FEDERAL Tax Return \xB7 Generated by Shop Crank for filing / SSA Business Services Online upload prep. Verify EIN and SSN before submitting.</p>
+<p class="meta">Copy B \u2014 To Be Filed With Employee\u2019s FEDERAL Tax Return \xB7 Generated by MechPro for filing / SSA Business Services Online upload prep. Verify EIN and SSN before submitting.</p>
 <div class="grid">
   <div class="box"><label>a Employee\u2019s social security number</label><b>***-**-${esc(data.employee.ssnLast4 || "XXXX")}</b></div>
   <div class="box"><label>b Employer identification number (EIN)</label><b>${esc(data.employer.ein || "XX-XXXXXXX")}</b></div>
@@ -3067,14 +3067,14 @@ button{margin-top:12px;padding:8px 14px}
   <div class="box"><label>16 State wages, tips, etc.</label><b>${money(data.stateWages || 0)}</b></div>
   <div class="box"><label>17 State income tax</label><b>${money(data.stateTax || 0)}</b></div>
 </div>
-<div class="notice">File Copy A electronically with SSA (ssa.gov/employer). Give Copies B, C, and 2 to the employee by January 31. Shop Crank generates this statement from shop payroll records; confirm SSN and EIN before e-filing.</div>`;
+<div class="notice">File Copy A electronically with SSA (ssa.gov/employer). Give Copies B, C, and 2 to the employee by January 31. MechPro generates this statement from shop payroll records; confirm SSN and EIN before e-filing.</div>`;
     return printHtml(`W-2 ${y} ${data.employee.name}`, body);
   }
   function open1099NecForm(data) {
     const y = data.taxYear || (/* @__PURE__ */ new Date()).getFullYear();
     const body = `
 <h1>Form 1099-NEC Nonemployee Compensation \u2014 ${y}</h1>
-<p class="meta">Copy B For Recipient \xB7 Generated by Shop Crank for IRS / recipient filing. File Copy A with the IRS (FIRE / IRIS) when required.</p>
+<p class="meta">Copy B For Recipient \xB7 Generated by MechPro for IRS / recipient filing. File Copy A with the IRS (FIRE / IRIS) when required.</p>
 <div class="grid">
   <div class="box"><label>PAYER\u2019S name, street address, city, state, ZIP</label><b>${esc(data.payer.name)}<br>${esc(data.payer.address)}</b></div>
   <div class="box"><label>PAYER\u2019S TIN</label><b>${esc(data.payer.tin || "")}</b></div>
@@ -3084,7 +3084,7 @@ button{margin-top:12px;padding:8px 14px}
   <div class="box"><label>1 Nonemployee compensation</label><b>${money(data.nonemployeeCompensation)}</b></div>
   <div class="box"><label>4 Federal income tax withheld</label><b>${money(data.federalTaxWithheld || 0)}</b></div>
 </div>
-<div class="notice">File with the IRS when nonemployee compensation is $600 or more. Recipients use this for Schedule C / income reporting. Shop Crank does not transmit to IRS FIRE until transmitter credentials are configured; download the e-file package and submit via IRS IRIS/FIRE or your CPA.</div>`;
+<div class="notice">File with the IRS when nonemployee compensation is $600 or more. Recipients use this for Schedule C / income reporting. MechPro does not transmit to IRS FIRE until transmitter credentials are configured; download the e-file package and submit via IRS IRIS/FIRE or your CPA.</div>`;
     return printHtml(`1099-NEC ${y} ${data.recipient.name}`, body);
   }
   function buildEfw2Text(employer, employees2, taxYear) {
@@ -3149,7 +3149,7 @@ button{margin-top:12px;padding:8px 14px}
       ["6", "Total taxes before adjustments", summary.totalTax],
       [],
       ["Portal", "https://www.irs.gov/businesses/small-businesses-self-employed/e-file-employment-tax-forms"],
-      ["Note", "Enter these amounts in IRS e-file / EFTPS or provide to your CPA. Shop Crank prepares the worksheet from payroll records."]
+      ["Note", "Enter these amounts in IRS e-file / EFTPS or provide to your CPA. MechPro prepares the worksheet from payroll records."]
     ];
     return csvFromRows(rows);
   }
@@ -13569,7 +13569,7 @@ button{margin-top:12px;padding:8px 14px}
     })[char]);
   }
   function isOfflineDesktop() {
-    return Boolean(globalThis.window?.shopcrankDesktop?.offline && globalThis.window.shopcrankDesktop.localAuth);
+    return Boolean(globalThis.window?.mechproDesktop?.offline && globalThis.window.mechproDesktop.localAuth);
   }
   function offlineSession(account) {
     const expires = Math.floor(Date.now() / 1e3) + 12 * 60 * 60;
@@ -13588,17 +13588,17 @@ button{margin-top:12px;padding:8px 14px}
       offline: true
     };
   }
-  function offlineLoginMarkup({ hasAccount, email, icon: icon2, portable = Boolean(globalThis.window?.shopcrankDesktop?.portable) }) {
+  function offlineLoginMarkup({ hasAccount, email, icon: icon2, portable = Boolean(globalThis.window?.mechproDesktop?.portable) }) {
     const mark = icon2("wrench");
     const lock = icon2("lock-keyhole", 15);
     const buttonIcon = icon2(hasAccount ? "log-in" : "save", 16);
     const safeEmail = escapeText(email);
     const device = portable ? "drive" : "computer";
     const shortDevice = portable ? "drive" : "PC";
-    const storage = portable ? "Shop Crank Demo Data folder beside the executable on this drive" : "Shop Crank Offline folder on this computer";
+    const storage = portable ? "MechPro Demo Data folder beside the executable on this drive" : "MechPro Offline folder on this computer";
     const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="name" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
     const confirmField = hasAccount ? "" : `<label for="offline-confirm">Confirm password</label><input id="offline-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8"/>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "Shop Crank Demo" : "Shop Crank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. Shop Crank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "MechPro Demo" : "MechPro"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. MechPro stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
   }
   function stripOfflineSecrets(value2) {
     if (Array.isArray(value2)) return value2.map(stripOfflineSecrets);
@@ -13961,7 +13961,7 @@ button{margin-top:12px;padding:8px 14px}
   // src/runtime/mutation-queue-store.js
   function createMutationQueueStore({
     storage,
-    storeKey = "shopcrank-mutation-queue-v1"
+    storeKey = "mechpro-mutation-queue-v1"
   } = {}) {
     if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") {
       throw new TypeError("createMutationQueueStore requires a Web Storage-compatible storage");
@@ -14304,7 +14304,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "login",
           roles: ["*"],
           title: "Sign in",
-          summary: "Open Shop Crank with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.",
+          summary: "Open MechPro with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.",
           steps: [
             "Enter your work email and request a sign-in link, or use Google when that button is shown.",
             "Open the email on this device and follow the link within fifteen minutes.",
@@ -14328,7 +14328,7 @@ button{margin-top:12px;padding:8px 14px}
             "Sign out and sign in again after the profile is active."
           ],
           limits: [
-            "Shop Crank will not invent an employee profile from Access alone for non-owner roles."
+            "MechPro will not invent an employee profile from Access alone for non-owner roles."
           ],
           keywords: ["pending", "employee", "profile", "deactivated"]
         },
@@ -14337,7 +14337,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "superadmin",
           roles: ["super_admin"],
           title: "Platform console",
-          summary: "Manage customer shops on Shop Crank: create accounts, credits, suspension, and Stripe keys for a shop.",
+          summary: "Manage customer shops on MechPro: create accounts, credits, suspension, and Stripe keys for a shop.",
           steps: [
             "Review the customer shop list and each shop\u2019s subscription status.",
             "Create a shop with owner name, email, shop name, and shop ID when onboarding a customer.",
@@ -14461,7 +14461,7 @@ button{margin-top:12px;padding:8px 14px}
             "Cancel on the reader from this screen if the customer walks away."
           ],
           limits: [
-            "Card numbers are never typed into Shop Crank on the reader path.",
+            "Card numbers are never typed into MechPro on the reader path.",
             "Technicians do not have Card terminal."
           ],
           keywords: ["pos", "terminal", "reader", "card present", "debit"]
@@ -14477,10 +14477,10 @@ button{margin-top:12px;padding:8px 14px}
             "Select Phone order, then choose the work order or invoice.",
             "Enter the amount and choose Enter card to open Stripe\u2019s Payment Element.",
             "Type the card only in the Stripe fields. Confirm the charge when the form is complete.",
-            "Keep this tab open until Shop Crank shows the payment recorded."
+            "Keep this tab open until MechPro shows the payment recorded."
           ],
           limits: [
-            "Never paste a card number into a Shop Crank note, chat, or work-order field.",
+            "Never paste a card number into a MechPro note, chat, or work-order field.",
             "Phone entry needs the publishable key saved on Payments.",
             "Mail-order / telephone (MOTO) may fall back to a normal keyed charge if Stripe has not enabled MOTO on the account."
           ],
@@ -14565,7 +14565,7 @@ button{margin-top:12px;padding:8px 14px}
             "Document the result on the work order."
           ],
           limits: [
-            "Shop Crank does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.",
+            "MechPro does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.",
             "Unsupported gateway or make combinations stay blocked."
           ],
           keywords: ["keys", "programming", "fob", "immobilizer"]
@@ -14659,7 +14659,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "imports",
           roles: ADMIN_ONLY,
           title: "Import data",
-          summary: "Bring customers, vehicles, or other supported lists into Shop Crank from a file.",
+          summary: "Bring customers, vehicles, or other supported lists into MechPro from a file.",
           steps: [
             "Pick the import type the screen lists.",
             "Preview rows before you confirm the write.",
@@ -14681,7 +14681,7 @@ button{margin-top:12px;padding:8px 14px}
             "Send only to customers who asked for contact on that channel."
           ],
           limits: [
-            "Do not send unsolicited mail from Shop Crank.",
+            "Do not send unsolicited mail from MechPro.",
             "Email routing on the apex domain stays with Google Workspace MX."
           ],
           keywords: ["messaging", "sms", "email"]
@@ -15338,8 +15338,8 @@ button{margin-top:12px;padding:8px 14px}
   function searchLaborGuide(query2 = "", services = CANNED_MENU) {
     const needle = String(query2 || "").trim().toLowerCase();
     if (needle.length < 2) return [];
-    const shopHits = SHOP_CRANK_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "Shop Crank guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
-    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "Shop Crank guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
+    const shopHits = MECHPRO_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "MechPro guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
+    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "MechPro guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
     return [...shopHits, ...canned].slice(0, 8);
   }
   function seedEstimateLines(draft = {}) {
@@ -15390,7 +15390,7 @@ button{margin-top:12px;padding:8px 14px}
     if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
     return {
       source: "shop-checklist",
-      notice: "Shop Crank AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
+      notice: "MechPro AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
       causes
     };
   }
@@ -15403,18 +15403,15 @@ button{margin-top:12px;padding:8px 14px}
     const email = String(draft.customer?.email || "").trim().toLowerCase();
     return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
   }
-  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [], customer = null } = {}) {
+  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
     const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
     const approval = draft.estimate?.approval || "pending";
     const status = approval === "approved" ? "approved" : "estimate";
     const assigned = applyAssignments({ id }, draft.assignments || [], users);
-    const missingPhotos = missingRequiredPhotos(draft);
     return {
       id,
-      customerId: customer?.id || "",
-      customer: String(customer?.name || "").trim() || customerDisplayName(draft),
-      phone: String(customer?.phone || draft.customer?.phone || "").trim(),
-      email: String(customer?.email || draft.customer?.email || "").trim(),
+      customer: customerDisplayName(draft),
+      phone: String(draft.customer?.phone || "").trim(),
       vehicle: vehicleLabel2(draft) || "Vehicle pending",
       vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
       complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
@@ -15446,9 +15443,7 @@ button{margin-top:12px;padding:8px 14px}
         concern: draft.concern,
         diagnosis: draft.diagnosis,
         disclaimer: INTAKE_DISCLAIMER,
-        approval,
-        photosWaived: missingPhotos.length > 0 && draft.photosWaived === true,
-        missingPhotos
+        approval
       }
     };
   }
@@ -15466,8 +15461,7 @@ button{margin-top:12px;padding:8px 14px}
     const problems = [];
     if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
     if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    const missingPhotos = missingRequiredPhotos(draft);
-    if (missingPhotos.length && draft.photosWaived !== true) problems.push(`Required photos: ${missingPhotos.join(", ")}. Add them on the Photos step, or tick "Convert without the required photos" below.`);
+    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
     if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
     return { ok: problems.length === 0, problems };
   }
@@ -15527,7 +15521,7 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
     const priced = priceIntakeEstimate(draft, profile);
     const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
     return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
-<p class="form-help">Lookup uses the Shop Crank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
+<p class="form-help">Lookup uses the MechPro guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
 <div id="labor-results"></div>
 <table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
 <label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
@@ -15545,9 +15539,7 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
     }).join("")}`;
     return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel2(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
-${missingRequiredPhotos(draft).length ? `<label class="intake-waiver"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without the required photos (${escapeHtml3(missingRequiredPhotos(draft).join(", "))}). The work order notes they are missing.</label>` : ""}
 ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
-${draft.convertError ? `<div class="import-errors"><span>Could not create the work order: ${escapeHtml3(draft.convertError)}</span></div>` : ""}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
   }
   function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
@@ -15613,7 +15605,6 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
       next.estimate.approval = data.approval || "pending";
     }
     if (step === "review") {
-      next.photosWaived = Boolean(form.querySelector('[name="photosWaived"]')?.checked);
       next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
         const employeeId = data[`assign-${role}`];
         if (!employeeId) return [];
@@ -15678,26 +15669,11 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
         if (form) current = readForm(current, form);
         const check2 = canConvertIntake(current);
         if (!check2.ok) {
-          current.convertError = "";
           persist("blocked");
           paint();
-          host.querySelector(".import-errors")?.scrollIntoView?.({ block: "nearest" });
           return;
         }
-        const button = host.querySelector("#intake-convert");
-        if (button) {
-          button.disabled = true;
-          button.textContent = "Creating work order...";
-        }
-        try {
-          current.convertError = "";
-          await onConvert?.(current);
-        } catch (error) {
-          current.convertError = error?.message || "The work order could not be saved. Your intake is still saved on this device.";
-          persist("convert-failed");
-          paint();
-          host.querySelector(".import-errors")?.scrollIntoView?.({ block: "nearest" });
-        }
+        await onConvert?.(current);
       });
       host.querySelector("#intake-decode")?.addEventListener("click", async () => {
         if (form) current = readForm(current, form);
@@ -15739,11 +15715,11 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
         const hits = searchLaborGuide(query2);
         const box = host.querySelector("#labor-results");
         if (!box) return;
-        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No Shop Crank guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
+        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No MechPro guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
         box.querySelectorAll("[data-add-labor]").forEach((button) => {
           button.addEventListener("click", () => {
             if (form) current = readForm(current, form);
-            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "Shop Crank guide" });
+            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "MechPro guide" });
             persist("labor");
             paint();
           });
@@ -15761,13 +15737,13 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
       current: () => current
     };
   }
-  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR;
+  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, MECHPRO_LABOR;
   var init_intake_wizard = __esm({
     "src/modules/intake-wizard.js"() {
       init_estimate_templates();
       init_canned_services();
       init_technician_assignment();
-      INTAKE_STORAGE_KEY = "shopcrank-intake-draft-v1";
+      INTAKE_STORAGE_KEY = "mechpro-intake-draft-v1";
       INTAKE_DISCLAIMER = "PRELIMINARY ESTIMATE DISCLAIMER\n\nThis estimate is based on the information available at the time of inspection. Additional issues may be identified during diagnosis, testing, disassembly, or repair. Parts pricing, labor times, and availability may change. Authorization will be obtained before performing additional work. Final invoice amounts may differ from this estimate.";
       INTAKE_STEPS = [
         { id: "customer", label: "Customer" },
@@ -15794,7 +15770,7 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
         { id: "extra", label: "Additional photo" }
       ];
       DAMAGE_AREAS = ["Front bumper", "Rear bumper", "Driver door", "Passenger door", "Hood", "Fenders", "Roof"];
-      SHOP_CRANK_LABOR = [
+      MECHPRO_LABOR = [
         { name: "Brake pads", hours: 1.5, notes: "One axle. Rotors and seized hardware are quoted separately." },
         { name: "Water pump", hours: 2.5, notes: "Starting point. Confirm the labor time for this VIN before selling the job." },
         { name: "Alternator", hours: 1.2, notes: "Replacement only. Programming or a stretch belt may add time." },
@@ -15876,21 +15852,9 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
   });
 
   // src/modules/shop-os/bay.js
-  function signedEstimateForOrder(order, _estimates = []) {
+  function signedEstimateForOrder(order, estimates = []) {
     if (!order?.id) return null;
-    const approval = order.estimateApproval;
-    if (approval && approval.status === "approved" && approval.signedAt && String(approval.authorizationName || "").trim()) {
-      return {
-        id: order.id,
-        workOrderId: order.id,
-        status: "approved",
-        signedAt: approval.signedAt,
-        authorizationName: approval.authorizationName,
-        signatureKey: approval.signatureKey || null,
-        type: approval.type || "signature"
-      };
-    }
-    return null;
+    return estimates.find((estimate) => estimate.workOrderId === order.id && estimate.status === "approved" && estimate.signedAt && String(estimate.authorizationName || "").trim()) || null;
   }
   function isRoAuthorizedForKeys(order, estimates = []) {
     return Boolean(signedEstimateForOrder(order, estimates));
@@ -24421,7 +24385,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
   // src/modules/platform/index.js
   init_detect();
   function initPlatform() {
-    window.__SHOP_CRANK_PLATFORM__ = platform;
+    window.__MECHPRO_PLATFORM__ = platform;
   }
   initPlatform();
 
@@ -24477,7 +24441,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
   init_detect();
   init_html();
   function registerModules() {
-    window.__SHOP_CRANK_MODULES__ = {
+    window.__MECHPRO_MODULES__ = {
       storage: storage_exports,
       mileage: mileage_exports,
       platform,
@@ -24675,7 +24639,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
     })).filter((section) => section.items.length > 0);
   }
   if (typeof globalThis !== "undefined") {
-    globalThis.__SHOP_CRANK_HOME__ = {
+    globalThis.__MECHPRO_HOME__ = {
       buildHomeModel,
       emptyState,
       escapeHtml,
@@ -24690,8 +24654,8 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
   }
 
   // src/main.js
-  window.__SHOP_CRANK_CONFIG__ = { cloudflare: cloudflareConfig, storage: storageKeys };
-  window.__SHOP_CRANK_HTML__ = { escapeAttr, escapeHtml };
+  window.__MECHPRO_CONFIG__ = { cloudflare: cloudflareConfig, storage: storageKeys };
+  window.__MECHPRO_HTML__ = { escapeAttr, escapeHtml };
   var bootstrapHooks = {
     beforeLegacyAppMount: () => {
     },
@@ -24700,13 +24664,13 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
     registerFeatureModule: () => {
     }
   };
-  window.__SHOP_CRANK_BOOTSTRAP__ = { ...bootstrapHooks };
-  window.__SHOP_CRANK_BOOTSTRAP_READY__ = (async () => {
-    window.__SHOP_CRANK_BOOTSTRAP__.beforeLegacyAppMount();
+  window.__MECHPRO_BOOTSTRAP__ = { ...bootstrapHooks };
+  window.__MECHPRO_BOOTSTRAP_READY__ = (async () => {
+    window.__MECHPRO_BOOTSTRAP__.beforeLegacyAppMount();
     try {
       await Promise.resolve().then(() => (init_legacy(), legacy_exports));
     } finally {
-      window.__SHOP_CRANK_BOOTSTRAP__.afterLegacyAppMount();
+      window.__MECHPRO_BOOTSTRAP__.afterLegacyAppMount();
     }
   })().catch((error) => {
     console.error("Legacy app bootstrap failed", error);
