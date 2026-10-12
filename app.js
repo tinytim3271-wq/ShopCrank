@@ -5435,11 +5435,23 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
   });
 
   // src/modules/shop-os/bay.js
-  function signedEstimateForOrder(order, estimates = []) {
+  function signedEstimateForOrder(order, _estimates = []) {
     if (!order?.id) return null;
-    return estimates.find((estimate) => estimate.workOrderId === order.id && estimate.status === "approved" && estimate.signedAt && String(estimate.authorizationName || "").trim()) || null;
+    const approval = order.estimateApproval;
+    if (approval && approval.status === "approved" && approval.signedAt && String(approval.authorizationName || "").trim()) {
+      return {
+        id: order.id,
+        workOrderId: order.id,
+        status: "approved",
+        signedAt: approval.signedAt,
+        authorizationName: approval.authorizationName,
+        signatureKey: approval.signatureKey || null,
+        type: approval.type || "signature"
+      };
+    }
+    return null;
   }
-  function isRoAuthorizedForKeys(order, estimates = []) {
+  function isRoAuthorizedForKeys2(order, estimates = []) {
     return Boolean(signedEstimateForOrder(order, estimates));
   }
   function assertKeyJobAllowed({ order, estimates, operation, notes, liveProgrammer = false }) {
@@ -5450,7 +5462,7 @@ ${draft.convertError ? `<div class="import-errors"><span>Could not create the wo
     if (!KEY_OPERATIONS.some((item) => item.id === operation)) {
       throw new Error("Choose identify, add, program, or test.");
     }
-    if (!isRoAuthorizedForKeys(order, estimates)) {
+    if (!isRoAuthorizedForKeys2(order, estimates)) {
       throw new Error("A signed repair order for this vehicle is required before key programming.");
     }
     if (liveProgrammer) {
@@ -9894,8 +9906,15 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         const vehicleId = `veh-${Date.now()}`;
         await saveShopEntity("vehicles", { id: vehicleId, customerId: customer.id, customer: customer.name || display, vin: current.vehicle.vin, year: current.vehicle.year, make: current.vehicle.make, model: current.vehicle.model, plate: current.vehicle.plate, mileage: current.vehicle.mileage, color: current.vehicle.color });
         const max = state.orders.reduce((highest, order) => Math.max(highest, Number(String(order.id).replace(/\D/g, "")) || 0), 1040);
-        const record = intakeOrderPayload(current, { id: `RO-${max + 1}`, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users, customer });
-        record.intake.photos = [];
+        let orderId = `RO-${max + 1}`;
+        let taken = new Set(state.orders.map((order) => order.id));
+        if (taken.has(orderId)) orderId = `RO-${Date.now()}`;
+        const buildRecord = (id) => {
+          const record2 = intakeOrderPayload(current, { id, laborRate: Number(profile.laborRate || 165), taxRate: Number(state.taxSettings?.rate || 0), users: state.users, customer });
+          record2.intake.photos = [];
+          return record2;
+        };
+        let record = buildRecord(orderId);
         for (const photo of current.photos || []) {
           if (!photo.file) {
             record.intake.photos.push(photo);
@@ -9908,10 +9927,24 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
             record.intake.photos.push({ id: photo.id, slot: photo.slot, name: photo.name, takenAt: photo.takenAt, uploadError: error.message || "Upload failed" });
           }
         }
+        const photos = record.intake.photos;
         let saved = record;
         if (!isOfflineDesktop()) {
-          const response = await apiFetch("/entities/orders", { method: "POST", body: JSON.stringify(record) });
-          saved = response?.queued ? record : response || record;
+          let attempts = 0;
+          while (attempts < 4) {
+            try {
+              const response = await apiFetch("/entities/orders", { method: "POST", body: JSON.stringify(record) });
+              saved = response?.queued ? record : response || record;
+              break;
+            } catch (error) {
+              const conflict = Number(error?.status) === 409 || /already exists/i.test(String(error?.message || ""));
+              if (!conflict || attempts === 3) throw error;
+              attempts += 1;
+              orderId = `RO-${Date.now()}-${attempts}`;
+              record = buildRecord(orderId);
+              record.intake.photos = photos;
+            }
+          }
         }
         state.orders.unshift(saved);
         localStorage.removeItem(INTAKE_STORAGE_KEY);
