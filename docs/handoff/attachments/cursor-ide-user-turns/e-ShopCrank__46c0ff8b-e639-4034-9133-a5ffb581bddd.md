@@ -1,6 +1,6 @@
 # Cursor agent transcript
-- source: `C:\Users\secon\.cursor\projects\e-MechPro\agent-transcripts\46c0ff8b-e639-4034-9133-a5ffb581bddd\46c0ff8b-e639-4034-9133-a5ffb581bddd.jsonl`
-- project folder: `e-MechPro`
+- source: `C:\Users\secon\.cursor\projects\e-Shop Crank\agent-transcripts\46c0ff8b-e639-4034-9133-a5ffb581bddd\46c0ff8b-e639-4034-9133-a5ffb581bddd.jsonl`
+- project folder: `e-Shop Crank`
 - mtime: 2026-08-30T02:48:50
 - size_bytes: 443068
 - user_turns: 32

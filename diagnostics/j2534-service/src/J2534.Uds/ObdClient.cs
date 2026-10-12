@@ -1,7 +1,7 @@
 using System.Text;
-using MechPro.J2534.IsoTp;
+using ShopCrank.J2534.IsoTp;
 
-namespace MechPro.J2534.Uds;
+namespace ShopCrank.J2534.Uds;
 
 /// <summary>One decoded SAE J1979 mode 01 reading.</summary>
 public sealed class ObdPidReading

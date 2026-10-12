@@ -1,5 +1,5 @@
 /* Loaded only as a text fragment by scripts/inject-filing-overrides.mjs — do not import. */
-/* === MECHPRO_FILING_OVERRIDES_START === */
+/* === SHOP_CRANK_FILING_OVERRIDES_START === */
 
 function filingIsoDate(d = new Date()) {
   const x = new Date(d);
@@ -131,7 +131,7 @@ ${filingCenterMarkup()}`);
 function filingCenterMarkup() {
   if (!filingCenterOpen) return '';
   const shop = shopFilingProfile();
-  return `<section class="messaging-panel no-print" style="margin-top:16px"><div class="statement-head"><div><div class="eyebrow">E-file center</div><h2>IRS · Texas Comptroller · SSA</h2><p>MechPro builds portal-ready packages. Transmit via the linked government portals (or your CPA). Configure transmitter credentials in Shop settings when you enroll as an e-file provider.</p></div><button type="button" class="secondary" id="close-filing-center">Close</button></div>
+  return `<section class="messaging-panel no-print" style="margin-top:16px"><div class="statement-head"><div><div class="eyebrow">E-file center</div><h2>IRS · Texas Comptroller · SSA</h2><p>Shop Crank builds portal-ready packages. Transmit via the linked government portals (or your CPA). Configure transmitter credentials in Shop settings when you enroll as an e-file provider.</p></div><button type="button" class="secondary" id="close-filing-center">Close</button></div>
 <div class="accounting-grid" style="margin-top:12px">
 <section class="statement"><div class="eyebrow">Sales tax</div><h3>Texas WebFile / EDI</h3><p>List-supplement CSV with 7-digit jurisdiction codes for WebFile or Texas EDI software.</p><a class="secondary" href="https://comptroller.texas.gov/taxes/file-pay/about-webfile.php" target="_blank" rel="noopener">Open WebFile</a></section>
 <section class="statement"><div class="eyebrow">Employment tax</div><h3>IRS Form 941 + EFTPS</h3><p>Quarterly 941 worksheet from payroll withholdings. Pay deposits via EFTPS.</p><a class="secondary" href="https://www.irs.gov/businesses/small-businesses-self-employed/e-file-employment-tax-forms" target="_blank" rel="noopener">IRS employment e-file</a></section>
@@ -184,7 +184,7 @@ function exportSalesTaxCsv() {
     [],
     ['Totals', '', '', taxReportResult.totals.gross, taxReportResult.totals.taxable, taxReportResult.totals.nontaxable || 0, taxReportResult.totals.tax, '', '', ''],
   ];
-  Filing.downloadTextFile(`mechpro-sales-tax-${taxReportResult.from}-${taxReportResult.to}.csv`, Filing.csvFromRows(rows));
+  Filing.downloadTextFile(`shopcrank-sales-tax-${taxReportResult.from}-${taxReportResult.to}.csv`, Filing.csvFromRows(rows));
   toast('Sales tax CSV exported');
 }
 
@@ -199,7 +199,7 @@ function exportTexasWebfilePackage() {
     to: taxReportResult.to,
     outlet: 'Primary',
   });
-  Filing.downloadTextFile(`mechpro-tx-webfile-${taxReportResult.from}-${taxReportResult.to}.csv`, csv);
+  Filing.downloadTextFile(`shopcrank-tx-webfile-${taxReportResult.from}-${taxReportResult.to}.csv`, csv);
   toast('Texas WebFile package downloaded');
 }
 
@@ -254,7 +254,7 @@ ${catRows}
 <small>${pack.payments} payments · Sales tax ${money(pack.salesTax)} held in 2100</small>
 </section>
 <section class="statement"><div class="statement-head"><div><div class="eyebrow">Filing note</div><h2>Income tax package</h2></div></div>
-<p>Export these CSVs for your CPA or Schedule C. Revenue excludes sales tax collected. MechPro does not e-file Form 1040/1120 — use the package with your preparer or tax software.</p>
+<p>Export these CSVs for your CPA or Schedule C. Revenue excludes sales tax collected. Shop Crank does not e-file Form 1040/1120 — use the package with your preparer or tax software.</p>
 </section></div></div>`;
 }
 
@@ -273,7 +273,7 @@ function exportTaxPackagePl() {
     ['Net income', pack.net],
     ['Sales tax collected (liability 2100)', pack.salesTax],
   ];
-  Filing.downloadTextFile(`mechpro-pl-${pack.from}-${pack.to}.csv`, Filing.csvFromRows(rows));
+  Filing.downloadTextFile(`shopcrank-pl-${pack.from}-${pack.to}.csv`, Filing.csvFromRows(rows));
   toast('P&L tax package exported');
 }
 
@@ -285,7 +285,7 @@ function exportTaxPackageExpenses() {
     ['Date', 'Vendor', 'Category', 'Account', 'Amount', 'Memo'],
     ...pack.expenses.map(x => [x.date, x.vendor, x.category, x.account || expenseAccount(x.category), x.amount, x.memo || '']),
   ];
-  Filing.downloadTextFile(`mechpro-expenses-${pack.from}-${pack.to}.csv`, Filing.csvFromRows(rows));
+  Filing.downloadTextFile(`shopcrank-expenses-${pack.from}-${pack.to}.csv`, Filing.csvFromRows(rows));
   toast('Expense detail exported');
 }
 
@@ -403,7 +403,7 @@ payroll = function () {
     hours: acc.hours + s.hours,
   }), { federal: 0, ss: 0, med: 0, net: 0, hours: 0 });
   return shell(`${heading('Compensation', 'Payroll', admin ? `Weekly payroll for ${period.start} – ${period.end}. Pub 15-T (2026) withholding · fileable register & 941/W-2 packages.` : `Your weekly pay stub for ${period.start} – ${period.end}.`, false)}
-<div class="ai-notice">${icon('landmark', 16)}<span>Withholding uses IRS Pub 15-T (2026) percentage method, employee W-4 fields, and FICA. MechPro prepares e-file packages for IRS / SSA portals; it does not transmit until you upload via those portals or configure transmitter credentials.</span></div>
+<div class="ai-notice">${icon('landmark', 16)}<span>Withholding uses IRS Pub 15-T (2026) percentage method, employee W-4 fields, and FICA. Shop Crank prepares e-file packages for IRS / SSA portals; it does not transmit until you upload via those portals or configure transmitter credentials.</span></div>
 ${admin ? `<div class="payroll-actions"><button class="secondary" id="payroll-export">${icon('download', 14)} Export register</button><button class="secondary" id="payroll-export-detail">${icon('download', 14)} Export detail</button><button class="secondary" id="payroll-export-941">${icon('file-text', 14)} 941 worksheet</button><button class="secondary" id="payroll-export-efw2">${icon('upload', 14)} SSA EFW2</button><button class="primary" id="sync-payroll">${icon('refresh-cw', 14)} Sync jobs</button></div>` : ''}
 <div class="payroll-period-controls" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
 <button type="button" class="secondary" id="payroll-prev">${icon('chevron-left', 14)} Prev</button>
@@ -429,7 +429,7 @@ exportPayroll = function () {
       stub.employerSocialSecurity, stub.employerMedicare, stub.method || '',
     ]),
   ];
-  Filing.downloadTextFile(`mechpro-payroll-register-${period.key}.csv`, Filing.csvFromRows(rows));
+  Filing.downloadTextFile(`shopcrank-payroll-register-${period.key}.csv`, Filing.csvFromRows(rows));
   toast('Payroll register exported');
 };
 
@@ -443,7 +443,7 @@ function exportPayrollDetail() {
       return [user?.employeeId || '', user?.name || '', `${period.start} - ${period.end}`, line.roNumber, line.customer, line.hours, line.rate, line.amount || line.grossPay];
     }),
   ];
-  Filing.downloadTextFile(`mechpro-payroll-detail-${period.key}.csv`, Filing.csvFromRows(rows));
+  Filing.downloadTextFile(`shopcrank-payroll-detail-${period.key}.csv`, Filing.csvFromRows(rows));
   toast('Payroll detail exported');
 }
 
@@ -491,7 +491,7 @@ function export941Worksheet() {
   };
   const shop = shopFilingProfile();
   Filing.downloadTextFile(
-    `mechpro-941-Q${bounds.quarter}-${bounds.taxYear}.csv`,
+    `shopcrank-941-Q${bounds.quarter}-${bounds.taxYear}.csv`,
     Filing.form941WorksheetCsv(summary, { taxYear: bounds.taxYear, quarter: bounds.quarter, ein: shop.ein, employerName: shop.shopName }),
   );
   toast('Form 941 worksheet exported');
@@ -522,7 +522,7 @@ function exportEfw2Package() {
   });
   const w2Employees = employees.filter(e => !String(e.taxStatus || '').includes('1099'));
   const text = Filing.buildEfw2Text({ ein: shop.ein, name: shop.shopName, address: shop.address }, w2Employees, year);
-  Filing.downloadTextFile(`mechpro-efw2-${year}.txt`, text, 'text/plain;charset=utf-8');
+  Filing.downloadTextFile(`shopcrank-efw2-${year}.txt`, text, 'text/plain;charset=utf-8');
   toast('SSA EFW2 package downloaded');
 }
 
@@ -758,4 +758,4 @@ bindExpandedFeatures = function () {
   }
 };
 
-/* === MECHPRO_FILING_OVERRIDES_END === */
+/* === SHOP_CRANK_FILING_OVERRIDES_END === */

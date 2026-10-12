@@ -7,8 +7,8 @@ const { spawn } = require('node:child_process');
 
 const hostToken = 'test-host-token';
 const socketPath = process.platform === 'win32'
-  ? `\\\\.\\pipe\\mechpro-j2534-test-${process.pid}`
-  : path.join(os.tmpdir(), `mechpro-j2534-test-${process.pid}.sock`);
+  ? `\\\\.\\pipe\\shopcrank-j2534-test-${process.pid}`
+  : path.join(os.tmpdir(), `shopcrank-j2534-test-${process.pid}.sock`);
 
 // ECDSA P-256 signing pair: host verifies with the public key; tests mint with
 // the private key (standing in for the Worker).
@@ -48,8 +48,8 @@ async function run() {
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'start.js')], {
     env: {
       ...process.env,
-      MECHPRO_J2534_PIPE: socketPath,
-      MECHPRO_J2534_TOKEN: hostToken,
+      SHOP_CRANK_J2534_PIPE: socketPath,
+      SHOP_CRANK_J2534_TOKEN: hostToken,
       DIAGNOSTICS_SIGNING_PUBLIC_KEY: publicPem,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

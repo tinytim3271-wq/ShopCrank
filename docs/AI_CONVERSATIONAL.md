@@ -1,11 +1,11 @@
-# MechPro conversational AI
+# Shop Crank conversational AI
 
-MechPro's primary shop-reasoning path is Anthropic Claude. Sonnet handles normal shop questions and Opus is available for explicit or heuristic escalation of difficult diagnostics. Deepgram Voice Agent provides speech-to-text and text-to-speech while using the same Anthropic account as its BYO thinking backend.
+Shop Crank's primary shop-reasoning path is Anthropic Claude. Sonnet handles normal shop questions and Opus is available for explicit or heuristic escalation of difficult diagnostics. Deepgram Voice Agent provides speech-to-text and text-to-speech while using the same Anthropic account as its BYO thinking backend.
 
 `AI_ENABLED` is `1` in `wrangler.jsonc`. Text assistant turns are routed in this order:
 
-1. **The shop's own Anthropic key** (paid upgrade, see below). Claude answers with the shop's key, so Anthropic bills the shop directly and MechPro records no provider cost for those turns.
-2. **The platform `ANTHROPIC_API_KEY` secret**, only if a platform admin sets it. This is an optional platform-wide override: MechPro then pays Anthropic for every shop that has no key of its own. Leave it unset to keep the default below.
+1. **The shop's own Anthropic key** (paid upgrade, see below). Claude answers with the shop's key, so Anthropic bills the shop directly and Shop Crank records no provider cost for those turns.
+2. **The platform `ANTHROPIC_API_KEY` secret**, only if a platform admin sets it. This is an optional platform-wide override: Shop Crank then pays Anthropic for every shop that has no key of its own. Leave it unset to keep the default below.
 3. **Cloudflare Workers AI** (the included default): the `AI` binding with model `WORKERS_AI_MODEL` (default `@cf/meta/llama-3.3-70b-instruct-fp8-fast`). It receives the 40 most recently updated shop records as read-only context, cannot call tools, and never prepares estimate drafts.
 
 If a Claude call fails, the turn is answered by Workers AI instead. When the shop's own key is the problem (rejected, no permission, out of credits, model not available), the key is flagged in `shop_ai_settings` and the response carries a `notice` telling the shop to check its key in Shop settings > AI; temporary Anthropic outages fall back with a softer notice and do not flag the key. Voice (Deepgram) is unchanged and still requires both platform provider secrets. Set `AI_ENABLED` to `0` to turn all AI endpoints off.
@@ -43,7 +43,7 @@ Use model environment variables to pin a dated provider model when release contr
 
 ## Text API
 
-`POST /api/ai/assistant` uses the same cookie, Cloudflare Access, and shop-role authorization as the existing MechPro APIs. Roles `admin`, `office`, `service_writer`, and `technician` may call it. The existing web assistant already uses this endpoint.
+`POST /api/ai/assistant` uses the same cookie, Cloudflare Access, and shop-role authorization as the existing Shop Crank APIs. Roles `admin`, `office`, `service_writer`, and `technician` may call it. The existing web assistant already uses this endpoint.
 
 Request:
 
@@ -69,7 +69,7 @@ npm run dev:worker
 
 curl -sS http://127.0.0.1:8787/api/ai/assistant \
   -H 'Content-Type: application/json' \
-  -H 'X-MechPro-Dev-Email: admin@example.com' \
+  -H 'X-ShopCrank-Dev-Email: admin@example.com' \
   --data '{"message":"Find estimate EST-100 and explain what is still unknown.","model":"sonnet"}'
 ```
 
@@ -83,7 +83,7 @@ Connect an authenticated WebSocket client to:
 wss://<worker-host>/api/ai/voice/session
 ```
 
-The Worker authenticates the user first, assigns a unique Durable Object session, and opens the upstream Deepgram Voice Agent connection server-side. Neither the Deepgram key nor the Anthropic key is sent to the browser. The Durable Object sends Deepgram a BYO Anthropic configuration with the MechPro accuracy prompt and a bounded, read-only snapshot of the authenticated shop.
+The Worker authenticates the user first, assigns a unique Durable Object session, and opens the upstream Deepgram Voice Agent connection server-side. Neither the Deepgram key nor the Anthropic key is sent to the browser. The Durable Object sends Deepgram a BYO Anthropic configuration with the Shop Crank accuracy prompt and a bounded, read-only snapshot of the authenticated shop.
 
 Client audio is raw `linear16` mono at 16 kHz. Returned audio is raw `linear16` mono at 24 kHz. Deepgram JSON events and binary audio are relayed unchanged. A browser voice UI is a follow-up; the current UI continues to use text chat.
 

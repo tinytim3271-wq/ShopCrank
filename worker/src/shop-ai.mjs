@@ -6,7 +6,7 @@ import { decryptSecret, encryptSecret } from './security.mjs';
 // Routing order for text AI (see runAnthropicTurn in ai.mjs):
 //   1. The shop's own Anthropic key (stored encrypted in shop_ai_settings).
 //   2. The platform ANTHROPIC_API_KEY secret, only if a platform admin set it
-//      (optional override: MechPro then pays Anthropic for every shop without a key).
+//      (optional override: Shop Crank then pays Anthropic for every shop without a key).
 //   3. Cloudflare Workers AI (the included default).
 // A failing shop key falls back to Workers AI and returns a notice for the shop.
 
@@ -86,7 +86,7 @@ export function anthropicFailureMessage(kind) {
 
 export class AnthropicApiError extends HttpError {
   constructor({ status = 0, type = '', message = '' } = {}) {
-    super(502, 'The MechPro assistant provider is unavailable');
+    super(502, 'The Shop Crank assistant provider is unavailable');
     this.name = 'AnthropicApiError';
     this.upstreamStatus = status;
     this.upstreamType = type;

@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sign in to MechPro</title>
-    <link rel="icon" href="/mechpro-icon.svg" type="image/svg+xml" />
+    <title>Sign in to Shop Crank</title>
+    <link rel="icon" href="/shopcrank-icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/assets/fonts/fonts.css" />
     <link rel="stylesheet" href="/market.css" />
   </head>
   <body class="auth-screen">
     <main class="auth-card">
-      <a class="brand" href="/features"><span class="brand-mark">M</span><span><strong>MECHPRO</strong><small>Shop operating system</small></span></a>
+      <a class="brand" href="/features"><span class="brand-mark">M</span><span><strong>SHOP_CRANK</strong><small>Shop operating system</small></span></a>
       <h1>Sign in with your work email</h1>
-      <p>We will open a one-time link for this browser. MechPro never receives your password.</p>
+      <p>We will open a one-time link for this browser. Shop Crank never receives your password.</p>
       <form id="login-form">
         <label for="email">Work email<input id="email" type="email" name="email" placeholder="you@yourshop.com" autocomplete="username" required /></label>
         <button class="btn primary" type="submit">Continue securely</button>
@@ -61,7 +61,7 @@
           errorEl.hidden = false;
           errorEl.className = 'error';
           errorEl.textContent = /failed to fetch|networkerror|load failed/i.test(raw)
-            ? 'Could not reach MechPro sign-in. Use the latest Windows installer from Downloads, or open the site in a browser.'
+            ? 'Could not reach Shop Crank sign-in. Use the latest Windows installer from Downloads, or open the site in a browser.'
             : (raw || 'Sign-in failed.');
           button.disabled = false;
         }

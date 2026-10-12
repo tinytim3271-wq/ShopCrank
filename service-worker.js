@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mechpro-shell-v29';
+const CACHE_NAME = 'shopcrank-shell-v29';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -6,7 +6,7 @@ const SHELL_FILES = [
   './styles.css',
   './theme.css',
   './manifest.webmanifest',
-  './mechpro-icon.svg',
+  './shopcrank-icon.svg',
   './assets/vendor/lucide.min.js',
   './assets/vendor/dompurify.min.js',
   './assets/fonts/fonts.css',

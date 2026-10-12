@@ -1,10 +1,10 @@
-"""Voice intake micro-service for MechPro Dispatch.
+"""Voice intake micro-service for Shop Crank Dispatch.
 
 Converts inbound-call transcripts into structured work orders that can be
 imported directly into the dispatch board.
 
 Ported from tinytim3271-wq/Reliable-Voice- and adapted for the unified
-mechpro-dispatch platform.
+shopcrank-dispatch platform.
 
 Usage
 -----
@@ -24,7 +24,7 @@ POST /intake-call
       "vehicle": "2019 Ford F-150"
     }
 
-Responds with a JSON work-order object ready for the MechPro API or local
+Responds with a JSON work-order object ready for the Shop Crank API or local
 import.  The app.js AI phone form already mirrors this schema when generating
 AI-assisted work orders from the in-app assistant.
 """
@@ -188,7 +188,7 @@ def _match_symptom(transcript: str) -> dict[str, Any]:
 
 
 def build_work_order(payload: dict[str, Any], labor_rate: float = 120.0) -> dict[str, Any]:
-    """Build a structured MechPro work-order dict from a raw call payload."""
+    """Build a structured Shop Crank work-order dict from a raw call payload."""
     transcript = str(payload.get("call_transcript", "")).strip()
     if not transcript:
         raise ValueError("call_transcript is required")
@@ -290,7 +290,7 @@ class VoiceIntakeHandler(BaseHTTPRequestHandler):
 
 def run(host: str = "127.0.0.1", port: int = 8080) -> None:
     server = ThreadingHTTPServer((host, port), VoiceIntakeHandler)
-    print(f"MechPro voice-intake service listening on http://{host}:{port}")
+    print(f"Shop Crank voice-intake service listening on http://{host}:{port}")
     print("  POST /intake-call   — convert call transcript to work order")
     print("  GET  /healthz       — liveness check")
     print("Press Ctrl-C to stop.")

@@ -1,4 +1,4 @@
-namespace MechPro.J2534.Native;
+namespace ShopCrank.J2534.Native;
 
 public static class PassThruMsgHelper
 {

@@ -49,8 +49,8 @@ Optional:
   --help                  Show this message
 
 Examples:
-  GITHUB_TOKEN=... GITHUB_REPOSITORY=tinytim3271-wq/mechpro-dispatch bash scripts/merge-open-prs.sh
-  bash scripts/merge-open-prs.sh --owner tinytim3271-wq --repo mechpro-dispatch --token "\$GITHUB_TOKEN"
+  GITHUB_TOKEN=... GITHUB_REPOSITORY=tinytim3271-wq/shopcrank-dispatch bash scripts/merge-open-prs.sh
+  bash scripts/merge-open-prs.sh --owner tinytim3271-wq --repo shopcrank-dispatch --token "\$GITHUB_TOKEN"
 USAGE
 }
 

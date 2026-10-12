@@ -1,5 +1,5 @@
 {
-  "name": "MechPro Dispatch",
+  "name": "Shop Crank Dispatch",
   "install": "bash .cursor/install.sh",
   "terminals": [
     {
@@ -10,7 +10,7 @@
     {
       "name": "worker-api",
       "command": "export NVM_DIR=\"$HOME/.nvm\"; . \"$NVM_DIR/nvm.sh\"; nvm use 24 >/dev/null; exec npx wrangler dev --local --ip 127.0.0.1 --port 8787",
-      "description": "Cloudflare Worker API (local miniflare + local D1) at http://127.0.0.1:8787/. Send X-MechPro-Dev-Email with DEV_AUTH_BYPASS for local auth."
+      "description": "Cloudflare Worker API (local miniflare + local D1) at http://127.0.0.1:8787/. Send X-ShopCrank-Dev-Email with DEV_AUTH_BYPASS for local auth."
     }
   ],
   "ports": [

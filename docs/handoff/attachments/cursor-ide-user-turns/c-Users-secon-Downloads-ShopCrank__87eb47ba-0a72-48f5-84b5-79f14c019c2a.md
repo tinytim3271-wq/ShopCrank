@@ -1,6 +1,6 @@
 # Cursor agent transcript
-- source: `C:\Users\secon\.cursor\projects\c-Users-secon-Downloads-MechPro\agent-transcripts\87eb47ba-0a72-48f5-84b5-79f14c019c2a\87eb47ba-0a72-48f5-84b5-79f14c019c2a.jsonl`
-- project folder: `c-Users-secon-Downloads-MechPro`
+- source: `C:\Users\secon\.cursor\projects\c-Users-secon-Downloads-Shop Crank\agent-transcripts\87eb47ba-0a72-48f5-84b5-79f14c019c2a\87eb47ba-0a72-48f5-84b5-79f14c019c2a.jsonl`
+- project folder: `c-Users-secon-Downloads-Shop Crank`
 - mtime: 2026-08-10T12:14:45
 - size_bytes: 758359
 - user_turns: 25
@@ -193,7 +193,7 @@ so the program is fully ready to go?
 ### User turn 20
 <timestamp>Monday, Aug 10, 2026, 9:31 AM (UTC-5)</timestamp>
 <user_query>
-can you write a full new program called MechPro2.0 and base it on all the features in the original but write the program to be hosted on aws and make it better than the original
+can you write a full new program called Shop Crank2.0 and base it on all the features in the original but write the program to be hosted on aws and make it better than the original
 </user_query>
 
 ### User turn 21

@@ -1,16 +1,16 @@
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
-using MechPro.J2534.Core;
+using ShopCrank.J2534.Core;
 
-namespace MechPro.J2534.Host;
+namespace ShopCrank.J2534.Host;
 
 /// <summary>Named-pipe JSON-RPC host for J2534 diagnostic operations.</summary>
 public static class Program
 {
     public static async Task Main(string[] args)
     {
-        var pipeName = Environment.GetEnvironmentVariable("MECHPRO_J2534_PIPE") ?? "mechpro-j2534";
+        var pipeName = Environment.GetEnvironmentVariable("SHOP_CRANK_J2534_PIPE") ?? "shopcrank-j2534";
         if (pipeName.StartsWith(@"\\.\pipe\", StringComparison.OrdinalIgnoreCase))
         {
             pipeName = pipeName[@"\\.\pipe\".Length..];

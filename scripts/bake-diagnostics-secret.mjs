@@ -15,7 +15,7 @@ const target = path.join(dir, 'capability-secret.txt');
 fs.mkdirSync(dir, { recursive: true });
 
 const fromEnv = String(
-  process.env.MECHPRO_DIAG_CAPABILITY_SECRET
+  process.env.SHOP_CRANK_DIAG_CAPABILITY_SECRET
     || process.env.DIAGNOSTICS_CAPABILITY_SECRET
     || '',
 ).trim();

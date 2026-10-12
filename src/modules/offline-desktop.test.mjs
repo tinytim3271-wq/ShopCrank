@@ -33,9 +33,9 @@ test('shop snapshots drop passwords and the owner profile matches the local acco
 
 test('portable login explains drive-local storage without changing installed editions', () => {
   const markup = offlineLoginMarkup({ hasAccount: false, email: '', icon, portable: true });
-  assert.match(markup, /MechPro Demo/);
+  assert.match(markup, /Shop Crank Demo/);
   assert.match(markup, /Save sign-in on this drive/);
-  assert.match(markup, /MechPro Demo Data folder beside the executable on this drive/);
+  assert.match(markup, /Shop Crank Demo Data folder beside the executable on this drive/);
   assert.doesNotMatch(markup, /this PC|this computer/);
   const returning = offlineLoginMarkup({ hasAccount: true, email: 'demo@shop.test', icon, portable: true });
   assert.match(returning, /Sign in on this drive/);

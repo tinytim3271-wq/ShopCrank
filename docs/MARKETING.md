@@ -1,4 +1,4 @@
-# MechPro commercial plan
+# Shop Crank commercial plan
 
 Locked public prices. Founding rates are invite-only and do not appear on `/pricing`.
 
@@ -18,7 +18,7 @@ Founding Member, first 50, private link only: Solo $49, Shop $99, Shop Pro $199.
 - Dispatch, scheduling, work orders, customers, invoices, and CSV import.
 - The in-app assistant drafts estimates from typed or spoken notes. A person confirms the job before it is sold.
 - Settings connects an AgentPhone agent. Calls and texts are answered by that assistant. The minute caps above are the commercial allowance.
-- Card payments use a Stripe-hosted page. MechPro does not store card numbers.
+- Card payments use a Stripe-hosted page. Shop Crank does not store card numbers.
 - Solo and Shop authorize the diagnostics simulator. Shop Pro, Enterprise, and Founding Pro authorize live key, immobilizer, and module procedures. Live mode also needs that shop's AutoAuth login and a J2534 pass-thru. OEM seed and key material is not bundled.
 - The shop app is an offline-capable PWA. Sign-in is a one-time work-email link.
 

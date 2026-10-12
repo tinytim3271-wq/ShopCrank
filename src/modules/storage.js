@@ -1,5 +1,5 @@
 /**
- * Shared storage helpers — single source of truth for MechPro local keys.
+ * Shared storage helpers — single source of truth for Shop Crank local keys.
  */
 import { storageKeys } from '../shared/config.js';
 

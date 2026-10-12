@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace MechPro.J2534.Host;
+namespace ShopCrank.J2534.Host;
 
 public static class JsonOptions
 {

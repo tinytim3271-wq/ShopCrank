@@ -10,7 +10,7 @@
     "/service-worker.js",
     "/diagnostics-ui.js",
     "/manifest.webmanifest",
-    "/mechpro-icon.svg",
+    "/shopcrank-icon.svg",
     "/assets/*",
     "/downloads/*",
     "/pricing",

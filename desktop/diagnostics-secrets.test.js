@@ -18,7 +18,7 @@ describe('resolveDiagnosticsPublicKey', () => {
   });
 
   it('uses the explicit public-key file when present', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mechpro-diag-public-key-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shopcrank-diag-public-key-'));
     const filePath = path.join(dir, 'capability-public-key.pem');
     fs.writeFileSync(filePath, 'public-key-from-file\n');
     try {
@@ -34,7 +34,7 @@ describe('resolveDiagnosticsPublicKey', () => {
   });
 
   it('uses the packaged public-key file when present', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mechpro-diag-public-key-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shopcrank-diag-public-key-'));
     const previous = process.resourcesPath;
     process.resourcesPath = dir;
     try {

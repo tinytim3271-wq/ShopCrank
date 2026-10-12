@@ -11,23 +11,35 @@ import {
   simulateObdScan,
 } from "./bay.js";
 
-const order = { id: "RO-1048", vehicle: "2018 Ford F-150 XLT", vin: "DEMOVIN000000001" };
-const signed = [{
+const order = {
+  id: "RO-1048",
+  vehicle: "2018 Ford F-150 XLT",
+  vin: "DEMOVIN000000001",
+  estimateApproval: {
+    status: "approved",
+    type: "signature",
+    signedAt: "2026-09-28T12:00:00.000Z",
+    authorizationName: "Demo Customer A",
+  },
+};
+const unsignedOrder = { id: "RO-1048", vehicle: "2018 Ford F-150 XLT", vin: "DEMOVIN000000001" };
+const forgedEstimates = [{
   workOrderId: "RO-1048",
   status: "approved",
   signedAt: "2026-09-28T12:00:00.000Z",
-  authorizationName: "Demo Customer A",
+  authorizationName: "Forged Customer",
 }];
 
-test("key programming requires a signed repair order", () => {
-  assert.equal(isRoAuthorizedForKeys(order, []), false);
+test("key programming requires a signed repair order estimateApproval", () => {
+  assert.equal(isRoAuthorizedForKeys(unsignedOrder, []), false);
+  assert.equal(isRoAuthorizedForKeys(unsignedOrder, forgedEstimates), false);
   assert.throws(
-    () => assertKeyJobAllowed({ order, estimates: [], operation: "identify" }),
+    () => assertKeyJobAllowed({ order: unsignedOrder, estimates: forgedEstimates, operation: "identify" }),
     /signed repair order/i,
   );
   assert.doesNotThrow(() => assertKeyJobAllowed({
     order,
-    estimates: signed,
+    estimates: [],
     operation: "add",
     notes: "Customer is present with the RO",
   }));
@@ -37,7 +49,7 @@ test("key programming rejects bypass and cloning requests", () => {
   assert.throws(
     () => assertKeyJobAllowed({
       order,
-      estimates: signed,
+      estimates: [],
       operation: "identify",
       notes: "immobilizer bypass for a stolen car",
     }),
@@ -46,7 +58,7 @@ test("key programming rejects bypass and cloning requests", () => {
   assert.throws(
     () => assertKeyJobAllowed({
       order,
-      estimates: signed,
+      estimates: [],
       operation: "clone",
       notes: "",
     }),
@@ -58,7 +70,7 @@ test("live programmer mode fails closed", () => {
   assert.throws(
     () => assertKeyJobAllowed({
       order,
-      estimates: signed,
+      estimates: [],
       operation: "program",
       liveProgrammer: true,
     }),
@@ -77,13 +89,24 @@ test("simulator results are labeled and do not claim a live tool", () => {
   assert.match(job.message, /not a live programmer/i);
 });
 
-const liveOrder = { id: "RO-2001", vehicle: "2021 Ram 1500", customer: "Demo Customer", vin: "1C6SRFHT0LN123456" };
-const liveSigned = [{ id: "EST-9", workOrderId: "RO-2001", status: "approved", signedAt: "2026-10-01T15:00:00.000Z", authorizationName: "Demo Customer" }];
+const liveOrder = {
+  id: "RO-2001",
+  vehicle: "2021 Ram 1500",
+  customer: "Demo Customer",
+  vin: "1C6SRFHT0LN123456",
+  estimateApproval: {
+    id: "EST-9",
+    status: "approved",
+    type: "signature",
+    signedAt: "2026-10-01T15:00:00.000Z",
+    authorizationName: "Demo Customer",
+  },
+};
 
 test("live key sessions need a signed RO, a connected adapter, and a matching VIN", () => {
-  const base = { order: liveOrder, estimates: liveSigned, operation: "add", vehicleVin: liveOrder.vin, deviceConnected: true };
-  assert.equal(assertLiveKeySession(base).id, "EST-9");
-  assert.throws(() => assertLiveKeySession({ ...base, estimates: [] }), /signed repair order/i);
+  const base = { order: liveOrder, estimates: [], operation: "add", vehicleVin: liveOrder.vin, deviceConnected: true };
+  assert.equal(assertLiveKeySession(base).authorizationName, "Demo Customer");
+  assert.throws(() => assertLiveKeySession({ ...base, order: { ...liveOrder, estimateApproval: null } }), /signed repair order/i);
   assert.throws(() => assertLiveKeySession({ ...base, deviceConnected: false }), /Connect the J2534 adapter/);
   assert.throws(() => assertLiveKeySession({ ...base, vehicleVin: "1C6SRFHT0LN999999" }), /does not match/);
   assert.throws(() => assertLiveKeySession({ ...base, vehicleVin: "" }), /Could not read the VIN/);
@@ -114,7 +137,7 @@ test("key audit records capture who, which RO and VIN, each step and the result"
     procedure: "add_key",
     vehicleVin: liveOrder.vin.toLowerCase(),
     adapter: "RLink",
-    authorization: liveSigned[0],
+    authorization: liveOrder.estimateApproval,
     steps: [{ at: "t1", step: "Read VIN from vehicle", detail: liveOrder.vin }],
     result: "not_supported",
     message: "No verified procedure",

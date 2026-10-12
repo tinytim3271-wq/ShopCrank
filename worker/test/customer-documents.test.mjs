@@ -151,7 +151,7 @@ function estimateOrder() {
 }
 
 async function issueLink(fixture, documentType, documentId) {
-  const request = new Request('https://mechpro.test/api/document-links', {
+  const request = new Request('https://shopcrank.test/api/document-links', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ documentType, documentId }),

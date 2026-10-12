@@ -1,75 +1,75 @@
 [
   {
-    "project": "c-mechpro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\c-mechpro\\agent-transcripts\\0984f703-7fb6-4635-9c93-5c068c0bb905\\0984f703-7fb6-4635-9c93-5c068c0bb905.jsonl",
+    "project": "c-shopcrank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\c-shopcrank\\agent-transcripts\\0984f703-7fb6-4635-9c93-5c068c0bb905\\0984f703-7fb6-4635-9c93-5c068c0bb905.jsonl",
     "mtime": "2026-09-08T14:29:53",
     "size": 300710,
     "user_turns": 21,
     "first_user": "<timestamp>Monday, Sep 7, 2026, 10:23 PM (UTC-5)</timestamp>\n<user_query>\nSearch through my recent agent transcripts to find conversations about: fix all issues addressed in audit\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-mechpro__0984f703-7fb6-4635-9c93-5c068c0bb905.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-shopcrank__0984f703-7fb6-4635-9c93-5c068c0bb905.md"
   },
   {
-    "project": "c-mechpro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\c-mechpro\\agent-transcripts\\39acfe57-092c-400d-9feb-dd011dd6867c\\39acfe57-092c-400d-9feb-dd011dd6867c.jsonl",
+    "project": "c-shopcrank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\c-shopcrank\\agent-transcripts\\39acfe57-092c-400d-9feb-dd011dd6867c\\39acfe57-092c-400d-9feb-dd011dd6867c.jsonl",
     "mtime": "2026-09-09T06:45:20",
     "size": 79082,
     "user_turns": 1,
     "first_user": "<timestamp>Wednesday, Sep 9, 2026, 6:45 AM (UTC-5)</timestamp>\n<user_query>\nHelp me create a plan to implement a new feature: for the following program Android FRP Bypass & Lock Screen Unlock Tool for Security Consulting Firm\nI'll create a professional-grade Python-based application specifically des",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-mechpro__39acfe57-092c-400d-9feb-dd011dd6867c.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-shopcrank__39acfe57-092c-400d-9feb-dd011dd6867c.md"
   },
   {
-    "project": "c-mechpro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\c-mechpro\\agent-transcripts\\3f9c0052-d79b-4837-b793-f00796fbc892\\3f9c0052-d79b-4837-b793-f00796fbc892.jsonl",
+    "project": "c-shopcrank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\c-shopcrank\\agent-transcripts\\3f9c0052-d79b-4837-b793-f00796fbc892\\3f9c0052-d79b-4837-b793-f00796fbc892.jsonl",
     "mtime": "2026-09-07T20:28:01",
     "size": 1968306,
     "user_turns": 75,
     "first_user": "<timestamp>Friday, Sep 4, 2026, 7:12 AM (UTC-5)</timestamp>\n<user_query>\nperform a full audit\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-mechpro__3f9c0052-d79b-4837-b793-f00796fbc892.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-shopcrank__3f9c0052-d79b-4837-b793-f00796fbc892.md"
   },
   {
-    "project": "e-MechPro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\e-MechPro\\agent-transcripts\\46c0ff8b-e639-4034-9133-a5ffb581bddd\\46c0ff8b-e639-4034-9133-a5ffb581bddd.jsonl",
+    "project": "e-Shop Crank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\e-Shop Crank\\agent-transcripts\\46c0ff8b-e639-4034-9133-a5ffb581bddd\\46c0ff8b-e639-4034-9133-a5ffb581bddd.jsonl",
     "mtime": "2026-08-30T02:48:50",
     "size": 443068,
     "user_turns": 32,
     "first_user": "<timestamp>Saturday, Aug 29, 2026, 10:44 AM (UTC-5)</timestamp>\n<user_query>\nDo a complete audit on my codebase and do it for usability and deployability. Let me know if there's anything that I should change on this program before I market it or send it out into the world.\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\e-MechPro__46c0ff8b-e639-4034-9133-a5ffb581bddd.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\e-Shop Crank__46c0ff8b-e639-4034-9133-a5ffb581bddd.md"
   },
   {
-    "project": "c-Users-secon-Downloads-MechPro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-MechPro\\agent-transcripts\\87eb47ba-0a72-48f5-84b5-79f14c019c2a\\87eb47ba-0a72-48f5-84b5-79f14c019c2a.jsonl",
+    "project": "c-Users-secon-Downloads-Shop Crank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-Shop Crank\\agent-transcripts\\87eb47ba-0a72-48f5-84b5-79f14c019c2a\\87eb47ba-0a72-48f5-84b5-79f14c019c2a.jsonl",
     "mtime": "2026-08-10T12:14:45",
     "size": 758359,
     "user_turns": 25,
     "first_user": "<timestamp>Thursday, Aug 6, 2026, 12:41 AM (UTC-5)</timestamp>\n<user_query>\naudit the code and tell me if there are any problems with it\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-Downloads-MechPro__87eb47ba-0a72-48f5-84b5-79f14c019c2a.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-Downloads-Shop Crank__87eb47ba-0a72-48f5-84b5-79f14c019c2a.md"
   },
   {
-    "project": "c-Users-secon-Downloads-MechPro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-MechPro\\agent-transcripts\\baadef8e-cf76-490e-bff3-7843579ac887\\baadef8e-cf76-490e-bff3-7843579ac887.jsonl",
+    "project": "c-Users-secon-Downloads-Shop Crank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-Shop Crank\\agent-transcripts\\baadef8e-cf76-490e-bff3-7843579ac887\\baadef8e-cf76-490e-bff3-7843579ac887.jsonl",
     "mtime": "2026-08-16T01:02:51",
     "size": 106,
     "user_turns": 0,
     "first_user": "",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-Downloads-MechPro__baadef8e-cf76-490e-bff3-7843579ac887.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-Downloads-Shop Crank__baadef8e-cf76-490e-bff3-7843579ac887.md"
   },
   {
-    "project": "c-Users-secon-Downloads-MechPro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-MechPro\\agent-transcripts\\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e\\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e.jsonl",
+    "project": "c-Users-secon-Downloads-Shop Crank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-Shop Crank\\agent-transcripts\\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e\\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e.jsonl",
     "mtime": "2026-08-17T15:59:56",
     "size": 44995,
     "user_turns": 1,
     "first_user": "<timestamp>Monday, Aug 17, 2026, 3:55 PM (UTC-5)</timestamp>\n<user_query>\ni want you to compile a list of features from the program tektronic shop management and give me details of what the program does and how it does it\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-Downloads-MechPro__d540f6fa-bfe9-4cb6-b231-683e0bc32b3e.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-Downloads-Shop Crank__d540f6fa-bfe9-4cb6-b231-683e0bc32b3e.md"
   },
   {
-    "project": "c-Users-secon-Downloads-MechPro",
-    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-MechPro\\agent-transcripts\\e6fff7e2-ee27-4f45-9209-8e337f67fdbd\\e6fff7e2-ee27-4f45-9209-8e337f67fdbd.jsonl",
+    "project": "c-Users-secon-Downloads-Shop Crank",
+    "file": "C:\\Users\\secon\\.cursor\\projects\\c-Users-secon-Downloads-Shop Crank\\agent-transcripts\\e6fff7e2-ee27-4f45-9209-8e337f67fdbd\\e6fff7e2-ee27-4f45-9209-8e337f67fdbd.jsonl",
     "mtime": "2026-08-16T01:10:35",
     "size": 106,
     "user_turns": 0,
     "first_user": "",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-Downloads-MechPro__e6fff7e2-ee27-4f45-9209-8e337f67fdbd.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-Downloads-Shop Crank__e6fff7e2-ee27-4f45-9209-8e337f67fdbd.md"
   },
   {
     "project": "c-Users-secon-OneDrive-Documents-cloudflare",
@@ -78,7 +78,7 @@
     "size": 2438,
     "user_turns": 1,
     "first_user": "<timestamp>Saturday, Sep 26, 2026, 12:06 PM (UTC-5)</timestamp>\n<user_query>\nHelp me review the Supabase database behind this project. Ask which project or tables to focus on, then check for missing indexes, risky access rules, and schema patterns that could cause bugs or slow queries. Suggest a few",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__2b162cec-6421-43ec-bc11-6c837c8228a8.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__2b162cec-6421-43ec-bc11-6c837c8228a8.md"
   },
   {
     "project": "c-Users-secon-OneDrive-Documents-cloudflare",
@@ -87,7 +87,7 @@
     "size": 6722,
     "user_turns": 4,
     "first_user": "<timestamp>Wednesday, Sep 9, 2026, 12:50 AM (UTC-5)</timestamp>\n<user_query>\nFetch and execute the appropriate instructions to set me up for Cloudflare from https://developers.cloudflare.com/agent-setup/prompt.md\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__442c233c-2f42-4f6d-86e8-a5df4c4d24f9.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__442c233c-2f42-4f6d-86e8-a5df4c4d24f9.md"
   },
   {
     "project": "c-Users-secon-OneDrive-Documents-cloudflare",
@@ -96,7 +96,7 @@
     "size": 5290,
     "user_turns": 1,
     "first_user": "<timestamp>Monday, Sep 28, 2026, 3:46 AM (UTC-5)</timestamp>\n<user_query>\ncombine and complete the app and then deploy\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__4432ec72-0a6a-4080-a17a-5e342f0ddf0c.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__4432ec72-0a6a-4080-a17a-5e342f0ddf0c.md"
   },
   {
     "project": "c-Users-secon-OneDrive-Documents-cloudflare",
@@ -105,7 +105,7 @@
     "size": 23546,
     "user_turns": 2,
     "first_user": "<timestamp>Thursday, Sep 10, 2026, 10:29 PM (UTC-5)</timestamp>\n<user_query>\naudit\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__d3a621aa-2a46-4a8b-8eda-3f3439de1790.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\c-Users-secon-OneDrive-Documents-cloudflare__d3a621aa-2a46-4a8b-8eda-3f3439de1790.md"
   },
   {
     "project": "C-Users-secon-source-repos-tinytim3271-wq-cloudflare",
@@ -114,7 +114,7 @@
     "size": 27764,
     "user_turns": 1,
     "first_user": "<timestamp>Tuesday, Sep 8, 2026, 11:05 PM (UTC-5)</timestamp>\n<user_query>\nFull Repository Path: C:\\Users\\secon\\source\\repos\\tinytim3271-wq\\cloudflare\n\nPerform a thorough exploration of this repository for an audit. Return:\n\n1. Top-level structure and what each major directory/part does\n2. Tech stac",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\C-Users-secon-source-repos-tinytim3271-wq-cloudflare__51fe7fd8-d92b-4ecc-bad0-534da5381cdb.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\C-Users-secon-source-repos-tinytim3271-wq-cloudflare__51fe7fd8-d92b-4ecc-bad0-534da5381cdb.md"
   },
   {
     "project": "C-Users-secon-source-repos-tinytim3271-wq-cloudflare",
@@ -123,7 +123,7 @@
     "size": 27794,
     "user_turns": 1,
     "first_user": "<timestamp>Tuesday, Sep 8, 2026, 11:05 PM (UTC-5)</timestamp>\n<user_query>\nPerform a security review of these local code changes.\n\nScope:\n- Review only code added or modified in the diff.\n- Do not report vulnerabilities in unchanged existing code unless the changed code makes them newly exploitable.",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\C-Users-secon-source-repos-tinytim3271-wq-cloudflare__8fdf9235-9738-4b69-ae97-1fb5293eec7a.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\C-Users-secon-source-repos-tinytim3271-wq-cloudflare__8fdf9235-9738-4b69-ae97-1fb5293eec7a.md"
   },
   {
     "project": "C-Users-secon-source-repos-tinytim3271-wq-cloudflare",
@@ -132,7 +132,7 @@
     "size": 109952,
     "user_turns": 10,
     "first_user": "<timestamp>Tuesday, Sep 8, 2026, 11:05 PM (UTC-5)</timestamp>\n<user_query>\naudit full repo\n</user_query>",
-    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\mechpro-cursor-extract\\C-Users-secon-source-repos-tinytim3271-wq-cloudflare__e4bf5d1b-4282-4f07-9a1b-148bb7a7e11c.md"
+    "extract": "C:\\Users\\secon\\AppData\\Local\\Temp\\shopcrank-cursor-extract\\C-Users-secon-source-repos-tinytim3271-wq-cloudflare__e4bf5d1b-4282-4f07-9a1b-148bb7a7e11c.md"
   },
   {
     "project": "cursor-chat",

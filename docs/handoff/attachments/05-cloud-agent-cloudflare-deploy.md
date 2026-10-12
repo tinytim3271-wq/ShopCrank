@@ -10,7 +10,7 @@
 
 ## Launch prompt (summary)
 
-Full production deploy of MechPro Cloudflare Pages project `tinytim3271-wq/cloudflare` (Pages `mechpro-dispatch`). Prompt described hybrid SPA on Pages with API on AWS; agent later noted `main` actually uses Cloudflare Worker/D1/R2/Workers AI.
+Full production deploy of Shop Crank Cloudflare Pages project `tinytim3271-wq/cloudflare` (Pages `shopcrank-dispatch`). Prompt described hybrid SPA on Pages with API on AWS; agent later noted `main` actually uses Cloudflare Worker/D1/R2/Workers AI.
 
 ---
 
@@ -26,7 +26,7 @@ The latest `main` workflow validated successfully but publishing stopped on Clou
 
 ### Final report
 
-Production Pages is live at https://mechpro-dispatch.pages.dev, serving the bundle from `main` commit `6e3bc8e9c409e02bec89d447ea9fa02ada7d676c`.
+Production Pages is live at https://shopcrank-dispatch.pages.dev, serving the bundle from `main` commit `6e3bc8e9c409e02bec89d447ea9fa02ada7d676c`.
 
 - Owner’s authenticated Windows deployment is the working publish path.
 - PR [#21](https://github.com/tinytim3271-wq/cloudflare/pull/21) adds clearer token-failure diagnostics and rotation documentation.
@@ -41,4 +41,4 @@ Production Pages is live at https://mechpro-dispatch.pages.dev, serving the bund
 
 ## Parent Grok Bot’s parallel local deploy conclusion (from Timothy chat)
 
-Live from Lees_computer Wrangler (`lee@yourcarguy806.com`): Worker `mechpro-api`, Pages `mechpro-dispatch`, `https://www.yourcarguy806.com/` 200, `/api/healthz` → `{"ok":true,"service":"mechpro-cloudflare-api"}`. CI token still needs rotation.
+Live from Lees_computer Wrangler (`lee@yourcarguy806.com`): Worker `shopcrank-api`, Pages `shopcrank-dispatch`, `https://www.yourcarguy806.com/` 200, `/api/healthz` → `{"ok":true,"service":"shopcrank-cloudflare-api"}`. CI token still needs rotation.

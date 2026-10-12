@@ -9,8 +9,8 @@ const { verifyCapabilityToken } = require('../diagnostics/j2534-host-node/capabi
 
 const sessionId = crypto.randomBytes(8).toString('hex');
 const hostToken = crypto.randomBytes(24).toString('base64url');
-const PIPE_WIN = `\\\\.\\pipe\\mechpro-j2534-${sessionId}`;
-const PIPE_UNIX = path.join(os.tmpdir(), `mechpro-j2534-${sessionId}.sock`);
+const PIPE_WIN = `\\\\.\\pipe\\shopcrank-j2534-${sessionId}`;
+const PIPE_UNIX = path.join(os.tmpdir(), `shopcrank-j2534-${sessionId}.sock`);
 
 let hostProcess = null;
 let requestId = 0;
@@ -22,7 +22,7 @@ function pipePath() {
 }
 
 function csharpPipeName() {
-  return `mechpro-j2534-${sessionId}`;
+  return `shopcrank-j2534-${sessionId}`;
 }
 
 function hostScriptPath() {
@@ -69,8 +69,8 @@ function startHostProcess() {
   const publicKey = diagnosticsPublicKey();
   const hostEnv = {
     ...process.env,
-    MECHPRO_J2534_PIPE: process.platform === 'win32' ? csharpPipeName() : pipePath(),
-    MECHPRO_J2534_TOKEN: hostToken,
+    SHOP_CRANK_J2534_PIPE: process.platform === 'win32' ? csharpPipeName() : pipePath(),
+    SHOP_CRANK_J2534_TOKEN: hostToken,
   };
   if (publicKey) {
     hostEnv.DIAGNOSTICS_SIGNING_PUBLIC_KEY = publicKey;
@@ -86,14 +86,14 @@ function startHostProcess() {
     const script = hostScriptPath();
     if (!fs.existsSync(script)) {
       throw new Error(
-        `J2534 host script not found at ${script}. Reinstall MechPro Desktop or run from a full checkout.`,
+        `J2534 host script not found at ${script}. Reinstall Shop Crank Desktop or run from a full checkout.`,
       );
     }
     hostProcess = spawn(process.execPath, [script], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...hostEnv,
-        MECHPRO_J2534_PIPE: pipePath(),
+        SHOP_CRANK_J2534_PIPE: pipePath(),
         ELECTRON_RUN_AS_NODE: '1',
       },
     });
@@ -334,7 +334,7 @@ async function obdClearDtcs(params = {}) {
   return rpcCall('obdClearDtcs', { confirmed: true }, 20000);
 }
 
-/** Read-only: does MechPro have a verified live key procedure for the connected vehicle? */
+/** Read-only: does Shop Crank have a verified live key procedure for the connected vehicle? */
 async function keyProcedureSupport(params = {}) {
   await ensureHost();
   return rpcCall('keyProcedureSupport', { procedure: String(params.procedure || '') }, 20000);

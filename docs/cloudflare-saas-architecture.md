@@ -1,6 +1,6 @@
 # Cloudflare SaaS Architecture
 
-This is the target architecture for turning MechPro into a public, paid SaaS on
+This is the target architecture for turning Shop Crank into a public, paid SaaS on
 Cloudflare. Cloudflare Access should be reserved for internal operator/admin
 surfaces only; customer signup, login, billing, and shop access should be owned
 by the app.
@@ -24,7 +24,7 @@ flowchart LR
   Visitor[Public visitor] --> CF[Cloudflare edge]
   Customer[Shop user] --> CF
   Stripe[Stripe webhooks] --> CF
-  CF --> Worker[MechPro Worker]
+  CF --> Worker[Shop Crank Worker]
   Worker --> Pages[Pages static assets]
   Worker --> D1[(D1)]
   Worker --> R2[(R2)]
@@ -155,7 +155,7 @@ CREATE TABLE login_tokens (
 Session cookie requirements:
 
 ```text
-Name: mechpro_session
+Name: shopcrank_session
 Flags: HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=<duration>
 Stored value: opaque random token
 Database value: SHA-256 hash of token, never the raw token
@@ -216,7 +216,7 @@ Stripe owns payment collection. D1 owns the application entitlement snapshot.
 ```mermaid
 sequenceDiagram
   participant Buyer
-  participant App as MechPro Worker
+  participant App as Shop Crank Worker
   participant Stripe
   participant D1
   participant Email
@@ -308,10 +308,10 @@ Split into separate Workers later only if needed:
 
 | Worker | When to split |
 |---|---|
-| `mechpro-web` | If SSR/Pages Functions become complex |
-| `mechpro-api` | Default app API |
-| `mechpro-webhooks` | If billing/provider traffic needs isolated deploy risk |
-| `mechpro-admin` | If operator tooling grows separately |
+| `shopcrank-web` | If SSR/Pages Functions become complex |
+| `shopcrank-api` | Default app API |
+| `shopcrank-webhooks` | If billing/provider traffic needs isolated deploy risk |
+| `shopcrank-admin` | If operator tooling grows separately |
 
 ## Secrets and variables
 
@@ -332,8 +332,8 @@ Worker vars:
 
 ```text
 APP_ORIGIN=https://www.yourcarguy806.com
-PAGES_ORIGIN=https://mechpro-dispatch.pages.dev
-EMAIL_FROM=MechPro <support@yourcarguy806.com>
+PAGES_ORIGIN=https://shopcrank-dispatch.pages.dev
+EMAIL_FROM=Shop Crank <support@yourcarguy806.com>
 AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
 ```
 
@@ -360,8 +360,8 @@ Use separate Cloudflare resources for production and preview/staging.
 
 | Environment | Host | D1 | R2 |
 |---|---|---|---|
-| Production | `www.yourcarguy806.com` | `mechpro` | `mechpro-files` |
-| Staging | `staging.yourcarguy806.com` | `mechpro-staging` | `mechpro-files-staging` |
+| Production | `www.yourcarguy806.com` | `shopcrank` | `shopcrank-files` |
+| Staging | `staging.yourcarguy806.com` | `shopcrank-staging` | `shopcrank-files-staging` |
 | Local | `localhost` | local D1 | local/preview R2 |
 
 ## Implementation milestones

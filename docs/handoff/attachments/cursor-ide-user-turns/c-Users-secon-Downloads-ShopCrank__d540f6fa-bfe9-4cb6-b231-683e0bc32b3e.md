@@ -1,6 +1,6 @@
 # Cursor agent transcript
-- source: `C:\Users\secon\.cursor\projects\c-Users-secon-Downloads-MechPro\agent-transcripts\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e.jsonl`
-- project folder: `c-Users-secon-Downloads-MechPro`
+- source: `C:\Users\secon\.cursor\projects\c-Users-secon-Downloads-Shop Crank\agent-transcripts\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e\d540f6fa-bfe9-4cb6-b231-683e0bc32b3e.jsonl`
+- project folder: `c-Users-secon-Downloads-Shop Crank`
 - mtime: 2026-08-17T15:59:56
 - size_bytes: 44995
 - user_turns: 1

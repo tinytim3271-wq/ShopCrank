@@ -5,7 +5,7 @@ const path = require('node:path');
 
 function configurePortableData(app, edition, executable = process.execPath) {
   if (edition.portable !== true) return null;
-  const dir = path.join(path.dirname(executable), 'MechPro Demo Data');
+  const dir = path.join(path.dirname(executable), 'Shop Crank Demo Data');
   mkdirSync(dir, { recursive: true });
   accessSync(dir, constants.W_OK);
   app.setPath('userData', dir);
