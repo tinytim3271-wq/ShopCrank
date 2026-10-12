@@ -137,3 +137,74 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .help-results span,.help-empty{color:var(--muted);font-size:11px;line-height:1.4}
 [data-theme="dark"] .help-results li{background:#1b2629}
 @media(max-width:600px){#help-root{left:12px;bottom:12px}.help-float span{display:none}.help-float{width:42px;padding:0;border-radius:50%;justify-content:center}}
+
+/* Shop Crank brand refresh (logo + palette) */
+:root{
+  --ink:#13252c;
+  --muted:#5f6a6f;
+  --canvas:#fff5da;
+  --paper:#ffffff;
+  --line:#e8d8b7;
+  --green:#044251;
+  --deep:#032f3b;
+  --lime:#cf1a23;
+  --orange:#c94f2c;
+  --yellow:#d88e21;
+  --red:#b11820;
+  --blue:#1f6d84;
+  --shadow:0 16px 40px rgba(3,47,59,.14);
+}
+
+[data-theme="dark"]{
+  --ink:#e8f1f4;
+  --muted:#a6b2b7;
+  --canvas:#09151a;
+  --paper:#11232a;
+  --line:#2d434c;
+  --green:#2c7f91;
+  --deep:#041015;
+  --lime:#e1444d;
+  --orange:#d97154;
+  --yellow:#e0aa4f;
+  --red:#ef656d;
+  --blue:#61a8bf;
+  --shadow:0 16px 40px rgba(0,0,0,.36);
+}
+
+body{
+  background-color:var(--canvas);
+  background-image:
+    linear-gradient(rgba(4,66,81,.055) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(4,66,81,.045) 1px,transparent 1px);
+}
+
+.sidebar{background:linear-gradient(180deg,#022733,#043947)}
+.nav-button.active{border-left-color:var(--lime)}
+.nav-button.active svg{color:var(--lime)}
+.nav-button .count{background:var(--lime);color:#fff}
+.primary{background:var(--green);border-color:var(--green);box-shadow:0 7px 16px rgba(4,66,81,.22)}
+.primary:hover{background:#065467;border-color:#065467;box-shadow:0 9px 20px rgba(4,66,81,.3)}
+.toast{background:var(--deep);border-left-color:var(--lime)}
+.modal-head{border-top-color:var(--lime)}
+
+.brand-mark{
+  width:72px;
+  height:72px;
+  border-radius:14px;
+  background:
+    #fff url("./assets/branding/shopcrank-logo.jpg") center/90% auto no-repeat;
+  color:transparent;
+  box-shadow:0 10px 28px rgba(3,47,59,.22);
+}
+
+.login-brand .brand-mark,
+.login-screen .brand-mark{
+  width:88px;
+  height:88px;
+  border-radius:16px;
+}
+
+.brand-name{
+  color:#fff;
+  letter-spacing:.4px;
+}
