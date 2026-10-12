@@ -1356,6 +1356,7 @@ async function handleVoiceSession(request, env, context) {
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
   if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
+  await enforceAiRateLimit(env, context);
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
   const headers = new Headers(request.headers);
