@@ -2,7 +2,7 @@ import { calculateShopEstimate } from './estimate-templates.js';
 import { CANNED_MENU } from './canned-services.js';
 import { applyAssignments, assignableTechnicians, technicianName } from './technician-assignment.js';
 
-export const INTAKE_STORAGE_KEY = 'mechpro-intake-draft-v1';
+export const INTAKE_STORAGE_KEY = 'shopcrank-intake-draft-v1';
 
 export const INTAKE_DISCLAIMER = 'PRELIMINARY ESTIMATE DISCLAIMER\n\nThis estimate is based on the information available at the time of inspection. Additional issues may be identified during diagnosis, testing, disassembly, or repair. Parts pricing, labor times, and availability may change. Authorization will be obtained before performing additional work. Final invoice amounts may differ from this estimate.';
 
@@ -35,7 +35,7 @@ export const EXTRA_PHOTO_SLOTS = [
 
 export const DAMAGE_AREAS = ['Front bumper', 'Rear bumper', 'Driver door', 'Passenger door', 'Hood', 'Fenders', 'Roof'];
 
-const MECHPRO_LABOR = [
+const SHOP_CRANK_LABOR = [
   { name: 'Brake pads', hours: 1.5, notes: 'One axle. Rotors and seized hardware are quoted separately.' },
   { name: 'Water pump', hours: 2.5, notes: 'Starting point. Confirm the labor time for this VIN before selling the job.' },
   { name: 'Alternator', hours: 1.2, notes: 'Replacement only. Programming or a stretch belt may add time.' },
@@ -139,11 +139,11 @@ export function applyVinDecode(draft, decoded = {}) {
 export function searchLaborGuide(query = '', services = CANNED_MENU) {
   const needle = String(query || '').trim().toLowerCase();
   if (needle.length < 2) return [];
-  const shopHits = MECHPRO_LABOR.filter(item => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase()))
-    .map(item => ({ source: 'MechPro guide', name: item.name, hours: item.hours, price: null, notes: item.notes }));
+  const shopHits = SHOP_CRANK_LABOR.filter(item => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase()))
+    .map(item => ({ source: 'Shop Crank guide', name: item.name, hours: item.hours, price: null, notes: item.notes }));
   const canned = services.filter(item => `${item.name} ${item.description || ''}`.toLowerCase().includes(needle))
     .slice(0, 6)
-    .map(item => ({ source: 'MechPro guide', name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || '' }));
+    .map(item => ({ source: 'Shop Crank guide', name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || '' }));
   return [...shopHits, ...canned].slice(0, 8);
 }
 
@@ -201,7 +201,7 @@ export function localDiagnosticChecklist(draft = {}) {
   if (!causes.length) causes.push({ name: 'Verify the complaint', detail: 'Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show.' });
   return {
     source: 'shop-checklist',
-    notice: 'MechPro AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.',
+    notice: 'Shop Crank AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.',
     causes,
   };
 }
@@ -354,7 +354,7 @@ function estimateStep(draft, profile) {
   const priced = priceIntakeEstimate(draft, profile);
   const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr(line.description || '')}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml(line.source || 'Shop')}</td></tr>`).join('');
   return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
-<p class="form-help">Lookup uses the MechPro guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
+<p class="form-help">Lookup uses the Shop Crank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
 <div id="labor-results"></div>
 <table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
 <label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
@@ -570,11 +570,11 @@ export function mountIntakeWizard(host, {
       if (!box) return;
       box.innerHTML = hits.length
         ? `<ul class="intake-causes">${hits.map(hit => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml(hit.name)}</button><p>${escapeHtml(hit.notes)} · ${escapeHtml(hit.source)}${hit.hours ? ` · ${hit.hours} hr` : ''}</p></li>`).join('')}</ul>`
-        : '<p class="form-help">No MechPro guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
+        : '<p class="form-help">No Shop Crank guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
       box.querySelectorAll('[data-add-labor]').forEach(button => {
         button.addEventListener('click', () => {
           if (form) current = readForm(current, form);
-          current.estimate.lines.push({ type: 'labor', description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: 'MechPro guide' });
+          current.estimate.lines.push({ type: 'labor', description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: 'Shop Crank guide' });
           persist('labor');
           paint();
         });

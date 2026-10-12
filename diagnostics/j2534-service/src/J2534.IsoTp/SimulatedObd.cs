@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace MechPro.J2534.IsoTp;
+namespace ShopCrank.J2534.IsoTp;
 
 /// <summary>Generic OBD-II (SAE J1979) answers for the bench simulator.</summary>
 public static class SimulatedObd

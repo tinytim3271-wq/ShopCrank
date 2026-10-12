@@ -1,6 +1,6 @@
 # Cursor agent transcript
-- source: `C:\Users\secon\.cursor\projects\c-mechpro\agent-transcripts\39acfe57-092c-400d-9feb-dd011dd6867c\39acfe57-092c-400d-9feb-dd011dd6867c.jsonl`
-- project folder: `c-mechpro`
+- source: `C:\Users\secon\.cursor\projects\c-shopcrank\agent-transcripts\39acfe57-092c-400d-9feb-dd011dd6867c\39acfe57-092c-400d-9feb-dd011dd6867c.jsonl`
+- project folder: `c-shopcrank`
 - mtime: 2026-09-09T06:45:20
 - size_bytes: 79082
 - user_turns: 1

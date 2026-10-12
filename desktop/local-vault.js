@@ -75,7 +75,7 @@ function accountStatus(dir) {
 }
 
 function createAccount(dir, input = {}) {
-  if (accountStatus(dir).exists) throw new Error('This computer already has a MechPro sign-in.');
+  if (accountStatus(dir).exists) throw new Error('This computer already has a Shop Crank sign-in.');
   const email = normalizeEmail(input.email);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email.');
   const name = String(input.name || '').trim().slice(0, 80);

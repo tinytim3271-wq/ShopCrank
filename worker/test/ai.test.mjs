@@ -4,7 +4,7 @@ import worker from '../src/index.js';
 import {
   ANTHROPIC_TOOLS,
   buildAssistantSystemPrompt,
-  MECHPRO_SYSTEM_PROMPT,
+  SHOP_CRANK_SYSTEM_PROMPT,
   calculateTextCost,
   executeGroundingTool,
   loadShopPricing,
@@ -38,10 +38,10 @@ test('model routing defaults to Sonnet and explicitly supports Opus escalation',
 });
 
 test('system prompt requires detailed, evidence-grounded answers', () => {
-  assert.match(MECHPRO_SYSTEM_PROMPT, /detailed/i);
-  assert.match(MECHPRO_SYSTEM_PROMPT, /never guess/i);
-  assert.match(MECHPRO_SYSTEM_PROMPT, /ask for the missing VIN/i);
-  assert.match(MECHPRO_SYSTEM_PROMPT, /read-only/i);
+  assert.match(SHOP_CRANK_SYSTEM_PROMPT, /detailed/i);
+  assert.match(SHOP_CRANK_SYSTEM_PROMPT, /never guess/i);
+  assert.match(SHOP_CRANK_SYSTEM_PROMPT, /ask for the missing VIN/i);
+  assert.match(SHOP_CRANK_SYSTEM_PROMPT, /read-only/i);
   assert.match(buildAssistantSystemPrompt(), /prepare_estimate_work_order/);
   assert.match(buildAssistantSystemPrompt(), /\$140\.00 per labor hour/);
   assert.match(buildAssistantSystemPrompt(), /\$200 flat fee/);
@@ -409,7 +409,7 @@ function assistantRequest() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-MechPro-Dev-Email': 'admin@example.test',
+      'X-ShopCrank-Dev-Email': 'admin@example.test',
     },
     body: JSON.stringify({ message: 'Explain this open estimate.', model: 'sonnet' }),
   });
@@ -476,7 +476,7 @@ test('successful audio transcription records shop-scoped Deepgram usage', async 
     method: 'POST',
     headers: {
       'Content-Type': 'audio/webm',
-      'X-MechPro-Dev-Email': 'admin@example.test',
+      'X-ShopCrank-Dev-Email': 'admin@example.test',
     },
     body: new Uint8Array([1, 2, 3]),
   });

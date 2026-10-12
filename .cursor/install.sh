@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent Cloud Agent bootstrap for the MechPro repository.
+# Idempotent Cloud Agent bootstrap for the Shop Crank repository.
 set -eo pipefail
 
 cd "$(dirname "$0")/.."

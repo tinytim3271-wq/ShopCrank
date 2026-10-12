@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const edition = {
-  offline: process.argv.includes('--mechpro-offline'),
-  portable: process.argv.includes('--mechpro-portable'),
-  demo: process.argv.includes('--mechpro-demo'),
+  offline: process.argv.includes('--shopcrank-offline'),
+  portable: process.argv.includes('--shopcrank-portable'),
+  demo: process.argv.includes('--shopcrank-demo'),
 };
 
 async function invoke(channel, params) {
@@ -31,9 +31,9 @@ if (edition.offline === true) {
   });
 }
 
-contextBridge.exposeInMainWorld('mechproDesktop', Object.freeze(desktopApi));
+contextBridge.exposeInMainWorld('shopcrankDesktop', Object.freeze(desktopApi));
 
-contextBridge.exposeInMainWorld('mechproDiagnostics', Object.freeze({
+contextBridge.exposeInMainWorld('shopcrankDiagnostics', Object.freeze({
   listAdapters: () => invoke('diagnostics:listAdapters'),
   connect: (params) => invoke('diagnostics:connect', params),
   disconnect: () => invoke('diagnostics:disconnect'),

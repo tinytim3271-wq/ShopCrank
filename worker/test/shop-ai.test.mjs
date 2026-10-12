@@ -107,7 +107,7 @@ function chatNamespace(env) {
 function apiRequest(path, method = 'GET', body = undefined) {
   return new Request(`https://app.example.test/api${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-MechPro-Dev-Email': 'owner@example.test' },
+    headers: { 'Content-Type': 'application/json', 'X-ShopCrank-Dev-Email': 'owner@example.test' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -277,7 +277,7 @@ test('the shop key is decrypted from D1; a missing table keeps the shop on Worke
   assert.equal(await loadShopAnthropicConfig({ DB: fakeDb({ shopRow: row }), INTEGRATION_ENCRYPTION_KEY: 'wrong-secret' }, 'shop-a'), null);
 });
 
-test('assistant route uses the stored shop key end to end and does not bill MechPro usage', async (t) => {
+test('assistant route uses the stored shop key end to end and does not bill Shop Crank usage', async (t) => {
   const DB = fakeDb({ shopRow: await encryptedRow() });
   const provider = t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url, 'https://api.anthropic.com/v1/messages');

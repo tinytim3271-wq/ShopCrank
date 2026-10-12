@@ -1,10 +1,10 @@
-# MechPro Cursor Agent Handoff Brief
+# Shop Crank Cursor Agent Handoff Brief
 
 **Owner:** Timothy Alderman (Lee)  
 **Compiled:** 2026-09-28 ~04:00 America/Chicago  
-**Purpose:** Paste this into a fresh Cursor agent so it can continue MechPro **without re-deriving** context, and **without rewriting working code**. Preserve every bit of hard work already done.
+**Purpose:** Paste this into a fresh Cursor agent so it can continue Shop Crank **without re-deriving** context, and **without rewriting working code**. Preserve every bit of hard work already done.
 
-**How to use:** Open Cursor on the primary repo you are extending (`tinytim3271-wq/MechPro` and/or `tinytim3271-wq/cloudflare`), paste this brief, then open the sibling files listed under **Artifact inventory**.
+**How to use:** Open Cursor on the primary repo you are extending (`tinytim3271-wq/Shop Crank` and/or `tinytim3271-wq/cloudflare`), paste this brief, then open the sibling files listed under **Artifact inventory**.
 
 ---
 
@@ -12,7 +12,7 @@
 
 1. **Do not rewrite working systems.** Start from current repos + open PRs. Layer features on top.
 2. **Two product trees exist** (do not conflate them):
-   - **AWS MechPro:** `https://github.com/tinytim3271-wq/MechPro` — Cognito / Lambda / Aurora / CDK. Shop OS PR #9.
+   - **AWS Shop Crank:** `https://github.com/tinytim3271-wq/Shop Crank` — Cognito / Lambda / Aurora / CDK. Shop OS PR #9.
    - **Cloudflare Dispatch:** `https://github.com/tinytim3271-wq/cloudflare` — Pages + Worker + D1 + R2 + Workers AI. Live at `www.yourcarguy806.com`. PR #21 is CI diagnostics only.
 3. **No immobilizer bypass, key cloning, rolling-code attacks, FRP/theft unlock tools.** Key programming must require a signed repair order (RO).
 4. **Do not invent secrets.** Rotate tokens yourself; never paste live keys into chat.
@@ -41,7 +41,7 @@ Timothy wants **one all-encompassing mechanic shop OS** (“one-stop shop”):
 
 | Role | GitHub | Canonical local path (Lees_computer) | Notes |
 |------|--------|--------------------------------------|-------|
-| Primary AWS shop OS | `https://github.com/tinytim3271-wq/MechPro` | `E:\MechPro\MechPro` | Nested repo; outer `E:\MechPro` is empty wrapper |
+| Primary AWS shop OS | `https://github.com/tinytim3271-wq/Shop Crank` | `E:\Shop Crank\Shop Crank` | Nested repo; outer `E:\Shop Crank` is empty wrapper |
 | Payroll/shop donor | `https://github.com/tinytim3271-wq/reliable-shop-management1` | `C:\Users\secon\source\repos\reliable-shop-management1` | GitHub sometimes 404’d from agents; use local clone |
 | Standalone reference | `https://github.com/tinytim3271-wq/reliable-shop-standalone` | `C:\Users\secon\source\repos\reliable-shop-standalone` | Static extract; weak as source of truth |
 | Electron shop host | under `tinytim3271-wq` | (see inventory) | Feature donor / host |
@@ -58,13 +58,13 @@ Timothy wants **one all-encompassing mechanic shop OS** (“one-stop shop”):
 
 ## 3. Done — what already shipped
 
-### 3.1 MechPro AWS shop OS — Cursor cloud agent `bc-d1104827-55b4-4565-a1d7-0b699a6661e6`
+### 3.1 Shop Crank AWS shop OS — Cursor cloud agent `bc-d1104827-55b4-4565-a1d7-0b699a6661e6`
 
 - **URL:** https://cursor.com/agents/bc-d1104827-55b4-4565-a1d7-0b699a6661e6  
 - **Branch:** `cursor/shop-os-payroll-obd-keys-61e6`  
-- **PR:** https://github.com/tinytim3271-wq/MechPro/pull/9 (~+4925/−163, ~50 files)  
+- **PR:** https://github.com/tinytim3271-wq/Shop Crank/pull/9 (~+4925/−163, ~50 files)  
 - **Transcript (box):** `/workspace/cloud-agent-transcripts/bc-d1104827-55b4-4565-a1d7-0b699a6661e6.jsonl`  
-- **Transcript (PC copy if shipped):** see `MechPro-handoff-attachments\bc-d1104827….jsonl`
+- **Transcript (PC copy if shipped):** see `ShopCrank-handoff-attachments\bc-d1104827….jsonl`
 
 **Landed features (do not rebuild from scratch):**
 
@@ -78,18 +78,18 @@ Timothy wants **one all-encompassing mechanic shop OS** (“one-stop shop”):
 | AWS | New Aurora tables: `payrollRuns`, `payStubs`, `shopExpenses`, `inspectionTemplates`, `diagnosticSessions`, `keyProgrammingJobs` + org-member pay fields. Apply `aws/db/migrate/002_shop_os.sql` on existing cluster or full `aws/db/schema.sql` on new. Same CDK stack / Cognito auth |
 | Tests (agent-reported) | `pnpm test` 33; `pnpm test:convex` 19; build OK; lint follow-up for `prefer-const` in `elm327.ts` |
 
-**Caveat:** Donor `reliable-shop-management1` 404’d remotely; payroll rebuilt from standalone + MechPro timeclock.
+**Caveat:** Donor `reliable-shop-management1` 404’d remotely; payroll rebuilt from standalone + Shop Crank timeclock.
 
 ### 3.2 Cloudflare — live production deploy (from Lees_computer Wrangler)
 
 - **Repo:** `tinytim3271-wq/cloudflare`  
 - **Wrangler identity:** `lee@yourcarguy806.com`  
 - **Cloudflare account ID:** `0c31efca6f8739ca301b222f3d68cff4`  
-- **Pages project:** `mechpro-dispatch`  
-- **Worker:** `mechpro-api` (version id started with `30342afa…` at ship time)  
-- **Pages preview URL:** https://b53a8fb8.mechpro-dispatch.pages.dev  
+- **Pages project:** `shopcrank-dispatch`  
+- **Worker:** `shopcrank-api` (version id started with `30342afa…` at ship time)  
+- **Pages preview URL:** https://b53a8fb8.shopcrank-dispatch.pages.dev  
 - **Production:** https://www.yourcarguy806.com/ → HTTP 200  
-- **Health:** `https://www.yourcarguy806.com/api/healthz` → `{"ok":true,"service":"mechpro-cloudflare-api"}`  
+- **Health:** `https://www.yourcarguy806.com/api/healthz` → `{"ok":true,"service":"shopcrank-cloudflare-api"}`  
 - **D1:** reported current at ship time (`db:migrate:remote` noop)  
 - **Stack on this repo:** Pages + Worker + D1 + R2 + Workers AI (**not** the AWS hybrid as production for this app)
 
@@ -106,16 +106,16 @@ Large agent transcripts under `%USERPROFILE%\.cursor\projects\`:
 
 | Project folder | Notable | Themes |
 |----------------|---------|--------|
-| `c-Users-secon-Downloads-MechPro` | `87eb47ba…` Aug 6–10 | Audit/fix; leave Hercules → Amazon; **MechPro 2.0 on AWS** ask; Aikido |
-| `e-MechPro` | `46c0ff8b…` Aug 29–30 | Usability/deployability audit; Bedrock; Secrets Manager; Cognito login errors; AWS deploy |
-| `c-mechpro` | `3f9c0052…` ~1.97 MB Sep 4–7 | Full audit/fix; CDK/AWS; clearDtcs security; entity mutation fixes |
-| `c-mechpro` | `0984f703…` Sep 7–8 | Cloudflare deployability; PWA/Pages fixes; **create cloudflare git copy** |
+| `c-Users-secon-Downloads-Shop Crank` | `87eb47ba…` Aug 6–10 | Audit/fix; leave Hercules → Amazon; **Shop Crank 2.0 on AWS** ask; Aikido |
+| `e-Shop Crank` | `46c0ff8b…` Aug 29–30 | Usability/deployability audit; Bedrock; Secrets Manager; Cognito login errors; AWS deploy |
+| `c-shopcrank` | `3f9c0052…` ~1.97 MB Sep 4–7 | Full audit/fix; CDK/AWS; clearDtcs security; entity mutation fixes |
+| `c-shopcrank` | `0984f703…` Sep 7–8 | Cloudflare deployability; PWA/Pages fixes; **create cloudflare git copy** |
 | OneDrive / source-repos cloudflare | multiple | CF agent-setup; secrets not set; merge 66 commits; audits; **2026-09-28:** “combine and complete the app and then deploy” |
 | Composer chats | Repo Auditor / Merge Branches / CF Setup | Same CF arc |
 
 **User-turn extracts (redacted):**  
-`C:\Users\secon\Documents\MechPro-handoff\attachments\cursor-ide-user-turns\`  
-(and box: `/workspace/mechpro-history/cursor-ide-user-turns/`)
+`C:\Users\secon\Documents\ShopCrank-handoff\attachments\cursor-ide-user-turns\`  
+(and box: `/workspace/shopcrank-history/cursor-ide-user-turns/`)
 
 ---
 
@@ -125,19 +125,19 @@ Legend: **Done in PR #9 / main spine** · **Exists elsewhere / partial** · **Mi
 
 | Capability | Status | Where / notes |
 |------------|--------|---------------|
-| Customers / vehicles / VIN / NHTSA | Done (spine) | MechPro |
-| ROs, estimates, invoices, parts, POs, schedule | Done (spine) | MechPro |
-| Employees, timeclock, GPS | Done (spine) | MechPro |
-| AI estimates / DTC-symptom diagnosis / checklists | Done (spine) | MechPro AI pages; not a substitute for live OBD |
+| Customers / vehicles / VIN / NHTSA | Done (spine) | Shop Crank |
+| ROs, estimates, invoices, parts, POs, schedule | Done (spine) | Shop Crank |
+| Employees, timeclock, GPS | Done (spine) | Shop Crank |
+| AI estimates / DTC-symptom diagnosis / checklists | Done (spine) | Shop Crank AI pages; not a substitute for live OBD |
 | Shop expenses + inspection templates | Done | PR #9 |
 | Payroll W-2/1099 + stubs + YTD | Done (v1) | PR #9; estimate-grade tax math; deepen from local `reliable-shop-management1` if needed |
 | OBD bay `/obd` (sim + Web Serial) | Done (v1) | PR #9; J2534 still browser-unavailable |
 | Key programming `/keys` (RO-gated) | Done (v1) | PR #9; needs licensed programmer path later |
 | Live production Dispatch on Cloudflare | Done | Wrangler deploy Sep 12 |
 | CI auto-publish to Cloudflare | **Blocked** | Invalid `CLOUDFLARE_API_TOKEN` |
-| Merge PR #9 to MechPro `main` | Verify | Confirm merge state before rebasing |
+| Merge PR #9 to Shop Crank `main` | Verify | Confirm merge state before rebasing |
 | Merge PR #21 to cloudflare `main` | Verify | Docs/diagnostics only |
-| Unify AWS MechPro UI with Cloudflare Dispatch codebase | **Open product decision** | Two backends today; do not silently replace CF Worker/D1 with AWS or vice versa |
+| Unify AWS Shop Crank UI with Cloudflare Dispatch codebase | **Open product decision** | Two backends today; do not silently replace CF Worker/D1 with AWS or vice versa |
 | Real QBO sync | Partial | Export dialog exists; not live sync |
 | SMS / voice / Expo Bay Floor / richer HR | Donor | `reliable-shop-management1` — port selectively |
 | Capacitor / Electron / Apple / Android | Gaps | Often README-claimed; verify folders/scripts before marketing |
@@ -152,8 +152,8 @@ Legend: **Done in PR #9 / main spine** · **Exists elsewhere / partial** · **Mi
    - Set secret `CLOUDFLARE_API_TOKEN` on `tinytim3271-wq/cloudflare`.  
    - Set `CLOUDFLARE_ACCOUNT_ID=0c31efca6f8739ca301b222f3d68cff4` in the **production** Actions environment (per PR #21 notes).  
    - Until then: deploy with local Wrangler as `lee@yourcarguy806.com`.
-2. **Architecture split:** AWS MechPro vs Cloudflare Dispatch — pick explicitly before “combining” further.
-3. **Local MechPro tree hygiene (historical):** detached HEAD / dirty tree noted Aug 31 inventory — re-check before large merges.
+2. **Architecture split:** AWS Shop Crank vs Cloudflare Dispatch — pick explicitly before “combining” further.
+3. **Local Shop Crank tree hygiene (historical):** detached HEAD / dirty tree noted Aug 31 inventory — re-check before large merges.
 4. **Secrets hygiene:** Old IDE chats may contain pasted live payment keys — **rotate** any exposed Stripe/AWS keys; never re-echo them.
 
 ---
@@ -166,10 +166,10 @@ Legend: **Done in PR #9 / main spine** · **Exists elsewhere / partial** · **Mi
 | Cloudflare login (Wrangler) | `lee@yourcarguy806.com` |
 | Cloudflare account ID | `0c31efca6f8739ca301b222f3d68cff4` |
 | Production domain | `https://www.yourcarguy806.com` |
-| Pages project | `mechpro-dispatch` |
-| Worker name | `mechpro-api` |
-| D1 / R2 (from wrangler) | D1 `mechpro`; R2 `mechpro-files` (confirm in `wrangler.jsonc`) |
-| AWS | Cognito + Lambda + Aurora via MechPro `aws/` CDK — use existing pools/secrets in Secrets Manager; do not create parallel stacks casually |
+| Pages project | `shopcrank-dispatch` |
+| Worker name | `shopcrank-api` |
+| D1 / R2 (from wrangler) | D1 `shopcrank`; R2 `shopcrank-files` (confirm in `wrangler.jsonc`) |
+| AWS | Cognito + Lambda + Aurora via Shop Crank `aws/` CDK — use existing pools/secrets in Secrets Manager; do not create parallel stacks casually |
 | Bedrock | User mentioned permanent Bedrock API for voice AI in IDE chats — wire only if still desired; otherwise leave current path |
 
 ---
@@ -179,12 +179,12 @@ Legend: **Done in PR #9 / main spine** · **Exists elsewhere / partial** · **Mi
 ### Phase A — Orient (read-only, 15–30 min)
 
 1. Open this brief + attachments folder.
-2. `gh pr view 9 --repo tinytim3271-wq/MechPro` and `gh pr view 21 --repo tinytim3271-wq/cloudflare` — note merge status.
+2. `gh pr view 9 --repo tinytim3271-wq/Shop Crank` and `gh pr view 21 --repo tinytim3271-wq/cloudflare` — note merge status.
 3. On Lees_computer, confirm canonical checkouts:
-   - `E:\MechPro\MechPro`
+   - `E:\Shop Crank\Shop Crank`
    - `C:\Users\secon\source\repos\cloudflare`
 4. Skim inventory reports (attached) — do not re-inventory unless paths moved.
-5. Ask Timothy **only** if unclear: single runtime target for “combine and complete” = **AWS MechPro**, **Cloudflare Dispatch**, or **thin SPA on CF talking to AWS API**.
+5. Ask Timothy **only** if unclear: single runtime target for “combine and complete” = **AWS Shop Crank**, **Cloudflare Dispatch**, or **thin SPA on CF talking to AWS API**.
 
 ### Phase B — Stabilize bases (no feature rewrite)
 
@@ -197,17 +197,17 @@ Legend: **Done in PR #9 / main spine** · **Exists elsewhere / partial** · **Mi
 
 Priority order suggested:
 
-1. **Product decision:** which UI is customer-facing production (CF Dispatch vs AWS MechPro SPA).
+1. **Product decision:** which UI is customer-facing production (CF Dispatch vs AWS Shop Crank SPA).
 2. If unifying: port **features**, not whole trees — e.g. bring PR #9 payroll/OBD/keys UX patterns into Dispatch **or** point Dispatch API at AWS — document choice in README.
 3. Enrich payroll from local `reliable-shop-management1` (stubs/QBO/advances) **without** deleting PR #9 modules.
 4. Harden OBD: better ELM327 error handling; document J2534 desktop host if Electron returns.
 5. Harden keys: licensed programmer adapter interface; keep RO authorization gates.
 6. Mobile/desktop: only after `package.json` scripts and folders actually exist.
-7. CI: green Cloudflare publish + MechPro AWS deploy workflows.
+7. CI: green Cloudflare publish + Shop Crank AWS deploy workflows.
 
 ### Phase D — Verify
 
-- MechPro: unit + convex tests; login; create RO; run payroll stub; `/obd` sim; `/keys` rejects without signed RO.
+- Shop Crank: unit + convex tests; login; create RO; run payroll stub; `/obd` sim; `/keys` rejects without signed RO.
 - Cloudflare: `/api/healthz`; Pages load; Wrangler + (after rotation) Actions deploy.
 - Never claim “fully ready to market” until Capacitor/Electron claims match the tree.
 
@@ -219,31 +219,31 @@ Priority order suggested:
 
 | Artifact | Path |
 |----------|------|
-| **This brief** | `C:\Users\secon\Documents\MechPro-handoff\MECHPRO_CURSOR_HANDOFF.md` |
-| Cloud agent transcript MechPro PR #9 | `...\attachments\bc-d1104827-55b4-4565-a1d7-0b699a6661e6.jsonl` |
+| **This brief** | `C:\Users\secon\Documents\ShopCrank-handoff\SHOP_CRANK_CURSOR_HANDOFF.md` |
+| Cloud agent transcript Shop Crank PR #9 | `...\attachments\bc-d1104827-55b4-4565-a1d7-0b699a6661e6.jsonl` |
 | Cloud agent transcript CF PR #21 | `...\attachments\bc-b544e316-fd41-4655-bcc3-eeb7dcbe263d.jsonl` |
 | Shop inventory report | `...\attachments\02-shop-inventory-executor.md` |
 | Cloudflare repo finder | `...\attachments\03-cloudflare-repo-finder.md` |
-| Sep 1 + Sep 12 Grok Bot thread extract | `...\attachments\01-timothy-grokbot-mechpro.md` |
+| Sep 1 + Sep 12 Grok Bot thread extract | `...\attachments\01-timothy-grokbot-shopcrank.md` |
 | Cloud agent summaries | `...\attachments\04-cloud-agent-shop-os.md`, `05-cloud-agent-cloudflare-deploy.md` |
 | Full history INDEX | `...\attachments\INDEX.md` |
 | Cursor IDE user-turn extracts | `...\attachments\cursor-ide-user-turns\` |
-| Raw Cursor IDE jsonl (originals) | `%USERPROFILE%\.cursor\projects\c-mechpro\agent-transcripts\` (etc.) |
+| Raw Cursor IDE jsonl (originals) | `%USERPROFILE%\.cursor\projects\c-shopcrank\agent-transcripts\` (etc.) |
 
 ### On Grok Bot computer (if agent can reach)
 
 | Artifact | Path |
 |----------|------|
-| History archive root | `/workspace/mechpro-history/` |
+| History archive root | `/workspace/shopcrank-history/` |
 | Cloud transcripts | `/workspace/cloud-agent-transcripts/` |
-| Inventory scratch (if still present) | `/workspace/mechpro-inventory/` |
+| Inventory scratch (if still present) | `/workspace/shopcrank-inventory/` |
 
 ### Live URLs
 
-- https://github.com/tinytim3271-wq/MechPro/pull/9  
+- https://github.com/tinytim3271-wq/Shop Crank/pull/9  
 - https://github.com/tinytim3271-wq/cloudflare/pull/21  
 - https://www.yourcarguy806.com/  
-- https://b53a8fb8.mechpro-dispatch.pages.dev  
+- https://b53a8fb8.shopcrank-dispatch.pages.dev  
 - https://cursor.com/agents/bc-d1104827-55b4-4565-a1d7-0b699a6661e6  
 - https://cursor.com/agents/bc-b544e316-fd41-4655-bcc3-eeb7dcbe263d  
 
@@ -254,7 +254,7 @@ Priority order suggested:
 ### ≈2026-09-01 — Shop OS + AWS
 
 - User: combine all folder features into one shop OS (management, employees, payroll, OBD, keys).
-- Inventory: MechPro primary; rsm1 payroll donor; OBD/keys missing then.
+- Inventory: Shop Crank primary; rsm1 payroll donor; OBD/keys missing then.
 - User: cloud on AWS.
 - After GitHub auth: cloud agent `bc-d1104827` → PR #9 shop OS.
 
@@ -262,17 +262,17 @@ Priority order suggested:
 
 - User: full deploy to Cloudflare.
 - Declined Cloudflare **connector**; insisted on **existing** Cloudflare git.
-- Found `C:\Users\secon\source\repos\cloudflare` → Pages `mechpro-dispatch`, Worker `mechpro-api`.
+- Found `C:\Users\secon\source\repos\cloudflare` → Pages `shopcrank-dispatch`, Worker `shopcrank-api`.
 - CI token invalid; **local Wrangler** deploy succeeded; live domain healthy.
 - Cloud agent `bc-b544e316` → PR #21 token diagnostics.
 
-*(Full dialogue extract: attachment `01-timothy-grokbot-mechpro.md`.)*
+*(Full dialogue extract: attachment `01-timothy-grokbot-shopcrank.md`.)*
 
 ---
 
 ## 10. Suggested first message for the new Cursor agent
 
-> Read `MECHPRO_CURSOR_HANDOFF.md` and the attachments folder beside it. Do not re-inventory unless paths are missing. Confirm merge state of MechPro PR #9 and cloudflare PR #21. Ask me only which runtime is the “combine and complete” target (AWS MechPro vs Cloudflare Dispatch vs hybrid). Then execute Phase B of the brief. Do not rewrite working payroll/OBD/keys modules from PR #9. Do not implement bypass/FRP. After Cloudflare token rotation, verify GH Actions publish.
+> Read `SHOP_CRANK_CURSOR_HANDOFF.md` and the attachments folder beside it. Do not re-inventory unless paths are missing. Confirm merge state of Shop Crank PR #9 and cloudflare PR #21. Ask me only which runtime is the “combine and complete” target (AWS Shop Crank vs Cloudflare Dispatch vs hybrid). Then execute Phase B of the brief. Do not rewrite working payroll/OBD/keys modules from PR #9. Do not implement bypass/FRP. After Cloudflare token rotation, verify GH Actions publish.
 
 ---
 

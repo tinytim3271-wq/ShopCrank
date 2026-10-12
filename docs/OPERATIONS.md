@@ -5,7 +5,7 @@
 ### Cloudflare Pages (`.github/workflows/cloudflare-pages.yml`)
 - Confirm CI passed on the target commit.
 - Confirm `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are available in Actions.
-- Confirm Pages project name variable is set (or default `mechpro-dispatch` is intended).
+- Confirm Pages project name variable is set (or default `shopcrank-dispatch` is intended).
 - Run/verify `npm ci`, `npm run build:web`, and `npm run stage:pages`.
 - Validate `/` on the Pages origin and `/api/healthz` on the Worker hostname (`www.yourcarguy806.com`) after deployment. Pages does not serve `/api/*`.
 

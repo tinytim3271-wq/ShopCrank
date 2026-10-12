@@ -1,6 +1,6 @@
-using MechPro.J2534.Native;
+using ShopCrank.J2534.Native;
 
-namespace MechPro.J2534.IsoTp;
+namespace ShopCrank.J2534.IsoTp;
 
 /// <summary>ISO-TP over a live J2534 Pass-Thru ISO15765 channel.</summary>
 public sealed class J2534IsoTpChannel : IIsoTpChannel

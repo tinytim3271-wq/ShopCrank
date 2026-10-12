@@ -1,8 +1,8 @@
 {
   "extends": null,
-  "appId": "com.mechpro.dispatch.demo",
-  "productName": "MechPro Demo",
-  "artifactName": "MechPro-Demo-USB-${version}.${ext}",
+  "appId": "com.shopcrank.dispatch.demo",
+  "productName": "Shop Crank Demo",
+  "artifactName": "ShopCrank-Demo-USB-${version}.${ext}",
   "publish": null,
   "directories": {
     "output": "dist/windows-demo"
@@ -15,7 +15,7 @@
     "theme.css",
     "manifest.webmanifest",
     "service-worker.js",
-    "mechpro-icon.svg",
+    "shopcrank-icon.svg",
     "assets/**/*",
     "desktop/**/*",
     "!desktop/packaged-secrets/**/*",

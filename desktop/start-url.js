@@ -10,12 +10,12 @@ const DEFAULT_DESKTOP_APP_URL = 'https://www.yourcarguy806.com/';
 function resolveDesktopStart(options = {}) {
   const argv = options.argv || process.argv;
   const env = options.env || process.env;
-  const offline = options.offline === true || env.MECHPRO_DESKTOP_OFFLINE === '1';
+  const offline = options.offline === true || env.SHOP_CRANK_DESKTOP_OFFLINE === '1';
   const useLocalAssets = offline
     || argv.includes('--smoke-test')
     || argv.includes('--local-assets')
-    || env.MECHPRO_DESKTOP_LOCAL === '1';
-  const remoteUrl = String(env.MECHPRO_DESKTOP_URL || DEFAULT_DESKTOP_APP_URL).trim() || DEFAULT_DESKTOP_APP_URL;
+    || env.SHOP_CRANK_DESKTOP_LOCAL === '1';
+  const remoteUrl = String(env.SHOP_CRANK_DESKTOP_URL || DEFAULT_DESKTOP_APP_URL).trim() || DEFAULT_DESKTOP_APP_URL;
   return {
     offline,
     useLocalAssets,

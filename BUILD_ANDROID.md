@@ -1,4 +1,4 @@
-# Building MechPro Dispatch — Android APK
+# Building Shop Crank Dispatch — Android APK
 
 This project uses [Capacitor](https://capacitorjs.com/) to package the web app as a fully offline Android application. All app features work without an internet connection — data is stored locally on the device.
 
@@ -43,8 +43,8 @@ Transfer this file to your Android device and install it (you may need to enable
 
 1. Generate a signing keystore (one-time):
    ```bash
-   keytool -genkey -v -keystore mechpro.jks -keyalg RSA -keysize 2048 \
-     -validity 10000 -alias mechpro
+   keytool -genkey -v -keystore shopcrank.jks -keyalg RSA -keysize 2048 \
+     -validity 10000 -alias shopcrank
    ```
 
 2. Build the release APK:
@@ -73,7 +73,7 @@ Then rebuild the APK.
 
 | Property | Value |
 |---|---|
-| App ID | `com.mechpro.dispatch` |
+| App ID | `com.shopcrank.dispatch` |
 | Min Android | 6.0 (API 23) |
 | Target Android | 15 (API 35) |
 | Offline storage | `localStorage` (device-local) |

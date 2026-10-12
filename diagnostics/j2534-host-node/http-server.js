@@ -5,7 +5,7 @@
 const http = require('node:http');
 const { handleRequest } = require('./index');
 
-const PORT = Number(process.env.MECHPRO_J2534_HTTP_PORT || 39254);
+const PORT = Number(process.env.SHOP_CRANK_J2534_HTTP_PORT || 39254);
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', 'http://127.0.0.1:3000');

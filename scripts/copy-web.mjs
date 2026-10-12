@@ -13,7 +13,7 @@ const files = [
   'diagnostics-ui.js',
   'service-worker.js',
   'manifest.webmanifest',
-  'mechpro-icon.svg',
+  'shopcrank-icon.svg',
 ];
 
 rmSync(webDir, { recursive: true, force: true });

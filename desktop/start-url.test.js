@@ -16,8 +16,8 @@ describe('resolveDesktopStart', () => {
     assert.equal(result.useLocalAssets, true);
   });
 
-  it('uses local assets when MECHPRO_DESKTOP_LOCAL=1', () => {
-    const result = resolveDesktopStart({ argv: ['electron', '.'], env: { MECHPRO_DESKTOP_LOCAL: '1' } });
+  it('uses local assets when SHOP_CRANK_DESKTOP_LOCAL=1', () => {
+    const result = resolveDesktopStart({ argv: ['electron', '.'], env: { SHOP_CRANK_DESKTOP_LOCAL: '1' } });
     assert.equal(result.useLocalAssets, true);
   });
 
@@ -27,12 +27,12 @@ describe('resolveDesktopStart', () => {
     assert.equal(result.useLocalAssets, true);
   });
 
-  it('honors MECHPRO_DESKTOP_URL overrides', () => {
+  it('honors SHOP_CRANK_DESKTOP_URL overrides', () => {
     const result = resolveDesktopStart({
       argv: ['electron', '.'],
-      env: { MECHPRO_DESKTOP_URL: 'https://mechpro-dispatch.pages.dev' },
+      env: { SHOP_CRANK_DESKTOP_URL: 'https://shopcrank-dispatch.pages.dev' },
     });
     assert.equal(result.useLocalAssets, false);
-    assert.equal(result.remoteUrl, 'https://mechpro-dispatch.pages.dev/');
+    assert.equal(result.remoteUrl, 'https://shopcrank-dispatch.pages.dev/');
   });
 });

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">MechPro Dispatch</string>
-    <string name="title_activity_main">MechPro Dispatch</string>
-    <string name="package_name">com.mechpro.dispatch</string>
-    <string name="custom_url_scheme">com.mechpro.dispatch</string>
+    <string name="app_name">Shop Crank Dispatch</string>
+    <string name="title_activity_main">Shop Crank Dispatch</string>
+    <string name="package_name">com.shopcrank.dispatch</string>
+    <string name="custom_url_scheme">com.shopcrank.dispatch</string>
 </resources>

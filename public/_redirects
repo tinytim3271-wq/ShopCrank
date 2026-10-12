@@ -2,7 +2,7 @@
 # Cloudflare serves /pricing/ and 308s /pricing → /pricing/.
 # Do not add `/pricing → /pricing.html` rewrites — that loops with pretty URLs.
 #
-# `/api/*` is served by the mechpro-api Worker on the production hostname.
+# `/api/*` is served by the shopcrank-api Worker on the production hostname.
 
 # Optional explicit entry for the SPA shell.
 /app            /index.html       200

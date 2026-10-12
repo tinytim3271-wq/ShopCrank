@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "pipeName": "\\\\.\\pipe\\mechpro-j2534",
+  "pipeName": "\\\\.\\pipe\\shopcrank-j2534",
   "methods": {
     "listAdapters": { "params": {}, "result": { "adapters": "AdapterInfo[]", "simulator": "boolean" } },
     "connect": { "params": { "adapterId": "string", "protocol": "string", "baudRate": "number?" }, "result": { "connected": "boolean", "protocol": "string", "voltage": "number" } },

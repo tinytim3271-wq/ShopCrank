@@ -1,5 +1,5 @@
 /**
- * MechPro J2534 diagnostic host — Node.js implementation with simulator mode.
+ * Shop Crank J2534 diagnostic host — Node.js implementation with simulator mode.
  * On Windows with a real J2534 DLL, the C# J2534.Host.exe is preferred.
  * This host provides the same JSON-RPC named-pipe protocol for development and CI.
  */
@@ -10,10 +10,10 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
-const PIPE_NAME = process.env.MECHPRO_J2534_PIPE || (process.platform === 'win32'
-  ? '\\\\.\\pipe\\mechpro-j2534'
-  : path.join(os.tmpdir(), 'mechpro-j2534.sock'));
-const HOST_TOKEN = process.env.MECHPRO_J2534_TOKEN || '';
+const PIPE_NAME = process.env.SHOP_CRANK_J2534_PIPE || (process.platform === 'win32'
+  ? '\\\\.\\pipe\\shopcrank-j2534'
+  : path.join(os.tmpdir(), 'shopcrank-j2534.sock'));
+const HOST_TOKEN = process.env.SHOP_CRANK_J2534_TOKEN || '';
 
 const SIM_VIN = '1C6SRFHT0LN123456';
 const SIM_PLATFORM = 'DT';
@@ -41,7 +41,7 @@ function logEntry(direction, address, data, description) {
 function assertAuth(params = {}) {
   // Fail closed unless explicitly opted into unauthenticated local/dev hosts.
   if (!HOST_TOKEN) {
-    if (process.env.MECHPRO_ALLOW_UNAUTHENTICATED_HOST === '1') return;
+    if (process.env.SHOP_CRANK_ALLOW_UNAUTHENTICATED_HOST === '1') return;
     throw new Error('Unauthorized J2534 RPC — host token not configured');
   }
   if (String(params.authToken || '') !== HOST_TOKEN) {
@@ -129,7 +129,7 @@ function obdSnapshot() {
   return {
     source: 'simulator',
     simulator: true,
-    adapterName: 'MechPro CAN Simulator',
+    adapterName: 'Shop Crank CAN Simulator',
     protocol: 'ISO 15765-4 CAN 11-bit 500 kbps (engine ECU 0x7E0)',
     responded: true,
     vin: SIM_VIN,
@@ -199,8 +199,8 @@ function listAdapters() {
   }
   adapters.push({
     id: 'simulator',
-    name: 'MechPro CAN Simulator (Dodge/Ram bench)',
-    vendor: 'MechPro',
+    name: 'Shop Crank CAN Simulator (Dodge/Ram bench)',
+    vendor: 'Shop Crank',
     dllPath: 'builtin-simulator',
     protocols: ['CAN', 'ISO15765'],
     firmware: '1.0.0-sim',
@@ -550,7 +550,7 @@ function identifyVehicle() {
     networkTopology,
     identifiedAt: new Date().toISOString(),
     adapterInfo: {
-      vendor: sim.adapterId === 'simulator' ? 'MechPro' : 'J2534',
+      vendor: sim.adapterId === 'simulator' ? 'Shop Crank' : 'J2534',
       dll: sim.adapterId === 'simulator' ? 'builtin-simulator' : sim.adapterId,
       firmware: '1.0.0',
     },

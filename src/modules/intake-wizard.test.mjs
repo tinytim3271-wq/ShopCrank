@@ -64,9 +64,9 @@ test('conversion carries the disclaimer, customer, and primary technician', () =
   assert.ok(order.labor > 0);
 });
 
-test('labor lookup stays on the MechPro guide', () => {
+test('labor lookup stays on the Shop Crank guide', () => {
   const hits = searchLaborGuide('brake pads');
-  assert.ok(hits.every(hit => hit.source === 'MechPro guide'));
+  assert.ok(hits.every(hit => hit.source === 'Shop Crank guide'));
   assert.deepEqual(unavailableLaborSources().map(item => item.name), ['Mitchell', 'ALLDATA', 'Motor', 'ShopKey']);
 });
 

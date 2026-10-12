@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace MechPro.J2534.Native;
+namespace ShopCrank.J2534.Native;
 
 /// <summary>Active J2534 device session over ISO15765 for UDS diagnostic requests.</summary>
 public sealed class PassThruDevice : IDisposable

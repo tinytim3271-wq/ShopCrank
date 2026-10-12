@@ -1,11 +1,11 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using MechPro.J2534.Core;
-using MechPro.J2534.Host;
+using ShopCrank.J2534.Core;
+using ShopCrank.J2534.Host;
 using Xunit;
 
-namespace MechPro.J2534.Host.Tests;
+namespace ShopCrank.J2534.Host.Tests;
 
 public sealed class RpcDispatcherTests
 {
@@ -16,7 +16,7 @@ public sealed class RpcDispatcherTests
         Environment.SetEnvironmentVariable(
             "DIAGNOSTICS_SIGNING_PUBLIC_KEY",
             Convert.ToBase64String(signingKey.ExportSubjectPublicKeyInfo()));
-        Environment.SetEnvironmentVariable("MECHPRO_J2534_TOKEN", "test-host-token");
+        Environment.SetEnvironmentVariable("SHOP_CRANK_J2534_TOKEN", "test-host-token");
 
         using var session = new DiagnosticSession();
         session.Connect(new ConnectParams { AdapterId = "simulator" });

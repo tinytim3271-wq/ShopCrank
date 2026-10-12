@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent Cloud Agent bootstrap for MechPro.
+# Idempotent Cloud Agent bootstrap for Shop Crank.
 # Refreshes dependencies, builds the web bundle, seeds local-only Worker dev
 # secrets, and applies the D1 schema to the local Miniflare database.
 set -euo pipefail

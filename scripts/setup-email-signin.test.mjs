@@ -26,14 +26,14 @@ test('parseArgs rejects unknown flags', () => {
 
 test('validateWebhookUrl accepts https webhooks', () => {
   assert.equal(
-    validateWebhookUrl('https://mailer.example.com/mechpro-login'),
-    'https://mailer.example.com/mechpro-login',
+    validateWebhookUrl('https://mailer.example.com/shopcrank-login'),
+    'https://mailer.example.com/shopcrank-login',
   );
 });
 
 test('validateWebhookUrl rejects insecure http urls by default', () => {
   assert.throws(
-    () => validateWebhookUrl('http://mailer.example.com/mechpro-login'),
+    () => validateWebhookUrl('http://mailer.example.com/shopcrank-login'),
     (error) => error instanceof SetupError && /HTTPS webhook URL/.test(error.message),
   );
 });

@@ -1,13 +1,13 @@
-# MechPro Dispatch
+# Shop Crank Dispatch
 
 This repository, [`tinytim3271-wq/cloudflare`](https://github.com/tinytim3271-wq/cloudflare),
-is the canonical home for MechPro.
+is the canonical home for Shop Crank.
 
-MechPro is a local-first shop dispatch and work-order PWA with cloud
+Shop Crank is a local-first shop dispatch and work-order PWA with cloud
 synchronization on **Cloudflare** (Pages, Workers, D1, R2, Workers AI). The
 public SaaS architecture is documented in
 [`docs/cloudflare-saas-architecture.md`](docs/cloudflare-saas-architecture.md).
-The app supports a public customer-auth path using the `mechpro_session`
+The app supports a public customer-auth path using the `shopcrank_session`
 HTTP-only cookie, with magic-link and Google sign-in endpoints at
 `/api/auth/magic-link`, `/api/auth/google`, `/api/auth/callback`, and `/api/auth/logout`.
 - **Pages** serves the static PWA.
@@ -19,7 +19,7 @@ HTTP-only cookie, with magic-link and Google sign-in endpoints at
 - **Cloudflare Access** should be reserved for internal/operator surfaces as the
   product moves to public SaaS signup, login, and billing.
 
-The PWA remains usable offline with `localStorage` (`mechpro-dispatch-v1`) and
+The PWA remains usable offline with `localStorage` (`shopcrank-dispatch-v1`) and
 queues non-sensitive entity mutations until connectivity returns.
 
 ## Deployment Targets (Source of Truth)
@@ -123,21 +123,21 @@ Migration `worker/migrations/0008_repair_flow_integrations.sql` adds `oauth_stat
 
 ### Flash-drive demo (Windows 10/11 x64)
 
-The **Windows desktop release** workflow builds a separate `mechpro-usb-demo`
+The **Windows desktop release** workflow builds a separate `shopcrank-usb-demo`
 artifact on pull requests, pushes to `main`, and manual runs. Main-branch pushes
-also attach `MechPro-Demo-USB-1.0.0.zip` (version follows `package.json`) to the
+also attach `ShopCrank-Demo-USB-1.0.0.zip` (version follows `package.json`) to the
 [desktop release](https://github.com/tinytim3271-wq/cloudflare/releases/tag/desktop-v1.0.0).
 The normal installer and online ZIP remain unchanged.
 
 1. Download the demo ZIP and **extract the entire ZIP** into a folder on a
    writable flash drive (not just the EXE).
-2. Run **MechPro Demo.exe** from that folder; no install, Node.js, or internet
+2. Run **Shop Crank Demo.exe** from that folder; no install, Node.js, or internet
    connection is needed on the demo computer.
 3. Create a local sign-in with a demo email, name, and your own password. No
    email is sent. Explore the existing sample shop records and local workflows.
 4. Close the app fully before safely ejecting the drive.
 
-The account, shop records, Chromium profile, and logs stay in **MechPro Demo
+The account, shop records, Chromium profile, and logs stay in **Shop Crank Demo
 Data**, beside the executable. Copy the entire folder to move/back up the demo.
 To reset, close the app and delete only that data folder. Use sample data only:
 shop records on the drive are not encrypted. A read-only drive fails explicitly
@@ -155,7 +155,7 @@ npm ci
 npm run build:windows:demo
 ```
 
-Output: `dist/windows-demo/MechPro-Demo-USB-<version>.zip`. The build uses a
+Output: `dist/windows-demo/ShopCrank-Demo-USB-<version>.zip`. The build uses a
 temporary offline/portable edition flag and restores the original edition even
 if packaging fails. The Windows workflow launches the extracted app, verifies
 drive-local storage, and repeats after moving the folder.
@@ -182,9 +182,9 @@ Create the resources once. The production D1 `database_id` is already set in
 
 ```bash
 npx wrangler login
-npx wrangler d1 create mechpro
-npx wrangler r2 bucket create mechpro-files
-npx wrangler r2 bucket create mechpro-files-preview
+npx wrangler d1 create shopcrank
+npx wrangler r2 bucket create shopcrank-files
+npx wrangler r2 bucket create shopcrank-files-preview
 ```
 
 Set Worker secrets interactively:
@@ -220,7 +220,7 @@ register `https://www.yourcarguy806.com/api/auth/google/callback` as an
 authorized redirect URI. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are
 required; the Worker refuses to start the OAuth flow when either is missing.
 The callback validates OAuth state, PKCE, the ID-token signature and claims,
-and Google's verified-email flag before issuing a MechPro session.
+and Google's verified-email flag before issuing a Shop Crank session.
 
 ### Fixing email sign-in
 
@@ -230,7 +230,7 @@ only after Cloudflare Email accepts the message. Its address is:
 
 `https://www.yourcarguy806.com/api/auth/send-login`
 
-Enable Email Routing for `yourcarguy806.com`, then deploy `mechpro-api`. After
+Enable Email Routing for `yourcarguy806.com`, then deploy `shopcrank-api`. After
 that deploy, magic-link sign-in uses the `EMAIL` binding directly. Until then,
 point `AUTH_EMAIL_WEBHOOK` at the address above. `Unable to deliver the sign-in
 email` means the current webhook did not accept the message.
@@ -243,7 +243,7 @@ npm run setup:email
 
 The script explains each step, asks for confirmation before saving anything, and
 stores the values as **remote Worker secrets** through Wrangler. Your
-administrator needs an **HTTPS** webhook endpoint that accepts MechPro's JSON
+administrator needs an **HTTPS** webhook endpoint that accepts Shop Crank's JSON
 payload:
 
 ```json
@@ -268,7 +268,7 @@ npm run deploy:worker
 
 Simple verification:
 
-1. Open your MechPro site and visit `/login`.
+1. Open your Shop Crank site and visit `/login`.
 2. Request a sign-in link with an email address you control.
 3. Confirm your webhook receives `{ email, loginUrl, returnTo }`.
 4. Confirm the email arrives and that the login link signs you in.
@@ -282,7 +282,7 @@ npm run deploy:pages
 ```
 
 Configure a Cloudflare Pages custom domain for `www.yourcarguy806.com` and keep
-the Worker on the `/api/*` route only. Do not attach `mechpro-api` as a custom
+the Worker on the `/api/*` route only. Do not attach `shopcrank-api` as a custom
 domain for the whole hostname — that conflicts with Pages and is why production
 deploys fail. Browser requests stay same-origin: Pages serves the PWA and marketing
 pages, and the Worker handles `/api`.
@@ -292,7 +292,7 @@ the public hostname. Those challenges currently return HTTP 403 "Just a moment..
 for `https://www.yourcarguy806.com/` and `/api/*`, which blocks the PWA and API
 clients. Reserve Access for an internal admin hostname. Confirm the Worker route
 with `curl -sS https://www.yourcarguy806.com/api/healthz` — it should return JSON
-`{"ok":true,"service":"mechpro-cloudflare-api"}`, not a Cloudflare challenge page.
+`{"ok":true,"service":"shopcrank-cloudflare-api"}`, not a Cloudflare challenge page.
 
 After an owner signs in with a magic-link from `/login`, create shops in
 **Platform Administration**. Account creation maps the owner's email to the
@@ -306,7 +306,7 @@ For local Worker API development only, copy `.dev.vars.example` to an ignored
 cp .dev.vars.example .dev.vars
 ```
 
-Then send `X-MechPro-Dev-Email` (and optionally `X-MechPro-Dev-Name`) on local
+Then send `X-ShopCrank-Dev-Email` (and optionally `X-ShopCrank-Dev-Name`) on local
 API requests. Never enable `DEV_AUTH_BYPASS` in production.
 
 ## API compatibility
@@ -414,7 +414,7 @@ Modes:
   - `DELETE /api/diagnostics/autoauth` — disconnect.
 
   Until the shop is connected, live authorization returns `501`. Live execution
-  also requires a licensed `ISecurityAccessProvider`. MechPro does **not** bundle
+  also requires a licensed `ISecurityAccessProvider`. Shop Crank does **not** bundle
   or bypass OEM security-gateway seed/key algorithms; without a real provider,
   live SecurityAccess fails closed.
 

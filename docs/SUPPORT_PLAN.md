@@ -1,6 +1,6 @@
-# MechPro support plan
+# Shop Crank support plan
 
-MechPro is currently operated by one owner, so support promises must be
+Shop Crank is currently operated by one owner, so support promises must be
 specific, limited, and achievable. The in-app help center handles common
 questions; every submitted ticket is stored in D1 and can notify the configured
 support mailbox.

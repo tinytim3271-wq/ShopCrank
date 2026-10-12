@@ -1,7 +1,7 @@
 {
-  "appId": "com.mechpro.dispatch.offline",
-  "productName": "MechPro Offline",
-  "artifactName": "MechPro-Offline-Setup-${version}.${ext}",
+  "appId": "com.shopcrank.dispatch.offline",
+  "productName": "Shop Crank Offline",
+  "artifactName": "ShopCrank-Offline-Setup-${version}.${ext}",
   "publish": null,
   "directories": {
     "output": "dist/windows-offline"
@@ -14,7 +14,7 @@
     "theme.css",
     "manifest.webmanifest",
     "service-worker.js",
-    "mechpro-icon.svg",
+    "shopcrank-icon.svg",
     "assets/**/*",
     "desktop/**/*",
     "diagnostics/j2534-host-node/**/*",
@@ -46,6 +46,6 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "MechPro Offline"
+    "shortcutName": "Shop Crank Offline"
   }
 }

@@ -1,6 +1,6 @@
 {
-  "name": "MechPro Dispatch & Work Orders",
-  "short_name": "MechPro",
+  "name": "Shop Crank Dispatch & Work Orders",
+  "short_name": "Shop Crank",
   "description": "Dispatch, work orders, customers, invoices, payroll, and shop operations.",
   "start_url": "./",
   "scope": "./",
@@ -9,7 +9,7 @@
   "theme_color": "#162c24",
   "icons": [
     {
-      "src": "./mechpro-icon.svg",
+      "src": "./shopcrank-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

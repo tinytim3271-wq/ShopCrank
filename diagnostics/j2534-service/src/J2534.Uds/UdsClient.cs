@@ -1,7 +1,7 @@
 using System.Linq;
-using MechPro.J2534.IsoTp;
+using ShopCrank.J2534.IsoTp;
 
-namespace MechPro.J2534.Uds;
+namespace ShopCrank.J2534.Uds;
 
 public sealed class EcuIdentification
 {

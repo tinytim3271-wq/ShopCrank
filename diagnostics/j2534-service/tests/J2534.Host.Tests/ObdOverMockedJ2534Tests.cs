@@ -1,12 +1,12 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using MechPro.J2534.Core;
-using MechPro.J2534.Native;
-using MechPro.J2534.Uds;
+using ShopCrank.J2534.Core;
+using ShopCrank.J2534.Native;
+using ShopCrank.J2534.Uds;
 using Xunit;
 
-namespace MechPro.J2534.Host.Tests;
+namespace ShopCrank.J2534.Host.Tests;
 
 /// <summary>
 /// A stand-in for a vendor J2534 DLL (such as TOPDON PassThru464.dll). It
@@ -82,7 +82,7 @@ public sealed class ObdOverMockedJ2534Tests
 
     static ObdOverMockedJ2534Tests()
     {
-        Environment.SetEnvironmentVariable("MECHPRO_J2534_TOKEN", "test-host-token");
+        Environment.SetEnvironmentVariable("SHOP_CRANK_J2534_TOKEN", "test-host-token");
     }
 
     static IEnumerable<byte[]> Car(byte[] request)

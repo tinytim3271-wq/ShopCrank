@@ -16,14 +16,14 @@ test('installed editions leave Electron data paths unchanged', () => {
 });
 
 test('portable profile and shop records follow the executable, not the working directory', () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'mechpro-portable-'));
+  const root = mkdtempSync(path.join(os.tmpdir(), 'shopcrank-portable-'));
   try {
     const original = path.join(root, 'USB A');
     mkdirSync(original);
     const paths = {};
     const app = { setPath: (key, value) => { paths[key] = value; } };
-    const dir = configurePortableData(app, { offline: true, portable: true }, path.join(original, 'MechPro Demo.exe'));
-    assert.equal(dir, path.join(original, 'MechPro Demo Data'));
+    const dir = configurePortableData(app, { offline: true, portable: true }, path.join(original, 'Shop Crank Demo.exe'));
+    assert.equal(dir, path.join(original, 'Shop Crank Demo Data'));
     assert.equal(paths.userData, dir);
     assert.equal(paths.sessionData, dir);
     assert.ok(existsSync(paths.logs));
@@ -32,12 +32,12 @@ test('portable profile and shop records follow the executable, not the working d
     vault.createAccount(dir, account);
     vault.saveShop(dir, { orders: [{ id: 'USB-1' }] });
     assert.deepEqual(vault.loadShop(dir), { orders: [{ id: 'USB-1' }] });
-    assert.equal(configurePortableData(app, { portable: true }, path.join(original, 'MechPro Demo.exe')), dir);
+    assert.equal(configurePortableData(app, { portable: true }, path.join(original, 'Shop Crank Demo.exe')), dir);
     assert.deepEqual(vault.loadShop(paths.userData), { orders: [{ id: 'USB-1' }] });
     const moved = path.join(root, 'USB B');
     renameSync(original, moved);
-    configurePortableData(app, { portable: true }, path.join(moved, 'MechPro Demo.exe'));
-    assert.equal(paths.userData, path.join(moved, 'MechPro Demo Data'));
+    configurePortableData(app, { portable: true }, path.join(moved, 'Shop Crank Demo.exe'));
+    assert.equal(paths.userData, path.join(moved, 'Shop Crank Demo Data'));
     assert.deepEqual(vault.loadShop(paths.userData), { orders: [{ id: 'USB-1' }] });
     assert.equal(vault.signIn(paths.userData, account).email, account.email);
   } finally {
@@ -46,7 +46,7 @@ test('portable profile and shop records follow the executable, not the working d
 });
 
 test('sandboxed preload requires only Electron and exposes the supplied edition flags', () => {
-  for (const argv of [[], ['--mechpro-offline', '--mechpro-portable', '--mechpro-demo']]) {
+  for (const argv of [[], ['--shopcrank-offline', '--shopcrank-portable', '--shopcrank-demo']]) {
     const exposed = {};
     vm.runInNewContext(readFileSync(path.join(__dirname, 'preload.js'), 'utf8'), {
       process: { argv, platform: 'win32', versions: { electron: 'test' } },
@@ -58,11 +58,11 @@ test('sandboxed preload requires only Electron and exposes the supplied edition 
         };
       },
     });
-    assert.equal(exposed.mechproDesktop.offline, argv.length > 0);
-    assert.equal(exposed.mechproDesktop.portable, argv.length > 0);
-    assert.equal(exposed.mechproDesktop.demo, argv.length > 0);
-    assert.equal(Boolean(exposed.mechproDesktop.localShop), argv.length > 0);
-    assert.ok(exposed.mechproDiagnostics);
+    assert.equal(exposed.shopcrankDesktop.offline, argv.length > 0);
+    assert.equal(exposed.shopcrankDesktop.portable, argv.length > 0);
+    assert.equal(exposed.shopcrankDesktop.demo, argv.length > 0);
+    assert.equal(Boolean(exposed.shopcrankDesktop.localShop), argv.length > 0);
+    assert.ok(exposed.shopcrankDiagnostics);
   }
 });
 
@@ -76,10 +76,10 @@ test('demo packaging excludes credentials and does not inherit production resour
 });
 
 test('an unusable portable data directory fails instead of using host storage', () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'mechpro-portable-'));
+  const root = mkdtempSync(path.join(os.tmpdir(), 'shopcrank-portable-'));
   try {
-    writeFileSync(path.join(root, 'MechPro Demo Data'), 'not a directory');
-    assert.throws(() => configurePortableData({ setPath: () => assert.fail() }, { portable: true }, path.join(root, 'MechPro Demo.exe')));
+    writeFileSync(path.join(root, 'Shop Crank Demo Data'), 'not a directory');
+    assert.throws(() => configurePortableData({ setPath: () => assert.fail() }, { portable: true }, path.join(root, 'Shop Crank Demo.exe')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

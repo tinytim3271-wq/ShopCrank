@@ -1,9 +1,9 @@
 {
-  "name": "mechpro-desktop",
+  "name": "shopcrank-desktop",
   "version": "1.1.0",
-  "description": "MechPro Dispatch & Work Orders Windows desktop client",
+  "description": "Shop Crank Dispatch & Work Orders Windows desktop client",
   "main": "desktop/main.js",
-  "author": "MechPro",
+  "author": "Shop Crank",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "npm run dev:web",
@@ -24,7 +24,7 @@
     "deploy:worker": "wrangler deploy",
     "setup:email": "node scripts/setup-email-signin.mjs",
     "stage:pages": "node scripts/stage-pages.mjs",
-    "deploy:pages": "npm run build:web && npm run stage:pages && wrangler pages deploy .pages-dist --project-name=mechpro-dispatch --branch=main --commit-dirty=true",
+    "deploy:pages": "npm run build:web && npm run stage:pages && wrangler pages deploy .pages-dist --project-name=shopcrank-dispatch --branch=main --commit-dirty=true",
     "validate:worker": "npm run test:worker && wrangler deploy --dry-run",
     "validate": "npm run build:web && npm run test:config && npm run test:modules && npm run validate:worker && npm run test:j2534",
     "sync": "npm run build:web && npm run copy:web && npx cap sync android",
@@ -75,17 +75,17 @@
     "wrangler": "^4.130.0"
   },
   "build": {
-    "appId": "com.mechpro.dispatch",
-    "productName": "MechPro",
+    "appId": "com.shopcrank.dispatch",
+    "productName": "Shop Crank",
     "protocols": [
       {
-        "name": "MechPro authentication",
+        "name": "Shop Crank authentication",
         "schemes": [
-          "mechpro"
+          "shopcrank"
         ]
       }
     ],
-    "artifactName": "MechPro-Setup-${version}.${ext}",
+    "artifactName": "ShopCrank-Setup-${version}.${ext}",
     "publish": null,
     "directories": {
       "output": "dist/windows"
@@ -98,7 +98,7 @@
       "theme.css",
       "manifest.webmanifest",
       "service-worker.js",
-      "mechpro-icon.svg",
+      "shopcrank-icon.svg",
       "assets/**/*",
       "desktop/**/*",
       "diagnostics/j2534-host-node/**/*",
@@ -143,7 +143,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "MechPro"
+      "shortcutName": "Shop Crank"
     }
   },
   "dependencies": {

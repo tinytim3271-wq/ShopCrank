@@ -3,7 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>MechPro.J2534.IsoTp</RootNamespace>
+    <RootNamespace>ShopCrank.J2534.IsoTp</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\J2534.Native\J2534.Native.csproj" />

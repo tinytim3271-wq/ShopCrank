@@ -4,7 +4,7 @@
 
 This repository has three independent parts:
 
-- **Frontend PWA** (repo root: `index.html`, `app.js`, `styles.css`, `service-worker.js`, `assets/`) — a vanilla-JS, local-first Progressive Web App for shop dispatch and work orders. Cloudflare Pages serves it; seed data persists in `localStorage` (`mechpro-dispatch-v1`) and cloud synchronization fails gracefully offline.
+- **Frontend PWA** (repo root: `index.html`, `app.js`, `styles.css`, `service-worker.js`, `assets/`) — a vanilla-JS, local-first Progressive Web App for shop dispatch and work orders. Cloudflare Pages serves it; seed data persists in `localStorage` (`shopcrank-dispatch-v1`) and cloud synchronization fails gracefully offline.
 - **Web/packaging source** (`src/`, root `package.json`, `scripts/`) — edit source under `src/`, then run `npm run build:web` to refresh the committed root `app.js`. `npm run sync` also copies the offline shell into `www/` for the Capacitor Android wrapper in `android/`.
 - **Cloudflare backend** (`worker/`, `wrangler.jsonc`) — a Worker API using D1, R2, Workers AI, and Cloudflare Access identity. Run `npm run test:worker`, `npm run db:migrate:local`, and `npm run dev:worker` for local work. Remote deploys require Cloudflare credentials.
 
@@ -22,7 +22,7 @@ Serve the repo root over HTTP (service worker registration is gated on a secure 
 python3 -m http.server 3000 --bind 127.0.0.1   # then open http://127.0.0.1:3000/
 ```
 
-Serving the root still only requires a browser refresh. When editing source under `src/`, run `npm run build:web` first. The service worker caches aggressively; hard-reload or clear the `mechpro-dispatch-v1` service-worker cache if edits don't appear.
+Serving the root still only requires a browser refresh. When editing source under `src/`, run `npm run build:web` first. The service worker caches aggressively; hard-reload or clear the `shopcrank-dispatch-v1` service-worker cache if edits don't appear.
 
 ### OEM Diagnostics (J2534 / Windows)
 

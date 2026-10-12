@@ -9,11 +9,11 @@
 
 ## Key conclusions (user-facing)
 
-1. **Primary codebase:** Unify around `E:\MechPro\MechPro` → `https://github.com/tinytim3271-wq/MechPro.git` (Vite/TS, Convex-shaped API, AWS Cognito/Lambda/Aurora).
+1. **Primary codebase:** Unify around `E:\Shop Crank\Shop Crank` → `https://github.com/tinytim3271-wq/Shop Crank.git` (Vite/TS, Convex-shaped API, AWS Cognito/Lambda/Aurora).
 2. **Best donor for payroll/shop depth:** `reliable-shop-management1` (W-2/1099, QBO, POs, expenses, Diagnostics UX, SMS/voice, Expo Bay Floor, Electron hub).
 3. **Do not start from** `reliable-shop-standalone` (static frontend extract) or CLI scaffold `reliable-shop-management`.
 4. **Gaps vs ask:** Live OBD and key programming **missing everywhere**; AI DTC/symptom only.
-5. **MechPro local caveat:** Detached HEAD at `27be9a4` with dirty tree; README electron/cap claims not in `package.json`.
+5. **Shop Crank local caveat:** Detached HEAD at `27be9a4` with dirty tree; README electron/cap claims not in `package.json`.
 
 ---
 
@@ -21,7 +21,7 @@
 
 # Shop-software inventory (Lees_computer, read-only)
 
-Inventory taken ~11:51 PM–12:00 AM CT, Mon Aug 31 / Tue Sep 1, 2026. No clones, no file edits on the projects. Manifests copied to `/workspace/mechpro-inventory/` (MechPro files staged via `%TEMP%` because CopyToBox cannot read `E:\` directly).
+Inventory taken ~11:51 PM–12:00 AM CT, Mon Aug 31 / Tue Sep 1, 2026. No clones, no file edits on the projects. Manifests copied to `/workspace/shopcrank-inventory/` (Shop Crank files staged via `%TEMP%` because CopyToBox cannot read `E:\` directly).
 
 ---
 
@@ -29,19 +29,19 @@ Inventory taken ~11:51 PM–12:00 AM CT, Mon Aug 31 / Tue Sep 1, 2026. No clones
 
 | Remote | Local path(s) |
 |---|---|
-| **https://github.com/tinytim3271-wq/MechPro.git** | `E:\MechPro\MechPro` |
+| **https://github.com/tinytim3271-wq/Shop Crank.git** | `E:\Shop Crank\Shop Crank` |
 | **https://github.com/tinytim3271-wq/reliable-shop-management1.git** | `C:\Users\secon\source\repos\reliable-shop-management1`, nested clone, copilot worktrees |
 | **https://github.com/tinytim3271-wq/reliable-shop-standalone.git** | `C:\Users\secon\source\repos\reliable-shop-standalone`, nested clone |
 | **https://github.com/tinytim3271-wq/reliable-shop-management.git** | `C:\Users\secon\source\repos\tinytim3271-wq\reliable-shop-management` (CLI scaffold only) |
 | **https://github.com/tinytim3271-wq/uninstall-program.git** | `C:\Users\secon\source\repos\uninstall-program` |
 
-No remotes: `E:\MechPro` (outer, empty `main`), `NewRepo`, `AndroidApp1`, `bypass`.
+No remotes: `E:\Shop Crank` (outer, empty `main`), `NewRepo`, `AndroidApp1`, `bypass`.
 
 ---
 
 ## Recommended primary codebase
 
-**Unify around `MechPro` (`E:\MechPro\MechPro` → `https://github.com/tinytim3271-wq/MechPro.git`).**
+**Unify around `Shop Crank` (`E:\Shop Crank\Shop Crank` → `https://github.com/tinytim3271-wq/Shop Crank.git`).**
 
 Reasons:
 - Matches the intended stack (Vite/TS, Convex-shaped API, AWS Cognito/Lambda/Aurora).
@@ -53,7 +53,7 @@ Reasons:
 
 Do **not** start from `reliable-shop-standalone` (frontend is static build only; `api-server/src` cannot rebuild without monorepo packages). Do **not** start from the CLI scaffold `reliable-shop-management`.
 
-Caveat for the cloud agent: MechPro working tree is **detached HEAD** at `27be9a4` with a large dirty diff (old PWA/docs/lambda files deleted locally; README claims Capacitor/Electron scripts that are **not** in `package.json` and those folders are absent). `package.json` is still named `mechpro-aws-cdk`. Use `origin/main` plus the live `src/` + `convex/` + `aws/` tree, not the README’s electron/cap scripts.
+Caveat for the cloud agent: Shop Crank working tree is **detached HEAD** at `27be9a4` with a large dirty diff (old PWA/docs/lambda files deleted locally; README claims Capacitor/Electron scripts that are **not** in `package.json` and those folders are absent). `package.json` is still named `shopcrank-aws-cdk`. Use `origin/main` plus the live `src/` + `convex/` + `aws/` tree, not the README’s electron/cap scripts.
 
 ---
 
@@ -61,9 +61,9 @@ Caveat for the cloud agent: MechPro working tree is **detached HEAD** at `27be9a
 
 | Requested | Exists? | Where |
 |---|---|---|
-| Shop management (customers, vehicles, RO/WO, estimates, invoices, parts, schedule) | **Yes, implemented** | MechPro + rsm1 |
-| Employee management | **Yes** | Both (MechPro roster/GPS/dispatch; rsm1 HR + encrypted SSN + compliance) |
-| Payroll | **Partial in MechPro** (tech pay records, deductions, timeclock, billable hours). **Fuller in rsm1** (generate payroll, pay stubs PDF, W-2, 1099, YTD, advances/loans) | See pointers below |
+| Shop management (customers, vehicles, RO/WO, estimates, invoices, parts, schedule) | **Yes, implemented** | Shop Crank + rsm1 |
+| Employee management | **Yes** | Both (Shop Crank roster/GPS/dispatch; rsm1 HR + encrypted SSN + compliance) |
+| Payroll | **Partial in Shop Crank** (tech pay records, deductions, timeclock, billable hours). **Fuller in rsm1** (generate payroll, pay stubs PDF, W-2, 1099, YTD, advances/loans) | See pointers below |
 | OBD scan (live ELM327 / J2534 / Autel) | **Missing everywhere** | AI DTC/symptom diagnosis only; no adapter/serial/Bluetooth scan code found |
 | Key programming | **Missing everywhere** | No key-programming modules |
 
@@ -73,15 +73,15 @@ Diagnostics that **do** exist: typed DTC/symptom → LLM diagnosis; AI diagnosti
 
 ## Per-project inventory
 
-### 1. E:\MechPro (outer)
+### 1. E:\Shop Crank (outer)
 
 - Git repo, **no remotes**, branch `main`, **zero commits**.
-- Contains nested app `MechPro\`, `decompressedTemplate\pwa-starter-main` (Microsoft PWA starter), `fetchedTemplate.zip`, BSD license (Lee Alderman).
+- Contains nested app `Shop Crank\`, `decompressedTemplate\pwa-starter-main` (Microsoft PWA starter), `fetchedTemplate.zip`, BSD license (Lee Alderman).
 - Not an app. Ignore except as wrapper.
 
-### 2. E:\MechPro\MechPro — **PRIMARY**
+### 2. E:\Shop Crank\Shop Crank — **PRIMARY**
 
-- Git: `origin` https://github.com/tinytim3271-wq/MechPro.git  
+- Git: `origin` https://github.com/tinytim3271-wq/Shop Crank.git  
   Detached HEAD `27be9a4` (= `origin/main`). Extra remote branches: several `cursor/*` AWS/security, `fix/aikido-security-*`.
 - Last 5:  
   `27be9a4` Fix stored XSS in diagnostic and repair checklist print popups (#8)  
@@ -90,7 +90,7 @@ Diagnostics that **do** exist: typed DTC/symptom → LLM diagnosis; AI diagnosti
   `ab81321` Deploy and stabilize AWS runtime backend  
   `d2cf409` Fix Cognito callback sign-in loop
 - README: “Mobile mechanic shop management — repair orders, scheduling, invoicing, AI diagnostics.” Stack: React 19 + Vite + Tailwind/shadcn, AWS (Aurora, Cognito, Lambda, API GW, S3), Bedrock AI, Capacitor + Electron **claimed**.
-- `package.json` name `mechpro-aws-cdk`; scripts `vite build` / `frontend:dev` / `cdk:*`. Deps: convex, react 19, stripe, oidc, leaflet, jspdf, openai, radix, tanstack-query. **No** `dev`/`electron`/`cap` scripts despite README.
+- `package.json` name `shopcrank-aws-cdk`; scripts `vite build` / `frontend:dev` / `cdk:*`. Deps: convex, react 19, stripe, oidc, leaflet, jspdf, openai, radix, tanstack-query. **No** `dev`/`electron`/`cap` scripts despite README.
 - Layout: `src/{pages,components,api,hooks,lib}` · `convex/` · `aws/{db,handlers,infra,runtime}` · `scripts/convex-dev.sh` · PWA `public/`.
 
 **Implemented (file pointers):**
@@ -117,7 +117,7 @@ Diagnostics that **do** exist: typed DTC/symptom → LLM diagnosis; AI diagnosti
 
 **Hardware:** none (no ELM327/J2534/Autel). AI checklists *mention* scan-tool steps as text.
 
-Copied: `/workspace/mechpro-inventory/MechPro/{README.md,package.json}`
+Copied: `/workspace/shopcrank-inventory/Shop Crank/{README.md,package.json}`
 
 ---
 
@@ -197,13 +197,13 @@ Copied: README.md, api-server/package.json
 
 ## Hardware integrations (all projects)
 
-**None found** for ELM327, J2534, PassThru, Autel, WebSerial, or key programming. Closest: LLM “scan_tool” checklist category (MechPro `convex/ai.ts`); rsm1 Diagnostics typed-DTC UI; Android INTERNET/BLUETOOTH_ADMIN only on the empty `bypass` stub.
+**None found** for ELM327, J2534, PassThru, Autel, WebSerial, or key programming. Closest: LLM “scan_tool” checklist category (Shop Crank `convex/ai.ts`); rsm1 Diagnostics typed-DTC UI; Android INTERNET/BLUETOOTH_ADMIN only on the empty `bypass` stub.
 
 ---
 
 ## What the cloud agent should do
 
-1. **Base:** `https://github.com/tinytim3271-wq/MechPro.git` (`main` @ `27be9a4`), working tree `src/` + `convex/` + `aws/`.
+1. **Base:** `https://github.com/tinytim3271-wq/Shop Crank.git` (`main` @ `27be9a4`), working tree `src/` + `convex/` + `aws/`.
 2. **Port from** `https://github.com/tinytim3271-wq/reliable-shop-management1.git`: Diagnostics page UX, W-2/1099/pay-stub payroll, QBO sync, vendors/POs/expenses, inspection templates, SMS/voice, desktop/offline story if still wanted.
 3. **New work (does not exist in any repo):** live OBD adapter session + key-programming product surface — design from scratch; there is no donor code.
-4. Skip: outer MechPro, NewRepo, AndroidApp1, bypass, uninstall-program, CLI `reliable-shop-management`, standalone (except installer UX notes).
+4. Skip: outer Shop Crank, NewRepo, AndroidApp1, bypass, uninstall-program, CLI `reliable-shop-management`, standalone (except installer UX notes).

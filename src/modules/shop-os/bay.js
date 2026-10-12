@@ -101,7 +101,7 @@ export function normalizeVin(value) {
  */
 export function assertLiveKeySession({ order, estimates = [], operation, notes, vehicleVin, deviceConnected }) {
   assertKeyJobAllowed({ order, estimates, operation, notes });
-  if (!deviceConnected) throw new Error("Connect the J2534 adapter in the MechPro desktop app before a live key job.");
+  if (!deviceConnected) throw new Error("Connect the J2534 adapter in the Shop Crank desktop app before a live key job.");
   const roVin = normalizeVin(order?.vin);
   if (roVin.length !== 17) throw new Error("Add the 17-character VIN to this repair order before a live key job.");
   const carVin = normalizeVin(vehicleVin);
