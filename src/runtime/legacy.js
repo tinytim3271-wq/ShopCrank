@@ -1412,7 +1412,49 @@ loadOrdersFromApi = async function () { try { applyRemoteList("orders", await ap
 loadCustomersFromApi = async function () { const epoch = customerListEpoch; try { const records = await apiFetch("/entities/customers"); if (epoch !== customerListEpoch) return; applyRemoteList("customers", records) } catch (error) { console.error("Failed to load customers from API; using local data", error) } };
 loadInvoicesFromApi = async function () { try { applyRemoteList("invoices", await apiFetch("/entities/invoices")) } catch (error) { console.error("Failed to load invoices from API; using local data", error) } };
 loadExpensesFromApi = async function () { try { applyRemoteList("expenses", await apiFetch("/entities/expenses")) } catch (error) { console.error("Failed to load expenses from API; using local data", error) } };
-loadShopEntities = async function () { try { const types = Object.keys(shopEntityCollections), results = await Promise.all(types.map(type => apiFetch(`/entities/${type}`))); types.forEach((type, index) => applyRemoteList(shopEntityCollections[type], results[index], type)); const tax = state.shopSettingsRecords.find(item => item.id === "tax"); if (tax) state.taxSettings = { state: tax.state || "TX", taxId: String(tax.taxId || ""), rate: Number(tax.rate) || 0, filingFrequency: tax.filingFrequency || "Monthly", ein: String(tax.ein || ""), texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""), webfileNumber: String(tax.webfileNumber || ""), jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null } } catch (error) { console.error("Failed to load shop operations; using local data", error) } await ensureCannedMenu() };
+loadShopEntities = async function () {
+  const role = currentUser()?.role || "";
+  const types = Object.keys(shopEntityCollections).filter(type =>
+    !shopEntityReadRoles[type] || shopEntityReadRoles[type].includes(role),
+  );
+  const results = await Promise.allSettled(
+    types.map(type => apiFetch(`/entities/${type}`)),
+  );
+  let failed = 0;
+  types.forEach((type, index) => {
+    const result = results[index];
+    if (result.status === "fulfilled" && Array.isArray(result.value)) {
+      try {
+        applyRemoteList(shopEntityCollections[type], result.value, type);
+      } catch (error) {
+        failed += 1;
+        console.error(`Failed to load ${type}; using local data`, error);
+      }
+    } else if (result.status === "rejected") {
+      failed += 1;
+      console.error(`Failed to load ${type}; using local data`, result.reason);
+    }
+  });
+  try {
+    const tax = state.shopSettingsRecords.find(item => item.id === "tax");
+    if (tax) {
+      state.taxSettings = {
+        state: tax.state || "TX",
+        taxId: String(tax.taxId || ""),
+        rate: Number(tax.rate) || 0,
+        filingFrequency: tax.filingFrequency || "Monthly",
+        ein: String(tax.ein || ""),
+        texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
+        webfileNumber: String(tax.webfileNumber || ""),
+        jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+      };
+    }
+  } catch (error) {
+    console.error("Failed to load shop operations; using local data", error);
+  }
+  await ensureCannedMenu();
+  return failed === 0;
+};
 function stampDemoAppointments() { const samples = new Set(["apt-1048", "apt-1049", "apt-1052"]); if (!(state.appointments || []).some(item => samples.has(item.id))) return; const today = new Date(), iso = localIsoDate(today), tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1); const next = localIsoDate(tomorrow); state.appointments = state.appointments.map(item => item.id === "apt-1048" || item.id === "apt-1049" ? { ...item, date: iso } : item.id === "apt-1052" ? { ...item, date: next } : item) }
 stampDemoAppointments();
 
