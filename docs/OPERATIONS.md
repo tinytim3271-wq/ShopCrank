@@ -6,6 +6,7 @@
 - Confirm CI passed on the target commit.
 - Confirm `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are available in Actions.
 - Confirm Pages project name variable is set (or default `shopcrank-dispatch` is intended).
+- Run `npm run provision:shopcrank-com` (or the `provision-shopcrank-com` workflow) so `www.shopcrank.com` is a Pages custom domain and the Worker is routed to `/api/*` only.
 - Run/verify `npm ci`, `npm run build:web`, and `npm run stage:pages`.
 - Validate `/` and `/api/healthz` on `https://www.shopcrank.com` after deployment. Pages serves the UI shell; the Worker handles `/api/*` on the same hostname.
 
