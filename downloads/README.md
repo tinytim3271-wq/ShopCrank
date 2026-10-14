@@ -2,7 +2,7 @@
 
 ## Public install page
 
-- https://www.yourcarguy806.com/downloads/
+- https://www.shopcrank.com/downloads/
 - https://shopcrank-dispatch.pages.dev/downloads/
 
 ## Binaries
@@ -13,7 +13,7 @@
 | `ShopCrank-Setup-*.exe` / `.zip` | **Not** in git (too large). Published by `windows-desktop.yml` to R2 and GitHub Releases |
 | `ShopCrank-Offline-Setup-*.exe` | **Not** in git. Built with `npm run build:windows:offline` and published by `windows-desktop.yml` to R2 and GitHub Releases |
 
-On `www.yourcarguy806.com`, the Worker serves `/downloads/*.{exe,zip,apk}` from R2 (`shopcrank-files`) before proxying other paths to Pages. The install page HTML still comes from Pages. A binary missing from R2 falls back to a non-HTML file on Pages (the committed APK); otherwise the Worker returns `404` (or `503` when R2 is not bound) instead of the website shell.
+On `www.shopcrank.com`, the Worker serves `/downloads/*.{exe,zip,apk}` from R2 (`shopcrank-files`) before proxying other paths to Pages. The install page HTML still comes from Pages. A binary missing from R2 falls back to a non-HTML file on Pages (the committed APK); otherwise the Worker returns `404` (or `503` when R2 is not bound) instead of the website shell.
 
 Installer links in `index.html` and the in-app settings page use the `package.json` version; `worker/test/download.test.mjs` fails when they drift.
 

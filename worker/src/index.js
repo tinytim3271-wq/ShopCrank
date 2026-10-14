@@ -2,6 +2,14 @@ import { PostHog } from 'posthog-node/edge';
 import coverageBundle from '../data/coverage.json' with { type: 'json' };
 import { isApiRequest, pagesProxyUrl, publicDownloadObjectKey } from './routing.mjs';
 import {
+  APEX_HOST,
+  APP_SESSION_COOKIE,
+  CANONICAL_ORIGIN,
+  DESKTOP_AUTH_SCHEME,
+  HEALTHZ_SERVICE,
+  apexToWwwRedirect,
+} from './production-host.mjs';
+import {
   ENTITY_TYPES,
   buildTaxReport,
   canReadEntity,
@@ -82,12 +90,11 @@ import {
 export { AiChatSession, AiVoiceSession };
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
-const APP_SESSION_COOKIE = 'mechpro_session';
-const GOOGLE_STATE_COOKIE = '__Host-mechpro_google_state';
-const GOOGLE_NONCE_COOKIE = '__Host-mechpro_google_nonce';
-const GOOGLE_VERIFIER_COOKIE = '__Host-mechpro_google_verifier';
-const GOOGLE_RETURN_COOKIE = '__Host-mechpro_google_return';
-const GOOGLE_DESKTOP_COOKIE = '__Host-mechpro_google_desktop';
+const GOOGLE_STATE_COOKIE = '__Host-shopcrank_google_state';
+const GOOGLE_NONCE_COOKIE = '__Host-shopcrank_google_nonce';
+const GOOGLE_VERIFIER_COOKIE = '__Host-shopcrank_google_verifier';
+const GOOGLE_RETURN_COOKIE = '__Host-shopcrank_google_return';
+const GOOGLE_DESKTOP_COOKIE = '__Host-shopcrank_google_desktop';
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
@@ -253,8 +260,8 @@ function safeReturnPath(value, fallback = '/app') {
   const candidate = String(value || '').trim();
   if (!candidate || !candidate.startsWith('/') || candidate.startsWith('//')) return fallback;
   try {
-    const parsed = new URL(candidate, 'https://mechpro.invalid');
-    return parsed.origin === 'https://mechpro.invalid' ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
+    const parsed = new URL(candidate, 'https://shopcrank.invalid');
+    return parsed.origin === 'https://shopcrank.invalid' ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
   } catch {
     return fallback;
   }
@@ -986,7 +993,7 @@ export async function geocodeAddress(address, env) {
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
-      'User-Agent': 'MechProShopOS/1.0 (mileage; https://www.yourcarguy806.com)',
+      'User-Agent': 'ShopCrank/1.0 (mileage; https://www.shopcrank.com)',
     },
   });
   if (!response.ok) throw new HttpError(502, 'Address lookup is unavailable');
@@ -2059,13 +2066,13 @@ async function pkceChallenge(verifier) {
 }
 
 function desktopHandoffPage(token) {
-  const link = `mechpro://auth?token=${encodeURIComponent(token)}`;
+  const link = `${DESKTOP_AUTH_SCHEME}//auth?token=${encodeURIComponent(token)}`;
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="referrer" content="no-referrer">
-  <title>Return to MechPro</title>
+  <title>Return to Shop Crank</title>
   <style>
     body { font-family: "Segoe UI", sans-serif; background: #18252b; color: #f4f7f8; margin: 0; min-height: 100vh; display: grid; place-items: center; }
     main { max-width: 28rem; padding: 2rem; }
@@ -2076,8 +2083,8 @@ function desktopHandoffPage(token) {
 <body>
   <main>
     <h1>Google sign-in succeeded</h1>
-    <p>Open MechPro to finish signing in. If Windows asks which app to use, choose MechPro.</p>
-    <a href="${link}">Open MechPro</a>
+    <p>Open Shop Crank to finish signing in. If Windows asks which app to use, choose Shop Crank.</p>
+    <a href="${link}">Open Shop Crank</a>
   </main>
 </body>
 </html>`;
@@ -2086,8 +2093,8 @@ function desktopHandoffPage(token) {
 function googleAuthOrigin(request, env) {
   const configured = String(env.GOOGLE_REDIRECT_ORIGIN || '').trim();
   if (configured) return new URL(configured).origin;
-  const hostname = new URL(request.url).hostname.replace(/^www\./, '');
-  if (hostname === 'yourcarguy806.com') return 'https://www.yourcarguy806.com';
+  const hostname = new URL(request.url).hostname;
+  if (hostname === APEX_HOST) return CANONICAL_ORIGIN;
   return new URL(request.url).origin;
 }
 
@@ -2758,7 +2765,7 @@ async function route(request, env, analytics) {
       },
     });
   }
-  if (path === '/healthz') return json({ ok: true, service: 'mechpro-cloudflare-api' });
+  if (path === '/healthz') return json({ ok: true, service: HEALTHZ_SERVICE });
   if (segments[0] === 'founding') return handleFounding(request, env);
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
   if (segments[0] === 'customer-documents') {
@@ -2936,6 +2943,8 @@ export default {
         || crypto.randomUUID(),
     };
     try {
+      const apexRedirect = apexToWwwRedirect(request);
+      if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {
         const download = await servePublicDownload(request, env);
         if (download) return download;

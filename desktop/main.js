@@ -17,7 +17,8 @@ try {
 let mainWindow = null;
 
 const trustedOrigins = new Set([
-  'https://www.yourcarguy806.com',
+  'https://www.shopcrank.com',
+  'https://shopcrank.com',
   'https://shopcrank-dispatch.pages.dev',
   'https://accounts.google.com',
 ]);
