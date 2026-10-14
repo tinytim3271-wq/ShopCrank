@@ -73,7 +73,7 @@
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
-    "wrangler": "^4.130.0"
+    "wrangler": "^4.151.0"
   },
   "build": {
     "appId": "com.shopcrank.dispatch",
