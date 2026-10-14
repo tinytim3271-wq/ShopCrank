@@ -149,7 +149,7 @@ function createWindow() {
           && result.diagnostics
           && result.title.includes('Shop Crank')
           && (result.authenticated
-            || /work email|continue securely|sign in/i.test(result.loginText));
+            || /work email|continue securely|sign[\s-]?in/i.test(result.loginText));
         console.log(JSON.stringify({ smokeTest: passed ? 'passed' : 'failed', portableData, ...result }));
         app.exit(passed ? 0 : 1);
       } catch (error) {
