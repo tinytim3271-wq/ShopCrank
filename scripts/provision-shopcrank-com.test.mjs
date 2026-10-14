@@ -299,7 +299,10 @@ test('provisionShopcrankCom attaches Pages www, /api routes only, email, R2, and
   assert.equal(report.steps.email.sending.enabled, true);
   assert.equal(report.steps.email.destination.email, 'noreply@shopcrank.com');
   assert.equal(report.steps.email.destination.verified, true);
-  assert.deepEqual(store.putSecrets.sort(), ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']);
+  assert.deepEqual(
+    [...store.putSecrets].toSorted((left, right) => String(left).localeCompare(String(right))),
+    ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+  );
   assert.deepEqual(report.steps.secrets.missingValues, ['INTEGRATION_ENCRYPTION_KEY']);
   assert.equal(report.remaining[0].kind, 'google_oauth');
   assert.equal(report.remaining[1].kind, 'nameservers');
