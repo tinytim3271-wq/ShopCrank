@@ -219,7 +219,7 @@ export function visibleSidebar(canAccess, { oem = false } = {}) {
 }
 
 if (typeof globalThis !== 'undefined') {
-  globalThis.__MECHPRO_HOME__ = {
+  const home = {
     buildHomeModel,
     emptyState,
     escapeHtml,
@@ -231,4 +231,6 @@ if (typeof globalThis !== 'undefined') {
     sidebarCatalog,
     visibleSidebar,
   };
+  globalThis.__SHOP_CRANK_HOME__ = home;
+  globalThis.__MECHPRO_HOME__ = home;
 }
