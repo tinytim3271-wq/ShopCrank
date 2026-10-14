@@ -3435,6 +3435,7 @@ openOrder = function (id) {
 async function startApp() {
   if (isOfflineDesktop()) {
     desktopEntitlementVerified = true;
+    render();
     try {
       const status = await window.shopcrankDesktop.localAuth.status();
       offlineAccountReady = Boolean(status?.exists);

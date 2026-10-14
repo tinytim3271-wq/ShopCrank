@@ -11051,6 +11051,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   async function startApp() {
     if (isOfflineDesktop()) {
       desktopEntitlementVerified = true;
+      render();
       try {
         const status = await window.shopcrankDesktop.localAuth.status();
         offlineAccountReady = Boolean(status?.exists);
