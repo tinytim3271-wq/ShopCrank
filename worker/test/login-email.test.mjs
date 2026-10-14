@@ -38,7 +38,7 @@ function pendingLoginDb(email = 'owner@example.test') {
 function sendLoginRequest({
   secret = SECRET,
   email = 'owner@example.test',
-  host = 'www.yourcarguy806.com',
+  host = 'www.shopcrank.com',
   loginUrl = `https://${host}/api/auth/callback?token=${TOKEN}`,
   authorization = `Bearer ${secret}`,
 } = {}) {
@@ -57,7 +57,7 @@ test('send-login returns 202 only after the provider accepts the message', async
   const EMAIL = emailBinding(async () => { accepted = true; });
   const response = await worker.fetch(sendLoginRequest(), {
     AUTH_EMAIL_WEBHOOK_SECRET: SECRET,
-    ALLOWED_ORIGINS: 'https://www.yourcarguy806.com',
+    ALLOWED_ORIGINS: 'https://www.shopcrank.com',
     DB: pendingLoginDb(),
     EMAIL,
   });
@@ -66,9 +66,9 @@ test('send-login returns 202 only after the provider accepts the message', async
   assert.equal((await response.json()).ok, true);
   assert.equal(EMAIL.sent.length, 1);
   assert.match(EMAIL.sent[0].text, new RegExp(TOKEN));
-  assert.equal(EMAIL.sent[0].from, 'noreply@yourcarguy806.com');
+  assert.equal(EMAIL.sent[0].from, 'noreply@shopcrank.com');
   assert.equal(EMAIL.sent[0].to, 'owner@example.test');
-  assert.equal(EMAIL.sent[0].subject, 'Sign in to MechPro');
+  assert.equal(EMAIL.sent[0].subject, 'Sign in to Shop Crank');
 });
 
 test('send-login rejects a missing or wrong bearer secret before sending', async (t) => {
@@ -85,7 +85,7 @@ test('send-login does not relay links for other sites or other inboxes', async (
   const EMAIL = emailBinding();
   const env = {
     AUTH_EMAIL_WEBHOOK_SECRET: SECRET,
-    ALLOWED_ORIGINS: 'https://www.yourcarguy806.com',
+    ALLOWED_ORIGINS: 'https://www.shopcrank.com',
     DB: pendingLoginDb(),
     EMAIL,
   };
@@ -108,7 +108,7 @@ test('send-login names the provider rejection when Email Sending cannot reach th
     EMAIL: emailBinding(async () => { throw rejected; }),
   });
   assert.equal(response.status, 502);
-  assert.match((await response.json()).message, /cannot receive a MechPro sign-in link yet/);
+  assert.match((await response.json()).message, /cannot receive a Shop Crank sign-in link yet/);
 });
 
 test('send-login returns 502 when the provider rejects the message', async (t) => {

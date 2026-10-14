@@ -6,6 +6,7 @@ const { DEFAULT_DESKTOP_APP_URL, resolveDesktopStart } = require('./start-url');
 
 describe('resolveDesktopStart', () => {
   it('defaults to the hosted production app URL', () => {
+    assert.equal(DEFAULT_DESKTOP_APP_URL, 'https://www.shopcrank.com/');
     const result = resolveDesktopStart({ argv: ['electron', '.'], env: {} });
     assert.equal(result.useLocalAssets, false);
     assert.equal(result.remoteUrl, DEFAULT_DESKTOP_APP_URL);

@@ -1,6 +1,6 @@
 'use strict';
 
-const DEFAULT_DESKTOP_APP_URL = 'https://www.yourcarguy806.com/';
+const DEFAULT_DESKTOP_APP_URL = 'https://www.shopcrank.com/';
 
 /**
  * Resolve what the Electron shell should load.

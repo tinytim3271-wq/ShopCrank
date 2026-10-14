@@ -108,7 +108,7 @@ function printIntro({ dryRun, local }) {
   console.log('Shop Crank email sign-in setup');
   console.log('');
   console.log('This guided setup stores Worker secrets for the email sign-in webhook.');
-  console.log('The built-in sender is https://www.yourcarguy806.com/api/auth/send-login');
+  console.log('The built-in sender is https://www.shopcrank.com/api/auth/send-login');
   console.log('It accepts Shop Crank JSON { email, loginUrl, returnTo } and returns 202');
   console.log('only after Cloudflare Email accepts the message.');
   console.log('');

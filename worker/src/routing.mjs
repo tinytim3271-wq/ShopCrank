@@ -1,4 +1,5 @@
-export const DEFAULT_PAGES_ORIGIN = 'https://mechpro-dispatch.pages.dev';
+import { DEFAULT_PAGES_ORIGIN } from './production-host.mjs';
+export { DEFAULT_PAGES_ORIGIN };
 
 export function isApiPath(pathname) {
   return pathname === '/api' || pathname.startsWith('/api/');

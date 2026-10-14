@@ -1,7 +1,8 @@
 # Shop Crank Dispatch
 
-This repository, [`tinytim3271-wq/cloudflare`](https://github.com/tinytim3271-wq/cloudflare),
-is the canonical home for Shop Crank.
+This repository, [`tinytim3271-wq/ShopCrank`](https://github.com/tinytim3271-wq/ShopCrank),
+is the canonical home for Shop Crank, hosted at
+[`https://www.shopcrank.com`](https://www.shopcrank.com).
 
 Shop Crank is a local-first shop dispatch and work-order PWA with cloud
 synchronization on **Cloudflare** (Pages, Workers, D1, R2, Workers AI). The
@@ -77,8 +78,8 @@ Source lives in `src/`; `npm run build:web` refreshes committed `app.js`.
 | `CLOUDFLARE_ACCOUNT_ID` | Selects target Cloudflare account in CI/deploy scripts | GitHub Actions + local deploy CLI |
 | `CLOUDFLARE_D1_DATABASE_ID` | Optional CI override for Worker D1 binding `database_id` | GitHub Actions variable (`cloudflare-pages.yml`) |
 | `CLOUDFLARE_PAGES_PROJECT` | Optional Pages project name override | GitHub Actions variable (`cloudflare-pages.yml`) |
-| `CLOUDFLARE_APP_ORIGIN` | Optional smoke-check origin used by deploy verification (`/` + `/api/healthz`) | GitHub Actions variable (`cloudflare-pages.yml`) |
-| `CLOUDFLARE_ALLOWED_ORIGINS` | Optional Worker CORS origins override in CI deploy | GitHub Actions variable (`cloudflare-pages.yml`) |
+| `CLOUDFLARE_APP_ORIGIN` | Optional smoke-check origin (defaults to `https://www.shopcrank.com`) | GitHub Actions variable (`cloudflare-pages.yml`) |
+| `CLOUDFLARE_ALLOWED_ORIGINS` | Optional Worker CORS origins override (defaults in `wrangler.jsonc` include `https://www.shopcrank.com`) | GitHub Actions variable (`cloudflare-pages.yml`) |
 | `CLOUDFLARE_DEPLOY_ENABLED` | Set to `false` to skip production Cloudflare publish | GitHub Actions variable (`cloudflare-pages.yml`) |
 | `CLOUDFLARE_R2_BUCKET` (or `R2_BUCKET`) | Target R2 bucket for download/object uploads | GitHub Actions variable/secret (`deploy-r2.yml`, `windows-desktop.yml`) |
 | `INTEGRATION_ENCRYPTION_KEY` | Encrypts integration secrets at rest in D1 | Worker secret (`wrangler secret put`) |
@@ -216,7 +217,7 @@ API. `STRIPE_BILLING_WEBHOOK_SECRET` is the signing secret for the SaaS
 subscription webhook endpoint.
 
 For Google sign-in, create an OAuth 2.0 Web application in Google Cloud and
-register `https://www.yourcarguy806.com/api/auth/google/callback` as an
+register `https://www.shopcrank.com/api/auth/google/callback` as an
 authorized redirect URI. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are
 required; the Worker refuses to start the OAuth flow when either is missing.
 The callback validates OAuth state, PKCE, the ID-token signature and claims,
@@ -228,9 +229,9 @@ Sign-in mail is sent by this Worker. `POST /api/auth/send-login` accepts
 `{ email, loginUrl, returnTo }`, checks the bearer secret, and returns HTTP 202
 only after Cloudflare Email accepts the message. Its address is:
 
-`https://www.yourcarguy806.com/api/auth/send-login`
+`https://www.shopcrank.com/api/auth/send-login`
 
-Enable Email Routing for `yourcarguy806.com`, then deploy `shopcrank-api`. After
+Enable Email Routing for `shopcrank.com`, then deploy `shopcrank-api`. After
 that deploy, magic-link sign-in uses the `EMAIL` binding directly. Until then,
 point `AUTH_EMAIL_WEBHOOK` at the address above. `Unable to deliver the sign-in
 email` means the current webhook did not accept the message.
@@ -281,17 +282,33 @@ npm run deploy:worker
 npm run deploy:pages
 ```
 
-Configure a Cloudflare Pages custom domain for `www.yourcarguy806.com` and keep
-the Worker on the `/api/*` route only. Do not attach `shopcrank-api` as a custom
-domain for the whole hostname — that conflicts with Pages and is why production
-deploys fail. Browser requests stay same-origin: Pages serves the PWA and marketing
-pages, and the Worker handles `/api`.
+### Production hostname (`www.shopcrank.com`)
+
+Keep Pages as the hostname owner and the Worker on `/api/*` only. Binding
+`shopcrank-api` as a custom domain for the whole hostname conflicts with Pages.
+
+1. Add the `shopcrank.com` zone to the same Cloudflare account as Pages/Workers.
+2. Create DNS for the apex (`shopcrank.com`) and `www` as Cloudflare proxied
+   records (Pages will present the CNAME target when you add the custom domain).
+3. Pages → `shopcrank-dispatch` → Custom domains → add `www.shopcrank.com`.
+   Optionally add `shopcrank.com` so the apex redirect in `public/_redirects`
+   can run. Or use a Cloudflare Redirect Rule: `shopcrank.com` → `www.shopcrank.com`.
+4. Workers → `shopcrank-api` → Triggers → add routes:
+   - `www.shopcrank.com/api/*`
+   - `shopcrank.com/api/*` (so apex API calls 301 to www)
+5. Enable Email Routing / Email Sending for `shopcrank.com` and verify
+   `noreply@shopcrank.com` (see `AUTH_EMAIL_FROM` in `wrangler.jsonc`).
+6. Google Cloud OAuth web client: authorized JavaScript origin
+   `https://www.shopcrank.com` and redirect
+   `https://www.shopcrank.com/api/auth/google/callback`.
+7. If an older Worker named `mechpro-api` still holds secrets, copy them onto
+   `shopcrank-api` (`wrangler secret list` / `secret put`) before cutting DNS.
 
 Do not put Cloudflare Access or Bot Fight Mode / Super Bot Fight Mode in front of
-the public hostname. Those challenges currently return HTTP 403 "Just a moment..."
-for `https://www.yourcarguy806.com/` and `/api/*`, which blocks the PWA and API
+the public hostname. Those challenges return HTTP 403 "Just a moment..." for
+`https://www.shopcrank.com/` and `/api/*`, which blocks the PWA and API
 clients. Reserve Access for an internal admin hostname. Confirm the Worker route
-with `curl -sS https://www.yourcarguy806.com/api/healthz` — it should return JSON
+with `curl -sS https://www.shopcrank.com/api/healthz` — it should return JSON
 `{"ok":true,"service":"shopcrank-cloudflare-api"}`, not a Cloudflare challenge page.
 
 After an owner signs in with a magic-link from `/login`, create shops in

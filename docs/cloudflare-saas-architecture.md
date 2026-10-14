@@ -9,14 +9,14 @@ by the app.
 
 | Surface | Host/path | Audience | Auth |
 |---|---|---|---|
-| Marketing site | `https://www.yourcarguy806.com/` | Public buyers | None |
+| Marketing site | `https://www.shopcrank.com/` | Public buyers | None |
 | Pricing/sign-up | `/pricing`, `/signup` | Prospects | Turnstile + Stripe Checkout |
 | Customer app | `/app` | Shop owners and staff | App session cookie |
 | Public API | `/api/*` | Browser app, webhooks, desktop client | Route-specific |
-| Internal admin | `https://admin.yourcarguy806.com/` | Platform operators | Cloudflare Access |
+| Internal admin | `https://admin.shopcrank.com/` | Platform operators | Cloudflare Access |
 
-The current production routing keeps Pages on `www.yourcarguy806.com` and the
-Worker on `www.yourcarguy806.com/api/*`. Public pages and the app shell are Pages
+The current production routing keeps Pages on `www.shopcrank.com` and the
+Worker on `www.shopcrank.com/api/*`. Public pages and the app shell are Pages
 assets; `/api/*` is handled directly in Workers.
 
 ```mermaid
@@ -331,9 +331,9 @@ DIAGNOSTICS_CAPABILITY_SECRET
 Worker vars:
 
 ```text
-APP_ORIGIN=https://www.yourcarguy806.com
+APP_ORIGIN=https://www.shopcrank.com
 PAGES_ORIGIN=https://shopcrank-dispatch.pages.dev
-EMAIL_FROM=Shop Crank <support@yourcarguy806.com>
+EMAIL_FROM=Shop Crank <support@shopcrank.com>
 AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
 ```
 
@@ -360,8 +360,8 @@ Use separate Cloudflare resources for production and preview/staging.
 
 | Environment | Host | D1 | R2 |
 |---|---|---|---|
-| Production | `www.yourcarguy806.com` | `shopcrank` | `shopcrank-files` |
-| Staging | `staging.yourcarguy806.com` | `shopcrank-staging` | `shopcrank-files-staging` |
+| Production | `www.shopcrank.com` | `shopcrank` | `shopcrank-files` |
+| Staging | `staging.shopcrank.com` | `shopcrank-staging` | `shopcrank-files-staging` |
 | Local | `localhost` | local D1 | local/preview R2 |
 
 ## Implementation milestones

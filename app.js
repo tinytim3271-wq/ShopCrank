@@ -62,17 +62,22 @@
   });
 
   // src/modules/platform/detect.js
-  var isDesktopApp, DESKTOP_ENTITLEMENT_INTERVAL, platform;
+  function getDesktopBridge() {
+    if (typeof window === "undefined") return void 0;
+    return window.shopcrankDesktop || window.mechproDesktop;
+  }
+  var isDesktopApp, DESKTOP_ENTITLEMENT_INTERVAL, desktop, platform;
   var init_detect = __esm({
     "src/modules/platform/detect.js"() {
-      isDesktopApp = Boolean(window.mechproDesktop);
+      isDesktopApp = Boolean(getDesktopBridge());
       DESKTOP_ENTITLEMENT_INTERVAL = 5 * 60 * 1e3;
+      desktop = getDesktopBridge();
       platform = Object.freeze({
         kind: isDesktopApp ? "desktop" : "web",
         isDesktop: isDesktopApp,
         isWeb: !isDesktopApp,
-        electronVersion: window.mechproDesktop?.version ?? null,
-        os: window.mechproDesktop?.platform ?? null
+        electronVersion: desktop?.version ?? null,
+        os: desktop?.platform ?? null
       });
     }
   });
@@ -3176,8 +3181,12 @@ button{margin-top:12px;padding:8px 14px}
       "'": "&#39;"
     })[char]);
   }
+  function desktopBridge() {
+    return globalThis.window?.shopcrankDesktop || globalThis.window?.mechproDesktop;
+  }
   function isOfflineDesktop() {
-    return Boolean(globalThis.window?.mechproDesktop?.offline && globalThis.window.mechproDesktop.localAuth);
+    const desktop2 = desktopBridge();
+    return Boolean(desktop2?.offline && desktop2.localAuth);
   }
   function offlineSession(account) {
     const expires = Math.floor(Date.now() / 1e3) + 12 * 60 * 60;
@@ -3196,17 +3205,17 @@ button{margin-top:12px;padding:8px 14px}
       offline: true
     };
   }
-  function offlineLoginMarkup({ hasAccount, email, icon: icon2, portable = Boolean(globalThis.window?.mechproDesktop?.portable) }) {
+  function offlineLoginMarkup({ hasAccount, email, icon: icon2, portable = Boolean(desktopBridge()?.portable) }) {
     const mark = icon2("wrench");
     const lock = icon2("lock-keyhole", 15);
     const buttonIcon = icon2(hasAccount ? "log-in" : "save", 16);
     const safeEmail = escapeText(email);
     const device = portable ? "drive" : "computer";
     const shortDevice = portable ? "drive" : "PC";
-    const storage = portable ? "MechPro Demo Data folder beside the executable on this drive" : "MechPro Offline folder on this computer";
+    const storage = portable ? "Shop Crank Demo Data folder beside the executable on this drive" : "Shop Crank Offline folder on this computer";
     const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="name" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
     const confirmField = hasAccount ? "" : `<label for="offline-confirm">Confirm password</label><input id="offline-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8"/>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "MechPro Demo" : "MechPro"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. MechPro stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "Shop Crank Demo" : "Shop Crank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. Shop Crank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
   }
   function stripOfflineSecrets(value2) {
     if (Array.isArray(value2)) return value2.map(stripOfflineSecrets);
@@ -6468,7 +6477,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   async function apiFetch(path, options = {}) {
     if (isOfflineDesktop()) {
       if (String(path).startsWith("/ai/")) {
-        const aiError = new Error("Shop Crank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at yourcarguy806.com to use the assistant.");
+        const aiError = new Error("Shop Crank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
         aiError.retryable = false;
         throw aiError;
       }
@@ -12203,7 +12212,7 @@ ${catRows}
           }
         });
       };
-      shopProfileDefaults = { id: "profile", shopName: "Your Car Guy", phone: "555-0100", address: "100 Demo Street, Example City, TX 00000", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "https://www.yourcarguy806.com/assets/reliable-logo.jpg", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
+      shopProfileDefaults = { id: "profile", shopName: "Your Car Guy", phone: "555-0100", address: "100 Demo Street, Example City, TX 00000", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "/assets/reliable-logo.jpg", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
       appearanceMedia = matchMedia("(prefers-color-scheme: dark)");
       appearanceMedia.addEventListener?.("change", () => {
         if (document.documentElement.dataset.themeMode === "device") applyAppearance("device");

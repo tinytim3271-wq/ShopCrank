@@ -7,10 +7,11 @@
 - Confirm `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are available in Actions.
 - Confirm Pages project name variable is set (or default `shopcrank-dispatch` is intended).
 - Run/verify `npm ci`, `npm run build:web`, and `npm run stage:pages`.
-- Validate `/` on the Pages origin and `/api/healthz` on the Worker hostname (`www.yourcarguy806.com`) after deployment. Pages does not serve `/api/*`.
+- Validate `/` and `/api/healthz` on `https://www.shopcrank.com` after deployment. Pages serves the UI shell; the Worker handles `/api/*` on the same hostname.
 
 ### Cloudflare Worker (`worker/`, `wrangler.jsonc`)
-- Confirm `wrangler.jsonc` bindings and `database_id` are correct for target environment.
+- Confirm `wrangler.jsonc` name is `shopcrank-api`, CORS includes `https://www.shopcrank.com`, and D1/R2 bindings match the production account.
+- Confirm Pages custom domain `www.shopcrank.com` and Worker route `www.shopcrank.com/api/*` (not the whole hostname).
 - Apply migrations (`npm run db:migrate:remote`) before traffic-sensitive changes.
 - Deploy (`npm run deploy:worker`) and verify Worker logs/health.
 
@@ -38,8 +39,9 @@
 - Record rollback timestamp, commit SHA, and incident notes.
 
 ## Post-deploy smoke test checklist
-- Open web app root and confirm shell loads without console errors.
-- Hit `GET /api/healthz` and confirm expected JSON response.
+- Open `https://www.shopcrank.com/` and confirm the shell loads without console errors.
+- Confirm `https://shopcrank.com/` 301s to `https://www.shopcrank.com/`.
+- Hit `GET https://www.shopcrank.com/api/healthz` and confirm `{"ok":true,"service":"shopcrank-cloudflare-api"}`.
 - Validate one authenticated app flow relevant to the deploy.
 - Validate one offline/local-first flow still works.
 - Validate platform-specific artifact availability (APK/Windows installer) when released.
