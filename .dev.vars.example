@@ -8,15 +8,18 @@ DIAGNOSTICS_CAPABILITY_SECRET=replace-with-a-different-random-value
 # Base64 DER PKCS#8 ECDSA P-256 private key for /api/diagnostics/authorize
 DIAGNOSTICS_SIGNING_PRIVATE_KEY=replace-with-base64-pkcs8-p256-private-key
 
-# Conversational AI. With no ANTHROPIC_API_KEY the text assistant uses the
-# Workers AI binding from wrangler.jsonc (wrangler dev runs it against your
-# Cloudflare account). Set AI_ENABLED=0 to turn the assistant off locally.
+# Conversational AI. With no ANTHROPIC_API_KEY or GEMINI_API_KEY the text
+# assistant uses the Workers AI binding from wrangler.jsonc (wrangler dev runs
+# it against your Cloudflare account). Set AI_ENABLED=0 to turn the assistant off locally.
 AI_ENABLED=1
-# Shops can add their own Anthropic key in Shop settings > AI (encrypted with
-# INTEGRATION_ENCRYPTION_KEY). ANTHROPIC_API_KEY is only an optional platform-wide
-# override that makes Shop Crank pay for Claude for every shop without its own key.
+# Shops can add their own Anthropic or Gemini key in Shop settings > AI
+# (encrypted with INTEGRATION_ENCRYPTION_KEY). Platform keys below are optional
+# overrides used when a shop has not saved its own key.
 # ANTHROPIC_API_KEY=replace-with-your-anthropic-api-key
 # SHOP_ANTHROPIC_MODEL=claude-sonnet-5
+# GEMINI_API_KEY=replace-with-your-gemini-api-key
+# SHOP_GEMINI_MODEL=gemini-2.5-flash
+# AI_TEXT_PROVIDER=anthropic
 # DEEPGRAM_API_KEY=replace-with-your-deepgram-api-key
 
 # Configure current contracted provider rates before enabling pass-through billing.
@@ -24,6 +27,8 @@ AI_ENABLED=1
 # ANTHROPIC_SONNET_OUTPUT_USD_PER_MTOK=
 # ANTHROPIC_OPUS_INPUT_USD_PER_MTOK=
 # ANTHROPIC_OPUS_OUTPUT_USD_PER_MTOK=
+# GEMINI_INPUT_USD_PER_MTOK=
+# GEMINI_OUTPUT_USD_PER_MTOK=
 # DEEPGRAM_VOICE_USD_PER_MINUTE=
 # AI_BILLING_MARKUP_MULTIPLIER=1
 

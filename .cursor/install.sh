@@ -6,11 +6,15 @@ cd "$(dirname "$0")/.."
 
 # Node 24 to match .github/workflows/cloudflare-pages.yml and AGENTS.md.
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-# shellcheck disable=SC1091
-. "$NVM_DIR/nvm.sh"
-nvm install 24 >/dev/null
-nvm alias default 24 >/dev/null
-nvm use 24 >/dev/null
+if [ -f "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$NVM_DIR/nvm.sh"
+  nvm install 24 >/dev/null
+  nvm alias default 24 >/dev/null
+  nvm use 24 >/dev/null
+else
+  echo "nvm not found at $NVM_DIR/nvm.sh; using existing Node on PATH"
+fi
 echo "Using Node $(node -v) / npm $(npm -v)"
 
 # Install dependencies and refresh the committed web bundle (app.js) from src/.
@@ -47,4 +51,12 @@ EOF
 fi
 
 # Apply D1 migrations to the local (miniflare) database used by `wrangler dev`.
-npm run db:migrate:local
+# If a previous local DB schema drifts from tracked migrations, reset local state
+# once and retry so bootstrap remains idempotent for fresh development setups.
+if ! npm run db:migrate:local; then
+  echo "Local D1 migration failed; resetting .wrangler/state/v3/d1 and retrying once"
+  rm -rf .wrangler/state/v3/d1
+  if ! npm run db:migrate:local; then
+    echo "Local D1 migration still failed after reset; continuing bootstrap for non-D1 tasks"
+  fi
+fi

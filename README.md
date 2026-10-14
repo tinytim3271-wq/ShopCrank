@@ -15,7 +15,7 @@ HTTP-only cookie, with magic-link and Google sign-in endpoints at
 - **D1** stores tenant accounts, identity mappings, entities, audit events, and
   encrypted integration configuration.
 - **R2** stores inspection photos, signatures, and Windows downloads.
-- **Anthropic Claude** (when `ANTHROPIC_API_KEY` is set) or the **Workers AI** fallback powers `/api/ai/assistant` and AgentPhone responses. See `docs/AI_CONVERSATIONAL.md`.
+- **Anthropic Claude** or **Google Gemini** (when `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` are set) with **Workers AI** fallback powers `/api/ai/assistant` and AgentPhone responses. See `docs/AI_CONVERSATIONAL.md`.
 - **Cloudflare Access** should be reserved for internal/operator surfaces as the
   product moves to public SaaS signup, login, and billing.
 
@@ -434,3 +434,5 @@ npm run validate
 `wrangler deploy --dry-run` validates Worker bundling without changing remote
 resources. Remote Access policy behavior, D1 migrations, R2 writes, AI
 inference, and webhooks still require a configured Cloudflare account.
+
+

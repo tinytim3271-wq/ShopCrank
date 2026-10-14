@@ -547,7 +547,36 @@ test('Anthropic stays primary when its key and the Workers AI binding are both p
   });
   assert.equal(result.provider, 'anthropic');
   assert.equal(selectTextProvider({ AI: { run() {} } }), 'workers-ai');
+  assert.equal(selectTextProvider({ GEMINI_API_KEY: secret() }), 'gemini');
+  assert.equal(selectTextProvider({ ANTHROPIC_API_KEY: secret(), GEMINI_API_KEY: secret(), AI_TEXT_PROVIDER: 'gemini' }), 'gemini');
+  assert.equal(selectTextProvider({ ANTHROPIC_API_KEY: secret(), GEMINI_API_KEY: secret() }), 'gemini');
   assert.equal(selectTextProvider({}), null);
+});
+
+
+
+test('Gemini shop provider can answer assistant turns', async () => {
+  const GEMINI_KEY = 'AIzaSyGeminiKeyForTests1234567890abcd';
+  const result = await runAnthropicTurn({
+    AI_ENABLED: '1',
+    GEMINI_API_KEY: GEMINI_KEY,
+    AI_TEXT_PROVIDER: 'gemini',
+  }, {
+    shopId: 'shop-a',
+    message: 'What estimate is open?',
+    fetcher: async (url) => {
+      assert.match(String(url), /generativelanguage\.googleapis\.com/);
+      return Response.json({
+        candidates: [{ content: { parts: [{ text: 'Open estimate E-1001 is waiting on approval.' }] } }],
+        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 9 },
+      });
+    },
+    shopAnthropic: { provider: 'gemini', apiKey: GEMINI_KEY, model: 'gemini-2.5-flash', status: 'active' },
+  });
+  assert.equal(result.provider, 'gemini');
+  assert.equal(result.family, 'gemini');
+  assert.equal(result.keySource, 'shop');
+  assert.match(result.text, /Open estimate/);
 });
 
 test('chat session returns provider errors with their HTTP status instead of a generic 500', async () => {

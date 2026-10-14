@@ -28,8 +28,6 @@ import {
 } from '../modules/customer-intake.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
-import { mountUniversalGeminiButton, openGeminiAssistant } from '../modules/gemini-assistant.js';
-import { mountDispatchMap, openWorkOrderLocationModal, dispatchMapHtml } from '../modules/dispatch-map.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
 import { applyShopSnapshot, ensureOfflineOwner, isOfflineDesktop, offlineLoginMarkup, offlineSession, snapshotShop } from '../modules/offline-desktop.js';
 import { presentCatalogInspection, printCatalogInspection } from './catalog-inspection-ui.js';
@@ -244,15 +242,8 @@ function bindIntegrations() {
   document.querySelector("#quickbooks-sync-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); try { const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) }); toast(`Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`) } catch (error) { toast(error.message) } });
   document.querySelector("#support-ticket-form")?.addEventListener("submit", async event => { event.preventDefault(); const button = event.target.querySelector("button[type=submit]"), data = Object.fromEntries(new FormData(event.target)); button.disabled = true; try { const result = await apiFetch("/support", { method: "POST", body: JSON.stringify(data) }); if (result?.queued) throw new Error("Support tickets require a live connection."); toast(`Support ticket ${result.id} submitted`); event.target.reset() } catch (error) { toast(error.message) } finally { button.disabled = false } });
 }
-let assistantConversation = [], assistantPaused = false, assistantSessionId = "";
-function openGlobalAssistant() {
-  openGeminiAssistant({
-    state,
-    shopProfile: shopProfile(),
-    currentUser: currentUser(),
-    onOpenOrder: (id) => openOrder(id),
-  });
-}
+let assistantConversation = [], assistantPaused = false, assistantSessionId = "", assistantActiveProvider = "gemini";
+function openGlobalAssistant() { showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>Shop Crank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`); bindLiveAssistant(); }
 function toggleAssistantPause() { assistantPaused = !assistantPaused; if (assistantPaused) { window.speechSynthesis?.cancel(); toast("Assistant paused") } else toast("Assistant resumed"); document.querySelectorAll("[data-assistant-pause]").forEach(button => { button.title = assistantPaused ? "Resume assistant" : "Pause assistant"; button.innerHTML = icon(assistantPaused ? "play" : "pause", 15) }); document.querySelectorAll("#assistant-form textarea,#assistant-form button").forEach(control => { control.disabled = assistantPaused }) }
 function liveAssistant() { const rows = assistantConversation.map(item => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join(""); return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Live voice assistant</div><h2>Ask Shop Crank anything</h2><p>Talk or type questions about shop operations, vehicles, work orders, invoices, and repair decisions.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Your live assistant is ready. Ask a question to begin.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Ask about a customer, repair, invoice, or shop task..."></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Speak to Shop Crank">${icon("mic", 15)} Speak</button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div></form></section>` }
 function aiWorkbench() { const tabs = [["workflow", "RO workflow"], ["diagnostics", "Diagnostics"], ["estimate", "Estimator"], ["saved-estimates", "Estimates"], ["guide", "Repair guide"], ["phone", "Phone intake"]], body = { workflow: aiWorkflowForm(), diagnostics: aiDiagnosticsForm(), estimate: aiEstimateForm(), "saved-estimates": savedEstimates(), guide: aiGuideForm(), phone: aiPhoneForm() }[aiTab]; return shell(`${heading("Service intelligence", "AI Workbench", "Diagnostics, estimates, repair planning, and live conversation in one workspace.", false)}${liveAssistant()}<div class="ai-notice">${icon("sparkles", 16)}<span>AI outputs are recommendations. Verify safety-critical work and customer-impacting changes before acting.</span></div><div class="accounting-tabs">${tabs.map(tab => `<button class="tab ${aiTab === tab[0] ? "active" : ""}" data-ai-tab="${tab[0]}">${tab[1]}</button>`).join("")}</div>${body}`) }
@@ -478,22 +469,13 @@ function sidebarNavigation() { const counts = { active: visibleOrders().filter(x
 function attentionMenu() { const model = buildHomeModel({ orders: visibleOrders(), invoices: canAccess("invoices") ? state.invoices : [], appointments: state.appointments || [], now: new Date() }); const count = model.attention.length; const rows = model.attention.slice(0, 6).map(item => { const detail = item.type === "overdue" ? `${String(item.detail || "").split(" · ")[0]} · ${money(item.amount || 0)}` : item.detail; return `<button type="button" class="attention-item" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : `data-route="invoices"`}><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail || "")}</small></button>` }).join(""); return `<div class="attention-menu"><button class="icon-button" id="attention-toggle" type="button" aria-label="Needs attention${count ? `, ${count} items` : ""}" aria-expanded="false" aria-controls="attention-panel" title="Needs attention">${icon("bell")}${count ? `<span class="attention-badge">${count}</span>` : ""}</button><div class="attention-panel" id="attention-panel" hidden role="dialog" aria-label="Needs attention"><div class="attention-panel-head"><strong>Needs attention</strong><span>${count ? `${count} open` : "All clear"}</span></div>${rows || `<p class="attention-empty">Nothing is waiting. Home shows the full shop snapshot.</p>`}<button class="mini-action attention-home" type="button" data-route="home">Open home</button></div></div>` }
 function bindAttentionPanel() { const toggle = document.querySelector("#attention-toggle"), panel = document.querySelector("#attention-panel"); if (!toggle || !panel) return; toggle.onclick = event => { event.stopPropagation(); const willOpen = panel.hidden; panel.hidden = !willOpen; toggle.setAttribute("aria-expanded", willOpen ? "true" : "false") }; if (attentionDismissBound) return; attentionDismissBound = true; document.addEventListener("click", event => { const openPanel = document.querySelector("#attention-panel"), openToggle = document.querySelector("#attention-toggle"); if (!openPanel || openPanel.hidden || event.target.closest(".attention-menu")) return; openPanel.hidden = true; openToggle?.setAttribute("aria-expanded", "false") }) }
 function syncStatusBadge() { const pending = readMutationQueue().filter(item => !item.conflict).length, conflicts = readMutationQueue().filter(item => item.conflict).length, online = navigator.onLine; if (conflicts) return `<span class="sync-pill conflict" title="Offline edits conflict with newer server data">${icon("triangle-alert", 14)} ${conflicts} conflict${conflicts === 1 ? "" : "s"}</span>`; if (!online) return `<span class="sync-pill offline" title="Working offline">${icon("wifi-off", 14)} Offline${pending ? ` · ${pending} queued` : ""}</span>`; if (pending) return `<span class="sync-pill pending" title="Waiting to sync offline changes">${icon("refresh-cw", 14)} Syncing ${pending}</span>`; return `<span class="sync-pill online" title="Connected">${icon("cloud-check", 14)} Online</span>` }
-let dispatchViewMode = "board";
-function shell(content) { const user = currentUser(), profile = shopProfile(), shift = openShift(user.id); return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Shop operating system</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out · ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="gemini-topbar-button" id="topbar-gemini-btn" type="button" title="MechPro Gemini AI Voice & Chat Assistant (Grounded with Google Search)">✨ Gemini AI</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>` }
+function shell(content) { const user = currentUser(), profile = shopProfile(), shift = openShift(user.id); return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Shop operating system</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out · ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>` }
 function heading(kicker, title, description, action = true) { return `<div class="page-head"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p>${description}</p></div><div class="head-actions"><button class="secondary" id="export-button">${icon("download", 15)} Export</button>${action ? `<button class="primary" id="new-ro-button">${icon("plus", 15)} New work order</button>` : ""}</div></div>` }
 function filtered() { const q = query.trim().toLowerCase(); return visibleOrders().filter(x => (filter === "all" || (filter === "active" ? !["completed", "invoiced"].includes(x.status) : ["completed", "invoiced"].includes(x.status))) && (!q || [x.id, x.customer, x.vehicle, x.vin, x.complaint, x.tech].some(v => String(v).toLowerCase().includes(q)))) }
 function stats() { const tech = currentUser()?.role === "technician", orders = visibleOrders(), openCount = orders.filter(x => !["completed", "invoiced"].includes(x.status)).length, inProgress = orders.filter(x => x.status === "in_progress").length, waiting = orders.filter(x => x.status === "waiting_parts").length, paid = state.invoices.filter(x => x.status === "paid").reduce((s, x) => s + x.amount, 0), overdue = state.invoices.filter(x => x.status === "overdue"), overdueTotal = overdue.reduce((s, x) => s + Number(x.amount || 0), 0), baysInUse = new Set(orders.filter(x => x.status === "in_progress" && x.bay && x.bay !== "Unassigned" && x.bay !== "Mobile").map(x => x.bay)).size, cells = tech ? [["clipboard-check", "My open orders", openCount, "Assigned to you", "good"], ["circle-play", "In progress", inProgress, "Active repairs", ""], ["triangle-alert", "Waiting on parts", waiting, "Parts follow-up needed", "warn"]] : [["clipboard-check", "Open work orders", openCount, `${openCount} active in shop`, "good"], ["circle-play", "In progress", inProgress, `${baysInUse} bay${baysInUse === 1 ? "" : "s"} in use`, ""], ["triangle-alert", "Waiting on parts", waiting, waiting ? `${waiting} need parts follow-up` : "No parts holds", "warn"], ["badge-dollar-sign", "Collected (paid invoices)", money(paid), "From paid invoice register", "good"], ["clock-alert", "Overdue invoices", overdue.length, overdue.length ? `${money(overdueTotal)} outstanding` : "None overdue", "warn"]]; return `<div class="stats ${tech ? "tech-stats" : ""}">${cells.map(x => `<div class="stat"><div class="stat-top"><span>${x[1]}</span>${icon(x[0])}</div><div class="stat-value">${x[2]}</div><div class="stat-note ${x[4]}">${x[3]}</div></div>`).join("")}</div>` }
 function toolbar() { return `<div class="toolbar"><div class="tabs">${[["active", "Active"], ["completed", "Completed"], ["all", "All orders"]].map(x => `<button class="tab ${filter === x[0] ? "active" : ""}" data-filter="${x[0]}">${x[1]}</button>`).join("")}</div><label class="toolbar-search">${icon("search")}<input id="order-search" value="${query}" placeholder="Filter this view..."/></label></div>` }
-function card(x) { return `<button class="job-card ${x.priority}" data-order="${x.id}"><div class="job-meta"><span>${x.id}</span><span>·</span><span>${x.bay}</span>${x.mobile ? `<span class="mobile">${icon("map-pin", 10)} Mobile</span>` : ""}<span class="card-map-action" data-map-order="${x.id}" title="Map customer work order location" role="button" tabindex="0">${icon("map-pin", 11)} Map</span></div><h4>${x.customer}</h4><div class="vehicle">${x.vehicle}</div><p class="complaint">${x.complaint}</p><div class="job-foot"><span class="tech"><span class="mini-avatar">${initials(x.tech)}</span>${x.tech}</span><span class="promise">${icon("clock-3", 11)}${x.promise}</span></div></button>` }
-function dispatch() { const statuses = ["estimate", "approved", "in_progress", "waiting_parts"], orders = filtered(), lanes = statuses.map(s => { const items = orders.filter(x => x.status === s); return `<section class="lane"><div class="lane-head"><span class="status-dot ${s}"></span><h3>${label(s)}</h3><span class="lane-count">${items.length}</span></div><div class="lane-body">${items.length ? items.map(card).join("") : `<div class="empty-lane">No work orders</div>`}</div></section>` }).join("");
-  const viewSwitcher = `<div class="dispatch-view-switcher" style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-    <button type="button" class="tab ${dispatchViewMode === 'board' ? 'active' : ''}" id="dispatch-view-board">${icon("layout-dashboard", 14)} Board view</button>
-    <button type="button" class="tab ${dispatchViewMode === 'map' ? 'active' : ''}" id="dispatch-view-map">${icon("map-pin", 14)} Dispatched Customer Map & Routes</button>
-  </div>`;
-  const body = dispatchViewMode === 'map'
-    ? `<div class="dispatch-map-view-wrapper">${dispatchMapHtml(orders, { shopProfile: shopProfile() })}</div>`
-    : `<div class="board">${lanes}</div>`;
-  return shell(`${heading(shopDayLabel(), "Dispatch board", "Live shop workload, technician assignments, and promise times.")}${stats()}${viewSwitcher}${toolbar()}${body}`) }
+function card(x) { return `<button class="job-card ${x.priority}" data-order="${x.id}"><div class="job-meta"><span>${x.id}</span><span>·</span><span>${x.bay}</span>${x.mobile ? `<span class="mobile">${icon("map-pin", 10)} Mobile</span>` : ""}</div><h4>${x.customer}</h4><div class="vehicle">${x.vehicle}</div><p class="complaint">${x.complaint}</p><div class="job-foot"><span class="tech"><span class="mini-avatar">${initials(x.tech)}</span>${x.tech}</span><span class="promise">${icon("clock-3", 11)}${x.promise}</span></div></button>` }
+function dispatch() { const statuses = ["estimate", "approved", "in_progress", "waiting_parts"], orders = filtered(), lanes = statuses.map(s => { const items = orders.filter(x => x.status === s); return `<section class="lane"><div class="lane-head"><span class="status-dot ${s}"></span><h3>${label(s)}</h3><span class="lane-count">${items.length}</span></div><div class="lane-body">${items.length ? items.map(card).join("") : `<div class="empty-lane">No work orders</div>`}</div></section>` }).join(""); return shell(`${heading(shopDayLabel(), "Dispatch board", "Live shop workload, technician assignments, and promise times.")}${stats()}${toolbar()}<div class="board">${lanes}</div>`) }
 function orders() { const rows = filtered().map(x => `<tr data-order="${x.id}"><td class="mono strong">${x.id}</td><td><b>${escapeHtml(x.customer)}</b><small>${escapeHtml(x.phone)}</small></td><td><b>${escapeHtml(x.vehicle)}</b><small class="mono">${escapeHtml(x.vin)}</small></td><td>${badge(x.status)}</td><td>${escapeHtml(x.tech)}<small>${escapeHtml(x.bay)}</small></td><td>${escapeHtml(x.promise)}</td><td><b>${money(x.total)}</b></td></tr>`).join(""); return shell(`${heading("Operations", "Work orders", "Every estimate, repair, and completed job in one searchable queue.")}${toolbar()}<div class="data-panel"><table><thead><tr><th>RO number</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Assignment</th><th>Promise</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("No matching work orders")}</div>`) }
 function schedule() { return scheduleWorkspace() }
 function customers() { const q = query.toLowerCase(), cards = state.customers.filter(x => !q || Object.values(x).join(" ").toLowerCase().includes(q)).map(x => { const visitCount = state.orders.filter(o => o.customer === x.name).length; return `<article class="customer-card" data-open-customer="${encodeURIComponent(x.name)}"><div class="customer-top"><div class="avatar">${initials(x.name)}</div><div><h3>${escapeHtml(x.name)}</h3><p>${escapeHtml(x.phone)} · ${escapeHtml(x.email)}</p></div></div><div class="customer-stats"><div><span>Vehicles</span><b>${x.vehicles}</b></div><div><span>Lifetime spend</span><b>${money(x.spend)}</b></div><div><span>Shop visits</span><b>${Math.max(Number(x.visits) || 0, visitCount)}</b></div><div><span>Linked ROs</span><b>${visitCount || "None"}</b></div></div><div class="customer-card-actions"><button class="customer-message" data-message-customer="${encodeURIComponent(x.name)}" data-message-phone="${encodeURIComponent(x.phone || "")}" data-message-email="${encodeURIComponent(x.email || "")}">${icon("send", 14)} Message</button><button class="mini-action" data-open-customer="${encodeURIComponent(x.name)}">${icon("user", 14)} Details</button></div></article>` }).join(""); return shell(`${heading("Relationships", "Customers", "Customer contact details, vehicles, and service value at a glance.")}<div class="customer-grid">${cards}</div>`) }
@@ -1308,72 +1290,7 @@ settings = function () { const page = settingsAppsBillingCore(); if (!["admin", 
 const bindAgentPhoneSettingsCore = bindExpandedFeatures;
 bindExpandedFeatures = function () { bindAgentPhoneSettingsCore(); document.querySelector("#agentphone-config-form")?.addEventListener("submit", async event => { event.preventDefault(); const form = event.target, data = Object.fromEntries(new FormData(form)), button = form.querySelector("button[type=submit]"); button.disabled = true; try { const result = await apiFetch("/agentphone/configure", { method: "POST", body: JSON.stringify({ apiKey: data.apiKey, agentId: data.agentId, contextLimit: Number(data.contextLimit), timeout: Number(data.timeout) }) }); form.reset(); toast(`AgentPhone connected for ${result.agentId}`); render() } catch (error) { toast(error.message || "AgentPhone could not be connected"); button.disabled = false } }) };
 const bindAssistantGlobalCore = bind;
-bind = function () {
-  bindAssistantGlobalCore();
-
-  // Mount universal Gemini button on every page
-  mountUniversalGeminiButton({
-    state,
-    shopProfile: shopProfile(),
-    currentUser: currentUser(),
-    onOpenOrder: (id) => openOrder(id),
-  });
-
-  // Topbar Gemini AI button
-  document.querySelector("#topbar-gemini-btn")?.addEventListener("click", () => {
-    openGeminiAssistant({
-      state,
-      shopProfile: shopProfile(),
-      currentUser: currentUser(),
-      onOpenOrder: (id) => openOrder(id),
-    });
-  });
-
-  // Dispatch board vs map view switcher
-  document.querySelector("#dispatch-view-board")?.addEventListener("click", () => {
-    dispatchViewMode = "board";
-    render();
-  });
-  document.querySelector("#dispatch-view-map")?.addEventListener("click", () => {
-    dispatchViewMode = "map";
-    render();
-  });
-
-  // Mount Leaflet dispatch map if on dispatch route in map view
-  if (state.route === "dispatch" && dispatchViewMode === "map") {
-    setTimeout(() => {
-      mountDispatchMap("dispatch-leaflet-map", {
-        orders: filtered(),
-        shopProfile: shopProfile(),
-        onOpenOrder: (id) => openOrder(id),
-      });
-    }, 60);
-  }
-
-  // Work order location mapping clicks on cards & rows
-  document.querySelectorAll("[data-map-order]").forEach(btn => {
-    btn.onclick = (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      const orderId = btn.dataset.mapOrder;
-      const target = state.orders.find(o => o.id === orderId);
-      if (target) {
-        openWorkOrderLocationModal(target, {
-          shopProfile: shopProfile(),
-          onOpenOrder: (id) => openOrder(id),
-        });
-      }
-    };
-  });
-
-  const existing = document.querySelector("#global-assistant-controls");
-  if (!currentUser()) { existing?.remove(); return }
-  if (existing) return;
-  document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open MechPro Gemini Assistant">${icon("sparkles", 16)}<span>Gemini AI</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
-  document.querySelector("#global-assistant").onclick = openGlobalAssistant;
-  document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
-  lucide.createIcons();
-};
+bind = function () { bindAssistantGlobalCore(); const existing = document.querySelector("#global-assistant-controls"); if (!currentUser()) { existing?.remove(); return } if (existing) return; document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open Shop Crank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`); document.querySelector("#global-assistant").onclick = openGlobalAssistant; document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause; lucide.createIcons() };
 const apiFetchAssistantCore = apiFetch;
 apiFetch = async function (path, options = {}) { return apiFetchAssistantCore(path, options) };
 if ("serviceWorker" in navigator && isSecureContext && !isDesktopApp) { window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch(error => console.error("Service worker registration failed", error))) }
@@ -1644,7 +1561,7 @@ employees = function () {
 };
 
 openEmployee = function (existing = null) {
-  showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="name" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="title" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="role">${["technician", "office", "service_writer", "admin"].map(role => `<option value="${role}" ${existing?.role === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map(value => `<option ${existing?.employmentType === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map(value => `<option ${existing?.payFrequency === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", new Date().toISOString().slice(0, 10))}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map(value => `<option ${existing?.taxStatus === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
+  showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="name" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="title" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="role">${["technician", "office", "service_writer", "admin"].map(role => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map(value => `<option ${existing?.employmentType === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map(value => `<option ${existing?.payFrequency === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", new Date().toISOString().slice(0, 10))}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map(value => `<option ${existing?.taxStatus === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
   document.querySelector("#employee-form").onsubmit = async event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
@@ -2560,7 +2477,8 @@ openOrder = function (id) {
   const approvalActions = (order.status === "estimate" || order.estimateRevisionPending) && canManage && !["completed", "invoiced"].includes(order.status) ? `<div class="job-actions"><button class="secondary" data-send-job-estimate="email">${icon("mail", 14)} Email link</button><button class="secondary" data-send-job-estimate="sms">${icon("message-square", 14)} Text link</button>${canApprove ? `<button class="primary" id="sign-job-estimate">${icon("circle-check", 14)} Record approval</button>` : ""}</div>` : "";
   const workActions = canManage && order.status === "approved" ? `<div class="job-actions"><button class="primary" id="start-job-work">${icon("play", 14)} Start work</button></div>` : canManage && ["in_progress", "waiting_parts"].includes(order.status) ? `<div class="job-actions"><button class="primary" id="complete-job-card">${icon("circle-check", 14)} Complete job & generate invoice</button></div>` : "";
   const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge(invoice.status)} · ${money(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
-  showModal(`<div class="modal wide job-card-modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Job card</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body">${jobWorkflowSteps(order, invoice)}${detailsEditor}${estimatePresentation(order, estimate, { locked: false })}${assignments}${editor}${approvalActions}${workActions}${invoiceCard}</div><div class="modal-actions"><button class="primary" type="button" id="map-customer-location-btn" data-map-order="${escapeAttr(order.id)}">${icon("map-pin", 14)} Map Customer Location</button><button class="secondary" type="button" id="print-job-card">${icon("printer", 14)} Print job card</button><button class="secondary" data-close>Close</button></div></div>`);
+  const assignments = canManage ? laborAssignmentPanel(order, estimate) : "";
+  showModal(`<div class="modal wide job-card-modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Job card</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body">${jobWorkflowSteps(order, invoice)}${detailsEditor}${estimatePresentation(order, estimate, { locked: false })}${assignments}${editor}${approvalActions}${workActions}${invoiceCard}</div><div class="modal-actions"><button class="secondary" type="button" id="print-job-card">${icon("printer", 14)} Print job card</button><button class="secondary" data-close>Close</button></div></div>`);
   const editorRoot = document.querySelector("#job-estimate-editor");
   let jobCardDirty = false;
   let jobCardSaving = false;
@@ -2732,8 +2650,8 @@ openOrder = function (id) {
     completeJobCard(order);
   });
   document.querySelector("#sign-job-invoice")?.addEventListener("click", () => { if (!invoice.signature) onsiteSignatureModal("invoice", invoice) });
+  document.querySelectorAll("[data-print-invoice]").forEach(button => button.onclick = () => printInvoice(button.dataset.printInvoice));
   document.querySelector("#print-job-card")?.addEventListener("click", () => printJobCard(order));
-  document.querySelector("#map-customer-location-btn")?.addEventListener("click", () => openWorkOrderLocationModal(order, { shopProfile: shopProfile(), onOpenOrder: openOrder }));
   document.querySelector("#apply-bulk-technicians")?.addEventListener("click", () => {
     const selected = new Set([...document.querySelectorAll(".bulk-technician:checked")].map(input => input.value));
     document.querySelectorAll(".labor-assignment-row").forEach(row => {
@@ -3207,9 +3125,25 @@ function assistantMessageMarkup(item, index) {
   return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${actions}</article>`;
 }
 
+function assistantProviderLabel(provider = "") {
+  const value = String(provider || "").trim().toLowerCase();
+  if (value.startsWith("gemini")) return "Gemini";
+  if (value.startsWith("anthropic")) return "Claude";
+  if (value === "workers-ai") return "Cloudflare AI";
+  return "Gemini";
+}
+
+function assistantProviderFromSettings() {
+  if (shopAiSettings?.hasKey) return String(shopAiSettings.provider || assistantActiveProvider || "gemini").trim().toLowerCase();
+  if (shopAiSettings?.includedProvider) return String(shopAiSettings.includedProvider).trim().toLowerCase();
+  return assistantActiveProvider || "gemini";
+}
+
 liveAssistant = function () {
   const rows = assistantConversation.map(assistantMessageMarkup).join("");
-  return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Claude + Deepgram call assistant</div><h2>Talk through the job</h2><p>Speak or type the customer, vehicle, complaint, parts, labor hours and source, and exclusions. Shop Crank prepares both records for review; it never auto-submits the work order.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for…"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting requires Claude. Missing configuration is reported without a simulated answer.</p></form></section>`;
+  const provider = assistantProviderFromSettings();
+  const providerLabel = assistantProviderLabel(provider);
+  return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Speak or type the customer, vehicle, complaint, parts, labor hours and source, and exclusions. Shop Crank prepares both records for review; it never auto-submits the work order.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for…"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel}. Missing configuration is reported without a simulated answer.</p></form></section>`;
 };
 
 async function saveAssistantDraft(action) {
@@ -3262,6 +3196,15 @@ bindLiveAssistant = function () {
   const form = document.querySelector("#assistant-form");
   if (!form) return;
   const input = form.elements.message, sendButton = form.querySelector("button[type=submit]"), micButton = document.querySelector("#assistant-mic");
+  const renderAssistantProvider = () => {
+    const providerLabel = assistantProviderLabel(assistantActiveProvider);
+    const header = document.querySelector("#assistant-provider-header");
+    const note = document.querySelector("#assistant-provider-note");
+    if (header) header.textContent = `${providerLabel} + Deepgram call assistant`;
+    if (note) note.textContent = `Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel}. Missing configuration is reported without a simulated answer.`;
+  };
+  assistantActiveProvider = assistantProviderFromSettings();
+  renderAssistantProvider();
   const renderMessages = () => {
     const list = document.querySelector("#assistant-messages");
     list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
@@ -3281,6 +3224,8 @@ bindLiveAssistant = function () {
       const history = assistantConversation.slice(0, -1).slice(-10).map(item => ({ role: item.role === "assistant" ? "assistant" : "user", content: [{ text: item.content }] }));
       const result = await apiFetch("/ai/assistant", { method: "POST", body: JSON.stringify({ message, sessionId: assistantSessionId || undefined, history }) });
       assistantSessionId = result.sessionId || assistantSessionId;
+      assistantActiveProvider = String(result.provider || assistantActiveProvider || "gemini").trim().toLowerCase();
+      renderAssistantProvider();
       const answer = result.message || "The assistant did not return an answer.";
       append("assistant", answer, result.actions || []);
       if (!assistantPaused && "speechSynthesis" in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(answer)) }
@@ -4107,7 +4052,7 @@ function printEmployeeAnnualForm(userId) {
 
 openEmployee = function (existing = null) {
   const roleOptions = ["technician", "office", "service_writer", "admin"]
-    .map(role => `<option value="${role}" ${existing?.role === role ? "selected" : ""}>${roleLabel[role] || role}</option>`)
+    .map(role => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role] || role}</option>`)
     .join("");
   const employmentOptions = ["Hourly", "Salary", "Contractor"]
     .map(value => `<option ${existing?.employmentType === value ? "selected" : ""}>${value}</option>`)
@@ -4178,8 +4123,11 @@ openEmployee = function (existing = null) {
       return;
     }
     if (data.role === "technician" && !String(data.techName || "").trim()) {
-      toast("Add the technician dispatch name");
-      return;
+      data.techName = String(data.name || "").trim();
+      if (!data.techName) {
+        toast("Add the technician dispatch name");
+        return;
+      }
     }
     if (button) button.disabled = true;
     try {
@@ -4698,7 +4646,7 @@ render = function () {
   renderShopOsCore();
 };
 
-// --- Shop AI provider settings (optional bring-your-own Anthropic key) ---
+// --- Shop AI provider settings (optional bring-your-own provider key) ---
 let shopAiSettings = { loaded: false, loading: false };
 function canManageShopAi() { return ["admin", "owner"].includes(currentUser()?.role || "") }
 async function loadShopAiSettings(force = false) {
@@ -4717,26 +4665,31 @@ bind = function () {
   if (!shopAiSettings.loaded) void loadShopAiSettings();
   document.querySelector("#shop-ai-key-form")?.addEventListener("submit", async event => {
     event.preventDefault();
-    const form = event.target, button = form.querySelector("button[type=submit]"), apiKey = String(new FormData(form).get("apiKey") || "").trim();
+    const form = event.target, button = form.querySelector("button[type=submit]");
+    const formData = new FormData(form);
+    const provider = String(formData.get("provider") || "gemini").trim().toLowerCase();
+    const apiKey = String(formData.get("apiKey") || "").trim();
+    const model = String(formData.get("model") || "").trim();
     if (!apiKey) return;
     button.disabled = true; button.textContent = "Checking key...";
     try {
-      const result = await apiFetch("/settings/ai", { method: "PUT", body: JSON.stringify({ apiKey }) });
+      const result = await apiFetch("/settings/ai", { method: "PUT", body: JSON.stringify({ provider, apiKey, ...(model ? { model } : {}) }) });
       form.reset();
       shopAiSettings = { ...result, loaded: true, loading: false };
-      toast(result.warning ? `Claude key saved. ${result.warning}` : "Claude key saved. Shop Crank AI now uses Claude for this shop.");
+      const providerLabel = provider === "gemini" ? "Gemini" : "Claude";
+      toast(result.warning ? `${providerLabel} key saved. ${result.warning}` : `${providerLabel} key saved. Shop Crank AI now uses ${providerLabel} for this shop.`);
       render();
-    } catch (error) { button.disabled = false; button.textContent = shopAiSettings.hasKey ? "Replace key" : "Save key"; toast(error.message || "Could not save the Anthropic key") }
+    } catch (error) { button.disabled = false; button.textContent = shopAiSettings.hasKey ? "Replace key" : "Save key"; toast(error.message || "Could not save the AI provider key") }
   });
   document.querySelector("#shop-ai-remove-key")?.addEventListener("click", async event => {
-    if (!confirm("Remove this shop's Anthropic key? Shop Crank AI will go back to Cloudflare AI (included).")) return;
+    if (!confirm("Remove this shop's AI provider key? Shop Crank AI will go back to the included AI provider for your subscription.")) return;
     event.currentTarget.disabled = true;
     try {
       const result = await apiFetch("/settings/ai", { method: "DELETE" });
       shopAiSettings = { ...result, loaded: true, loading: false };
-      toast("Anthropic key removed. Using Cloudflare AI (included).");
+      toast("AI provider key removed. Using the included AI provider for your subscription.");
       render();
-    } catch (error) { toast(error.message || "Could not remove the Anthropic key"); render() }
+    } catch (error) { toast(error.message || "Could not remove the AI provider key"); render() }
   });
 };
 const apiFetchShopAiNoticeCore = apiFetch;

@@ -1266,7 +1266,7 @@ async function aiAnswer(env, shopId, message, history = [], options = {}) {
     shopId,
     userId: options.userId || null,
     channel: options.channel || 'text',
-    provider: result.provider || 'anthropic',
+    provider: result.provider || 'gemini',
     model: result.model,
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,

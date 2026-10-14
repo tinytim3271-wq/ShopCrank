@@ -72,6 +72,7 @@ async function encryptedRow(key = SHOP_KEY, extra = {}) {
   const encrypted = await encryptSecret(key, ENCRYPTION_KEY);
   return {
     shop_id: 'shop-a',
+    provider: 'anthropic',
     key_ciphertext: encrypted.ciphertext,
     key_iv: encrypted.iv,
     key_last4: key.slice(-4),
@@ -159,7 +160,7 @@ test('default Claude model is configurable platform-wide and per shop', () => {
 
 test('provider priority: shop key, then platform key, then Workers AI', () => {
   const ai = workersAi();
-  assert.equal(selectTextProvider({ AI: ai, ANTHROPIC_API_KEY: PLATFORM_KEY }, { shopAnthropic: { apiKey: SHOP_KEY } }), 'anthropic-shop');
+  assert.equal(selectTextProvider({ AI: ai, ANTHROPIC_API_KEY: PLATFORM_KEY }, { shopAnthropic: { provider: 'anthropic', apiKey: SHOP_KEY } }), 'anthropic-shop');
   assert.equal(selectTextProvider({ AI: ai, ANTHROPIC_API_KEY: PLATFORM_KEY }), 'anthropic');
   assert.equal(selectTextProvider({ AI: ai }), 'workers-ai');
   assert.equal(selectTextProvider({ AI: ai }, { shopAnthropic: null }), 'workers-ai');
@@ -176,7 +177,7 @@ test('a shop with its own key gets Claude with that key and its model', async ()
   }, {
     shopId: 'shop-a',
     message: 'P0234 on a 2016 Encore?',
-    shopAnthropic: { apiKey: SHOP_KEY, model: 'claude-shop-default', status: 'active' },
+    shopAnthropic: { provider: 'anthropic', apiKey: SHOP_KEY, model: 'claude-shop-default', status: 'active' },
     fetcher: async (url, init) => {
       requests.push({ url, headers: init.headers, body: JSON.parse(init.body) });
       return anthropicText('Overboost: test the wastegate.');
@@ -215,7 +216,7 @@ test('an invalid or out-of-credit shop key falls back to Workers AI with a notic
     const result = await runAnthropicTurn({ AI_ENABLED: '1', AI: workersAi(runs), DB }, {
       shopId: 'shop-a',
       message: 'P0234?',
-      shopAnthropic: { apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'active' },
+      shopAnthropic: { provider: 'anthropic', apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'active' },
       fetcher: async () => response(),
     });
     assert.equal(result.provider, 'workers-ai');
@@ -237,7 +238,7 @@ test('a temporary Anthropic outage falls back without flagging the shop key', as
   const result = await runAnthropicTurn({ AI_ENABLED: '1', AI: workersAi(), DB }, {
     shopId: 'shop-a',
     message: 'Hi',
-    shopAnthropic: { apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'active' },
+    shopAnthropic: { provider: 'anthropic', apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'active' },
     fetcher: async () => anthropicError(529, 'overloaded_error', 'Overloaded'),
   });
   assert.equal(result.provider, 'workers-ai');
@@ -250,7 +251,7 @@ test('a previously flagged key is marked healthy again after it works', async ()
   await runAnthropicTurn({ AI_ENABLED: '1', AI: workersAi(), DB }, {
     shopId: 'shop-a',
     message: 'Hi',
-    shopAnthropic: { apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'error' },
+    shopAnthropic: { provider: 'anthropic', apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'error' },
     fetcher: async () => anthropicText(),
   });
   const update = DB.calls.find(call => /UPDATE shop_ai_settings/.test(call.sql));
@@ -263,7 +264,7 @@ test('without a Workers AI binding a failing shop key surfaces the provider erro
   await assert.rejects(runAnthropicTurn({ AI_ENABLED: '1' }, {
     shopId: 'shop-a',
     message: 'Hi',
-    shopAnthropic: { apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'active' },
+    shopAnthropic: { provider: 'anthropic', apiKey: SHOP_KEY, model: 'claude-sonnet-5', status: 'active' },
     fetcher: async () => anthropicError(401, 'authentication_error'),
   }), error => error instanceof AnthropicApiError && error.status === 502);
 });
@@ -331,7 +332,7 @@ test('owners save a validated key; the response is masked and the stored value i
     return anthropicText('p');
   });
   const env = { DB, DEV_AUTH_BYPASS: '1', INTEGRATION_ENCRYPTION_KEY: ENCRYPTION_KEY };
-  const response = await worker.fetch(apiRequest('/settings/ai', 'PUT', { apiKey: SHOP_KEY }), env);
+  const response = await worker.fetch(apiRequest('/settings/ai', 'PUT', { provider: 'anthropic', apiKey: SHOP_KEY }), env);
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.saved, true);
@@ -345,23 +346,49 @@ test('owners save a validated key; the response is masked and the stored value i
   assert.ok(insert);
   assert.equal(insert.args[0], 'shop-a');
   assert.ok(!insert.args.includes(SHOP_KEY), 'plaintext key must not be stored');
-  assert.equal(insert.args[3], '1234');
+  assert.equal(insert.args[4], '1234');
   assert.ok(DB.calls.some(call => /INSERT INTO audit_log/.test(call.sql) && !call.args.join('|').includes(SHOP_KEY)));
 });
 
 test('an invalid key is rejected with a clear message and nothing is stored', async (t) => {
   const DB = fakeDb();
   t.mock.method(globalThis, 'fetch', async () => anthropicError(401, 'authentication_error', 'invalid x-api-key'));
-  const response = await worker.fetch(apiRequest('/settings/ai', 'PUT', { apiKey: SHOP_KEY }), { DB, DEV_AUTH_BYPASS: '1', INTEGRATION_ENCRYPTION_KEY: ENCRYPTION_KEY });
+  const response = await worker.fetch(apiRequest('/settings/ai', 'PUT', { provider: 'anthropic', apiKey: SHOP_KEY }), { DB, DEV_AUTH_BYPASS: '1', INTEGRATION_ENCRYPTION_KEY: ENCRYPTION_KEY });
   assert.equal(response.status, 400);
   assert.match((await response.json()).message, /Anthropic rejected this API key/);
   assert.equal(DB.calls.some(call => /INSERT INTO shop_ai_settings/.test(call.sql)), false);
 });
 
+
+
+test('Gemini key can be saved and used as the shop provider', async (t) => {
+  const DB = fakeDb();
+  const GEMINI_KEY = 'AIzaSyGeminiKeyForTests1234567890abcd';
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (String(url).includes('generativelanguage.googleapis.com')) {
+      const body = JSON.parse(init.body);
+      assert.equal(body.generationConfig.maxOutputTokens, 1);
+      return Response.json({ candidates: [{ content: { parts: [{ text: 'ok' }] } }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } });
+    }
+    assert.match(String(url), /generativelanguage\.googleapis\.com/);
+    return Response.json({ candidates: [{ content: { parts: [{ text: 'gemini answer' }] } }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 3 } });
+  });
+  const response = await worker.fetch(apiRequest('/settings/ai', 'PUT', { provider: 'gemini', apiKey: GEMINI_KEY, model: 'gemini-2.5-flash' }), {
+    DB,
+    DEV_AUTH_BYPASS: '1',
+    INTEGRATION_ENCRYPTION_KEY: ENCRYPTION_KEY,
+  });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.saved, true);
+  assert.equal(payload.provider, 'gemini');
+  assert.match(payload.label, /Using Gemini/);
+});
+
 test('a key with no credits is rejected before saving', async (t) => {
   const DB = fakeDb();
   t.mock.method(globalThis, 'fetch', async () => anthropicError(400, 'invalid_request_error', 'Your credit balance is too low to access the Anthropic API.'));
-  const response = await worker.fetch(apiRequest('/settings/ai', 'PUT', { apiKey: SHOP_KEY }), { DB, DEV_AUTH_BYPASS: '1', INTEGRATION_ENCRYPTION_KEY: ENCRYPTION_KEY });
+  const response = await worker.fetch(apiRequest('/settings/ai', 'PUT', { provider: 'anthropic', apiKey: SHOP_KEY }), { DB, DEV_AUTH_BYPASS: '1', INTEGRATION_ENCRYPTION_KEY: ENCRYPTION_KEY });
   assert.equal(response.status, 400);
   assert.match((await response.json()).message, /out of credits/);
 });
@@ -369,7 +396,7 @@ test('a key with no credits is rejected before saving', async (t) => {
 test('technicians cannot save or remove the key but can see the status', async (t) => {
   const fetchMock = t.mock.method(globalThis, 'fetch', async () => assert.fail('no validation call for unauthorized users'));
   const env = { DB: fakeDb({ role: 'technician', shopRow: await encryptedRow() }), DEV_AUTH_BYPASS: '1', INTEGRATION_ENCRYPTION_KEY: ENCRYPTION_KEY };
-  assert.equal((await worker.fetch(apiRequest('/settings/ai', 'PUT', { apiKey: SHOP_KEY }), env)).status, 403);
+  assert.equal((await worker.fetch(apiRequest('/settings/ai', 'PUT', { provider: 'anthropic', apiKey: SHOP_KEY }), env)).status, 403);
   assert.equal((await worker.fetch(apiRequest('/settings/ai', 'DELETE'), env)).status, 403);
   const status = await worker.fetch(apiRequest('/settings/ai'), env);
   assert.equal(status.status, 200);

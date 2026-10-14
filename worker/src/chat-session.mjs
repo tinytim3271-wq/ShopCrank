@@ -55,7 +55,7 @@ export class AiChatSession {
       shopId,
       userId,
       channel: 'text',
-      provider: result.provider || 'anthropic',
+      provider: result.provider || 'gemini',
       model: result.model,
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
