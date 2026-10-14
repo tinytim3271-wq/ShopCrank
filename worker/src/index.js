@@ -1330,6 +1330,7 @@ async function handleVoiceSession(request, env, context) {
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
   if (!isAiEnabled(env)) throw new HttpError(503, 'MechPro AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
+  await enforceAiRateLimit(env, context);
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
   const headers = new Headers(request.headers);
@@ -2591,12 +2592,15 @@ async function handleBilling(request, env, context, segments) {
             ? rawStatus : 'inactive';
         const periodEndSeconds = Number(object.current_period_end || 0);
         const periodStartSeconds = Number(object.current_period_start || 0);
-        const periodEnd = paymentFailed
-          ? existing?.current_period_end || null
-          : periodEndSeconds > 0 ? new Date(periodEndSeconds * 1000).toISOString() : null;
-        const periodStart = paymentFailed
-          ? existing?.current_period_start || null
-          : periodStartSeconds > 0 ? new Date(periodStartSeconds * 1000).toISOString() : null;
+        // Checkout Session objects have no current_period_*; writing null here
+        // used to wipe a real subscription period and leave status=active with
+        // no expiry (hasPlanCapability treats null period as never-expires).
+        const periodEnd = periodEndSeconds > 0
+          ? new Date(periodEndSeconds * 1000).toISOString()
+          : (paymentFailed || checkoutEvent ? existing?.current_period_end || null : null);
+        const periodStart = periodStartSeconds > 0
+          ? new Date(periodStartSeconds * 1000).toISOString()
+          : (paymentFailed || checkoutEvent ? existing?.current_period_start || null : null);
         const invoiceSubscription = typeof object.subscription === 'string'
           ? object.subscription
           : object.subscription?.id;
