@@ -287,22 +287,33 @@ npm run deploy:pages
 Keep Pages as the hostname owner and the Worker on `/api/*` only. Binding
 `shopcrank-api` as a custom domain for the whole hostname conflicts with Pages.
 
-1. Add the `shopcrank.com` zone to the same Cloudflare account as Pages/Workers.
-2. Create DNS for the apex (`shopcrank.com`) and `www` as Cloudflare proxied
-   records (Pages will present the CNAME target when you add the custom domain).
-3. Pages → `shopcrank-dispatch` → Custom domains → add `www.shopcrank.com`.
-   Optionally add `shopcrank.com` so the apex redirect in `public/_redirects`
-   can run. Or use a Cloudflare Redirect Rule: `shopcrank.com` → `www.shopcrank.com`.
-4. Workers → `shopcrank-api` → Triggers → add routes:
-   - `www.shopcrank.com/api/*`
-   - `shopcrank.com/api/*` (so apex API calls 301 to www)
-5. Enable Email Routing / Email Sending for `shopcrank.com` and verify
-   `noreply@shopcrank.com` (see `AUTH_EMAIL_FROM` in `wrangler.jsonc`).
-6. Google Cloud OAuth web client: authorized JavaScript origin
-   `https://www.shopcrank.com` and redirect
-   `https://www.shopcrank.com/api/auth/google/callback`.
-7. If an older Worker named `mechpro-api` still holds secrets, copy them onto
-   `shopcrank-api` (`wrangler secret list` / `secret put`) before cutting DNS.
+Apply the Cloudflare side from a machine (or Actions job) that already has the
+production API token:
+
+```bash
+npm run provision:shopcrank-com
+```
+
+The script is idempotent. It puts `shopcrank.com` on the same account as
+Pages/Workers, attaches Pages `shopcrank-dispatch` as `www.shopcrank.com` (and
+the apex so `shopcrank.com/api/*` can 301), binds Worker `shopcrank-api` only to
+`www.shopcrank.com/api/*` and `shopcrank.com/api/*`, detaches whole-hostname
+Worker domains, enables Email Routing/Sending and `noreply@shopcrank.com`,
+creates R2 `shopcrank-files` / `shopcrank-files-preview` when the account still
+has the old MechPro bucket names, and copies GitHub-available secrets from
+`mechpro-api` onto `shopcrank-api`. Secret *values* cannot be read back from
+Cloudflare; names that exist only on `mechpro-api` still need `wrangler secret
+put` unless the same values are in the environment.
+
+`.github/workflows/provision-shopcrank-com.yml` runs that command with the
+`production` Actions secrets on this change and on `main`.
+
+Google Cloud OAuth cannot be updated with a Cloudflare token. On the OAuth 2.0
+Web client, set authorized JavaScript origin `https://www.shopcrank.com` and
+redirect `https://www.shopcrank.com/api/auth/google/callback`.
+
+If the zone is newly created, point the registrar at the nameservers printed by
+the provision report, then re-run the script after the zone is active.
 
 Do not put Cloudflare Access or Bot Fight Mode / Super Bot Fight Mode in front of
 the public hostname. Those challenges return HTTP 403 "Just a moment..." for
@@ -361,6 +372,8 @@ the Settings screen stores its returned signing secret the same way.
 
 `.github/workflows/cloudflare-pages.yml` validates the web bundle and Worker,
 applies D1 migrations, deploys the Worker, and publishes Pages on `main`.
+`.github/workflows/provision-shopcrank-com.yml` attaches `www.shopcrank.com` on
+the same account (Pages custom domain + Worker `/api/*` routes only).
 Configure these **Actions** credentials for the publish job. The job targets the
 `production` environment, so environment secrets with the same names override
 repository secrets:
