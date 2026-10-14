@@ -1,0 +1,98 @@
+name: Provision shopcrank.com
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/provision-shopcrank-com.mjs'
+      - 'scripts/provision-shopcrank-com.test.mjs'
+      - '.github/workflows/provision-shopcrank-com.yml'
+      - 'wrangler.jsonc'
+      - 'worker/src/production-host.mjs'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/provision-shopcrank-com.mjs'
+      - 'scripts/provision-shopcrank-com.test.mjs'
+      - '.github/workflows/provision-shopcrank-com.yml'
+      - 'wrangler.jsonc'
+      - 'worker/src/production-host.mjs'
+
+concurrency:
+  group: provision-shopcrank-com-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/provision-shopcrank-com.test.mjs
+
+  provision:
+    needs: test
+    if: vars.CLOUDFLARE_DEPLOY_ENABLED != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Check Cloudflare credentials
+        id: creds
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.YOUR_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=shopcrank.com provision skipped::Add production secrets CLOUDFLARE_API_TOKEN (or YOUR_API_TOKEN) and CLOUDFLARE_ACCOUNT_ID."
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Provision shopcrank.com on this Cloudflare account
+        if: steps.creds.outputs.present == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.YOUR_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          DIAGNOSTICS_SIGNING_PRIVATE_KEY: ${{ secrets.DIAGNOSTICS_SIGNING_PRIVATE_KEY }}
+          INTEGRATION_ENCRYPTION_KEY: ${{ secrets.INTEGRATION_ENCRYPTION_KEY }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
+          ACCESS_ADMIN_EMAILS: ${{ secrets.ACCESS_ADMIN_EMAILS }}
+          AUTH_EMAIL_WEBHOOK: ${{ secrets.AUTH_EMAIL_WEBHOOK }}
+          AUTH_EMAIL_WEBHOOK_SECRET: ${{ secrets.AUTH_EMAIL_WEBHOOK_SECRET }}
+          STRIPE_BILLING_WEBHOOK_SECRET: ${{ secrets.STRIPE_BILLING_WEBHOOK_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          LABOR_WEB_SEARCH_API_KEY: ${{ secrets.LABOR_WEB_SEARCH_API_KEY }}
+          QUICKBOOKS_CLIENT_ID: ${{ secrets.QUICKBOOKS_CLIENT_ID }}
+          QUICKBOOKS_CLIENT_SECRET: ${{ secrets.QUICKBOOKS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          REPORT="${RUNNER_TEMP}/provision-shopcrank-com.json"
+          node scripts/provision-shopcrank-com.mjs --report "$REPORT"
+          mkdir -p /tmp/provision-artifacts
+          cp "$REPORT" /tmp/provision-artifacts/provision-shopcrank-com.json
+      - name: Upload provision report
+        if: steps.creds.outputs.present == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: provision-shopcrank-com
+          path: /tmp/provision-artifacts/provision-shopcrank-com.json
+          if-no-files-found: warn

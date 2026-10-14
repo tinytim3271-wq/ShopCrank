@@ -37,10 +37,10 @@ AI_ENABLED=1
 # ACCESS_AUD=your-access-application-audience
 
 # Magic-link email delivery. Production sender:
-# https://www.yourcarguy806.com/api/auth/send-login
+# https://www.shopcrank.com/api/auth/send-login
 # These local settings are not uploaded by a Worker deployment.
-# AUTH_EMAIL_FROM=noreply@yourcarguy806.com
-# AUTH_EMAIL_WEBHOOK=https://www.yourcarguy806.com/api/auth/send-login
+# AUTH_EMAIL_FROM=noreply@shopcrank.com
+# AUTH_EMAIL_WEBHOOK=https://www.shopcrank.com/api/auth/send-login
 # AUTH_EMAIL_WEBHOOK_SECRET=replace-with-your-webhook-bearer-secret
 
 # Google OpenID Connect. Register this local callback in Google Cloud:
@@ -75,12 +75,12 @@ AI_ENABLED=1
 # TWILIO_AUTH_TOKEN=...
 # TWILIO_MESSAGING_SERVICE_SID=MG...
 # TWILIO_FROM_NUMBER=+18065550100
-# TWILIO_WEBHOOK_URL=https://www.yourcarguy806.com/api/messaging/twilio/webhook/your-shop-id
+# TWILIO_WEBHOOK_URL=https://www.shopcrank.com/api/messaging/twilio/webhook/your-shop-id
 
 # QuickBooks Online OAuth2.
 # INTUIT_CLIENT_ID=...
 # INTUIT_CLIENT_SECRET=...
-# INTUIT_REDIRECT_URI=https://www.yourcarguy806.com/api/quickbooks/callback
+# INTUIT_REDIRECT_URI=https://www.shopcrank.com/api/quickbooks/callback
 # INTUIT_ENVIRONMENT=sandbox
 # INTUIT_DEFAULT_ITEM_ID=1
 
@@ -103,15 +103,15 @@ AI_ENABLED=1
 # STRIPE_PRICE_FOUNDING_PRO_ANNUAL=price_...
 
 # Support notifications and public service status.
-# SUPPORT_EMAIL_TO=support@yourcarguy806.com
-# SUPPORT_EMAIL_FROM=support@yourcarguy806.com
-# STATUS_PAGE_URL=https://status.yourcarguy806.com
+# SUPPORT_EMAIL_TO=support@shopcrank.com
+# SUPPORT_EMAIL_FROM=support@shopcrank.com
+# STATUS_PAGE_URL=https://status.shopcrank.com
 # PartsTech / MOTOR labor (per-shop credentials are stored encrypted in D1;
 # these optional overrides are only for local stubbing of the API base URL).
 # PARTSTECH_API_BASE=https://api.partstech.com
 
 # QuickBooks Online OAuth app (Intuit Developer). Per-shop tokens are encrypted in D1.
-# Register redirect: https://www.yourcarguy806.com/api/integrations/quickbooks/callback
+# Register redirect: https://www.shopcrank.com/api/integrations/quickbooks/callback
 # (local: http://127.0.0.1:8787/api/integrations/quickbooks/callback — the SPA posts code/state/realmId)
 # QUICKBOOKS_CLIENT_ID=replace-with-intuit-client-id
 # QUICKBOOKS_CLIENT_SECRET=replace-with-intuit-client-secret

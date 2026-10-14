@@ -13,6 +13,12 @@ import {
   visibleSidebar,
 } from './home.js';
 
+test('home runtime publishes Shop Crank window helpers the SPA bootstrap reads', () => {
+  assert.equal(globalThis.__SHOP_CRANK_HOME__.buildHomeModel, buildHomeModel);
+  assert.equal(globalThis.__SHOP_CRANK_HOME__.visibleSidebar, visibleSidebar);
+  assert.equal(globalThis.__MECHPRO_HOME__, globalThis.__SHOP_CRANK_HOME__);
+});
+
 const orders = [
   { id: 'RO-1', customer: 'Ada', vehicle: 'F-150', status: 'in_progress', tech: 'Tech A', promise: 'Today, 2:30 PM', complaint: 'Brakes' },
   { id: 'RO-2', customer: 'Bea', vehicle: 'Camry', status: 'estimate', tech: 'Unassigned', promise: 'Tomorrow, 11:00 AM', complaint: 'CEL' },
