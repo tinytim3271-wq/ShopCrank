@@ -243,8 +243,13 @@ test('provisionShopcrankCom attaches Pages www, /api routes only, email, R2, and
       return jsonResponse(200, { success: true, result: store.addresses });
     }
     if (method === 'POST' && path === '/accounts/acct-1/email/routing/addresses') {
-      const row = { email: JSON.parse(init.body).email, verified: '2026-10-14T00:00:00Z' };
+      const row = { id: 'addr-1', email: JSON.parse(init.body).email, verified: '2026-10-14T00:00:00Z' };
       store.addresses.push(row);
+      return jsonResponse(200, { success: true, result: row });
+    }
+    if (method === 'PATCH' && path === '/accounts/acct-1/email/routing/addresses/addr-1') {
+      const row = { ...store.addresses[0], verified: '2026-10-14T00:00:00Z' };
+      store.addresses[0] = row;
       return jsonResponse(200, { success: true, result: row });
     }
     if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/mechpro-api/secrets') {

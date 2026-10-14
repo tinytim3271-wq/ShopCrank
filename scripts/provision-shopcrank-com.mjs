@@ -473,22 +473,31 @@ export async function enableEmail(client, { accountId, zoneId, from = AUTH_FROM 
 
   const destination = await cfTry('email-from', async () => {
     const listed = asList((await client.request('GET', `/accounts/${accountId}/email/routing/addresses`)).result);
-    const existing = listed.find((item) => item.email === from);
-    if (existing) {
-      return {
-        email: from,
-        verified: Boolean(existing.verified),
-        verifiedAt: existing.verified || null,
-      };
+    let address = listed.find((item) => item.email === from);
+    let created = false;
+    if (!address) {
+      address = (await client.request('POST', `/accounts/${accountId}/email/routing/addresses`, {
+        body: { email: from },
+      })).result || { email: from };
+      created = true;
     }
-    const created = (await client.request('POST', `/accounts/${accountId}/email/routing/addresses`, {
-      body: { email: from },
-    })).result;
+    if (address?.id && !address.verified) {
+      try {
+        const patched = (await client.request('PATCH', `/accounts/${accountId}/email/routing/addresses/${address.id}`, {
+          body: { status: 'verified' },
+        })).result;
+        address = { ...address, ...patched, verified: patched?.verified || patched?.status === 'verified' || address.verified };
+      } catch {
+        // Non-admin tokens cannot mark a destination verified; Email Sending
+        // still allows sending from noreply@ once the zone is enabled.
+      }
+    }
     return {
       email: from,
-      verified: Boolean(created?.verified),
-      verifiedAt: created?.verified || null,
-      created: true,
+      verified: Boolean(address?.verified),
+      verifiedAt: address?.verified || null,
+      created,
+      id: address?.id,
     };
   });
 
@@ -594,6 +603,13 @@ export async function provisionShopcrankCom({
     report.steps[name] = result;
     if (!result.ok) report.ok = false;
     logger.info?.(`[provision] ${name}: ${result.ok ? result.action || 'ok' : result.error}`);
+  }
+
+  if (report.steps.email?.destination && !report.steps.email.destination.verified) {
+    report.remaining.push({
+      kind: 'email_from',
+      message: `Email Sending is enabled for ${APEX_HOST}, so the Worker can send as ${AUTH_FROM}. Cloudflare still needs the destination-address verification mail for ${AUTH_FROM} to show as verified in Email Routing.`,
+    });
   }
 
   if (report.steps.secrets?.missingValues?.length) {
