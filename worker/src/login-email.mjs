@@ -40,11 +40,7 @@ export function signInDeliveryFailure(error) {
   if (UNSENDABLE_CODES.has(code)) {
     return new HttpError(
       502,
-<<<<<<< HEAD
-      'That address cannot receive a Shop Crank sign-in link yet. Email Sending is turned off for yourcarguy806.com, so only an address already verified in Cloudflare can be used.',
-=======
       'That address cannot receive a Shop Crank sign-in link yet. Email Sending is turned off for shopcrank.com, so only an address already verified in Cloudflare can be used.',
->>>>>>> b2a7ae8765aa4dce1de0c1351fbd6ee673826440
     );
   }
   if (code) return new HttpError(502, `Unable to deliver the sign-in email (${code}).`);
