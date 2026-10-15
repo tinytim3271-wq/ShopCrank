@@ -243,3 +243,6 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
   .gemini-drawer{width:100vw}
 }
 
+
+.brand-mark{background-image:url('./assets/shopcrank-logo.jpg');background-size:cover;background-position:center;background-repeat:no-repeat}
+.brand-mark svg{display:none}

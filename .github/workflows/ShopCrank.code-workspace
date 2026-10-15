@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"name": "c518392159ec7c6f7cf835a22dff21b029cf9ba71791885854211tmp-27336QN7s5B7muWpW.csproj",
+			"path": "C:/Users/secon/AppData/Local/Temp/c518392159ec7c6f7cf835a22dff21b029cf9ba71791885854211tmp-27336QN7s5B7muWpW.csproj"
+		}
+	],
+	"settings": {
+		"python-envs.defaultEnvManager": "ms-python.python:system",
+		"gradle.javaDebug.cleanOutput": true,
+		"githubPullRequests.ignoredPullRequestBranches": [
+			"main"
+		]
+	}
+}

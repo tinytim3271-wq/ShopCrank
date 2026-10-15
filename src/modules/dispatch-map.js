@@ -1,5 +1,5 @@
 /**
- * MechPro Dispatched Work Order Location Mapping Module
+ * Shop Crank Dispatched Work Order Location Mapping Module
  * Uses Leaflet & OpenStreetMap (No Google Maps API)
  * Features:
  * - Map dispatched customer work orders with custom status markers
@@ -17,7 +17,7 @@ import { escapeHtml, escapeAttr } from '../shared/html.js';
 export const SHOP_HQ = {
   lat: 33.5843,
   lng: -101.8447,
-  name: 'MechPro Shop HQ',
+  name: 'Shop Crank Shop HQ',
   address: '101 Main St, Lubbock, TX 79401',
 };
 

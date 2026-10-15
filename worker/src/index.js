@@ -381,7 +381,7 @@ async function resolveContext(request, env) {
   const mapping = await env.DB.prepare(
     'SELECT shop_id, role, name, enabled FROM users WHERE email = ? COLLATE NOCASE',
   ).bind(email).first();
-  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active MechPro account is mapped to this Access identity');
+  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active Shop Crank account is mapped to this Access identity');
   return {
     shopId: mapping.shop_id,
     role: mapping.role,
@@ -410,7 +410,7 @@ async function requirePlanCapability(context, env, capability) {
     'SELECT plan_id, status, current_period_end FROM subscriptions WHERE shop_id = ? LIMIT 1',
   ).bind(context.shopId).first();
   if (!hasPlanCapability(subscription, capability)) {
-    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active MechPro plan`);
+    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active Shop Crank plan`);
   }
 }
 
@@ -986,7 +986,7 @@ export async function geocodeAddress(address, env) {
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
-      'User-Agent': 'MechProShopOS/1.0 (mileage; https://www.yourcarguy806.com)',
+      'User-Agent': 'ShopCrankShopOS/1.0 (mileage; https://www.yourcarguy806.com)',
     },
   });
   if (!response.ok) throw new HttpError(502, 'Address lookup is unavailable');
@@ -1292,8 +1292,8 @@ async function aiAnswer(env, shopId, message, history = [], options = {}) {
 async function handleAssistant(request, env, context, analytics) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'MechPro AI is not enabled');
-  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'MechPro AI chat sessions are not configured');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
+  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'Shop Crank AI chat sessions are not configured');
   await enforceAiRateLimit(env, context);
   const body = await requestJson(request);
   const message = String(body.message || '').trim().slice(0, 4000);
@@ -1328,7 +1328,7 @@ async function handleVoiceSession(request, env, context) {
     throw new HttpError(426, 'A WebSocket upgrade is required');
   }
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'MechPro AI is not enabled');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
@@ -2064,7 +2064,7 @@ function desktopHandoffPage(token) {
 <head>
   <meta charset="utf-8">
   <meta name="referrer" content="no-referrer">
-  <title>Return to MechPro</title>
+  <title>Return to Shop Crank</title>
   <style>
     body { font-family: "Segoe UI", sans-serif; background: #18252b; color: #f4f7f8; margin: 0; min-height: 100vh; display: grid; place-items: center; }
     main { max-width: 28rem; padding: 2rem; }
@@ -2075,8 +2075,8 @@ function desktopHandoffPage(token) {
 <body>
   <main>
     <h1>Google sign-in succeeded</h1>
-    <p>Open MechPro to finish signing in. If Windows asks which app to use, choose MechPro.</p>
-    <a href="${link}">Open MechPro</a>
+    <p>Open Shop Crank to finish signing in. If Windows asks which app to use, choose Shop Crank.</p>
+    <a href="${link}">Open Shop Crank</a>
   </main>
 </body>
 </html>`;

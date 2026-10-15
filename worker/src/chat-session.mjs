@@ -21,7 +21,7 @@ export class AiChatSession {
       // stub boundary, so return them as JSON the Worker can pass through.
       if (error instanceof HttpError) return json({ message: error.message }, error.status);
       console.error(JSON.stringify({ message: 'AI chat session failed', error: String(error?.message || error).slice(0, 300) }));
-      return json({ message: 'The MechPro assistant is unavailable' }, 500);
+      return json({ message: 'The Shop Crank assistant is unavailable' }, 500);
     }
   }
 

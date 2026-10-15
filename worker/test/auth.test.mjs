@@ -130,7 +130,7 @@ test('worker email binding sends the login link and ignores a broken webhook', a
   assert.equal(sent.length, 1);
   assert.equal(sent[0].from, 'noreply@yourcarguy806.com');
   assert.equal(sent[0].to, 'owner@example.test');
-  assert.equal(sent[0].subject, 'Sign in to MechPro');
+  assert.equal(sent[0].subject, 'Sign in to Shop Crank');
   assert.match(sent[0].text, /https:\/\/app\.example\.test\/api\/auth\/callback\?token=[a-f0-9]{32}/);
   assert.equal(fetched.mock.callCount(), 0);
 });

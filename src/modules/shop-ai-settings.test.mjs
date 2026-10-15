@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ANTHROPIC_CONSOLE_URL, GEMINI_CONSOLE_URL, SHOP_AI_PROMPT, shopAiPanelHtml, shopAiStatusLabel } from './shop-ai-settings.js';
+import { GEMINI_CONSOLE_URL, SHOP_AI_PROMPT, shopAiPanelHtml, shopAiStatusLabel } from './shop-ai-settings.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => `&#${char.charCodeAt(0)};`);
 
