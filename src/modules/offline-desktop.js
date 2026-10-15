@@ -8,8 +8,13 @@ function escapeText(value) {
   }[char]));
 }
 
+function desktopBridge() {
+  return globalThis.window?.shopcrankDesktop || globalThis.window?.mechproDesktop;
+}
+
 export function isOfflineDesktop() {
-  return Boolean(globalThis.window?.mechproDesktop?.offline && globalThis.window.mechproDesktop.localAuth);
+  const desktop = desktopBridge();
+  return Boolean(desktop?.offline && desktop.localAuth);
 }
 
 export function offlineSession(account) {
@@ -30,7 +35,7 @@ export function offlineSession(account) {
   };
 }
 
-export function offlineLoginMarkup({ hasAccount, email, icon, portable = Boolean(globalThis.window?.mechproDesktop?.portable) }) {
+export function offlineLoginMarkup({ hasAccount, email, icon, portable = Boolean(desktopBridge()?.portable) }) {
   const mark = icon('wrench');
   const lock = icon('lock-keyhole', 15);
   const buttonIcon = icon(hasAccount ? 'log-in' : 'save', 16);

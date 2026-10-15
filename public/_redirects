@@ -4,5 +4,10 @@
 #
 # `/api/*` is served by the shopcrank-api Worker on the production hostname.
 
+# Canonical host is www.shopcrank.com.
+https://shopcrank.com/* https://www.shopcrank.com/:splat 301
+http://shopcrank.com/* https://www.shopcrank.com/:splat 301
+http://www.shopcrank.com/* https://www.shopcrank.com/:splat 301
+
 # Optional explicit entry for the SPA shell.
 /app            /index.html       200

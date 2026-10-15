@@ -75,6 +75,11 @@ test('demo packaging excludes credentials and does not inherit production resour
   assert.deepEqual(config.win.target, [{ target: 'zip', arch: ['x64'] }]);
 });
 
+test('demo document title matches the packaged product name', () => {
+  const html = readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(html, /<title>[^<]*Shop Crank[^<]*<\/title>/);
+});
+
 test('an unusable portable data directory fails instead of using host storage', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'shopcrank-portable-'));
   try {

@@ -2,6 +2,14 @@ import { PostHog } from 'posthog-node/edge';
 import coverageBundle from '../data/coverage.json' with { type: 'json' };
 import { isApiRequest, pagesProxyUrl, publicDownloadObjectKey } from './routing.mjs';
 import {
+  APEX_HOST,
+  APP_SESSION_COOKIE,
+  CANONICAL_ORIGIN,
+  DESKTOP_AUTH_SCHEME,
+  HEALTHZ_SERVICE,
+  apexToWwwRedirect,
+} from './production-host.mjs';
+import {
   ENTITY_TYPES,
   buildTaxReport,
   canReadEntity,
@@ -82,12 +90,11 @@ import {
 export { AiChatSession, AiVoiceSession };
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
-const APP_SESSION_COOKIE = 'mechpro_session';
-const GOOGLE_STATE_COOKIE = '__Host-mechpro_google_state';
-const GOOGLE_NONCE_COOKIE = '__Host-mechpro_google_nonce';
-const GOOGLE_VERIFIER_COOKIE = '__Host-mechpro_google_verifier';
-const GOOGLE_RETURN_COOKIE = '__Host-mechpro_google_return';
-const GOOGLE_DESKTOP_COOKIE = '__Host-mechpro_google_desktop';
+const GOOGLE_STATE_COOKIE = '__Host-shopcrank_google_state';
+const GOOGLE_NONCE_COOKIE = '__Host-shopcrank_google_nonce';
+const GOOGLE_VERIFIER_COOKIE = '__Host-shopcrank_google_verifier';
+const GOOGLE_RETURN_COOKIE = '__Host-shopcrank_google_return';
+const GOOGLE_DESKTOP_COOKIE = '__Host-shopcrank_google_desktop';
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
@@ -253,8 +260,8 @@ function safeReturnPath(value, fallback = '/app') {
   const candidate = String(value || '').trim();
   if (!candidate || !candidate.startsWith('/') || candidate.startsWith('//')) return fallback;
   try {
-    const parsed = new URL(candidate, 'https://mechpro.invalid');
-    return parsed.origin === 'https://mechpro.invalid' ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
+    const parsed = new URL(candidate, 'https://shopcrank.invalid');
+    return parsed.origin === 'https://shopcrank.invalid' ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
   } catch {
     return fallback;
   }
@@ -986,7 +993,11 @@ export async function geocodeAddress(address, env) {
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
+<<<<<<< HEAD
       'User-Agent': 'ShopCrankShopOS/1.0 (mileage; https://www.yourcarguy806.com)',
+=======
+      'User-Agent': 'ShopCrank/1.0 (mileage; https://www.shopcrank.com)',
+>>>>>>> b2a7ae8765aa4dce1de0c1351fbd6ee673826440
     },
   });
   if (!response.ok) throw new HttpError(502, 'Address lookup is unavailable');
@@ -1330,6 +1341,7 @@ async function handleVoiceSession(request, env, context) {
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
   if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
+  await enforceAiRateLimit(env, context);
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
   const headers = new Headers(request.headers);
@@ -2058,7 +2070,7 @@ async function pkceChallenge(verifier) {
 }
 
 function desktopHandoffPage(token) {
-  const link = `mechpro://auth?token=${encodeURIComponent(token)}`;
+  const link = `${DESKTOP_AUTH_SCHEME}//auth?token=${encodeURIComponent(token)}`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -2085,8 +2097,8 @@ function desktopHandoffPage(token) {
 function googleAuthOrigin(request, env) {
   const configured = String(env.GOOGLE_REDIRECT_ORIGIN || '').trim();
   if (configured) return new URL(configured).origin;
-  const hostname = new URL(request.url).hostname.replace(/^www\./, '');
-  if (hostname === 'yourcarguy806.com') return 'https://www.yourcarguy806.com';
+  const hostname = new URL(request.url).hostname;
+  if (hostname === APEX_HOST) return CANONICAL_ORIGIN;
   return new URL(request.url).origin;
 }
 
@@ -2591,12 +2603,15 @@ async function handleBilling(request, env, context, segments) {
             ? rawStatus : 'inactive';
         const periodEndSeconds = Number(object.current_period_end || 0);
         const periodStartSeconds = Number(object.current_period_start || 0);
-        const periodEnd = paymentFailed
-          ? existing?.current_period_end || null
-          : periodEndSeconds > 0 ? new Date(periodEndSeconds * 1000).toISOString() : null;
-        const periodStart = paymentFailed
-          ? existing?.current_period_start || null
-          : periodStartSeconds > 0 ? new Date(periodStartSeconds * 1000).toISOString() : null;
+        // Checkout Session objects have no current_period_*; writing null here
+        // used to wipe a real subscription period and leave status=active with
+        // no expiry (hasPlanCapability treats null period as never-expires).
+        const periodEnd = periodEndSeconds > 0
+          ? new Date(periodEndSeconds * 1000).toISOString()
+          : (paymentFailed || checkoutEvent ? existing?.current_period_end || null : null);
+        const periodStart = periodStartSeconds > 0
+          ? new Date(periodStartSeconds * 1000).toISOString()
+          : (paymentFailed || checkoutEvent ? existing?.current_period_start || null : null);
         const invoiceSubscription = typeof object.subscription === 'string'
           ? object.subscription
           : object.subscription?.id;
@@ -2754,7 +2769,7 @@ async function route(request, env, analytics) {
       },
     });
   }
-  if (path === '/healthz') return json({ ok: true, service: 'mechpro-cloudflare-api' });
+  if (path === '/healthz') return json({ ok: true, service: HEALTHZ_SERVICE });
   if (segments[0] === 'founding') return handleFounding(request, env);
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
   if (segments[0] === 'customer-documents') {
@@ -2932,6 +2947,8 @@ export default {
         || crypto.randomUUID(),
     };
     try {
+      const apexRedirect = apexToWwwRedirect(request);
+      if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {
         const download = await servePublicDownload(request, env);
         if (download) return download;

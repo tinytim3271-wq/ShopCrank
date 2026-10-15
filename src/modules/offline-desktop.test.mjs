@@ -9,6 +9,7 @@ test('offline sign-in markup asks for a local password and does not offer Google
   assert.match(create, /Save sign-in on this PC/);
   assert.match(create, /name="password"/);
   assert.match(create, /name="confirm"/);
+  assert.match(create, /work email|continue securely|sign in/i);
   assert.doesNotMatch(create, /google|magic|sign-in link/i);
   const returning = offlineLoginMarkup({ hasAccount: true, email: 'lee@shop.test', icon });
   assert.match(returning, /value="lee@shop.test"/);

@@ -8,6 +8,16 @@ const plansSql = readFileSync(new URL('../worker/migrations/0002_public_saas_aut
 const legacy = readFileSync(new URL('../src/runtime/legacy.js', import.meta.url), 'utf8');
 const diagnosticsUi = readFileSync(new URL('../diagnostics-ui.js', import.meta.url), 'utf8');
 
+test('marketing pages and the app shell advertise www.shopcrank.com', () => {
+  const shell = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(shell, /https:\/\/www\.shopcrank\.com\//);
+  assert.doesNotMatch(shell, /yourcarguy806|MechPro dispatch board/);
+  for (const href of ['/features/', '/pricing/', '/login/', '/signup/']) {
+    const page = readFileSync(new URL(`../public${href}index.html`, import.meta.url), 'utf8');
+    assert.match(page, new RegExp(`https://www\\.shopcrank\\.com${href.replaceAll('/', '\\/')}`));
+  }
+});
+
 test('the public site sells the launch catalog, not the retired starter plan', () => {
   assert.match(plansSql, /'starter', 'price_starter', 'Starter', 4900, 3, 1/);
   assert.match(pricing, /\$69/);

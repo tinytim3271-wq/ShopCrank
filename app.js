@@ -62,17 +62,22 @@
   });
 
   // src/modules/platform/detect.js
-  var isDesktopApp, DESKTOP_ENTITLEMENT_INTERVAL, platform;
+  function getDesktopBridge() {
+    if (typeof window === "undefined") return void 0;
+    return window.shopcrankDesktop || window.mechproDesktop;
+  }
+  var isDesktopApp, DESKTOP_ENTITLEMENT_INTERVAL, desktop, platform;
   var init_detect = __esm({
     "src/modules/platform/detect.js"() {
-      isDesktopApp = Boolean(window.mechproDesktop);
+      isDesktopApp = Boolean(getDesktopBridge());
       DESKTOP_ENTITLEMENT_INTERVAL = 5 * 60 * 1e3;
+      desktop = getDesktopBridge();
       platform = Object.freeze({
         kind: isDesktopApp ? "desktop" : "web",
         isDesktop: isDesktopApp,
         isWeb: !isDesktopApp,
-        electronVersion: window.mechproDesktop?.version ?? null,
-        os: window.mechproDesktop?.platform ?? null
+        electronVersion: desktop?.version ?? null,
+        os: desktop?.platform ?? null
       });
     }
   });
@@ -331,6 +336,216 @@
   var init_mileage = __esm({
     "src/modules/mileage.js"() {
       DEFAULT_MILEAGE_RATE = 0.68;
+    }
+  });
+
+  // src/runtime/home.js
+  function emptyState(message) {
+    return `<div class="empty-state"><h2>${escapeHtml(message)}</h2></div>`;
+  }
+  function greetingForNow(date = /* @__PURE__ */ new Date()) {
+    const hour = date.getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  }
+  function localIsoDate(date = /* @__PURE__ */ new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  function isTodayPromise(promise) {
+    return /^today\b/i.test(String(promise || ""));
+  }
+  function buildHomeModel({
+    orders: orders2 = [],
+    invoices: invoices2 = [],
+    appointments = [],
+    now: now2 = /* @__PURE__ */ new Date()
+  } = {}) {
+    const open = orders2.filter((order) => !CLOSED.has(order.status));
+    const inProgress = orders2.filter((order) => order.status === "in_progress");
+    const waiting = orders2.filter((order) => order.status === "waiting_parts");
+    const overdue = invoices2.filter((invoice) => invoice.status === "overdue");
+    const unassigned = open.filter((order) => !order.tech || order.tech === "Unassigned");
+    const todayKey = localIsoDate(now2);
+    const promiseToday = open.filter((order) => isTodayPromise(order.promise));
+    const seen = new Set(promiseToday.map((order) => order.id));
+    const todayJobs = [
+      ...promiseToday,
+      ...inProgress.filter((order) => !seen.has(order.id))
+    ];
+    const todaysAppointments = appointments.filter(
+      (item) => item.date === todayKey && item.status !== "cancelled"
+    );
+    const attention = [
+      ...waiting.map((order) => ({
+        id: order.id,
+        type: "parts",
+        title: `${order.id} is waiting on parts`,
+        detail: `${order.customer} \xB7 ${order.vehicle}`,
+        orderId: order.id
+      })),
+      ...unassigned.map((order) => ({
+        id: `${order.id}-assign`,
+        type: "assign",
+        title: `${order.id} needs a technician`,
+        detail: order.complaint || order.vehicle,
+        orderId: order.id
+      })),
+      ...overdue.map((invoice) => ({
+        id: invoice.number || invoice.id,
+        type: "overdue",
+        title: `${invoice.number || invoice.id} is overdue`,
+        detail: `${invoice.customer} \xB7 ${Number(invoice.amount || 0)}`,
+        invoiceId: invoice.number || invoice.id,
+        amount: Number(invoice.amount || 0)
+      }))
+    ];
+    const activity = [
+      ...open.map((order) => ({
+        id: order.id,
+        title: order.id,
+        status: order.status,
+        customer: order.customer,
+        vehicle: order.vehicle,
+        meta: order.promise,
+        orderId: order.id
+      })),
+      ...invoices2.map((invoice) => ({
+        id: invoice.number || invoice.id,
+        title: invoice.number || invoice.id,
+        status: invoice.status,
+        customer: invoice.customer,
+        vehicle: invoice.ro,
+        meta: invoice.date
+      }))
+    ].slice(0, 8);
+    return {
+      openCount: open.length,
+      inProgressCount: inProgress.length,
+      waitingCount: waiting.length,
+      overdueCount: overdue.length,
+      overdueTotal: overdue.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
+      paidTotal: invoices2.filter((invoice) => invoice.status === "paid").reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
+      todayJobs,
+      todaysAppointments,
+      attention: attention.slice(0, 8),
+      activity,
+      isEmpty: orders2.length === 0 && invoices2.length === 0
+    };
+  }
+  function mergeRemoteCollection(key, remote, local, isSampleRecord, pendingCreateIds = []) {
+    if (!Array.isArray(remote)) return Array.isArray(local) ? local : [];
+    const current = Array.isArray(local) ? local : [];
+    const pendingIds = new Set(pendingCreateIds);
+    if (!remote.length) {
+      if (current.length && typeof isSampleRecord === "function" && current.every((record) => isSampleRecord(key, record))) {
+        return current;
+      }
+      const pendingCreates = current.filter((record) => record?.id && pendingIds.has(record.id));
+      return pendingCreates.length ? pendingCreates : remote;
+    }
+    const remoteIds = new Set(remote.map((record) => record?.id).filter(Boolean));
+    const localOnly = current.filter((record) => record?.id && !remoteIds.has(record.id) && pendingIds.has(record.id));
+    return localOnly.length ? [...localOnly, ...remote] : remote;
+  }
+  function pendingCreateIdsForCollection(collection, queue = [], entityCollections = {}) {
+    return (Array.isArray(queue) ? queue : []).flatMap((item) => {
+      if (item?.method !== "POST") return [];
+      const type = String(item.path || "").match(/^\/entities\/([^/]+)/i)?.[1]?.toLowerCase();
+      const target = type && Object.prototype.hasOwnProperty.call(entityCollections, type) ? entityCollections[type] : type;
+      if (target !== collection) return [];
+      try {
+        const id = JSON.parse(item.body)?.id;
+        return id ? [id] : [];
+      } catch {
+        return [];
+      }
+    });
+  }
+  function coalesceQueuedEntityMutation(existing, incoming) {
+    const preserveCreate = existing?.method === "POST" && incoming.method === "PUT";
+    return {
+      path: preserveCreate ? existing.path : incoming.path,
+      method: preserveCreate ? "POST" : incoming.method,
+      body: incoming.body,
+      expectedUpdatedAt: preserveCreate ? null : incoming.expectedUpdatedAt || null
+    };
+  }
+  function visibleSidebar(canAccess2, { oem = false } = {}) {
+    return sidebarCatalog.map((section) => ({
+      label: section.label,
+      items: section.items.filter((item) => (!item.requiresOem || oem) && canAccess2(item.route))
+    })).filter((section) => section.items.length > 0);
+  }
+  var CLOSED, sidebarCatalog;
+  var init_home = __esm({
+    "src/runtime/home.js"() {
+      init_html();
+      CLOSED = /* @__PURE__ */ new Set(["completed", "invoiced", "declined", "archived"]);
+      sidebarCatalog = [
+        {
+          label: "Today",
+          items: [
+            { route: "home", icon: "house", label: "Home" },
+            { route: "dispatch", icon: "layout-dashboard", label: "Dispatch board", count: "active" },
+            { route: "schedule", icon: "calendar-days", label: "Schedule" }
+          ]
+        },
+        {
+          label: "Front counter",
+          items: [
+            { route: "orders", icon: "clipboard-list", label: "Work orders", count: "orders" },
+            { route: "customers", icon: "users", label: "Customers" },
+            { route: "invoices", icon: "receipt-text", label: "Invoices", count: "overdue" },
+            { route: "pos", icon: "credit-card", label: "Card terminal" },
+            { route: "chat", icon: "messages-square", label: "Team chat", count: "unread" }
+          ]
+        },
+        {
+          label: "Shop floor",
+          items: [
+            { route: "shopops", icon: "blocks", label: "Vehicles & parts" },
+            { route: "oem-diagnostics", icon: "radio-tower", label: "OEM diagnostics", requiresOem: true },
+            { route: "obd", icon: "activity", label: "OBD bay" },
+            { route: "keys", icon: "key", label: "Key programming" },
+            { route: "ai", icon: "sparkles", label: "AI workbench" }
+          ]
+        },
+        {
+          label: "Back office",
+          items: [
+            { route: "employees", icon: "user-round-cog", label: "Employees" },
+            { route: "payroll", icon: "wallet-cards", label: "Payroll" },
+            { route: "accounting", icon: "landmark", label: "Accounting" },
+            { route: "reports", icon: "chart-no-axes-combined", label: "Reports" },
+            { route: "imports", icon: "file-up", label: "Import data" },
+            { route: "messaging", icon: "message-square-more", label: "Messaging" },
+            { route: "payments", icon: "credit-card", label: "Payments" },
+            { route: "integrations", icon: "plug-zap", label: "Integrations" },
+            { route: "support", icon: "life-buoy", label: "Help & support" },
+            { route: "settings", icon: "settings", label: "Settings" }
+          ]
+        }
+      ];
+      if (typeof globalThis !== "undefined") {
+        const home = {
+          buildHomeModel,
+          emptyState,
+          escapeHtml,
+          greetingForNow,
+          localIsoDate,
+          mergeRemoteCollection,
+          pendingCreateIdsForCollection,
+          coalesceQueuedEntityMutation,
+          sidebarCatalog,
+          visibleSidebar
+        };
+        globalThis.__SHOP_CRANK_HOME__ = home;
+        globalThis.__MECHPRO_HOME__ = home;
+      }
     }
   });
 
@@ -3176,8 +3391,12 @@ button{margin-top:12px;padding:8px 14px}
       "'": "&#39;"
     })[char]);
   }
+  function desktopBridge() {
+    return globalThis.window?.shopcrankDesktop || globalThis.window?.mechproDesktop;
+  }
   function isOfflineDesktop() {
-    return Boolean(globalThis.window?.mechproDesktop?.offline && globalThis.window.mechproDesktop.localAuth);
+    const desktop2 = desktopBridge();
+    return Boolean(desktop2?.offline && desktop2.localAuth);
   }
   function offlineSession(account) {
     const expires = Math.floor(Date.now() / 1e3) + 12 * 60 * 60;
@@ -3196,7 +3415,7 @@ button{margin-top:12px;padding:8px 14px}
       offline: true
     };
   }
-  function offlineLoginMarkup({ hasAccount, email, icon: icon2, portable = Boolean(globalThis.window?.mechproDesktop?.portable) }) {
+  function offlineLoginMarkup({ hasAccount, email, icon: icon2, portable = Boolean(desktopBridge()?.portable) }) {
     const mark = icon2("wrench");
     const lock = icon2("lock-keyhole", 15);
     const buttonIcon = icon2(hasAccount ? "log-in" : "save", 16);
@@ -5718,7 +5937,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
   }
   function empty(message) {
-    return emptyState2(message);
+    return emptyState(message);
   }
   function chatUser(email) {
     return state.users.find((user) => cleanEmail(user.email) === cleanEmail(email));
@@ -6304,7 +6523,11 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     saveTimer = setTimeout(flushStateSave, 120);
   }
   function sessionClaimRole(claims) {
-    return claims?.role || claims?.["custom:role"] || "technician";
+    const raw = String(claims?.role || claims?.["custom:role"] || "technician");
+    return ROLE_ALIASES[raw] || raw;
+  }
+  function routesForRole(role) {
+    return roleRoutes[role] || roleRoutes[ROLE_ALIASES[role]] || null;
   }
   function sessionClaimShopId(claims) {
     return claims?.shopId || claims?.["custom:shopId"] || "";
@@ -6468,7 +6691,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   async function apiFetch(path, options = {}) {
     if (isOfflineDesktop()) {
       if (String(path).startsWith("/ai/")) {
-        const aiError = new Error("Shop Crank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at yourcarguy806.com to use the assistant.");
+        const aiError = new Error("Shop Crank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
         aiError.retryable = false;
         throw aiError;
       }
@@ -6722,7 +6945,9 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     return jwtRole && jwtRole !== profile.role ? { ...profile, role: jwtRole } : profile;
   }
   function canAccess(route) {
-    return !!currentUser() && roleRoutes[currentUser().role].includes(route);
+    const user = currentUser();
+    const routes = user && routesForRole(user.role);
+    return Boolean(routes?.includes(route));
   }
   function visibleOrders() {
     const user = currentUser();
@@ -6853,10 +7078,10 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   function sidebarNavigation() {
     const counts = { active: visibleOrders().filter((x) => !["completed", "invoiced"].includes(x.status)).length, orders: visibleOrders().length, overdue: state.invoices.filter((x) => x.status === "overdue").length, unread: state.conversations.reduce((sum, item) => sum + chatUnread(item), 0) };
     const oem = true;
-    return visibleSidebar2(canAccess, { oem }).map((section) => `<div class="nav-label">${escapeHtml(section.label)}</div><nav class="nav" aria-label="${escapeHtml(section.label)}">${section.items.map((item) => nav(item.route, item.icon, bayNavLabel(item), item.count ? String(counts[item.count] || "") : "")).join("")}</nav>`).join("");
+    return visibleSidebar(canAccess, { oem }).map((section) => `<div class="nav-label">${escapeHtml(section.label)}</div><nav class="nav" aria-label="${escapeHtml(section.label)}">${section.items.map((item) => nav(item.route, item.icon, bayNavLabel(item), item.count ? String(counts[item.count] || "") : "")).join("")}</nav>`).join("");
   }
   function attentionMenu() {
-    const model = buildHomeModel2({ orders: visibleOrders(), invoices: canAccess("invoices") ? state.invoices : [], appointments: state.appointments || [], now: /* @__PURE__ */ new Date() });
+    const model = buildHomeModel({ orders: visibleOrders(), invoices: canAccess("invoices") ? state.invoices : [], appointments: state.appointments || [], now: /* @__PURE__ */ new Date() });
     const count = model.attention.length;
     const rows = model.attention.slice(0, 6).map((item) => {
       const detail = item.type === "overdue" ? `${String(item.detail || "").split(" \xB7 ")[0]} \xB7 ${money4(item.amount || 0)}` : item.detail;
@@ -8182,7 +8407,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       bind();
       return;
     }
-    if (!canAccess(state.route)) state.route = roleRoutes[currentUser().role][0];
+    if (!canAccess(state.route)) state.route = (routesForRole(currentUser().role) || ["home"])[0];
     const views = { superadmin: superAdmin, home: homeDashboard, dispatch, orders, schedule, customers, chat: teamChat, invoices, pos: cardTerminal, ai: aiWorkbench, messaging, payments, integrations, support, reports, settings };
     if (typeof accounting === "function") views.accounting = accounting;
     if (typeof payroll === "function") views.payroll = payroll;
@@ -9622,7 +9847,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function homeDashboard() {
     const user = currentUser();
-    const model = buildHomeModel2({ orders: visibleOrders(), invoices: canAccess("invoices") ? state.invoices : [], appointments: state.appointments, now: /* @__PURE__ */ new Date() });
+    const model = buildHomeModel({ orders: visibleOrders(), invoices: canAccess("invoices") ? state.invoices : [], appointments: state.appointments, now: /* @__PURE__ */ new Date() });
     const firstName = String(user.name || "there").split(/\s+/)[0];
     const attention = model.attention.map((item) => {
       const tone = item.type === "overdue" ? "warn" : item.type === "parts" ? "parts" : "assign";
@@ -9634,7 +9859,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const activity = model.activity.map((item) => `<button class="home-row" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : 'data-route="invoices"'}><span class="home-row-icon muted">${icon("activity", 15)}</span><span><strong>${escapeHtml(item.title)} \xB7 ${escapeHtml(item.customer || "")}</strong><small>${escapeHtml(item.vehicle || item.meta || "")} \xB7 ${escapeHtml(label(item.status))}</small></span></button>`).join("");
     const start = model.isEmpty ? `<section class="home-start"><div><div class="eyebrow">Get started</div><h2>Your shop dashboard is ready</h2><p>Create a work order, book a visit, or open the dispatch board. Metrics, today's jobs, and recent activity fill in as soon as records land.</p></div><div class="home-start-actions"><button class="primary" type="button" data-open-new>${icon("plus", 15)} New work order</button>${canAccess("dispatch") ? `<button class="secondary" type="button" data-route="dispatch">${icon("layout-dashboard", 15)} Open dispatch</button>` : ""}</div></section>` : "";
     const quick = `<div class="home-command"><button class="primary home-intake" type="button" id="home-intake">${icon("plus", 18)} New Customer Intake</button><div class="home-actions">${homeQuickAction("orders", "clipboard-list", "View Work Orders")}${homeQuickAction("dispatch", "layout-dashboard", "Dispatch Board")}${homeQuickAction("shopops", "package", "Parts Requests", 'data-ops-tab="ordering"')}${homeQuickAction("customers", "users", "Customers")}${homeQuickAction("pos", "credit-card", "Card terminal")}${homeQuickAction("reports", "pie-chart", "Reports")}${homeQuickAction("payroll", "landmark", "Payroll")}</div></div>`;
-    return shell(`<div class="home-hero"><div><div class="eyebrow">${shopDayLabel()}</div><h1>${greetingForNow2()}, ${escapeHtml(firstName)}</h1><p>Start with a customer intake. Work orders, dispatch, parts, and payroll stay one click away.</p></div><div class="head-actions"><button class="primary" type="button" id="home-intake-top">${icon("plus", 15)} New Customer Intake</button><button class="secondary" type="button" id="home-new-ro">New work order</button></div></div>${quick}${stats()}${start}<div class="home-grid"><section class="home-panel"><div class="home-panel-head"><div><h2>Needs attention</h2><p>Unassigned jobs, parts holds, and overdue invoices.</p></div><span>${model.attention.length}</span></div><div class="home-list">${attention || `<div class="home-empty">${icon("circle-check", 20)}<p>Nothing waiting on you right now.</p></div>`}</div></section><section class="home-panel"><div class="home-panel-head"><div><h2>Today's work</h2><p>Promise times and active repairs for this shop day.</p></div>${canAccess("dispatch") ? `<button class="mini-action" type="button" data-route="dispatch">View board</button>` : ""}</div><div class="home-jobs">${todayJobs || `<div class="home-empty">${icon("wrench", 20)}<p>No jobs promised for today. Create a work order to populate this list.</p></div>`}</div>${appointments ? `<div class="home-appointments"><h3>Appointments</h3>${appointments}</div>` : ""}</section><section class="home-panel home-panel-wide"><div class="home-panel-head"><div><h2>Recent activity</h2><p>Open work orders and the latest invoice movement.</p></div></div><div class="home-list">${activity || `<div class="home-empty">${icon("clipboard-list", 20)}<p>Activity shows here after the first repair order or invoice.</p></div>`}</div></section></div>`);
+    return shell(`<div class="home-hero"><div><div class="eyebrow">${shopDayLabel()}</div><h1>${greetingForNow()}, ${escapeHtml(firstName)}</h1><p>Start with a customer intake. Work orders, dispatch, parts, and payroll stay one click away.</p></div><div class="head-actions"><button class="primary" type="button" id="home-intake-top">${icon("plus", 15)} New Customer Intake</button><button class="secondary" type="button" id="home-new-ro">New work order</button></div></div>${quick}${stats()}${start}<div class="home-grid"><section class="home-panel"><div class="home-panel-head"><div><h2>Needs attention</h2><p>Unassigned jobs, parts holds, and overdue invoices.</p></div><span>${model.attention.length}</span></div><div class="home-list">${attention || `<div class="home-empty">${icon("circle-check", 20)}<p>Nothing waiting on you right now.</p></div>`}</div></section><section class="home-panel"><div class="home-panel-head"><div><h2>Today's work</h2><p>Promise times and active repairs for this shop day.</p></div>${canAccess("dispatch") ? `<button class="mini-action" type="button" data-route="dispatch">View board</button>` : ""}</div><div class="home-jobs">${todayJobs || `<div class="home-empty">${icon("wrench", 20)}<p>No jobs promised for today. Create a work order to populate this list.</p></div>`}</div>${appointments ? `<div class="home-appointments"><h3>Appointments</h3>${appointments}</div>` : ""}</section><section class="home-panel home-panel-wide"><div class="home-panel-head"><div><h2>Recent activity</h2><p>Open work orders and the latest invoice movement.</p></div></div><div class="home-list">${activity || `<div class="home-empty">${icon("clipboard-list", 20)}<p>Activity shows here after the first repair order or invoice.</p></div>`}</div></section></div>`);
   }
   function bindHomeDashboard() {
     document.querySelector("#home-new-ro")?.addEventListener("click", openNew);
@@ -9968,17 +10193,17 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     });
   }
   function applyRemoteList(key, records, entityType = key) {
-    const pending = pendingCreateIdsForCollection2(key, readMutationQueue(), shopEntityCollections);
-    const remote = mergeRemoteCollection2(key, records, state[key], localSampleRecord, pending);
+    const pending = pendingCreateIdsForCollection(key, readMutationQueue(), shopEntityCollections);
+    const remote = mergeRemoteCollection(key, records, state[key], localSampleRecord, pending);
     state[key] = applyQueuedEntityMutations(entityType, remote, readMutationQueue());
     save();
   }
   function stampDemoAppointments() {
     const samples = /* @__PURE__ */ new Set(["apt-1048", "apt-1049", "apt-1052"]);
     if (!(state.appointments || []).some((item) => samples.has(item.id))) return;
-    const today = /* @__PURE__ */ new Date(), iso = localIsoDate2(today), tomorrow = new Date(today);
+    const today = /* @__PURE__ */ new Date(), iso = localIsoDate(today), tomorrow = new Date(today);
     tomorrow.setDate(today.getDate() + 1);
-    const next = localIsoDate2(tomorrow);
+    const next = localIsoDate(tomorrow);
     state.appointments = state.appointments.map((item) => item.id === "apt-1048" || item.id === "apt-1049" ? { ...item, date: iso } : item.id === "apt-1052" ? { ...item, date: next } : item);
   }
   async function loadEmployeesFromApi() {
@@ -11042,6 +11267,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   async function startApp() {
     if (isOfflineDesktop()) {
       desktopEntitlementVerified = true;
+      render();
       try {
         const status = await window.shopcrankDesktop.localAuth.status();
         offlineAccountReady = Boolean(status?.exists);
@@ -11846,7 +12072,7 @@ ${catRows}
     }
     if (state.route === "settings") render();
   }
-  var buildHomeModel2, emptyState2, greetingForNow2, localIsoDate2, mergeRemoteCollection2, pendingCreateIdsForCollection2, visibleSidebar2, chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -11885,7 +12111,7 @@ ${catRows}
       init_estimate_templates();
       init_bay();
       init_estimate_approval();
-      ({ buildHomeModel: buildHomeModel2, emptyState: emptyState2, greetingForNow: greetingForNow2, localIsoDate: localIsoDate2, mergeRemoteCollection: mergeRemoteCollection2, pendingCreateIdsForCollection: pendingCreateIdsForCollection2, visibleSidebar: visibleSidebar2 } = window.__SHOP_CRANK_HOME__);
+      init_home();
       chatDerivedCache = null;
       posReaders = null;
       posConfigured = false;
@@ -12013,11 +12239,12 @@ ${catRows}
       persistedStateSnapshot = localStorage.getItem(STORE) || null;
       window.addEventListener("pagehide", flushStateSave);
       window.addEventListener("beforeunload", flushStateSave);
-      cloudflareConfig2 = window.__SHOP_CRANK_CONFIG__.cloudflare;
+      cloudflareConfig2 = (window.__SHOP_CRANK_CONFIG__ || window.__MECHPRO_CONFIG__).cloudflare;
       desktopEntitlementVerified = !isDesktopApp;
       desktopLoginMessage = "";
       offlineAccountReady = false;
       offlineAccountEmail = "";
+      ROLE_ALIASES = Object.freeze({ owner: "admin" });
       cloudflareSignIn = cloudflareAccessSignIn;
       MUTATION_QUEUE_STORE = "shopcrank-mutation-queue-v1";
       mutationQueueStore = createMutationQueueStore({ storage: localStorage, storeKey: MUTATION_QUEUE_STORE });
@@ -12203,7 +12430,7 @@ ${catRows}
           }
         });
       };
-      shopProfileDefaults = { id: "profile", shopName: "Your Car Guy", phone: "555-0100", address: "100 Demo Street, Example City, TX 00000", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "https://www.yourcarguy806.com/assets/reliable-logo.jpg", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
+      shopProfileDefaults = { id: "profile", shopName: "Your Car Guy", phone: "555-0100", address: "100 Demo Street, Example City, TX 00000", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "/assets/reliable-logo.jpg", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
       appearanceMedia = matchMedia("(prefers-color-scheme: dark)");
       appearanceMedia.addEventListener?.("change", () => {
         if (document.documentElement.dataset.themeMode === "device") applyAppearance("device");
@@ -14057,6 +14284,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
   }
   registerModules();
 
+<<<<<<< HEAD
   // src/runtime/home.js
   init_html();
   var CLOSED = /* @__PURE__ */ new Set(["completed", "invoiced", "declined", "archived"]);
@@ -14260,8 +14488,12 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
     };
   }
 
+=======
+>>>>>>> b2a7ae8765aa4dce1de0c1351fbd6ee673826440
   // src/main.js
-  window.__MECHPRO_CONFIG__ = { cloudflare: cloudflareConfig, storage: storageKeys };
+  init_home();
+  window.__SHOP_CRANK_CONFIG__ = { cloudflare: cloudflareConfig, storage: storageKeys };
+  window.__MECHPRO_CONFIG__ = window.__SHOP_CRANK_CONFIG__;
   window.__MECHPRO_HTML__ = { escapeAttr, escapeHtml };
   var bootstrapHooks = {
     beforeLegacyAppMount: () => {
@@ -14281,6 +14513,9 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
     }
   })().catch((error) => {
     console.error("Legacy app bootstrap failed", error);
-    throw error;
+    const root = document.querySelector("#root");
+    if (root && !root.innerHTML.trim()) {
+      root.innerHTML = '<main class="login-screen"><section class="login-panel"><h1>Shop Crank could not open</h1><p>Reload the page. If this continues, clear site data for this host and sign in again.</p></section></main>';
+    }
   });
 })();

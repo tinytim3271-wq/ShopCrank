@@ -1,7 +1,7 @@
 import { HttpError, json, parseJson } from './http.mjs';
 import { constantTimeEqual } from './security.mjs';
+import { DEFAULT_AUTH_EMAIL_FROM } from './production-host.mjs';
 
-const DEFAULT_FROM = 'noreply@yourcarguy806.com';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function loginText(loginUrl) {
@@ -40,7 +40,11 @@ export function signInDeliveryFailure(error) {
   if (UNSENDABLE_CODES.has(code)) {
     return new HttpError(
       502,
+<<<<<<< HEAD
       'That address cannot receive a Shop Crank sign-in link yet. Email Sending is turned off for yourcarguy806.com, so only an address already verified in Cloudflare can be used.',
+=======
+      'That address cannot receive a Shop Crank sign-in link yet. Email Sending is turned off for shopcrank.com, so only an address already verified in Cloudflare can be used.',
+>>>>>>> b2a7ae8765aa4dce1de0c1351fbd6ee673826440
     );
   }
   if (code) return new HttpError(502, `Unable to deliver the sign-in email (${code}).`);
@@ -49,7 +53,7 @@ export function signInDeliveryFailure(error) {
 
 export async function deliverLoginEmail(env, { email, loginUrl }) {
   if (!canSendLoginEmail(env)) throw new HttpError(503, 'Email delivery is not configured on this Worker');
-  const from = String(env.AUTH_EMAIL_FROM || DEFAULT_FROM).trim();
+  const from = String(env.AUTH_EMAIL_FROM || DEFAULT_AUTH_EMAIL_FROM).trim();
   if (!EMAIL_PATTERN.test(from)) throw new HttpError(503, 'AUTH_EMAIL_FROM is not a valid sender address');
   await env.EMAIL.send({
     to: email,
