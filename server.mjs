@@ -650,8 +650,9 @@ app.use((req, res) => {
   res.sendFile(join(__dirname, 'index.html'));
 });
 
-const PORT = 3000;
-const HOST = '0.0.0.0';
+// Unauthenticated mock API: loopback only unless explicitly exposed.
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`MechPro server listening on http://${HOST}:${PORT}`);
