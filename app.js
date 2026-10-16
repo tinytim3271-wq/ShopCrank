@@ -2228,6 +2228,48 @@
     }
   });
 
+  // src/modules/diagnostic-ai.js
+  function clean(value2, max) {
+    return String(value2 ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+  }
+  function diagnosticDraftToOrderLines(action = {}, { laborRate = 0, scanId = "", codes = [] } = {}) {
+    const draft = action.draft || action;
+    const tag = codes.length ? ` (${codes.slice(0, 6).join(", ")})` : "";
+    const parts = (draft.parts || []).slice(0, 20).map((part, index) => ({
+      id: `ai-diag-part-${index + 1}`,
+      type: "part",
+      description: clean(part.description, 300) || "Part",
+      notes: clean(part.notes, 500),
+      partNumber: clean(part.partNumber, 60),
+      quantity: Math.max(1, Math.trunc(Number(part.quantity) || 1)),
+      unitPrice: 0,
+      priceStatus: "pending",
+      source: "ai_diagnostics",
+      aiDiagnostics: { scanId }
+    }));
+    const labor = (draft.labor || []).slice(0, 10).map((item, index) => ({
+      id: `ai-diag-labor-${index + 1}`,
+      type: "labor",
+      description: clean(item.description, 300) || "Diagnostic labor",
+      notes: clean(item.notes, 500),
+      hours: Math.min(40, Math.max(0, Number(item.hours) || 0)),
+      laborRate: Math.max(0, Number(laborRate) || 0),
+      laborSource: `AI suggestion from scan${tag}; verify against the labor guide before authorization`,
+      source: "ai_diagnostics",
+      aiDiagnostics: { scanId }
+    }));
+    return [...labor, ...parts];
+  }
+  function estimateDraftAction(result = {}) {
+    return (Array.isArray(result.actions) ? result.actions : []).find((action) => action?.kind === "estimate_work_order_draft") || null;
+  }
+  var SYSTEMS;
+  var init_diagnostic_ai = __esm({
+    "src/modules/diagnostic-ai.js"() {
+      SYSTEMS = Object.freeze({ P: "Powertrain", B: "Body", C: "Chassis", U: "Network/communication" });
+    }
+  });
+
   // src/modules/labor-guide.js
   function normalizeProvider(value2) {
     const provider = String(value2 || "manual").trim().toLowerCase();
@@ -3504,8 +3546,8 @@ button{margin-top:12px;padding:8px 14px}
   }
   function applyShopSnapshot(state2, snapshot) {
     if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return false;
-    const clean = stripOfflineSecrets(snapshot);
-    for (const [key, value2] of Object.entries(clean)) state2[key] = value2;
+    const clean2 = stripOfflineSecrets(snapshot);
+    for (const [key, value2] of Object.entries(clean2)) state2[key] = value2;
     return true;
   }
   function ensureOfflineOwner(state2, account) {
@@ -7359,8 +7401,8 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     const options = orders2.map((order) => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} \xB7 ${escapeHtml(order.customer || "")} \xB7 ${escapeHtml(order.vehicle || "")}</option>`).join("");
     return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
   }
-  async function addLinesToTargetOrder(lines, label2) {
-    const order = state.orders.find((item) => item.id === orderingTargetOrderId);
+  async function addLinesToTargetOrder(lines, label2, orderId = orderingTargetOrderId) {
+    const order = state.orders.find((item) => item.id === orderId);
     if (!order) {
       toast("Choose an open repair order first");
       return false;
@@ -11909,11 +11951,46 @@ ${catRows}
     const result = snap ? `<section class="data-panel"><h3>${snap.simulator ? "Simulator" : "Live"} scan \xB7 ${escapeHtml(snap.adapterName || "J2534 adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}</p><p>Check engine light: <b>${mil}</b>${snap.reportedDtcCount !== void 0 && snap.reportedDtcCount !== null ? ` \xB7 ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : ""}</p>${codes("Stored", snap.storedDtcs)}${codes("Pending", snap.pendingDtcs)}${codes("Permanent", snap.permanentDtcs)}${readings ? `<table><thead><tr><th>Reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>` : ""}${(snap.errors || []).length ? `<ul class="ledger-note">${snap.errors.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}<p class="ledger-note">${escapeHtml(snap.protocol || "")} \xB7 read ${escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString())}</p><div class="job-actions"><button class="ghost" type="button" id="obd-live-clear"${hw.busy || !snap.responded ? " disabled" : ""}>${icon("eraser", 14)} Clear codes...</button></div></section>` : "";
     return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit"${hw.busy ? " disabled" : ""}>${icon("activity", 14)} ${hw.busy === "scan" ? "Reading vehicle..." : "Read vehicle"}</button></div></form>${result}`;
   }
+  function scanAiPanel(scan) {
+    const analysis = scan.aiAnalysis;
+    const analyzeButton = `<button class="secondary" type="button" data-ai-scan-analyze="${escapeAttr(scan.id)}" ${scanAiBusy ? "disabled" : ""}>${icon("sparkles", 14)} ${scanAiBusy === scan.id ? "Analyzing codes\u2026" : analysis ? "Re-analyze with AI" : "Analyze codes with AI"}</button>`;
+    if (!analysis) return `<div class="messaging-actions">${analyzeButton}</div>`;
+    const apply = analysis.draft ? `<button class="primary" type="button" data-ai-scan-apply="${escapeAttr(scan.id)}" ${analysis.appliedAt ? "disabled" : ""}>${icon("clipboard-plus", 14)} ${analysis.appliedAt ? `Added to ${escapeHtml(scan.orderId)}` : `Add AI estimate to ${escapeHtml(scan.orderId)}`}</button>` : "";
+    return `<div class="ai-panel"><div class="eyebrow">AI likely cause \xB7 advisory, verify with tests</div><p style="white-space:pre-wrap">${escapeHtml(analysis.message || "")}</p><p class="ai-disclaimer">Codes: ${escapeHtml((analysis.codes || []).join(", ") || "none")} \xB7 ${escapeHtml(analysis.model || "")}. Parts are added unpriced and labor hours are AI suggestions to verify against the labor guide.</p><div class="messaging-actions">${apply}${analyzeButton}</div></div>`;
+  }
+  async function analyzeScanWithAi(scanId) {
+    const scan = state.diagnosticSessions.find((item) => item.id === scanId);
+    if (!scan) return;
+    scanAiBusy = scanId;
+    render();
+    try {
+      const result = await apiFetch("/diagnostics/analyze", { method: "POST", body: JSON.stringify({ orderId: scan.orderId, scanId: scan.id, dtcs: scan.dtcs || [], vin: scan.vin, vehicle: scan.vehicle, readings: scan.readings || [], milOn: scan.milOn ?? null }) });
+      await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { message: result.message || "", model: result.model || "", at: now(), codes: (result.dtcs || []).map((item) => item.code), draft: estimateDraftAction(result) } });
+      if (result.invalidCodes?.length) toast(`Ignored unreadable codes: ${result.invalidCodes.join(", ")}`);
+    } catch (error) {
+      toast(error.message || "AI analysis failed");
+    }
+    scanAiBusy = "";
+    render();
+  }
+  async function applyScanAiEstimate(scanId) {
+    const scan = state.diagnosticSessions.find((item) => item.id === scanId);
+    if (!scan?.aiAnalysis?.draft) return;
+    const lines = diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes: scan.aiAnalysis.codes || [] });
+    if (!lines.length) {
+      toast("The AI draft had no labor or parts to add");
+      return;
+    }
+    if (await addLinesToTargetOrder(lines, "the AI diagnostic estimate", scan.orderId)) {
+      await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: now() } });
+      render();
+    }
+  }
   function obdBay() {
     const live = bayLive();
     const latest = [...state.diagnosticSessions].reverse()[0];
     const latestTitle = latest?.mode === "live" ? "Latest live record" : "Latest simulated scan";
-    const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} \xB7 ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map((dtc) => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value2]) => `${name} ${value2}`).join(" \xB7 "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
+    const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} \xB7 ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map((dtc) => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value2]) => `${name} ${value2}`).join(" \xB7 "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}${scanAiPanel(latest)}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
     const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
     const subtitle = live ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes." : "Bench simulator until a J2534 adapter is connected in the Shop Crank Windows app.";
     return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${result}`);
@@ -12176,6 +12253,16 @@ ${catRows}
       void runLiveObdScan(new FormData(event.target).get("orderId"));
     });
     document.querySelector("#obd-live-clear")?.addEventListener("click", openObdClearConfirm);
+    document.querySelectorAll("[data-ai-scan-analyze]").forEach((button) => {
+      button.onclick = () => {
+        void analyzeScanWithAi(button.dataset.aiScanAnalyze);
+      };
+    });
+    document.querySelectorAll("[data-ai-scan-apply]").forEach((button) => {
+      button.onclick = () => {
+        void applyScanAiEstimate(button.dataset.aiScanApply);
+      };
+    });
     document.querySelector("#obd-scan-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const order = state.orders.find((item) => item.id === new FormData(event.target).get("orderId"));
@@ -12235,7 +12322,7 @@ ${catRows}
     }
     if (state.route === "settings") render();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -12249,6 +12336,7 @@ ${catRows}
       init_shop_inspections();
       init_autozone_pro();
       init_partstech();
+      init_diagnostic_ai();
       init_labor_guide();
       init_shop_ai_settings();
       init_quickbooks();
@@ -14291,6 +14379,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           }, { capture: true });
         }
       };
+      scanAiBusy = "";
       renderShopOsCore = render;
       render = function() {
         if (currentUser() && (state.route === "obd" || state.route === "keys")) {
