@@ -2168,7 +2168,18 @@
     return Number.isFinite(number) && number > 0 ? roundMoney2(number) : null;
   }
   function partstechLineToEstimateLines(line = {}) {
-    const lines = [{ ...line }];
+    const quantity = Math.max(1, Math.trunc(Number(line.quantity) || 1));
+    const unitPrice = Math.max(0, Number(line.unitPrice) || 0);
+    const lines = [{
+      ...line,
+      type: "part",
+      source: "partstech",
+      quantity,
+      unitPrice,
+      total: roundMoney2(quantity * unitPrice),
+      priceStatus: line.priceStatus || (unitPrice > 0 ? "priced" : "pending"),
+      partstech: { partNumber: line.partNumber || "", ...line.partstech }
+    }];
     const core = parsePartstechMoney(line.partstech?.coreCharge);
     if (core) {
       lines.push({
@@ -2194,8 +2205,12 @@
     const stock = item.partstech?.availability?.label ? `<small>${escapeHtml4(item.partstech.availability.label)}</small>` : "";
     return `<tr><td>${escapeHtml4(item.description)}${stock}</td><td>${escapeHtml4(item.partNumber)}</td><td>${price}${cost}${core}</td><td><button type="button" class="mini-action" data-add-pt-line="${escapeAttr4(item.id)}" ${canAdd ? "" : "disabled"}>Add to RO</button></td></tr>`;
   }
+  function partstechPanelStatus(account = {}) {
+    if (account?.connected === true) return { ...account, connected: true, status: "connected", label: account.label || "PartsTech connected" };
+    return partstechConnectionStatus(account);
+  }
   function partstechPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
-    const status = partstechConnectionStatus(account);
+    const status = partstechPanelStatus(account);
     const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>User ${escapeHtml4(status.userId || "")}${status.storeId ? ` \xB7 store ${escapeHtml4(status.storeId)}` : ""}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Connect PartsTech with partner and user API keys. Search, quote, and order stay server-side; unconfigured shops fail closed.</span></div></div>`;
     const form = canSave ? `<form id="partstech-connect-form" class="form-grid">
         <label>Partner ID<input name="partnerId" autocomplete="off" value="${escapeHtml4(account.partnerId || "")}" required/></label>
@@ -2478,8 +2493,12 @@
       tokenExpiresAt: record.tokenExpiresAt || null
     };
   }
+  function quickbooksPanelStatus(account = {}) {
+    if (account?.connected === true) return { ...account, connected: true, status: "connected", label: account.label || "QuickBooks Online connected" };
+    return quickbooksConnectionStatus(account);
+  }
   function quickbooksPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
-    const status = quickbooksConnectionStatus(account);
+    const status = quickbooksPanelStatus(account);
     const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Company ${escapeHtml4(status.realmId || "")}</span></div></div>` : `<div class="messaging-status idle">${icon2("landmark", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Connect QuickBooks Online with OAuth 2.0. Sync stays fail-closed until authorized.</span></div></div>`;
     const actions = canSave ? `<div class="messaging-actions">
         ${status.connected ? `<button class="secondary" type="button" id="qbo-sync-now">${icon2("refresh-cw", 14)} Sync customers / invoices / payments</button>
