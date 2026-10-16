@@ -74,6 +74,7 @@ import {
   handleTwilioWebhook,
 } from './integration-routes.mjs';
 import { handleCustomerLookup } from './customer-search.mjs';
+import { buildDiagnosticAiMessage, normalizeDtcs } from '../../src/modules/diagnostic-ai.js';
 import { chargeTargetSnapshot, recordPayment as recordPaymentToTarget } from './payments.mjs';
 import { handleTerminalRoutes, stripeKeyMode, terminalPaymentRecord } from './terminal.mjs';
 import {
@@ -1105,6 +1106,7 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
   requireRole(context, ['owner', 'admin', 'technician', 'service_writer']);
   if (action === 'coverage') return handleCoverage(request, segments);
   if (action === 'autoauth') return handleAutoAuth(request, env, context);
+  if (action === 'analyze') return handleDiagnosticAnalysis(request, env, context, analytics);
   if (action === 'audit' && request.method === 'POST') {
     const id = await recordDiagnosticAudit(env, context, await requestJson(request));
     return json({ id, recorded: true }, 201);
@@ -1331,6 +1333,16 @@ async function handleAssistant(request, env, context, analytics) {
   const body = await requestJson(request);
   const message = String(body.message || '').trim().slice(0, 4000);
   if (!message) throw new HttpError(400, 'A message is required');
+  const { result, status } = await runAssistantSessionTurn(env, context, body, message);
+  if (status !== 200) return json(result, status);
+  captureForContext(analytics, context, 'ai_assistant_queried', {
+    model: result.model,
+    routing_reason: result.routingReason,
+  });
+  return json(result);
+}
+
+async function runAssistantSessionTurn(env, context, body, message) {
   const requestedSessionId = String(body.sessionId || '').trim();
   if (requestedSessionId && !/^[A-Za-z0-9_-]{8,100}$/.test(requestedSessionId)) {
     throw new HttpError(400, 'sessionId is invalid');
@@ -1347,13 +1359,42 @@ async function handleAssistant(request, env, context, analytics) {
     headers,
     body: JSON.stringify({ ...body, message }),
   }));
-  const result = await sessionResponse.json();
-  if (!sessionResponse.ok) return json(result, sessionResponse.status);
-  captureForContext(analytics, context, 'ai_assistant_queried', {
-    model: result.model,
-    routing_reason: result.routingReason,
+  return { result: await sessionResponse.json(), status: sessionResponse.status };
+}
+
+export async function handleDiagnosticAnalysis(request, env, context, analytics) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
+  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'Shop Crank AI chat sessions are not configured');
+  const body = await requestJson(request);
+  const orderId = String(body.orderId || '').trim().slice(0, 80);
+  const order = orderId ? await getEntity(env, context.shopId, 'orders', orderId) : null;
+  if (orderId && !order) throw new HttpError(404, 'Repair order not found');
+  const { dtcs, invalid } = normalizeDtcs(body.dtcs);
+  const complaint = String(body.complaint || order?.complaint || '').trim();
+  if (!dtcs.length && !complaint) throw new HttpError(400, 'Read trouble codes or record a complaint before asking the AI');
+  await enforceAiRateLimit(env, context);
+  const message = buildDiagnosticAiMessage({
+    order: order || {},
+    vehicle: body.vehicle,
+    vin: body.vin,
+    mileage: body.mileage,
+    complaint,
+    dtcs,
+    readings: body.readings,
+    milOn: typeof body.milOn === 'boolean' ? body.milOn : null,
   });
-  return json(result);
+  const { result, status } = await runAssistantSessionTurn(env, context, { sessionId: body.sessionId }, message);
+  if (status !== 200) return json(result, status);
+  await recordDiagnosticAudit(env, context, {
+    kind: 'diagnostics.ai_analyze',
+    orderId: orderId || undefined,
+    scanId: String(body.scanId || '').slice(0, 80) || undefined,
+    codes: dtcs.map(item => item.code),
+    model: result.model,
+  });
+  captureForContext(analytics, context, 'ai_diagnostics_analyzed', { model: result.model, dtc_count: dtcs.length });
+  return json({ ...result, orderId: orderId || null, dtcs, invalidCodes: invalid });
 }
 
 async function handleVoiceSession(request, env, context) {

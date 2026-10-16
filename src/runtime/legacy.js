@@ -10,6 +10,7 @@ import { buildRepairGuide, repairDiagram, safeVideoUrl, stepText } from '../modu
 import { inspectionMenuHtml } from '../modules/shop-inspections.js';
 import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.js';
 import { partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
+import { diagnosticDraftToOrderLines, estimateDraftAction } from '../modules/diagnostic-ai.js';
 import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
 import { quickbooksPanelHtml } from '../modules/quickbooks.js';
@@ -530,8 +531,8 @@ function orderingTargetHtml() {
   const options = orders.map(order => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} · ${escapeHtml(order.customer || "")} · ${escapeHtml(order.vehicle || "")}</option>`).join("");
   return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
 }
-async function addLinesToTargetOrder(lines, label) {
-  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+async function addLinesToTargetOrder(lines, label, orderId = orderingTargetOrderId) {
+  const order = state.orders.find(item => item.id === orderId);
   if (!order) { toast("Choose an open repair order first"); return false }
   try {
     const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
@@ -4413,11 +4414,46 @@ function obdLiveSection() {
   return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit"${hw.busy ? " disabled" : ""}>${icon("activity", 14)} ${hw.busy === "scan" ? "Reading vehicle..." : "Read vehicle"}</button></div></form>${result}`;
 }
 
+let scanAiBusy = "";
+function scanAiPanel(scan) {
+  const analysis = scan.aiAnalysis;
+  const analyzeButton = `<button class="secondary" type="button" data-ai-scan-analyze="${escapeAttr(scan.id)}" ${scanAiBusy ? "disabled" : ""}>${icon("sparkles", 14)} ${scanAiBusy === scan.id ? "Analyzing codes…" : analysis ? "Re-analyze with AI" : "Analyze codes with AI"}</button>`;
+  if (!analysis) return `<div class="messaging-actions">${analyzeButton}</div>`;
+  const apply = analysis.draft
+    ? `<button class="primary" type="button" data-ai-scan-apply="${escapeAttr(scan.id)}" ${analysis.appliedAt ? "disabled" : ""}>${icon("clipboard-plus", 14)} ${analysis.appliedAt ? `Added to ${escapeHtml(scan.orderId)}` : `Add AI estimate to ${escapeHtml(scan.orderId)}`}</button>`
+    : "";
+  return `<div class="ai-panel"><div class="eyebrow">AI likely cause · advisory, verify with tests</div><p style="white-space:pre-wrap">${escapeHtml(analysis.message || "")}</p><p class="ai-disclaimer">Codes: ${escapeHtml((analysis.codes || []).join(", ") || "none")} · ${escapeHtml(analysis.model || "")}. Parts are added unpriced and labor hours are AI suggestions to verify against the labor guide.</p><div class="messaging-actions">${apply}${analyzeButton}</div></div>`;
+}
+async function analyzeScanWithAi(scanId) {
+  const scan = state.diagnosticSessions.find(item => item.id === scanId);
+  if (!scan) return;
+  scanAiBusy = scanId;
+  render();
+  try {
+    const result = await apiFetch("/diagnostics/analyze", { method: "POST", body: JSON.stringify({ orderId: scan.orderId, scanId: scan.id, dtcs: scan.dtcs || [], vin: scan.vin, vehicle: scan.vehicle, readings: scan.readings || [], milOn: scan.milOn ?? null }) });
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { message: result.message || "", model: result.model || "", at: now(), codes: (result.dtcs || []).map(item => item.code), draft: estimateDraftAction(result) } });
+    if (result.invalidCodes?.length) toast(`Ignored unreadable codes: ${result.invalidCodes.join(", ")}`);
+  } catch (error) {
+    toast(error.message || "AI analysis failed");
+  }
+  scanAiBusy = "";
+  render();
+}
+async function applyScanAiEstimate(scanId) {
+  const scan = state.diagnosticSessions.find(item => item.id === scanId);
+  if (!scan?.aiAnalysis?.draft) return;
+  const lines = diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes: scan.aiAnalysis.codes || [] });
+  if (!lines.length) { toast("The AI draft had no labor or parts to add"); return }
+  if (await addLinesToTargetOrder(lines, "the AI diagnostic estimate", scan.orderId)) {
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: now() } });
+    render();
+  }
+}
 function obdBay() {
   const live = bayLive();
   const latest = [...state.diagnosticSessions].reverse()[0];
   const latestTitle = latest?.mode === "live" ? "Latest live record" : "Latest simulated scan";
-  const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} · ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value]) => `${name} ${value}`).join(" · "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
+  const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} · ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value]) => `${name} ${value}`).join(" · "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}${scanAiPanel(latest)}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
   const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
   const subtitle = live
     ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes."
@@ -4663,6 +4699,8 @@ function bindShopOs() {
     void runLiveObdScan(new FormData(event.target).get("orderId"));
   });
   document.querySelector("#obd-live-clear")?.addEventListener("click", openObdClearConfirm);
+  document.querySelectorAll("[data-ai-scan-analyze]").forEach(button => { button.onclick = () => { void analyzeScanWithAi(button.dataset.aiScanAnalyze); }; });
+  document.querySelectorAll("[data-ai-scan-apply]").forEach(button => { button.onclick = () => { void applyScanAiEstimate(button.dataset.aiScanApply); }; });
   document.querySelector("#obd-scan-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const order = state.orders.find(item => item.id === new FormData(event.target).get("orderId"));
