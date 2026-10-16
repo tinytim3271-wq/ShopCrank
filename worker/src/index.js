@@ -37,7 +37,7 @@ import { createLaborGuideHandlers } from './integrations/labor-guide.mjs';
 import { createQuickbooksHandlers } from './integrations/quickbooks.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
 import { storeUploadedFile } from './routes/files.mjs';
-import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec } from './diagnostics.mjs';
+import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, signedRepairOrderForKeys } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
@@ -816,6 +816,11 @@ async function handleEntities(request, env, context, segments, analytics) {
     // Sync access before writing the entity so a cross-tenant email conflict
     // cannot leave an orphan employee row behind.
     if (type === 'employees') await syncAccessUser(env, context, body);
+    // Orders must not silently overwrite on POST — intake/new-RO id races
+    // previously lost the first work order via ON CONFLICT DO UPDATE.
+    if (type === 'orders' && await getEntity(env, context.shopId, type, newId)) {
+      throw new HttpError(409, `Work order ${newId} already exists`);
+    }
     const saved = await putEntity(env, context, type, newId, body);
     captureForContext(analytics, context, 'entity_created', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_created', {
@@ -1126,7 +1131,25 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
         }, 402);
       }
     }
-    if (mode === 'live' && spec.autoAuth) {
+    let signedOrder = null;
+    if (mode === 'live' && spec.klass === 'immobilizer') {
+      // The shop's signed repair order is the authorization for live key work.
+      // Approval must live on the order (estimateApproval), not a forgeable estimates row.
+      signedOrder = await signedRepairOrderForKeys(env.DB, context.shopId, body.orderId, vin);
+      if (!signedOrder) {
+        return json({
+          authorized: false,
+          message: 'Live key programming needs a signed repair order whose VIN matches this vehicle.',
+        }, 403);
+      }
+      if (signedOrder.signatureKey) {
+        await verifyOrderApprovalSignature(env, context, {
+          status: 'approved',
+          type: 'signature',
+          signatureKey: signedOrder.signatureKey,
+        });
+      }
+    } else if (mode === 'live' && spec.autoAuth) {
       const login = await readAutoAuthLogin(env, context.shopId);
       if (!login) {
         return json({
@@ -1145,6 +1168,9 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
     });
     await recordDiagnosticAudit(env, context, {
       kind: 'diagnostics.authorize', procedure, scope: spec.klass, vin, mode, jti: payload.jti,
+      orderId: signedOrder ? String(body.orderId || '') : undefined,
+      authorizationName: signedOrder?.authorizationName,
+      signedAt: signedOrder?.signedAt,
     });
     capturePostHogEvent(env, context, 'diagnostics_authorized', {
       procedure,
