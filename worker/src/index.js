@@ -1447,21 +1447,24 @@ async function readAutozoneLogin(env, shopId) {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
-async function handleOrdering(request, env, context, segments) {
+export function autozoneLoginStatus(login) {
+  return {
+    connected: Boolean(login?.username && login?.password),
+    username: login?.username || null,
+    connectedAt: login?.connectedAt || null,
+  };
+}
+
+export async function handleOrdering(request, env, context, segments) {
   if (segments[1] !== 'autozone') throw new HttpError(404, 'Not found');
   requireRole(context, ORDERING_ROLES);
   if (request.method === 'GET') {
     const login = await readAutozoneLogin(env, context.shopId);
-    const reveal = new URL(request.url).searchParams.get('reveal') === '1';
-    if (reveal && login) {
-      await recordDiagnosticAudit(env, context, { kind: 'ordering.autozone.reveal', username: login.username });
+    if (new URL(request.url).searchParams.has('reveal')) {
+      await recordDiagnosticAudit(env, context, { kind: 'ordering.autozone.reveal_denied', role: context.role });
+      throw new HttpError(403, 'Saved supplier passwords are never returned to the browser');
     }
-    return json({
-      connected: Boolean(login?.username && login?.password),
-      username: login?.username || null,
-      connectedAt: login?.connectedAt || null,
-      ...(reveal && login?.password ? { password: login.password } : {}),
-    });
+    return json(autozoneLoginStatus(login));
   }
   requireRole(context, ['owner', 'admin']);
   if (request.method === 'POST') {

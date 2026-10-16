@@ -229,7 +229,7 @@ export const HELP_TOPICS = [
     ],
     limits: [
       'Plate lookup and Carfax stay off until those providers are connected.',
-      'AutoZone Pro ordering needs a saved login on this screen.',
+      'AutoZone Pro ordering opens AutoZone Pro; each user signs in with their own AutoZone Pro user.',
     ],
     keywords: ['shopops', 'vehicles', 'inventory', 'parts', 'inspections'],
   },
