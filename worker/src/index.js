@@ -993,11 +993,7 @@ export async function geocodeAddress(address, env) {
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
-<<<<<<< HEAD
-      'User-Agent': 'ShopCrankShopOS/1.0 (mileage; https://www.yourcarguy806.com)',
-=======
       'User-Agent': 'ShopCrank/1.0 (mileage; https://www.shopcrank.com)',
->>>>>>> b2a7ae8765aa4dce1de0c1351fbd6ee673826440
     },
   });
   if (!response.ok) throw new HttpError(502, 'Address lookup is unavailable');

@@ -219,11 +219,7 @@ export function visibleSidebar(canAccess, { oem = false } = {}) {
 }
 
 if (typeof globalThis !== 'undefined') {
-<<<<<<< HEAD
-  globalThis.__SHOP_CRANK_HOME__ = {
-=======
   const home = {
->>>>>>> b2a7ae8765aa4dce1de0c1351fbd6ee673826440
     buildHomeModel,
     emptyState,
     escapeHtml,
