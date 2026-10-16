@@ -6245,7 +6245,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from Shop Crank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>Shop Crank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button></div></form></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from Shop Crank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>Shop Crank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
   }
   function support() {
     if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -6304,7 +6304,32 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       const data = Object.fromEntries(new FormData(event.target));
       try {
         const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) });
-        toast(`Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`);
+        toast(result.tax?.mismatch ? `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId}. QuickBooks calculated tax ${money4(result.tax.quickBooks)} vs Shop Crank ${money4(result.tax.expected)} \u2014 review the invoice in QuickBooks.` : `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`);
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    const renderQuickbooksTax = (settings2) => {
+      const panel = document.querySelector("#quickbooks-tax-settings");
+      if (!panel) return;
+      const modeLabel = { ast: "Automated Sales Tax (QuickBooks calculates tax)", manual: "Manual sales tax rate", global: "Tax codes per line (non-US company)", none: "Sales tax is off in QuickBooks" }[settings2.mode] || settings2.mode;
+      const options = (selected, taxable) => `<option value="">Choose\u2026</option>${(settings2.taxCodes || []).filter((code) => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map((code) => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`;
+      const pickers = settings2.mode === "manual" || settings2.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options(settings2.taxCodeId, true)}</select></label>${settings2.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options(settings2.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : "";
+      panel.innerHTML = `<form class="form-grid" id="quickbooks-tax-form"><p class="full ops-note"><b>${escapeHtml(modeLabel)}</b>${settings2.needsChoice ? " \xB7 choose a rate before syncing taxed invoices" : ""}</p>${pickers}</form>`;
+      panel.querySelector("#quickbooks-tax-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          const saved = await apiFetch("/quickbooks/tax-settings", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(event.target))) });
+          renderQuickbooksTax(saved);
+          toast("QuickBooks tax settings saved");
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+    };
+    document.querySelector("#quickbooks-tax-load")?.addEventListener("click", async () => {
+      try {
+        renderQuickbooksTax(await apiFetch("/quickbooks/tax-settings"));
       } catch (error) {
         toast(error.message);
       }
