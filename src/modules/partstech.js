@@ -126,7 +126,18 @@ export function mapPartstechQuoteItemToEstimateLine(item = {}, index = 0, option
 
 /** Converts a quoted line into the estimate lines it adds: the part, plus a core charge when PartsTech reports one. */
 export function partstechLineToEstimateLines(line = {}) {
-  const lines = [{ ...line }];
+  const quantity = Math.max(1, Math.trunc(Number(line.quantity) || 1));
+  const unitPrice = Math.max(0, Number(line.unitPrice) || 0);
+  const lines = [{
+    ...line,
+    type: 'part',
+    source: 'partstech',
+    quantity,
+    unitPrice,
+    total: roundMoney(quantity * unitPrice),
+    priceStatus: line.priceStatus || (unitPrice > 0 ? 'priced' : 'pending'),
+    partstech: { partNumber: line.partNumber || '', ...line.partstech },
+  }];
   const core = parsePartstechMoney(line.partstech?.coreCharge);
   if (core) {
     lines.push({
@@ -213,8 +224,14 @@ export function partstechQuoteRowHtml(item, { escapeHtml = v => String(v ?? ''),
   return `<tr><td>${escapeHtml(item.description)}${stock}</td><td>${escapeHtml(item.partNumber)}</td><td>${price}${cost}${core}</td><td><button type="button" class="mini-action" data-add-pt-line="${escapeAttr(item.id)}" ${canAdd ? '' : 'disabled'}>Add to RO</button></td></tr>`;
 }
 
+/** The browser only ever sees the server's status (never the keys), so trust its `connected` flag. */
+export function partstechPanelStatus(account = {}) {
+  if (account?.connected === true) return { ...account, connected: true, status: 'connected', label: account.label || 'PartsTech connected' };
+  return partstechConnectionStatus(account);
+}
+
 export function partstechPanelHtml(account = {}, { canSave = false, escapeHtml = v => String(v ?? ''), icon = () => '' } = {}) {
-  const status = partstechConnectionStatus(account);
+  const status = partstechPanelStatus(account);
   const banner = status.connected
     ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>${escapeHtml(status.label)}</strong><span>User ${escapeHtml(status.userId || '')}${status.storeId ? ` · store ${escapeHtml(status.storeId)}` : ''}</span></div></div>`
     : `<div class="messaging-status idle">${icon('lock', 17)}<div><strong>${escapeHtml(status.label)}</strong><span>Connect PartsTech with partner and user API keys. Search, quote, and order stay server-side; unconfigured shops fail closed.</span></div></div>`;

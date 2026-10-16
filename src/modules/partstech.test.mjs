@@ -65,6 +65,14 @@ test('cost-only quotes apply the shop markup and unpriced quotes are flagged, no
   assert.equal(parsePartstechMoney('n/a'), null);
 });
 
+test('quoted items without a type are always added as part lines', () => {
+  const [line] = partstechLineToEstimateLines({ id: 'pt-part-2', description: 'Ceramic pads', partNumber: 'CP-1052', unitPrice: 42 });
+  assert.equal(line.type, 'part');
+  assert.equal(line.total, 42);
+  assert.equal(line.source, 'partstech');
+  assert.equal(line.partstech.partNumber, 'CP-1052');
+});
+
 test('core charges become their own RO line', () => {
   const line = mapPartstechQuoteItemToEstimateLine({ partNumber: 'ALT-1', price: { list: 220, core: 45 }, quantity: 1 });
   const lines = partstechLineToEstimateLines(line);
@@ -112,6 +120,13 @@ test('order status summaries read nested PartsTech orders', () => {
   assert.equal(summary.orderId, 'PO-55');
   assert.equal(summary.status, 'confirmed');
   assert.equal(summary.total, 137.98);
+});
+
+test('panel enables search from the server status, which never includes API keys', () => {
+  const html = partstechPanelHtml({ connected: true, status: 'connected', userId: 'u-1', partnerId: 'p-1', storeId: '77' }, { escapeHtml: v => String(v ?? ''), icon: () => '' });
+  assert.match(html, /PartsTech connected/);
+  assert.doesNotMatch(html, /name="keyword"[^>]*disabled/);
+  assert.doesNotMatch(html, /id="partstech-order-ro"[^>]*disabled/);
 });
 
 test('panel shows not connected without inventing results', () => {

@@ -68,3 +68,10 @@ test('company tax mode detection and tax code auto-selection', async () => {
   assert.equal(resolveQboTaxSettings('manual', codes, { taxCodeId: 'gone' }).taxCodeId, null);
   assert.equal(resolveQboTaxSettings('manual', codes.slice(0, 3), {}).taxCodeId, '3');
 });
+
+test('panel shows connected from the server status, which never includes tokens', async () => {
+  const { quickbooksPanelHtml } = await import('./quickbooks.js');
+  const html = quickbooksPanelHtml({ connected: true, status: 'connected', realmId: '9130' }, { canSave: true });
+  assert.match(html, /QuickBooks Online connected/);
+  assert.match(html, /qbo-disconnect/);
+});

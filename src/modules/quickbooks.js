@@ -183,8 +183,14 @@ export function mapPaymentToQbo(payment = {}, customerRef, invoiceRef) {
   };
 }
 
+/** The browser only receives the server's status (never tokens), so trust its `connected` flag. */
+export function quickbooksPanelStatus(account = {}) {
+  if (account?.connected === true) return { ...account, connected: true, status: 'connected', label: account.label || 'QuickBooks Online connected' };
+  return quickbooksConnectionStatus(account);
+}
+
 export function quickbooksPanelHtml(account = {}, { canSave = false, escapeHtml = v => String(v ?? ''), icon = () => '' } = {}) {
-  const status = quickbooksConnectionStatus(account);
+  const status = quickbooksPanelStatus(account);
   const banner = status.connected
     ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>${escapeHtml(status.label)}</strong><span>Company ${escapeHtml(status.realmId || '')}</span></div></div>`
     : `<div class="messaging-status idle">${icon('landmark', 17)}<div><strong>${escapeHtml(status.label)}</strong><span>Connect QuickBooks Online with OAuth 2.0. Sync stays fail-closed until authorized.</span></div></div>`;
