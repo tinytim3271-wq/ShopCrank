@@ -9,7 +9,7 @@ import { CANNED_MENU, cannedServiceGroups, estimateLineFromService, missingCanne
 import { buildRepairGuide, repairDiagram, safeVideoUrl, stepText } from '../modules/repair-guide.js';
 import { inspectionMenuHtml } from '../modules/shop-inspections.js';
 import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.js';
-import { partstechPanelHtml } from '../modules/partstech.js';
+import { partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
 import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
 import { quickbooksPanelHtml } from '../modules/quickbooks.js';
@@ -69,6 +69,7 @@ import {
 } from '../modules/work-order-editor.js';
 import {
   afterMidnightFeeLine,
+  appendEstimateLinesToOrder,
   approvedEstimate,
   billableEstimateLines,
   calculateEstimate,
@@ -78,6 +79,7 @@ import {
   laborLinePrintRows,
   normalizeEstimateLine,
   normalizeTechnicianIds,
+  ordersAcceptingEstimateLines,
   workOrderWithEditedEstimate,
 } from '../modules/estimate-workflow.js';
 import {
@@ -519,7 +521,65 @@ let autozoneAccount = { connected: false, loaded: false };
 let partstechAccount = { connected: false, loaded: false };
 let laborGuideAccount = { connected: false, provider: "manual", loaded: false };
 let quickbooksAccount = { connected: false, loaded: false };
+let orderingTargetOrderId = "";
+function orderingTargetHtml() {
+  const orders = ordersAcceptingEstimateLines(state.orders);
+  if (!orders.some(order => order.id === orderingTargetOrderId)) orderingTargetOrderId = orders[0]?.id || "";
+  const options = orders.map(order => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} · ${escapeHtml(order.customer || "")} · ${escapeHtml(order.vehicle || "")}</option>`).join("");
+  return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
+}
+async function addLinesToTargetOrder(lines, label) {
+  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+  if (!order) { toast("Choose an open repair order first"); return false }
+  try {
+    const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    toast(`Added ${label} to ${order.id}`);
+    return true;
+  } catch (error) {
+    toast(error.message || `Could not add ${label} to ${order.id}`);
+    return false;
+  }
+}
+async function orderTargetPartstechParts() {
+  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+  if (!order) { toast("Choose an open repair order first"); return }
+  const lines = (order.estimate?.lines || []).filter(line => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
+  if (!lines.length) { toast(`${order.id} has no un-ordered PartsTech part lines`); return }
+  const checkout = window.open("about:blank", "_blank");
+  if (checkout) checkout.opener = null;
+  try {
+    const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+    const placedAt = now();
+    const revised = { ...order, partsOrders: [...(order.partsOrders || []), { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map(line => lines.some(item => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    if (checkout) checkout.location.href = result.redirectUrl; else window.location.assign(result.redirectUrl);
+    toast(`PartsTech checkout opened for ${order.id}. Submit the cart there to place the order.`);
+  } catch (error) {
+    checkout?.close();
+    toast(error.message || "Could not start the PartsTech order");
+  }
+}
+async function refreshTargetPartstechOrder() {
+  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+  const session = [...(order?.partsOrders || [])].reverse().find(item => item.provider === "partstech");
+  if (!session) { toast("No PartsTech order session on this RO yet"); return }
+  try {
+    const result = await apiFetch("/integrations/partstech/order/status", { method: "POST", body: JSON.stringify({ sessionId: session.sessionId }) });
+    const status = result.order?.status || "submitted", orderId = result.order?.orderId || "";
+    const revised = { ...order, partsOrders: order.partsOrders.map(item => item.sessionId === session.sessionId ? { ...item, status, orderId, checkedAt: now() } : item), estimate: { ...order.estimate, lines: order.estimate.lines.map(line => line.partstechOrder?.sessionId === session.sessionId ? { ...line, partstechOrder: { ...line.partstechOrder, status, orderId } } : line) } };
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    toast(`PartsTech order ${orderId || session.sessionId}: ${status}`);
+  } catch (error) { toast(error.message || "Could not check the PartsTech order") }
+}
 function operationsOrdering() { const canSave = ["owner", "admin"].includes(currentUser()?.role); return [
+  orderingTargetHtml(),
   orderingPanelHtml(autozoneAccount, { canSave, escapeHtml, icon }),
   partstechPanelHtml(partstechAccount, { canSave, escapeHtml, icon }),
   laborGuidePanelHtml(laborGuideAccount, { canSave, escapeHtml, icon }),
@@ -664,6 +724,9 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
       render();
     } catch (error) { toast(error.message || "Could not disconnect PartsTech"); }
   });
+  document.querySelector("#ordering-target-order")?.addEventListener("change", event => { orderingTargetOrderId = event.target.value; });
+  document.querySelector("#partstech-order-ro")?.addEventListener("click", () => { void orderTargetPartstechParts(); });
+  document.querySelector("#partstech-order-status")?.addEventListener("click", () => { void refreshTargetPartstechOrder(); });
   document.querySelector("#partstech-search-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
@@ -671,15 +734,14 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
     if (panel) panel.innerHTML = "<p>Quoting…</p>";
     try {
       const result = await apiFetch("/integrations/partstech/quote", { method: "POST", body: JSON.stringify(data) });
-      const rows = (result.items || []).map(item => `<tr><td>${escapeHtml(item.description)}</td><td>${escapeHtml(item.partNumber)}</td><td>${money(item.unitPrice)}</td><td><button type="button" class="mini-action" data-add-pt-line="${escapeAttr(item.id)}">Add</button></td></tr>`).join("");
+      const rows = (result.items || []).map(item => partstechQuoteRowHtml(item, { escapeHtml, escapeAttr, money, canAdd: Boolean(orderingTargetOrderId) })).join("");
       if (panel) panel.innerHTML = `<table><thead><tr><th>Part</th><th>#</th><th>Price</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No quotes returned</td></tr>"}</tbody></table>`;
       window.__SHOP_CRANK_PARTSTECH_LINES__ = Object.fromEntries((result.items || []).map(item => [item.id, item]));
       document.querySelectorAll("[data-add-pt-line]").forEach(button => {
         button.onclick = () => {
           const line = window.__SHOP_CRANK_PARTSTECH_LINES__?.[button.dataset.addPtLine];
           if (!line) return;
-          state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-          toast(`Added ${line.description} to pending estimate lines`);
+          void addLinesToTargetOrder(partstechLineToEstimateLines(line), line.description);
         };
       });
     } catch (error) {
@@ -732,8 +794,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
         button.onclick = () => {
           const line = window.__SHOP_CRANK_LABOR_LINES__?.[button.dataset.addLaborLine];
           if (!line) return;
-          state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-          toast(`Added ${line.description}`);
+          void addLinesToTargetOrder([line], line.description);
         };
       });
     } catch (error) {
@@ -749,8 +810,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
       hours: data.hours,
       laborRate: data.laborRate,
     });
-    state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-    toast(`Added manual labor: ${line.description}`);
+    void addLinesToTargetOrder([line], `manual labor: ${line.description}`);
   });
   document.querySelector("#qbo-connect")?.addEventListener("click", async () => {
     try {
