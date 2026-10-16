@@ -206,6 +206,14 @@ function qboTokenName() {
   return 'quickbooks-oauth-tokens';
 }
 
+const QBO_TAX_SETTINGS_NAME = 'quickbooks-tax-settings';
+
+async function readQboTaxSettings(env, shopId, dependencies) {
+  const raw = await dependencies.getSecret(env, shopId, QBO_TAX_SETTINGS_NAME);
+  if (!raw) return {};
+  try { return JSON.parse(raw) || {}; } catch { return {}; }
+}
+
 function dateOnly(value) {
   const parsed = new Date(value || Date.now());
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString().slice(0, 10) : parsed.toISOString().slice(0, 10);
@@ -304,6 +312,27 @@ export async function handleQuickBooks(request, env, context, segments, dependen
     if (action === 'connect' && request.method === 'POST') {
       return json(await qbo.getAuthorizationUrl());
     }
+    if (action === 'tax-settings' && request.method === 'GET') {
+      const saved = await readQboTaxSettings(env, context.shopId, dependencies);
+      const detected = await qbo.getTaxContext(saved);
+      return json({ ...detected, saved, needsChoice: detected.mode === 'manual' ? !detected.taxCodeId : detected.mode === 'global' ? !(detected.taxCodeId && detected.exemptTaxCodeId) : false });
+    }
+    if (action === 'tax-settings' && request.method === 'PUT') {
+      const body = await requestJson(request);
+      const detected = await qbo.getTaxContext({});
+      const valid = new Set(detected.taxCodes.map((code) => code.id));
+      const settings = {};
+      for (const key of ['taxCodeId', 'exemptTaxCodeId']) {
+        const value = String(body[key] || '').trim();
+        if (!value) continue;
+        if (!valid.has(value)) throw new HttpError(400, `${key} is not an active QuickBooks tax code`);
+        settings[key] = value;
+      }
+      settings.updatedAt = new Date().toISOString();
+      settings.updatedBy = context.userId;
+      await dependencies.saveSecret(env, context.shopId, QBO_TAX_SETTINGS_NAME, JSON.stringify(settings));
+      return json({ ...(await qbo.getTaxContext(settings)), saved: settings });
+    }
     if (action === 'disconnect' && request.method === 'DELETE') {
       await dependencies.deleteSecret(env, context.shopId, qboTokenName());
       return json({ connected: false });
@@ -362,7 +391,7 @@ export async function handleQuickBooks(request, env, context, segments, dependen
                 amount,
                 quickBooksItemId: env.INTUIT_DEFAULT_ITEM_ID || undefined,
               }];
-          result = await qbo.syncInvoice({
+          result = await qbo.syncInvoiceWithTax({
             ...payload,
             id: entityId,
             quickBooksCustomerId,
@@ -370,6 +399,9 @@ export async function handleQuickBooks(request, env, context, segments, dependen
             date: dateOnly(payload.date || payload.createdAt),
             dueDate: payload.dueDate ? dateOnly(payload.dueDate) : undefined,
             lines,
+          }, {
+            taxSettings: await readQboTaxSettings(env, context.shopId, dependencies),
+            defaultItemId,
           });
         } else {
           const invoiceId = String(payload.invoiceId || payload.invoiceNumber || '').trim();
