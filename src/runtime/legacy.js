@@ -13,6 +13,7 @@ import { partstechPanelHtml } from '../modules/partstech.js';
 import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
 import { quickbooksPanelHtml } from '../modules/quickbooks.js';
+import { revenueRecognitionPanelHtml } from '../modules/revenue-recognition.js';
 import { applyEstimateFromInspection } from '../modules/repair-order-flow.js';
 import { uploadFailureMessage, uploadFileToStorage } from '../modules/file-upload.js';
 import { applyAiWorkflowEstimate } from '../modules/ai-workflow.js';
@@ -519,11 +520,13 @@ let autozoneAccount = { connected: false, loaded: false };
 let partstechAccount = { connected: false, loaded: false };
 let laborGuideAccount = { connected: false, provider: "manual", loaded: false };
 let quickbooksAccount = { connected: false, loaded: false };
+let revrecStatus = { enabled: false, loaded: false };
 function operationsOrdering() { const canSave = ["owner", "admin"].includes(currentUser()?.role); return [
   orderingPanelHtml(autozoneAccount, { canSave, escapeHtml, icon }),
   partstechPanelHtml(partstechAccount, { canSave, escapeHtml, icon }),
   laborGuidePanelHtml(laborGuideAccount, { canSave, escapeHtml, icon }),
   quickbooksPanelHtml(quickbooksAccount, { canSave, escapeHtml, icon }),
+  revenueRecognitionPanelHtml(revrecStatus, { canSave, escapeHtml, icon }),
 ].join("") }
 async function loadAutozoneAccount(force = false) { if (autozoneAccount.loaded && !force) return; autozoneAccount = { ...autozoneAccount, loaded: true }; try { const account = await apiFetch("/ordering/autozone"); autozoneAccount = { connected: Boolean(account?.connected), username: account?.username || "", connectedAt: account?.connectedAt || null, loaded: true } } catch { autozoneAccount = { connected: false, loaded: true, unavailable: true } } if (state.route === "shopops" && shopOpsTab === "ordering") render() }
 
@@ -557,6 +560,17 @@ async function loadQuickbooksAccount(force = false) {
     quickbooksAccount = { ...account, loaded: true };
   } catch {
     quickbooksAccount = { connected: false, loaded: true, unavailable: true };
+  }
+  if (state.route === "shopops" && shopOpsTab === "ordering") render();
+}
+async function loadRevrecStatus(force = false) {
+  if (revrecStatus.loaded && !force) return;
+  revrecStatus = { ...revrecStatus, loaded: true };
+  try {
+    const status = await apiFetch("/revenue-recognition/status");
+    revrecStatus = { ...status, loaded: true };
+  } catch {
+    revrecStatus = { enabled: false, loaded: true, unavailable: true };
   }
   if (state.route === "shopops" && shopOpsTab === "ordering") render();
 }
@@ -646,6 +660,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
     void loadPartstechAccount();
     void loadLaborGuideAccount();
     void loadQuickbooksAccount();
+    void loadRevrecStatus();
   }
   document.querySelector("#partstech-connect-form")?.addEventListener("submit", async event => {
     event.preventDefault();
@@ -775,6 +790,57 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
     const status = document.querySelector("#qbo-sync-status");
     if (status) status.textContent = "Sync uses per-record POST /integrations/quickbooks/sync from invoices and customers.";
     toast("Open a customer or invoice and sync from there, or call the sync API with entityType/localId");
+  });
+  document.querySelector("#revrec-config-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    try {
+      const status = await apiFetch("/revenue-recognition/configure", {
+        method: "POST",
+        body: JSON.stringify({
+          enabled: data.enabled === "on",
+          currency: String(data.currency || "usd").trim().toLowerCase(),
+        }),
+      });
+      revrecStatus = { ...status, loaded: true };
+      toast(status.enabled ? "Revenue Recognition sync enabled" : "Revenue Recognition sync disabled");
+      render();
+    } catch (error) {
+      toast(error.message || "Could not save Revenue Recognition settings");
+    }
+  });
+  document.querySelector("#revrec-export-now")?.addEventListener("click", async () => {
+    const note = document.querySelector("#revrec-sync-status");
+    if (note) note.textContent = "Uploading CSV to S3…";
+    try {
+      const status = await apiFetch("/revenue-recognition/export", { method: "POST", body: "{}" });
+      revrecStatus = { ...status, loaded: true };
+      if (note) note.textContent = `Exported ${status.rowCount ?? 0} row(s) to ${status.objectKey || "S3"}`;
+      toast("Revenue Recognition export uploaded");
+      render();
+    } catch (error) {
+      if (note) note.textContent = error.message || "Export failed";
+      toast(error.message || "Could not export Revenue Recognition CSV");
+    }
+  });
+  document.querySelector("#revrec-download-csv")?.addEventListener("click", async () => {
+    try {
+      const response = await authorizedApiRequest("/revenue-recognition/export.csv", { method: "GET", headers: { Accept: "text/csv" } });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || `Download failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `shopcrank-revrec-${revrecStatus.shopId || "export"}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast("Revenue Recognition CSV downloaded");
+    } catch (error) {
+      toast(error.message || "Could not download Revenue Recognition CSV");
+    }
   });
  document.querySelectorAll("[data-ops-tab]").forEach(button => button.onclick = () => { shopOpsTab = button.dataset.opsTab; render() }); document.querySelector("#add-vehicle")?.addEventListener("click", () => openVehicleForm()); document.querySelector("#add-inspection")?.addEventListener("click", () => openInspectionForm()); document.querySelectorAll("[data-start-inspection]").forEach(button => button.onclick = () => openCatalogInspection(null, button.dataset.startInspection)); document.querySelector("#manage-templates")?.addEventListener("click", openManageTemplates); document.querySelectorAll("[data-edit-inspection]").forEach(button => button.onclick = () => { const inspection = state.inspections.find(item => item.id === button.dataset.editInspection); if (inspection?.catalogId) openCatalogInspection(inspection); else openInspectionForm(inspection) });
   document.querySelectorAll("[data-estimate-from-inspection]").forEach(button => button.onclick = async event => {

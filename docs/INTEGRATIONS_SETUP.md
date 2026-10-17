@@ -101,6 +101,50 @@ payments. Sync metadata prevents losing the QBO ID. This does not import edits
 from QBO or perform accounting reconciliation; verify the sandbox company
 before production use.
 
+## Stripe Revenue Recognition (per-shop)
+
+Shop Crank can export **general import** CSVs so each shop's Stripe Revenue
+Recognition reports include:
+
+- Non-Stripe payments (cash, check, bank, and manual card/processor without a
+  Stripe id)
+- Recognition start/end dates for work (work-order open → invoice closeout)
+
+Stripe has no public API for Revenue Recognition CSV upload. Automation uses
+the [Amazon S3 Data Management connector](https://docs.stripe.com/data/import-external-data/connectors/s3).
+Cloudflare R2 cannot replace this connector (it requires AWS account ID + IAM).
+
+### Platform (once)
+
+1. Create an S3 bucket and an IAM user/role that can `s3:PutObject` (and list)
+   under `revrec/`.
+2. Set Worker secrets / `.dev.vars`:
+   - `REVREC_S3_BUCKET`
+   - `REVREC_S3_REGION` (default `us-east-1`)
+   - `REVREC_S3_ACCESS_KEY_ID`
+   - `REVREC_S3_SECRET_ACCESS_KEY`
+3. Apply D1 migration `0012_revenue_recognition_exports.sql`.
+4. Deploy the Worker (cron `0 6 * * *` UTC runs enabled shops daily).
+
+### Per shop
+
+1. Connect the shop's Stripe secret + webhook keys (Payments) as usual.
+2. Enable **Stripe Revenue Recognition** on that Stripe account.
+3. In Stripe Dashboard → **Data Management** → Amazon S3 connector, grant
+   Stripe read access to folder `revrec/{shopId}/general/` and map files to
+   Revenue Recognition **general / transactions** import.
+4. In Shop Crank → **Shop operations → Ordering → Stripe Revenue Recognition**,
+   enable sync (admins/owners). Use **Export now** or **Download CSV** to
+   verify the file before relying on the daily job.
+
+Object keys look like `revrec/{shopId}/general/2026-10-16.csv`. Stripe replaces
+rows that share the same Source + Transaction ID (+ Split ID). Keep accounting
+periods open when backfilling (see Stripe accounting period control docs).
+
+Checkout and Terminal webhooks store `stripePaymentIntentId` / `stripeChargeId`
+on payment records when available so schedule overrides can target `ch_` / `py_`
+ids instead of Checkout `cs_` session ids.
+
 ## Stripe SaaS subscription billing
 
 This is the Shop Crank platform subscription, separate from each shop's Stripe

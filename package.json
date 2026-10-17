@@ -57,6 +57,7 @@
     "test:labor-guide": "node --test src/modules/labor-guide.test.mjs",
     "test:labor-web": "node --test worker/test/labor-web-estimate.test.mjs",
     "test:quickbooks": "node --test src/modules/quickbooks.test.mjs",
+    "test:revrec": "node --test src/modules/revenue-recognition.test.mjs",
     "test:estimate": "node --test src/modules/estimate-approval.test.mjs src/modules/estimate-workflow.test.mjs src/modules/estimate-templates.test.mjs src/modules/work-order-editor.test.mjs",
     "test:payments": "node --test src/modules/payments.test.mjs",
     "test:market": "node --test scripts/market-pages.test.mjs",
@@ -65,7 +66,7 @@
     "test:shop-os": "node --test src/modules/shop-os/bay.test.mjs",
     "test:work-orders": "node --test src/modules/work-order-editor.test.mjs",
     "issue-invite": "node scripts/issue-founding-invite.mjs",
-    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shop-os && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs",
+    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shop-os && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs",
     "test:filing": "node --test src/modules/filing/withholding.test.mjs"
   },
   "devDependencies": {
@@ -152,7 +153,7 @@
     "@capacitor/android": "^7.0.0",
     "@capacitor/core": "^7.0.0",
     "@google/genai": "^2.28.0",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "express": "^5.2.1",
     "leaflet": "^1.9.4",
     "posthog-node": "^5.52.4"
