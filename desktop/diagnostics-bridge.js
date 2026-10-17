@@ -169,13 +169,12 @@ async function listAdapters() {
   await ensureHost();
   return rpcCall('listAdapters');
 }
-Diagnostic
+
 /**
  * Automatically detect available J2534 adapters and connect to the first one found.
  * Returns the result of the `connect` RPC call. Throws if no adapters are present.
  */
 async function autoDetectAndConnect() {
-  // Ensure the host process is running and ready
   await ensureHost();
   const adapters = await listAdapters();
   if (!Array.isArray(adapters) || adapters.length === 0) {
@@ -185,7 +184,6 @@ async function autoDetectAndConnect() {
   const adapterId = selected.id ?? selected.adapterId ?? Object.values(selected)[0];
   return connect({ adapterId });
 }
-
 
 async function connect(params) {
   await ensureHost();
@@ -374,6 +372,7 @@ function stopHost() {
 module.exports = {
   ensureHost,
   listAdapters,
+  autoDetectAndConnect,
   connect,
   disconnect,
   getConnectionStatus,
