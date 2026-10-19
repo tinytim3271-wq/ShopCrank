@@ -43,6 +43,7 @@ import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   LIVE_DIAGNOSTICS_PLANS,
+  PUBLIC_TRIAL_DAYS,
   claimDecision,
   hasPlanCapability,
   isFoundingPlan,
@@ -2004,7 +2005,91 @@ async function handleAdmin(request, env, context, segments, analytics) {
   throw new HttpError(405, 'Method not allowed');
 }
 
-async function ensureSaasUser(env, email, name) {
+function normalizeSignupIntent({ planId, shopName, ownerName, email, name } = {}) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const owner = String(ownerName || name || normalizedEmail.split('@')[0] || 'Owner').trim().slice(0, 120) || 'Owner';
+  const shop = String(shopName || `${owner}'s shop`).trim().slice(0, 120) || `${owner}'s shop`;
+  // Public signup only. Founding plans attach via applyPendingFoundingClaim after invite claim.
+  const plan = isPublicPlan(planId) ? String(planId).trim() : 'shop';
+  return { ownerName: owner, shopName: shop, planId: plan };
+}
+
+/** Pack public signup fields into return_to so magic-link works before D1 columns exist. */
+function embedSignupIntent(returnTo, { planId, shopName, ownerName } = {}) {
+  const path = safeReturnPath(returnTo);
+  if (!planId && !shopName && !ownerName) return path;
+  try {
+    const parsed = new URL(path, 'https://shopcrank.invalid');
+    if (planId && isPublicPlan(planId)) parsed.searchParams.set('trialPlan', planId);
+    if (shopName) parsed.searchParams.set('trialShop', shopName);
+    if (ownerName) parsed.searchParams.set('trialOwner', ownerName);
+    return safeReturnPath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+  } catch {
+    return path;
+  }
+}
+
+function extractSignupIntent(returnTo, fallback = {}) {
+  const intent = {
+    planId: fallback.planId || null,
+    shopName: fallback.shopName || null,
+    ownerName: fallback.ownerName || null,
+  };
+  let cleanPath = safeReturnPath(returnTo);
+  try {
+    const parsed = new URL(cleanPath, 'https://shopcrank.invalid');
+    const planId = parsed.searchParams.get('trialPlan');
+    const shopName = parsed.searchParams.get('trialShop');
+    const ownerName = parsed.searchParams.get('trialOwner');
+    if (planId && isPublicPlan(planId)) intent.planId = planId;
+    if (shopName) intent.shopName = shopName;
+    if (ownerName) intent.ownerName = ownerName;
+    parsed.searchParams.delete('trialPlan');
+    parsed.searchParams.delete('trialShop');
+    parsed.searchParams.delete('trialOwner');
+    cleanPath = safeReturnPath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+  } catch {
+    // keep fallbacks
+  }
+  return { ...intent, returnTo: cleanPath };
+}
+
+async function createPublicTrialSubscription(env, { shopId, email, ownerName, shopName, planId }) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const trialEnds = new Date(now.getTime() + PUBLIC_TRIAL_DAYS * 86400000).toISOString();
+  const plan = isPublicPlan(planId) ? planId : 'shop';
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO accounts (
+        shop_id, shop_name, owner_email, owner_name,
+        subscription_status, subscription_expires_at, created_at, updated_at, created_by
+      )
+      VALUES (?, ?, ?, ?, 'trialing', ?, ?, ?, ?)
+      ON CONFLICT(shop_id) DO UPDATE SET
+        subscription_status = COALESCE(accounts.subscription_status, 'trialing'),
+        subscription_expires_at = COALESCE(accounts.subscription_expires_at, excluded.subscription_expires_at),
+        updated_at = excluded.updated_at
+    `).bind(shopId, shopName, email, ownerName, trialEnds, nowIso, nowIso, email),
+    env.DB.prepare(`
+      INSERT INTO subscriptions (shop_id, plan_id, status, current_period_end, updated_at)
+      VALUES (?, ?, 'trialing', ?, ?)
+      ON CONFLICT(shop_id) DO UPDATE SET
+        plan_id = excluded.plan_id,
+        status = excluded.status,
+        current_period_end = excluded.current_period_end,
+        updated_at = excluded.updated_at
+      WHERE subscriptions.plan_id IS NULL
+         OR trim(subscriptions.plan_id) = ''
+    `).bind(shopId, plan, trialEnds, nowIso),
+    env.DB.prepare(`
+      UPDATE shops SET billing_status = 'trialing', name = ?, updated_at = ? WHERE id = ?
+    `).bind(shopName, nowIso, shopId),
+  ]);
+  return { planId: plan, trialEnds };
+}
+
+async function ensureSaasUser(env, email, name, signup = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) throw new HttpError(400, 'A valid email is required');
   const existing = await env.DB.prepare(
@@ -2022,15 +2107,19 @@ async function ensureSaasUser(env, email, name) {
     // unverified, so applying here would let a stolen invite rewrite a live plan.
     return existing;
   }
+  const intent = normalizeSignupIntent({
+    ...signup,
+    email: normalized,
+    name,
+  });
   const userId = crypto.randomUUID();
   const now = new Date().toISOString();
   const shopId = `shop-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
-  const ownerName = String(name || normalized.split('@')[0] || 'Owner').trim();
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO shops (id, name, slug, timezone, billing_status, created_at, updated_at)
       VALUES (?, ?, ?, 'America/Chicago', 'trialing', ?, ?)
-    `).bind(shopId, `${ownerName}'s shop`, shopId.toLowerCase(), now, now),
+    `).bind(shopId, intent.shopName, shopId.toLowerCase(), now, now),
     env.DB.prepare(`
       INSERT INTO shop_memberships (shop_id, user_id, role, status, created_at, updated_at)
       VALUES (?, ?, 'owner', 'active', ?, ?)
@@ -2038,15 +2127,24 @@ async function ensureSaasUser(env, email, name) {
     env.DB.prepare(`
       INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
       VALUES (?, ?, ?, 'admin', ?, 1, ?, ?)
-    `).bind(userId, normalized, shopId, ownerName, now, now),
+    `).bind(userId, normalized, shopId, intent.ownerName, now, now),
   ]);
-  await applyPendingFoundingClaim(env, {
+  const founding = await applyPendingFoundingClaim(env, {
     email: normalized,
     shopId,
-    ownerName,
-    shopName: `${ownerName}'s shop`,
+    ownerName: intent.ownerName,
+    shopName: intent.shopName,
   });
-  return { id: userId, email: normalized, shop_id: shopId, role: 'admin', name: ownerName, enabled: 1 };
+  if (!founding) {
+    await createPublicTrialSubscription(env, {
+      shopId,
+      email: normalized,
+      ownerName: intent.ownerName,
+      shopName: intent.shopName,
+      planId: intent.planId,
+    });
+  }
+  return { id: userId, email: normalized, shop_id: shopId, role: 'admin', name: intent.ownerName, enabled: 1 };
 }
 
 function requireGoogleConfig(env) {
@@ -2270,6 +2368,16 @@ async function handleMagicLink(request, env) {
   const email = String(body.email || '').trim().toLowerCase();
   const returnTo = safeReturnPath(body.returnTo || body.return_to || body.redirectTo);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email address');
+  const requestedPlan = String(body.plan || body.planId || body.plan_id || '').trim();
+  // Only persist public catalog plans. Founding plans attach after /api/founding/claim.
+  const signupPlanId = isPublicPlan(requestedPlan) ? requestedPlan : null;
+  const signupShopName = String(body.shopName || body.shop_name || '').trim().slice(0, 120) || null;
+  const signupOwnerName = String(body.ownerName || body.owner_name || '').trim().slice(0, 120) || null;
+  const storedReturnTo = embedSignupIntent(returnTo, {
+    planId: signupPlanId,
+    shopName: signupShopName,
+    ownerName: signupOwnerName,
+  });
   const exposeLoginLink = env.AUTH_EXPOSE_LOGIN_LINK === '1';
   const sendDirectly = canSendLoginEmail(env);
   if (!env.AUTH_EMAIL_WEBHOOK && !exposeLoginLink && !sendDirectly) {
@@ -2301,7 +2409,7 @@ async function handleMagicLink(request, env) {
       used_at = NULL,
       created_at = excluded.created_at,
       auth_method = excluded.auth_method
-  `).bind(crypto.randomUUID(), email, tokenHash, returnTo, expiresAt, now).run();
+  `).bind(crypto.randomUUID(), email, tokenHash, storedReturnTo, expiresAt, now).run();
   const loginUrl = new URL('/api/auth/callback', new URL(request.url).origin);
   loginUrl.searchParams.set('token', token);
   try {
@@ -2347,7 +2455,12 @@ async function handleAuthCallback(request, env) {
     throw new HttpError(401, 'The sign-in link has expired');
   }
   const email = String(loginToken.email || '').trim().toLowerCase();
-  const user = await ensureSaasUser(env, email, email.split('@')[0]);
+  const signup = extractSignupIntent(loginToken.return_to);
+  const user = await ensureSaasUser(env, email, signup.ownerName || email.split('@')[0], {
+    planId: signup.planId,
+    shopName: signup.shopName,
+    ownerName: signup.ownerName,
+  });
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
   }
@@ -2376,7 +2489,7 @@ async function handleAuthCallback(request, env) {
     auth_method: loginToken.auth_method || 'magic_link',
     actor_role: user.role,
   });
-  const redirect = new URL(safeReturnPath(loginToken.return_to), url.origin);
+  const redirect = new URL(signup.returnTo, url.origin);
   return new Response(null, {
     status: 302,
     headers: {

@@ -501,3 +501,111 @@ test('Google callback rejects a mismatched OAuth state before token exchange', a
   assert.match((await response.json()).message, /invalid or expired/i);
   assert.equal(fetched.mock.callCount(), 0);
 });
+
+test('magic-link stores public signup plan and shop details', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let inserted = null;
+  const env = {
+    AUTH_EXPOSE_LOGIN_LINK: '1',
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) {
+            return {
+              async first() {
+                assert.match(sql, /SELECT created_at, used_at, expires_at FROM login_tokens/);
+                return null;
+              },
+              async run() {
+                assert.match(sql, /INSERT INTO login_tokens/);
+                inserted = {
+                  email: args[1],
+                  returnTo: args[3],
+                };
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/auth/magic-link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'new-owner@example.test',
+      plan: 'shop_pro',
+      shopName: 'High Plains Auto',
+      ownerName: 'Lee Owner',
+      returnTo: '/app',
+    }),
+  }), env);
+  assert.equal(response.status, 200);
+  assert.equal(inserted.email, 'new-owner@example.test');
+  const stored = new URL(inserted.returnTo, 'https://shopcrank.invalid');
+  assert.equal(stored.pathname, '/app');
+  assert.equal(stored.searchParams.get('trialPlan'), 'shop_pro');
+  assert.equal(stored.searchParams.get('trialShop'), 'High Plains Auto');
+  assert.equal(stored.searchParams.get('trialOwner'), 'Lee Owner');
+});
+
+test('magic-link callback creates a 14-day public trial for new shops', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'error', () => {});
+  const token = 'e'.repeat(32);
+  const batches = [];
+  const env = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) {
+            return {
+              sql,
+              args,
+              async first() {
+                if (/FROM login_tokens/.test(sql)) {
+                  return {
+                    id: 'login-signup',
+                    email: 'trial@example.test',
+                    return_to: '/app?trialPlan=shop_pro&trialShop=Trial%20Shop&trialOwner=Trial%20Owner',
+                    expires_at: new Date(Date.now() + 60_000).toISOString(),
+                    used_at: null,
+                    auth_method: 'magic_link',
+                  };
+                }
+                if (/FROM users WHERE email/.test(sql)) return null;
+                if (/FROM founding_invites/.test(sql)) return null;
+                assert.fail(`unexpected query: ${sql}`);
+              },
+              async run() {
+                assert.fail(`unexpected run: ${sql}`);
+              },
+            };
+          },
+        };
+      },
+      async batch(statements) {
+        batches.push(statements);
+        return statements.map(() => ({ success: true }));
+      },
+    },
+  };
+  const response = await worker.fetch(
+    new Request(`https://app.example.test/api/auth/callback?token=${token}`),
+    env,
+  );
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('Location'), 'https://app.example.test/app');
+  assert.equal(batches.length, 3);
+  assert.match(batches[0][0].sql, /INSERT INTO shops/);
+  assert.equal(batches[0][0].args[1], 'Trial Shop');
+  assert.equal(batches[0][2].args[3], 'Trial Owner');
+  assert.match(batches[1][0].sql, /INSERT INTO accounts/);
+  assert.match(batches[1][1].sql, /INSERT INTO subscriptions/);
+  assert.equal(batches[1][1].args[1], 'shop_pro');
+  const trialEnds = Date.parse(batches[1][1].args[2]);
+  assert.ok(Number.isFinite(trialEnds));
+  assert.ok(trialEnds > Date.now() + 13 * 86400000);
+  assert.ok(trialEnds < Date.now() + 15 * 86400000);
+  assert.match(batches[2][0].sql, /INSERT INTO sessions/);
+});

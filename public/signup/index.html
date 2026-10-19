@@ -14,7 +14,7 @@
       <a class="brand" href="/features"><span class="brand-mark">M</span><span><strong>SHOP_CRANK</strong><small>Shop operating system</small></span></a>
       <h1>Create your shop</h1>
       <p id="trial-copy">Start a 14-day trial on the Shop plan ($139/month after the trial). You will sign in with a one-time link sent to the owner email. Unlimited users. No card on this step.</p>
-      <form id="signup-form" method="post" action="/api/auth/magic-link">
+      <form id="signup-form">
         <label for="plan">Plan
           <select id="plan" name="plan">
             <option value="solo">Solo · $69/month</option>
@@ -28,6 +28,7 @@
         <label for="email">Owner email<input id="email" type="email" name="email" autocomplete="email" placeholder="owner@yourshop.com" required /></label>
         <input type="hidden" name="returnTo" value="/app" />
         <p id="signup-error" class="error" hidden></p>
+        <p id="signup-sent" class="success" hidden></p>
         <button class="btn primary" type="submit">Start trial</button>
       </form>
       <script>
@@ -59,26 +60,58 @@
           showPublicCopy();
           select.addEventListener("change", showPublicCopy);
         }
+        if (["starter", "shop", "pro"].includes(plan)) {
+          document.querySelector('input[name="returnTo"]').value = `/app?plan=${encodeURIComponent(plan)}`;
+          document.querySelector('.auth-links a[href="/login"]').href = `/login?plan=${encodeURIComponent(plan)}`;
+        }
         document.querySelector("#signup-form").addEventListener("submit", async (event) => {
-          if (!invite || !foundingNames[select.value]) return;
           event.preventDefault();
+          const form = event.currentTarget;
           const errorEl = document.querySelector("#signup-error");
-          const button = event.currentTarget.querySelector("button");
+          const sentEl = document.querySelector("#signup-sent");
+          const button = form.querySelector("button");
           errorEl.hidden = true;
+          sentEl.hidden = true;
           button.disabled = true;
+          const email = document.querySelector("#email").value.trim();
+          const planId = select.value;
+          const shopName = document.querySelector("#shopName").value.trim();
+          const ownerName = document.querySelector("#ownerName").value.trim();
+          const returnTo = document.querySelector('input[name="returnTo"]').value || "/app";
           try {
-            const response = await fetch("/api/founding/claim", {
+            if (invite && foundingNames[planId]) {
+              const claim = await fetch("/api/founding/claim", {
+                method: "POST",
+                headers: { Accept: "application/json", "Content-Type": "application/json" },
+                body: JSON.stringify({ token: invite, planId, email }),
+              });
+              const claimPayload = await claim.json().catch(() => ({}));
+              if (!claim.ok) throw new Error(claimPayload.message || "This Founding Member spot could not be claimed.");
+            }
+            const response = await fetch("/api/auth/magic-link", {
               method: "POST",
               headers: { Accept: "application/json", "Content-Type": "application/json" },
-              body: JSON.stringify({ token: invite, planId: select.value, email: document.querySelector("#email").value }),
+              body: JSON.stringify({
+                email,
+                plan: foundingNames[planId] ? undefined : planId,
+                shopName,
+                ownerName,
+                returnTo,
+              }),
             });
             const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.message || "This Founding Member spot could not be claimed.");
-            event.currentTarget.submit();
+            if (!response.ok) throw new Error(payload.message || "Could not start the trial.");
+            if (payload.loginUrl) {
+              location.assign(payload.loginUrl);
+              return;
+            }
+            sentEl.hidden = false;
+            sentEl.textContent = payload.message || "Check your email for a sign-in link. It expires in 15 minutes.";
           } catch (error) {
-            button.disabled = false;
             errorEl.hidden = false;
             errorEl.textContent = error.message;
+          } finally {
+            button.disabled = false;
           }
         });
       </script>
@@ -87,13 +120,5 @@
         <a href="/pricing">Compare plans</a>
       </div>
     </main>
-    <script>
-      const plan = new URLSearchParams(window.location.search).get('plan');
-      if (['starter', 'shop', 'pro'].includes(plan)) {
-        const returnTo = `/app?plan=${encodeURIComponent(plan)}`;
-        document.querySelector('input[name="returnTo"]').value = returnTo;
-        document.querySelector('.auth-links a[href="/login"]').href = `/login?plan=${encodeURIComponent(plan)}`;
-      }
-    </script>
   </body>
 </html>
