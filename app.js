@@ -14422,7 +14422,7 @@ ${line}`.trim();
     const refreshAssistantList = () => {
       const list = document.querySelector("#assistant-messages");
       if (!list) return;
-      list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+      list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
       list.scrollTop = list.scrollHeight;
       bindAssistantDraftActions();
     };
@@ -14512,6 +14512,10 @@ ${line}`.trim();
     const removeBtn = grokVoiceSettings.configured && grokVoiceSettings.keySource === "shop" ? `<button type="button" class="secondary" id="grok-voice-remove-key">${icon("trash-2", 14)} Remove xAI key</button>` : "";
     const formHtml = canManage ? `<form class="form-grid" id="grok-voice-config-form" autocomplete="off"><label>xAI API Key (Grok)<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.configured ? "Leave blank to keep existing key, or paste xai-..." : "xai-..."}" ${grokVoiceSettings.configured ? "" : "required"}/></label><label>Grok Receptionist Voice<select name="voice">${voiceSelectOptions}</select></label><label>Shop Business Hours (spoken to callers)<input name="shopHours" value="${escapeAttr(grokVoiceSettings.shopHours || "Monday\u2013Friday 8:00 AM \u2013 5:30 PM")}"/></label><label>Shop / Twilio Forwarding Number<input name="forwardingPhone" placeholder="+18065550199" value="${escapeAttr(grokVoiceSettings.forwardingPhone || "")}"/></label><label class="full">Custom Opening Greeting (optional)<input name="greeting" placeholder="Thanks for calling! I'm Grok, the shop's automated service advisor. How can I help with your vehicle today?" value="${escapeAttr(grokVoiceSettings.greeting || "")}"/></label><label class="full">Receptionist Instructions & Shop Policies (optional)<textarea name="instructions" rows="2" placeholder="e.g., Standard diagnostic fee is $140 waived with repair. We service domestic and Asian vehicles; no heavy diesel.">${escapeHtml(grokVoiceSettings.instructions || "")}</textarea></label><div class="full agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL (Paste in Twilio Console \u2192 Phone Numbers \u2192 Voice \u2192 "A call comes in" HTTP POST)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">To forward your existing shop phone line: enable Unconditional (*72) or Busy/No-Answer (*71) call forwarding on your shop phone carrier to your Twilio number. When a call arrives, Grok answers immediately, quotes estimates, and saves the Customer Intake, Vehicle, Estimate, and Work Order in ShopCrank.</small></div><div class="full"><button class="primary" type="submit">${icon("phone-call", 14)} Save Grok Voice & Phone Settings</button>${removeBtn}</div></form>` : `<div class="agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL</span><code>${escapeHtml(webhookUrl)}</code></div><p class="form-help">Only shop owners and admins can update Grok Voice settings.</p>`;
     return `<section class="settings-panel grok-voice-settings" id="grok-voice-settings"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice & Call Forwarding</div><h2>Have Grok Answer Shop Phone Calls</h2><p>${escapeHtml(statusLabel3)}</p></div>${icon("phone-incoming", 20)}</div>${formHtml}</section>`;
+  }
+  function openCustomerIntakeWithDraft(draft) {
+    saveIntakeDraft(draft);
+    openCustomerIntake();
   }
   var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
@@ -16785,7 +16789,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
               assistantConversation.push({ role: "user", content: text });
               const list = document.querySelector("#assistant-messages");
               if (list) {
-                list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+                list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
                 list.scrollTop = list.scrollHeight;
               }
               activeGrokSession.sendTextTurn(text);
@@ -16817,10 +16821,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         return page.replace("</main>", `${grokSettingsPanelHtml()}</main>`);
       };
       openCustomerIntakeBeforeGrok = openCustomerIntake;
-      openCustomerIntake = function(initialDraftOverride = null) {
-        if (initialDraftOverride) {
-          saveIntakeDraft(initialDraftOverride);
-        }
+      openCustomerIntake = function() {
         openCustomerIntakeBeforeGrok();
         const meta = document.querySelector("#intake-host .intake-head-meta");
         if (meta && !meta.querySelector("#intake-grok-voice-btn")) {
@@ -16838,7 +16839,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
               onWizardIntakeUpdate: (newDraft) => {
                 const merged = applyGrokCallToIntakeDraft(loadIntakeDraft(), newDraft);
                 saveIntakeDraft(merged);
-                openCustomerIntake(merged);
+                openCustomerIntakeWithDraft(merged);
               }
             });
           });
@@ -16900,14 +16901,14 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           btn.onclick = () => {
             const order = state.orders.find((o) => o.id === btn.dataset.grokOpenIntake);
             if (order?.intake) {
-              openCustomerIntake(order.intake);
+              openCustomerIntakeWithDraft(order.intake);
             } else if (order) {
               const draft = applyGrokCallToIntakeDraft(emptyIntakeDraft(), {
                 customer: { firstName: order.customer, phone: order.phone },
                 vehicle: { vin: order.vin, model: order.vehicle },
                 concern: { description: order.complaint }
               });
-              openCustomerIntake(draft);
+              openCustomerIntakeWithDraft(draft);
             }
           };
         });

@@ -5704,7 +5704,7 @@ function startOrStopGrokVoice({ target = "assistant", greetAsReceptionist = fals
   const refreshAssistantList = () => {
     const list = document.querySelector("#assistant-messages");
     if (!list) return;
-    list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+    list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
     list.scrollTop = list.scrollHeight;
     bindAssistantDraftActions();
   };
@@ -5817,7 +5817,7 @@ bindLiveAssistant = function () {
         assistantConversation.push({ role: "user", content: text });
         const list = document.querySelector("#assistant-messages");
         if (list) {
-          list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+          list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
           list.scrollTop = list.scrollHeight;
         }
         activeGrokSession.sendTextTurn(text);
@@ -5878,10 +5878,11 @@ settings = function () {
 };
 
 const openCustomerIntakeBeforeGrok = openCustomerIntake;
-openCustomerIntake = function (initialDraftOverride = null) {
-  if (initialDraftOverride) {
-    saveIntakeDraft(initialDraftOverride);
-  }
+function openCustomerIntakeWithDraft(draft) {
+  saveIntakeDraft(draft);
+  openCustomerIntake();
+}
+openCustomerIntake = function () {
   openCustomerIntakeBeforeGrok();
   const meta = document.querySelector("#intake-host .intake-head-meta");
   if (meta && !meta.querySelector("#intake-grok-voice-btn")) {
@@ -5899,7 +5900,7 @@ openCustomerIntake = function (initialDraftOverride = null) {
         onWizardIntakeUpdate: (newDraft) => {
           const merged = applyGrokCallToIntakeDraft(loadIntakeDraft(), newDraft);
           saveIntakeDraft(merged);
-          openCustomerIntake(merged);
+          openCustomerIntakeWithDraft(merged);
         },
       });
     });
@@ -5968,14 +5969,14 @@ bind = function () {
     btn.onclick = () => {
       const order = state.orders.find(o => o.id === btn.dataset.grokOpenIntake);
       if (order?.intake) {
-        openCustomerIntake(order.intake);
+        openCustomerIntakeWithDraft(order.intake);
       } else if (order) {
         const draft = applyGrokCallToIntakeDraft(emptyIntakeDraft(), {
           customer: { firstName: order.customer, phone: order.phone },
           vehicle: { vin: order.vin, model: order.vehicle },
           concern: { description: order.complaint },
         });
-        openCustomerIntake(draft);
+        openCustomerIntakeWithDraft(draft);
       }
     };
   });
