@@ -4931,7 +4931,8 @@ function licenseFormModal({ id, title, summary = "", fields, note = "", submitLa
 }
 function licenseExpiryField(value = "") {
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" value="${escapeHtml(value)}"/></label>`;
+  const latest = new Date(Date.now() + 3650 * 86400000).toISOString().slice(0, 10);
+  return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" max="${latest}" value="${escapeHtml(value)}"/></label>`;
 }
 const LICENSE_EXPIRY_NOTE = `${icon("calendar-clock", 15)} Unlocks stop at the end of this day (UTC). The customer's unlock token carries this date as its expiry.`;
 function openLicenseApprove(requestId, business, devices) {

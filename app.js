@@ -12530,7 +12530,8 @@ ${catRows}
   }
   function licenseExpiryField(value2 = "") {
     const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-    return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" value="${escapeHtml(value2)}"/></label>`;
+    const latest = new Date(Date.now() + 3650 * 864e5).toISOString().slice(0, 10);
+    return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" max="${latest}" value="${escapeHtml(value2)}"/></label>`;
   }
   function openLicenseApprove(requestId, business, devices) {
     licenseFormModal({

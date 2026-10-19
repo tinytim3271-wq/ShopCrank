@@ -376,6 +376,9 @@ test('expiry parsing and license path detection', () => {
   assert.equal(parseLicenseExpiry('2027-03-01T08:30:15.987Z', START), '2027-03-01T08:30:15.000Z');
   assert.throws(() => parseLicenseExpiry('', START), /required/);
   assert.throws(() => parseLicenseExpiry('soon', START), /valid date/);
+  assert.throws(() => parseLicenseExpiry('+070630-02-02', START), /within 10 years/);
+  assert.throws(() => parseLicenseExpiry('2037-12-31', START), /within 10 years/);
+  assert.equal(parseLicenseExpiry('2036-10-01', START), '2036-10-01T23:59:59.000Z');
   assert.ok(isLicensePath('/api/licenses/unlock'));
   assert.ok(isLicensePath('/api/admin/licenses/abc/revoke'));
   assert.ok(!isLicensePath('/api/admin/accounts'));
