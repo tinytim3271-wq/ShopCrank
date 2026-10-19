@@ -29,7 +29,7 @@ test('parseArgs accepts json and report flags', () => {
   });
 });
 
-test('desired state keeps Pages on www and Worker on /api/* only', () => {
+test('desired state keeps Pages on www and Worker on /api/* plus /downloads/*', () => {
   const state = desiredState();
   assert.equal(state.zone, 'shopcrank.com');
   assert.equal(state.pagesProject, PAGES_PROJECT);
@@ -38,15 +38,19 @@ test('desired state keeps Pages on www and Worker on /api/* only', () => {
   assert.deepEqual(state.workerRoutes, [
     'www.shopcrank.com/api/*',
     'shopcrank.com/api/*',
+    'www.shopcrank.com/downloads/*',
+    'shopcrank.com/downloads/*',
   ]);
-  assert.ok(!state.workerRoutes.some((pattern) => pattern.endsWith('.com/*') && !pattern.includes('/api/')));
+  assert.ok(!state.workerRoutes.some((pattern) => /\/\*$/.test(pattern) && !pattern.includes('/api/') && !pattern.includes('/downloads/')));
   assert.deepEqual(desiredWorkerRoutes(), state.workerRoutes);
 });
 
-test('route classifiers keep /api/* and reject whole-host bindings', () => {
+test('route classifiers keep /api/* and /downloads/* and reject whole-host bindings', () => {
   assert.equal(isDesiredApiRoute('www.shopcrank.com/api/*'), true);
   assert.equal(isDesiredApiRoute('shopcrank.com/api/*'), true);
   assert.equal(isDesiredApiRoute('https://www.shopcrank.com/api/*'), true);
+  assert.equal(isDesiredApiRoute('www.shopcrank.com/downloads/*'), true);
+  assert.equal(isDesiredApiRoute('shopcrank.com/downloads/*'), true);
   assert.equal(isDesiredApiRoute('www.shopcrank.com/*'), false);
   assert.equal(isDesiredApiRoute('www.shopcrank.com'), false);
 
@@ -63,20 +67,29 @@ test('shouldDeleteWorkerRoute strips whole-host and leftover Worker paths', () =
   assert.equal(shouldDeleteWorkerRoute({ pattern: 'www.shopcrank.com/*', script: 'shopcrank-api' }), true);
   assert.equal(shouldDeleteWorkerRoute({ pattern: 'www.shopcrank.com', script: 'pages-something' }), true);
   assert.equal(shouldDeleteWorkerRoute({ pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' }), false);
-  assert.equal(shouldDeleteWorkerRoute({ pattern: 'www.shopcrank.com/downloads/*', script: 'shopcrank-api' }), true);
+  assert.equal(shouldDeleteWorkerRoute({ pattern: 'www.shopcrank.com/downloads/*', script: 'shopcrank-api' }), false);
   assert.equal(shouldDeleteWorkerRoute({ pattern: 'www.shopcrank.com/downloads/*', script: 'other-worker' }), false);
   assert.equal(shouldDeleteWorkerRoute({ pattern: 'admin.shopcrank.com/*', script: 'shopcrank-api' }), false);
 });
 
-test('routesToCreate only adds missing /api/* bindings', () => {
+test('routesToCreate adds missing /api/* and /downloads/* bindings', () => {
   assert.deepEqual(
     routesToCreate([{ pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' }]),
-    ['shopcrank.com/api/*'],
+    ['shopcrank.com/api/*', 'www.shopcrank.com/downloads/*', 'shopcrank.com/downloads/*'],
   );
   assert.deepEqual(
     routesToCreate([
       { pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' },
       { pattern: 'shopcrank.com/api/*', script: 'shopcrank-api' },
+    ]),
+    ['www.shopcrank.com/downloads/*', 'shopcrank.com/downloads/*'],
+  );
+  assert.deepEqual(
+    routesToCreate([
+      { pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' },
+      { pattern: 'shopcrank.com/api/*', script: 'shopcrank-api' },
+      { pattern: 'www.shopcrank.com/downloads/*', script: 'shopcrank-api' },
+      { pattern: 'shopcrank.com/downloads/*', script: 'shopcrank-api' },
     ]),
     [],
   );
@@ -144,7 +157,7 @@ test('createCloudflareClient throws on real API failures', async () => {
   );
 });
 
-test('provisionShopcrankCom attaches Pages www, /api routes only, email, R2, and secrets', async () => {
+test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, email, R2, and secrets', async () => {
   const calls = [];
   const store = {
     zones: [],
@@ -288,11 +301,14 @@ test('provisionShopcrankCom attaches Pages www, /api routes only, email, R2, and
   assert.deepEqual(report.steps.workerRoutes.created, [
     'www.shopcrank.com/api/*',
     'shopcrank.com/api/*',
+    'www.shopcrank.com/downloads/*',
+    'shopcrank.com/downloads/*',
   ]);
   assert.deepEqual(report.steps.workerRoutes.deleted, [
     { pattern: 'www.shopcrank.com/*', script: 'shopcrank-api' },
   ]);
   assert.ok(!report.steps.workerRoutes.routes.some((route) => route.pattern === 'www.shopcrank.com/*'));
+  assert.ok(report.steps.workerRoutes.routes.some((route) => route.pattern === 'www.shopcrank.com/downloads/*'));
   assert.ok(report.steps.r2.created.includes('shopcrank-files'));
   assert.ok(report.steps.r2.created.includes('shopcrank-files-preview'));
   assert.deepEqual(report.steps.r2.legacyPresent, ['mechpro-files']);
