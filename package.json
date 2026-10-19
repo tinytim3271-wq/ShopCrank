@@ -156,6 +156,7 @@
     "dompurify": "^3.4.17",
     "express": "^5.2.1",
     "leaflet": "^1.9.4",
+    "obd": "^1.0.0",
     "posthog-node": "^5.52.4"
   },
   "overrides": {
