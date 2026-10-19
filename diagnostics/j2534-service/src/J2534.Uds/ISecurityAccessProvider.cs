@@ -4,7 +4,7 @@ namespace ShopCrank.J2534.Uds;
 /// Computes the UDS SecurityAccess key from a seed for a given security level.
 ///
 /// Real Stellantis SGW / immobilizer / programming unlocks require licensed
-/// AutoAuth credentials and OEM-specific seed→key material. Shop Crank does NOT
+/// AutoAuth credentials and OEM-specific seed→key material. ShopCrank does NOT
 /// bundle or reverse-engineer those algorithms; a provider must be supplied at
 /// runtime (e.g. an AutoAuth-backed implementation). Absent a real provider,
 /// live programming fails closed.
@@ -25,7 +25,7 @@ public sealed class FailClosedSecurityAccessProvider : ISecurityAccessProvider
 
     public byte[] ComputeKey(int level, byte[] seed, string vin) =>
         throw new InvalidOperationException(
-            "Live SecurityAccess requires licensed OEM AutoAuth credentials. Configure an AutoAuth security provider; Shop Crank does not bypass manufacturer security gateways.");
+            "Live SecurityAccess requires licensed OEM AutoAuth credentials. Configure an AutoAuth security provider; ShopCrank does not bypass manufacturer security gateways.");
 }
 
 /// <summary>

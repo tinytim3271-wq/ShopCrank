@@ -416,3 +416,35 @@ test('labor technician sets survive estimate calculation and invoice creation', 
   assert.deepEqual(estimate.lines[0].technicianIds, ['tech-1', 'tech-2']);
   assert.deepEqual(invoice.lines[0].technicianIds, ['tech-1', 'tech-2']);
 });
+
+test('quoted parts are appended to the repair order estimate with recalculated totals', async () => {
+  const { appendEstimateLinesToOrder, ordersAcceptingEstimateLines } = await import('./estimate-workflow.js');
+  const order = {
+    id: 'RO-1050',
+    status: 'estimate',
+    estimate: { taxRate: 10, lines: [{ id: 'pt-part-1', type: 'labor', description: 'Brake labor', hours: 1, laborRate: 100 }] },
+  };
+  const revised = appendEstimateLinesToOrder(order, [
+    { id: 'pt-part-1', type: 'part', description: 'Wagner pads', partNumber: 'D1092', quantity: 1, unitPrice: 68.99, source: 'partstech', approvalStatus: 'approved' },
+    { id: 'pt-part-1', type: 'part', description: 'Core charge', quantity: 1, unitPrice: 10, source: 'partstech' },
+  ], { editedAt: '2026-10-16T12:00:00.000Z' });
+  assert.deepEqual(revised.estimate.lines.map(line => line.id), ['pt-part-1', 'pt-part-1-2', 'pt-part-1-3']);
+  assert.equal(revised.estimate.lines[1].approvalStatus, 'pending');
+  assert.equal(revised.parts, 78.99);
+  assert.equal(revised.labor, 100);
+  assert.equal(revised.tax, 17.9);
+  assert.equal(revised.total, 196.89);
+  assert.equal(order.estimate.lines.length, 1);
+  assert.throws(() => appendEstimateLinesToOrder({ ...order, status: 'invoiced' }, [{ type: 'part' }]), /reopen/);
+  assert.throws(() => appendEstimateLinesToOrder({}, [{ type: 'part' }]), /repair order/);
+  assert.deepEqual(ordersAcceptingEstimateLines([order, { id: 'RO-1', status: 'paid' }, { status: 'estimate' }]).map(item => item.id), ['RO-1050']);
+});
+
+test('adding lines to an approved order requires re-approval', async () => {
+  const { appendEstimateLinesToOrder } = await import('./estimate-workflow.js');
+  const revised = appendEstimateLinesToOrder({
+    id: 'RO-2', status: 'approved', estimateApproval: { status: 'approved' }, estimate: { lines: [] },
+  }, [{ type: 'part', description: 'Rotor', quantity: 1, unitPrice: 50 }]);
+  assert.equal(revised.estimateApproval, null);
+  assert.equal(revised.estimateRevisionPending, true);
+});

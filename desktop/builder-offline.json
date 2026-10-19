@@ -1,6 +1,6 @@
 {
   "appId": "com.shopcrank.dispatch.offline",
-  "productName": "Shop Crank Offline",
+  "productName": "ShopCrank Offline",
   "artifactName": "ShopCrank-Offline-Setup-${version}.${ext}",
   "publish": null,
   "directories": {
@@ -46,6 +46,6 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "Shop Crank Offline"
+    "shortcutName": "ShopCrank Offline"
   }
 }

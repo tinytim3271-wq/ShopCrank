@@ -106,7 +106,7 @@ export function phonePaymentIntentBody({
 export function rejectRawCardFields(body) {
   const raw = JSON.stringify(body ?? {});
   if (/"[^"]*(?:card|cvc|cvv|pan|expir)[^"]*"\s*:/i.test(raw) || /\b(?:\d[ -]?){13,19}\b/.test(raw)) {
-    throw new HttpError(400, "Card numbers stay in the secure card form. Do not send them to MechPro.");
+    throw new HttpError(400, "Card numbers stay in the secure card form. Do not send them to ShopCrank.");
   }
 }
 
@@ -127,6 +127,7 @@ export function terminalPaymentRecord(intent, shopId) {
   if (!["invoice", "work_order"].includes(meta.targetType) || !meta.targetId) return null;
   const amount = Number(intent.amount_received ?? intent.amount ?? 0) / 100;
   if (!Number.isFinite(amount) || amount <= 0) return null;
+  const latestCharge = String(intent.latest_charge || "").trim();
   return {
     paymentId: intent.id,
     body: {
@@ -137,6 +138,8 @@ export function terminalPaymentRecord(intent, shopId) {
       receivedAt: new Date().toISOString(),
       reference: intent.id,
       note,
+      stripePaymentIntentId: intent.id,
+      ...(latestCharge ? { stripeChargeId: latestCharge } : {}),
     },
   };
 }

@@ -1,4 +1,4 @@
-# Building Shop Crank Dispatch — Android APK
+# Building ShopCrank Dispatch — Android APK
 
 This project uses [Capacitor](https://capacitorjs.com/) to package the web app as a fully offline Android application. All app features work without an internet connection — data is stored locally on the device.
 

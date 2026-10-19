@@ -1,5 +1,5 @@
 /**
- * Home dashboard model for MechPro.
+ * Home dashboard model for ShopCrank.
  * Pure data assembly so the landing view always has metrics, attention
  * items, today's work, and recent activity — even when the shop is empty.
  */

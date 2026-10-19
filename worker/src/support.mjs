@@ -10,7 +10,7 @@ function clean(value, max) {
 function rawSupportEmail({ from, to, ticket }) {
   const safeSubject = ticket.subject.replace(/[\r\n]/g, ' ');
   return [
-    `From: MechPro Support <${from}>`,
+    `From: ShopCrank Support <${from}>`,
     `To: ${to}`,
     `Reply-To: ${ticket.requesterEmail}`,
     `Subject: [${ticket.priority.toUpperCase()}] ${ticket.id}: ${safeSubject}`,

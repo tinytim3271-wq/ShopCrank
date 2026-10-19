@@ -199,7 +199,7 @@ export const GROK_SHOP_TOOLS = Object.freeze([
   {
     type: 'function',
     name: 'save_call_intake_and_estimate',
-    description: 'Fill the shop customer intake form, vehicle details, 3 Cs / concern, and save a reviewable Estimate and Work Order draft in Shop Crank. Call this whenever the caller provides their name, vehicle, or repair concern, and update it as more details are collected.',
+    description: 'Fill the shop customer intake form, vehicle details, 3 Cs / concern, and save a reviewable Estimate and Work Order draft in ShopCrank. Call this whenever the caller provides their name, vehicle, or repair concern, and update it as more details are collected.',
     parameters: {
       type: 'object',
       properties: {
@@ -418,7 +418,7 @@ export async function calculateGrokServiceEstimate(env, shopId, input = {}, pric
           laborRate,
           unitPrice: laborRate,
           total: laborTotal,
-          source: 'Shop Crank Service Guide',
+          source: 'ShopCrank Service Guide',
         });
         if (op.partsPrice > 0) {
           lines.push({
@@ -427,7 +427,7 @@ export async function calculateGrokServiceEstimate(env, shopId, input = {}, pric
             quantity: 1,
             unitPrice: op.partsPrice,
             total: op.partsPrice,
-            source: 'Shop Crank Ballpark Parts',
+            source: 'ShopCrank Ballpark Parts',
           });
         }
       }
@@ -866,7 +866,7 @@ export async function executeGrokShopTool(env, shopId, name, args = {}, { caller
         labor: estimateCalc.lines.filter((l) => l.type === 'labor').map((l) => ({
           description: l.description,
           hours: l.hours || l.quantity || 1,
-          source: l.source || 'Shop Crank Service Guide',
+          source: l.source || 'ShopCrank Service Guide',
         })),
       },
       intakeDraft,

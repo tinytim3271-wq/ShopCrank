@@ -1,10 +1,10 @@
-# Shop Crank Dispatch
+# ShopCrank Dispatch
 
 This repository, [`tinytim3271-wq/ShopCrank`](https://github.com/tinytim3271-wq/ShopCrank),
-is the canonical home for Shop Crank, hosted at
+is the canonical home for ShopCrank, hosted at
 [`https://www.shopcrank.com`](https://www.shopcrank.com).
 
-Shop Crank is a local-first shop dispatch and work-order PWA with cloud
+ShopCrank is a local-first shop dispatch and work-order PWA with cloud
 synchronization on **Cloudflare** (Pages, Workers, D1, R2, Workers AI). The
 public SaaS architecture is documented in
 [`docs/cloudflare-saas-architecture.md`](docs/cloudflare-saas-architecture.md).
@@ -132,13 +132,13 @@ The normal installer and online ZIP remain unchanged.
 
 1. Download the demo ZIP and **extract the entire ZIP** into a folder on a
    writable flash drive (not just the EXE).
-2. Run **Shop Crank Demo.exe** from that folder; no install, Node.js, or internet
+2. Run **ShopCrank Demo.exe** from that folder; no install, Node.js, or internet
    connection is needed on the demo computer.
 3. Create a local sign-in with a demo email, name, and your own password. No
    email is sent. Explore the existing sample shop records and local workflows.
 4. Close the app fully before safely ejecting the drive.
 
-The account, shop records, Chromium profile, and logs stay in **Shop Crank Demo
+The account, shop records, Chromium profile, and logs stay in **ShopCrank Demo
 Data**, beside the executable. Copy the entire folder to move/back up the demo.
 To reset, close the app and delete only that data folder. Use sample data only:
 shop records on the drive are not encrypted. A read-only drive fails explicitly
@@ -221,7 +221,7 @@ register `https://www.shopcrank.com/api/auth/google/callback` as an
 authorized redirect URI. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are
 required; the Worker refuses to start the OAuth flow when either is missing.
 The callback validates OAuth state, PKCE, the ID-token signature and claims,
-and Google's verified-email flag before issuing a Shop Crank session.
+and Google's verified-email flag before issuing a ShopCrank session.
 
 ### Fixing email sign-in
 
@@ -244,7 +244,7 @@ npm run setup:email
 
 The script explains each step, asks for confirmation before saving anything, and
 stores the values as **remote Worker secrets** through Wrangler. Your
-administrator needs an **HTTPS** webhook endpoint that accepts Shop Crank's JSON
+administrator needs an **HTTPS** webhook endpoint that accepts ShopCrank's JSON
 payload:
 
 ```json
@@ -269,7 +269,7 @@ npm run deploy:worker
 
 Simple verification:
 
-1. Open your Shop Crank site and visit `/login`.
+1. Open your ShopCrank site and visit `/login`.
 2. Request a sign-in link with an email address you control.
 3. Confirm your webhook receives `{ email, loginUrl, returnTo }`.
 4. Confirm the email arrives and that the login link signs you in.
@@ -444,7 +444,7 @@ Modes:
   - `DELETE /api/diagnostics/autoauth` — disconnect.
 
   Until the shop is connected, live authorization returns `501`. Live execution
-  also requires a licensed `ISecurityAccessProvider`. Shop Crank does **not** bundle
+  also requires a licensed `ISecurityAccessProvider`. ShopCrank does **not** bundle
   or bypass OEM security-gateway seed/key algorithms; without a real provider,
   live SecurityAccess fails closed.
 

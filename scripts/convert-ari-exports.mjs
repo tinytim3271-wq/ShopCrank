@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Convert ARI (Auto Repair Software) CSV exports into Shop Crank import CSVs.
+ * Convert ARI (Auto Repair Software) CSV exports into ShopCrank import CSVs.
  *
  * Usage:
  *   node scripts/convert-ari-exports.mjs
@@ -179,7 +179,7 @@ async function main() {
   const paths = resolvePaths(parseArgs(process.argv));
   mkdirSync(paths.outDir, { recursive: true });
 
-  console.log('ARI → Shop Crank converter');
+  console.log('ARI → ShopCrank converter');
   console.log('clients:   ', paths.clients || '(missing)');
   console.log('vehicles:  ', paths.vehicles || '(missing)');
   console.log('orders:    ', paths.orders || '(missing)');
@@ -309,7 +309,7 @@ async function main() {
   };
   writeFileSync(join(paths.outDir, 'import-summary.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify(summary, null, 2));
-  console.log('\nIn Shop Crank: Imports → upload customers, then vehicles, then work orders.');
+  console.log('\nIn ShopCrank: Imports → upload customers, then vehicles, then work orders.');
 }
 
 main().catch((error) => {

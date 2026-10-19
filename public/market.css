@@ -1,13 +1,16 @@
 :root {
-  --ink: #14201c;
-  --muted: #5d6d66;
+  /* ShopCrank Retro Garage Badge palette (Marketing Pack, Oct 2026) */
+  --ink: #074251;
+  --muted: #4a6670;
   --paper: #fffefb;
-  --canvas: #f3f1eb;
-  --line: #d9ddd8;
-  --green: #1f654b;
-  --deep: #162c24;
-  --lime: #c8df59;
-  --shadow: 0 18px 40px rgba(22, 44, 36, 0.12);
+  --canvas: #FDF3DA;
+  --cream: #FDF3DA;
+  --line: #d7c9a8;
+  --green: #074251;
+  --deep: #074251;
+  --cherry: #CC1D24;
+  --lime: #CC1D24;
+  --shadow: 0 18px 40px rgba(7, 66, 81, 0.14);
 }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
@@ -15,7 +18,7 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    linear-gradient(180deg, rgba(200, 223, 89, 0.18), transparent 280px),
+    linear-gradient(180deg, rgba(7, 66, 81, 0.08), transparent 280px),
     var(--canvas);
   font-family: "DM Sans", "Segoe UI", sans-serif;
 }
@@ -38,17 +41,16 @@ img { max-width: 100%; }
   text-decoration: none;
 }
 .brand-mark {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  color: var(--deep);
-  background: var(--lime);
-  font-weight: 800;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: #074251 url("/assets/brand/logo-icon-192.png") center / cover no-repeat;
+  box-shadow: 0 6px 16px rgba(7, 66, 81, 0.22);
+  font-size: 0;
 }
-.brand strong { display: block; font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 26px; letter-spacing: 0.04em; line-height: 0.9; }
-.brand small { color: var(--muted); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+.brand strong { display: block; font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 26px; letter-spacing: 0.02em; line-height: 0.95; text-transform: none; }
+.brand small { color: var(--muted); font-size: 11px; letter-spacing: 0.02em; text-transform: none; }
 .nav { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .nav a { color: var(--ink); font-size: 14px; font-weight: 650; text-decoration: none; }
 .nav a:hover, .nav a[aria-current="page"] { color: var(--green); }
@@ -63,11 +65,12 @@ img { max-width: 100%; }
   font-weight: 750;
   text-decoration: none;
 }
-.btn.primary { color: #fff; background: var(--green); }
-.btn.primary:hover { background: #174d3a; }
+.btn.primary { color: #fff; background: var(--cherry); }
+.btn.primary:hover { background: #a8171d; }
+.btn.secondary:hover { border-color: var(--deep); color: var(--deep); }
 .btn.secondary { color: var(--deep); background: transparent; border-color: #b7c4bc; }
 .hero { padding: 42px 0 12px; }
-.eyebrow { margin: 0 0 8px; color: var(--green); font-size: 12px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+.eyebrow { margin: 0 0 8px; color: var(--cherry); font-size: 12px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
 h1, h2, h3 { margin: 0; font-family: "Barlow Condensed", "Arial Narrow", sans-serif; letter-spacing: 0.02em; }
 h1 { max-width: 16ch; font-size: clamp(42px, 6vw, 68px); line-height: 0.92; text-transform: uppercase; }
 .lede { max-width: 62ch; margin: 14px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }

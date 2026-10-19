@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shopcrank-shell-v30';
+const CACHE_NAME = 'shopcrank-shell-v32';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -6,7 +6,8 @@ const SHELL_FILES = [
   './styles.css',
   './theme.css',
   './manifest.webmanifest',
-  './shopcrank-icon.svg',
+  './assets/brand/logo-icon-192.png',
+  './assets/brand/logo-icon-512.png',
   './assets/vendor/lucide.min.js',
   './assets/vendor/dompurify.min.js',
   './assets/fonts/fonts.css',

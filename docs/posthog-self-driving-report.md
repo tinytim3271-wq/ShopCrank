@@ -79,7 +79,7 @@ A Replay Vision scanner is an LLM that watches individual session recordings on 
 | Scanner | Status | Query scope | Sampling | Estimated monthly spend |
 |---|---|---|---:|---:|
 | Invoice payment breakage | Created | Sessions whose current URL contains `#payment-success`, the configured success return for invoice payment checkout | 0.5 | 0 observations / 0 credits |
-| Shop Crank user frustration | Created | Sessions containing `$rageclick` only | 1.0 | 0 observations / 0 credits |
+| ShopCrank user frustration | Created | Sessions containing `$rageclick` only | 1.0 | 0 observations / 0 credits |
 
 The organization has 2,500 Replay Vision credits remaining in the current period and no current spend. There are no recordings yet, so both scanners are armed but will not observe anything until browser session recordings begin.
 

@@ -55,7 +55,7 @@ export function form941WorksheetCsv(summary, meta = {}) {
     ['6', 'Total taxes before adjustments', summary.totalTax],
     [],
     ['Portal', 'https://www.irs.gov/businesses/small-businesses-self-employed/e-file-employment-tax-forms'],
-    ['Note', 'Enter these amounts in IRS e-file / EFTPS or provide to your CPA. MechPro prepares the worksheet from payroll records.'],
+    ['Note', 'Enter these amounts in IRS e-file / EFTPS or provide to your CPA. ShopCrank prepares the worksheet from payroll records.'],
   ];
   return csvFromRows(rows);
 }

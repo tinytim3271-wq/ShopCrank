@@ -4,6 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { GoogleGenAI } from '@google/genai';
+import diagnosticsBridge from './desktop/diagnostics-bridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -114,6 +115,9 @@ app.post('/api/diagnostics/authorize', (req, res) => {
 app.post('/api/diagnostics/audit', (req, res) => {
   res.json({ ok: true });
 });
+
+// Local J2534 hardware bridge endpoints for browser-hosted shop bays
+diagnosticsBridge.registerLocalDiagnosticsRoutes(app);
 
 // Vehicle decode endpoint
 app.get('/api/vehicles/decode/:vin', (req, res) => {
@@ -275,7 +279,7 @@ async function callGeminiWithSearch({ prompt, systemInstruction, history = [], s
   let fullPrompt = prompt;
   if (shopContext && (shopContext.activeOrders || shopContext.activeTab || shopContext.shopProfile)) {
     fullPrompt = `[Live Shop Context]:
-Shop: ${shopContext.shopProfile?.shopName || 'MechPro Auto Service'} (Labor Rate: $${shopContext.shopProfile?.laborRate || 140}/hr)
+Shop: ${shopContext.shopProfile?.shopName || 'ShopCrank Auto Service'} (Labor Rate: $${shopContext.shopProfile?.laborRate || 140}/hr)
 Current Screen: ${shopContext.currentRoute || 'Dispatch'}
 Active Dispatched Work Orders: ${JSON.stringify(shopContext.activeOrders || [])}
 Mobile Dispatches: ${JSON.stringify(shopContext.mobileOrders || [])}
@@ -286,7 +290,7 @@ ${prompt}`;
 
   contents.push({ role: 'user', parts: [{ text: fullPrompt }] });
 
-  const defaultSystem = `You are the MechPro Voice & Dispatch Assistant for automotive shop owners, mobile service technicians, and service dispatchers.
+  const defaultSystem = `You are the ShopCrank Voice & Dispatch Assistant for automotive shop owners, mobile service technicians, and service dispatchers.
 You have real-time access to live technical data, manufacturer recalls, technical service bulletins (TSBs), known failure patterns, DTC definitions, part sourcing, and local traffic/weather via Google Search.
 Whenever answering technical automotive questions, parts availability, or diagnostic symptoms, ALWAYS ground your answer using Google Search.
 When responding:
@@ -640,7 +644,7 @@ app.post('/api/geocode', async (req, res) => {
 
   // Pre-mapped shop base and demo addresses around Lubbock, TX
   const knownLocations = {
-    '101 main st': { lat: 33.5843, lng: -101.8447, name: 'MechPro Shop HQ' },
+    '101 main st': { lat: 33.5843, lng: -101.8447, name: 'ShopCrank Shop HQ' },
     '502 4th st': { lat: 33.5892, lng: -101.8510, name: 'North Downtown Site' },
     '5812 34th st': { lat: 33.5658, lng: -101.9325, name: 'Fleet Yard West' },
     '2410 broadway st': { lat: 33.5840, lng: -101.8715, name: 'Tech Terrace / Campus' },
@@ -667,7 +671,7 @@ app.post('/api/geocode', async (req, res) => {
   try {
     const searchUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
     const geoRes = await fetch(searchUrl, {
-      headers: { 'User-Agent': 'MechPro-ShopCrank/1.1 (dispatch@yourcarguy806.com)' },
+      headers: { 'User-Agent': 'ShopCrank/1.1 (dispatch@yourcarguy806.com)' },
       signal: AbortSignal.timeout(3500),
     });
     if (geoRes.ok) {
@@ -810,11 +814,12 @@ app.use((req, res) => {
   res.sendFile(join(__dirname, 'index.html'));
 });
 
-const PORT = 3000;
-const HOST = '0.0.0.0';
+// Unauthenticated mock API: loopback only unless explicitly exposed for diagnostics.
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || (process.env.SHOP_CRANK_DIAGNOSTICS_HTTP_TOKEN ? '0.0.0.0' : '127.0.0.1');
 
 const server = app.listen(PORT, HOST, () => {
-  console.log(`MechPro server listening on http://${HOST}:${PORT}`);
+  console.log(`ShopCrank server listening on http://${HOST}:${PORT}`);
 });
 
 server.on('error', (err) => {

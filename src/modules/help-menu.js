@@ -18,7 +18,7 @@ export const HELP_TOPICS = [
     route: 'login',
     roles: ['*'],
     title: 'Sign in',
-    summary: 'Open MechPro with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.',
+    summary: 'Open ShopCrank with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.',
     steps: [
       'Enter your work email and request a sign-in link, or use Google when that button is shown.',
       'Open the email on this device and follow the link within fifteen minutes.',
@@ -42,7 +42,7 @@ export const HELP_TOPICS = [
       'Sign out and sign in again after the profile is active.',
     ],
     limits: [
-      'MechPro will not invent an employee profile from Access alone for non-owner roles.',
+      'ShopCrank will not invent an employee profile from Access alone for non-owner roles.',
     ],
     keywords: ['pending', 'employee', 'profile', 'deactivated'],
   },
@@ -51,7 +51,7 @@ export const HELP_TOPICS = [
     route: 'superadmin',
     roles: ['super_admin'],
     title: 'Platform console',
-    summary: 'Manage customer shops on MechPro: create accounts, credits, suspension, and Stripe keys for a shop.',
+    summary: 'Manage customer shops on ShopCrank: create accounts, credits, suspension, and Stripe keys for a shop.',
     steps: [
       'Review the customer shop list and each shop’s subscription status.',
       'Create a shop with owner name, email, shop name, and shop ID when onboarding a customer.',
@@ -175,7 +175,7 @@ export const HELP_TOPICS = [
       'Cancel on the reader from this screen if the customer walks away.',
     ],
     limits: [
-      'Card numbers are never typed into MechPro on the reader path.',
+      'Card numbers are never typed into ShopCrank on the reader path.',
       'Technicians do not have Card terminal.',
     ],
     keywords: ['pos', 'terminal', 'reader', 'card present', 'debit'],
@@ -191,10 +191,10 @@ export const HELP_TOPICS = [
       'Select Phone order, then choose the work order or invoice.',
       'Enter the amount and choose Enter card to open Stripe’s Payment Element.',
       'Type the card only in the Stripe fields. Confirm the charge when the form is complete.',
-      'Keep this tab open until MechPro shows the payment recorded.',
+      'Keep this tab open until ShopCrank shows the payment recorded.',
     ],
     limits: [
-      'Never paste a card number into a MechPro note, chat, or work-order field.',
+      'Never paste a card number into a ShopCrank note, chat, or work-order field.',
       'Phone entry needs the publishable key saved on Payments.',
       'Mail-order / telephone (MOTO) may fall back to a normal keyed charge if Stripe has not enabled MOTO on the account.',
     ],
@@ -229,7 +229,7 @@ export const HELP_TOPICS = [
     ],
     limits: [
       'Plate lookup and Carfax stay off until those providers are connected.',
-      'AutoZone Pro ordering needs a saved login on this screen.',
+      'AutoZone Pro ordering opens AutoZone Pro; each user signs in with their own AutoZone Pro user.',
     ],
     keywords: ['shopops', 'vehicles', 'inventory', 'parts', 'inspections'],
   },
@@ -256,16 +256,16 @@ export const HELP_TOPICS = [
     route: 'obd',
     roles: FLOOR,
     title: 'OBD bay',
-    summary: 'Shop-bay OBD tools tied to a repair order when the bay simulator or host is available.',
+    summary: 'Live SAE J1979 OBD-II diagnostics over a J2534 Pass-Thru VCI or ELM327 serial adapter tied to a repair order.',
     steps: [
-      'Select the work order for the vehicle in the bay.',
-      'Run the scan the bay supports and copy codes into the RO notes.',
-      'Verify safety-critical findings before releasing the vehicle.',
+      'Connect your J2534 Pass-Thru VCI or USB/Bluetooth ELM327 adapter with the vehicle ignition ON.',
+      'Select the work order for the vehicle in the bay and click Read vehicle to pull the VIN, stored/pending/permanent trouble codes, and live engine PIDs.',
+      'Copy scan findings into the RO notes or send trouble codes to the AI workbench.',
     ],
     limits: [
-      'Simulated bay results are not a substitute for a live tool on a customer vehicle.',
+      'Clearing trouble codes (Mode 04) also resets freeze-frame data and readiness monitors.',
     ],
-    keywords: ['obd', 'codes', 'scan', 'bay'],
+    keywords: ['obd', 'codes', 'scan', 'bay', 'j2534', 'elm327'],
   },
   {
     id: 'keys',
@@ -279,7 +279,7 @@ export const HELP_TOPICS = [
       'Document the result on the work order.',
     ],
     limits: [
-      'MechPro does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.',
+      'ShopCrank does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.',
       'Unsupported gateway or make combinations stay blocked.',
     ],
     keywords: ['keys', 'programming', 'fob', 'immobilizer'],
@@ -373,7 +373,7 @@ export const HELP_TOPICS = [
     route: 'imports',
     roles: ADMIN_ONLY,
     title: 'Import data',
-    summary: 'Bring customers, vehicles, or other supported lists into MechPro from a file.',
+    summary: 'Bring customers, vehicles, or other supported lists into ShopCrank from a file.',
     steps: [
       'Pick the import type the screen lists.',
       'Preview rows before you confirm the write.',
@@ -395,7 +395,7 @@ export const HELP_TOPICS = [
       'Send only to customers who asked for contact on that channel.',
     ],
     limits: [
-      'Do not send unsolicited mail from MechPro.',
+      'Do not send unsolicited mail from ShopCrank.',
       'Email routing on the apex domain stays with Google Workspace MX.',
     ],
     keywords: ['messaging', 'sms', 'email'],

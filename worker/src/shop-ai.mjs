@@ -167,7 +167,7 @@ export function providerFailureMessage(provider, kind) {
 
 export class AnthropicApiError extends HttpError {
   constructor({ status = 0, type = '', message = '' } = {}) {
-    super(502, 'The Shop Crank assistant provider is unavailable');
+    super(502, 'The ShopCrank assistant provider is unavailable');
     this.name = 'AnthropicApiError';
     this.upstreamStatus = status;
     this.upstreamType = type;
@@ -177,7 +177,7 @@ export class AnthropicApiError extends HttpError {
 
 export class GeminiApiError extends HttpError {
   constructor({ status = 0, type = '', message = '' } = {}) {
-    super(502, 'The Shop Crank assistant provider is unavailable');
+    super(502, 'The ShopCrank assistant provider is unavailable');
     this.name = 'GeminiApiError';
     this.upstreamStatus = status;
     this.upstreamType = type;

@@ -77,22 +77,27 @@ export class AiVoiceSession {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       throw new HttpError(426, 'A WebSocket upgrade is required');
     }
-    const shopId = request.headers.get('X-MechPro-Shop-Id');
-    const voiceMode = request.headers.get('X-MechPro-Voice-Mode');
+    const shopId = (request.headers.get('X-ShopCrank-Shop-Id') || request.headers.get('X-MechPro-Shop-Id'));
+    const voiceMode = (request.headers.get('X-ShopCrank-Voice-Mode') || request.headers.get('X-MechPro-Voice-Mode'));
     if (voiceMode === 'twilio-grok') {
-      const apiKey = String(request.headers.get('X-MechPro-Xai-Key') || this.env.XAI_API_KEY || '').trim();
+      const apiKey = String(
+        request.headers.get('X-ShopCrank-Xai-Key')
+        || request.headers.get('X-MechPro-Xai-Key')
+        || this.env.XAI_API_KEY
+        || '',
+      ).trim();
       if (!shopId || !apiKey) throw new HttpError(503, 'Grok Voice AI is not configured');
       return handleGrokTwilioBridge({
         request,
         env: this.env,
         state: this.state,
         shopId,
-        callerPhone: String(request.headers.get('X-MechPro-Caller-Phone') || ''),
-        callSid: String(request.headers.get('X-MechPro-Call-Sid') || ''),
+        callerPhone: String(request.headers.get('X-ShopCrank-Caller-Phone') || request.headers.get('X-MechPro-Caller-Phone') || ''),
+        callSid: String(request.headers.get('X-ShopCrank-Call-Sid') || request.headers.get('X-MechPro-Call-Sid') || ''),
         apiKey,
       });
     }
-    const userId = request.headers.get('X-MechPro-User-Id');
+    const userId = (request.headers.get('X-ShopCrank-User-Id') || request.headers.get('X-MechPro-User-Id'));
     if (!shopId || !userId) throw new HttpError(401, 'Authenticated shop context is required');
     if (!String(this.env.DEEPGRAM_API_KEY || '').trim() || !String(this.env.ANTHROPIC_API_KEY || '').trim()) {
       throw new HttpError(503, 'Voice AI is not configured');

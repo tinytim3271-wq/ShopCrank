@@ -4,7 +4,7 @@ namespace ShopCrank.J2534.Core;
 /// A live immobilizer procedure that has been checked against the manufacturer's
 /// documented sequence and validated on a real vehicle. Only these may write to
 /// a vehicle. The OEM-specific routine and its security handshake are supplied
-/// by <see cref="Execute"/>; Shop Crank never invents routine IDs or seed/key math.
+/// by <see cref="Execute"/>; ShopCrank never invents routine IDs or seed/key math.
 /// </summary>
 public sealed class KeyProcedureDefinition
 {
@@ -82,7 +82,7 @@ public sealed class KeyProcedureCatalog
                 Supported = false,
                 Procedure = procedure,
                 Vin = vin,
-                Reason = $"Shop Crank does not have a verified live {procedure.Replace('_', ' ')} procedure for this vehicle ({vin[..3]}, model year {ModelYear(vin)}). Nothing was written. Use the manufacturer's software (for example wiTECH 2.0, Techstream or FDRS) through the RLink X7 for this job.",
+                Reason = $"ShopCrank does not have a verified live {procedure.Replace('_', ' ')} procedure for this vehicle ({vin[..3]}, model year {ModelYear(vin)}). Nothing was written. Use the manufacturer's software (for example wiTECH 2.0, Techstream or FDRS) through the RLink X7 for this job.",
             };
         }
         return new KeyProcedureSupport

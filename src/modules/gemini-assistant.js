@@ -1,5 +1,5 @@
 /**
- * MechPro Gemini Voice & Chat Assistant Module
+ * ShopCrank Gemini Voice & Chat Assistant Module
  * Features:
  * - Real-time conversational AI powered by Gemini 2.5 Flash / 3.8 Flash
  * - Grounded with Google Search data on all responses
@@ -64,7 +64,7 @@ function getShopContext() {
       mobileOrders,
       orderCount: activeOrders.length,
       shopProfile: {
-        shopName: 'MechPro Mobile & Shop Service',
+        shopName: 'ShopCrank Mobile & Shop Service',
         laborRate: 140,
         address: '101 Main St, Lubbock, TX',
       },

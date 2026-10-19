@@ -103,6 +103,9 @@ export function normalizePaymentInput(body) {
   if (!PAYMENT_METHODS.has(method)) throw new HttpError(400, "Unsupported payment method");
   const received = body.receivedAt ? new Date(body.receivedAt) : new Date();
   if (Number.isNaN(received.valueOf())) throw new HttpError(400, "receivedAt must be a valid date and time");
+  const stripeChargeId = String(body.stripeChargeId || "").trim().slice(0, 80);
+  const stripePaymentIntentId = String(body.stripePaymentIntentId || "").trim().slice(0, 80);
+  const stripePaymentId = String(body.stripePaymentId || "").trim().slice(0, 80);
   return {
     targetType,
     targetId,
@@ -111,6 +114,9 @@ export function normalizePaymentInput(body) {
     receivedAt: received.toISOString(),
     reference: String(body.reference || "").trim().slice(0, 160),
     note: String(body.note || "").trim().slice(0, 500),
+    ...(stripeChargeId ? { stripeChargeId } : {}),
+    ...(stripePaymentIntentId ? { stripePaymentIntentId } : {}),
+    ...(stripePaymentId ? { stripePaymentId } : {}),
   };
 }
 
@@ -176,6 +182,9 @@ export async function recordPayment(env, context, body, { paymentId = crypto.ran
     note: input.note,
     status: "completed",
     recordedBy: context.userId,
+    ...(input.stripeChargeId ? { stripeChargeId: input.stripeChargeId } : {}),
+    ...(input.stripePaymentIntentId ? { stripePaymentIntentId: input.stripePaymentIntentId } : {}),
+    ...(input.stripePaymentId ? { stripePaymentId: input.stripePaymentId } : {}),
   };
 
   const writes = [];

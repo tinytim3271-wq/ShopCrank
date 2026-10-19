@@ -1,9 +1,9 @@
 {
   "name": "shopcrank-desktop",
   "version": "1.1.0",
-  "description": "Shop Crank Dispatch & Work Orders Windows desktop client",
+  "description": "ShopCrank Dispatch & Work Orders Windows desktop client",
   "main": "desktop/main.js",
-  "author": "Shop Crank",
+  "author": "ShopCrank",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "node server.mjs",
@@ -44,7 +44,7 @@
     "test:chat": "node --test src/modules/chat/utils.test.mjs",
     "test:storage": "node --test src/modules/storage.test.mjs",
     "test:upload": "node --test src/modules/file-upload.test.mjs",
-    "test:desktop": "node --test desktop/start-url.test.js desktop/auth-deep-link.test.js desktop/diagnostics-secrets.test.js desktop/local-vault.test.js desktop/portable-data.test.js",
+    "test:desktop": "node --test desktop/start-url.test.js desktop/auth-deep-link.test.js desktop/diagnostics-secrets.test.js desktop/diagnostics-bridge.test.js desktop/local-vault.test.js desktop/portable-data.test.js desktop/print-window.test.js",
     "test:offline": "node --test src/modules/offline-desktop.test.mjs",
     "test:mutation": "node --test src/runtime/prepare-entity-mutation.test.mjs src/runtime/entity-persistence.test.mjs src/runtime/mutation-queue-store.test.mjs",
     "test:imports": "node --test src/modules/imports.test.mjs",
@@ -57,6 +57,7 @@
     "test:labor-guide": "node --test src/modules/labor-guide.test.mjs",
     "test:labor-web": "node --test worker/test/labor-web-estimate.test.mjs",
     "test:quickbooks": "node --test src/modules/quickbooks.test.mjs",
+    "test:revrec": "node --test src/modules/revenue-recognition.test.mjs",
     "test:estimate": "node --test src/modules/estimate-approval.test.mjs src/modules/estimate-workflow.test.mjs src/modules/estimate-templates.test.mjs src/modules/work-order-editor.test.mjs",
     "test:payments": "node --test src/modules/payments.test.mjs",
     "test:market": "node --test scripts/market-pages.test.mjs",
@@ -65,7 +66,7 @@
     "test:shop-os": "node --test src/modules/shop-os/bay.test.mjs",
     "test:work-orders": "node --test src/modules/work-order-editor.test.mjs",
     "issue-invite": "node scripts/issue-founding-invite.mjs",
-    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shop-os && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs",
+    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shop-os && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs",
     "test:filing": "node --test src/modules/filing/withholding.test.mjs"
   },
   "devDependencies": {
@@ -74,14 +75,14 @@
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
-    "wrangler": "^4.130.0"
+    "wrangler": "^4.151.0"
   },
   "build": {
     "appId": "com.shopcrank.dispatch",
-    "productName": "Shop Crank",
+    "productName": "ShopCrank",
     "protocols": [
       {
-        "name": "Shop Crank authentication",
+        "name": "ShopCrank authentication",
         "schemes": [
           "shopcrank"
         ]
@@ -145,14 +146,14 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Shop Crank"
+      "shortcutName": "ShopCrank"
     }
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
     "@capacitor/core": "^7.0.0",
     "@google/genai": "^2.28.0",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "express": "^5.2.1",
     "leaflet": "^1.9.4",
     "posthog-node": "^5.52.4"

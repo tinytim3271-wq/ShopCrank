@@ -1,7 +1,7 @@
 {
   "extends": null,
   "appId": "com.shopcrank.dispatch.demo",
-  "productName": "Shop Crank Demo",
+  "productName": "ShopCrank Demo",
   "artifactName": "ShopCrank-Demo-USB-${version}.${ext}",
   "publish": null,
   "directories": {

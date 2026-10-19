@@ -2114,16 +2114,16 @@
   }
   function orderingPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4, icon: icon2 }) {
     const connected = Boolean(account.connected && account.username);
-    const status = connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>AutoZone Pro login saved</strong><span>${escapeHtml4(account.username)}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. MechPro encrypts them and does not put them on the work order.</span></div></div>`;
+    const status = connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>AutoZone Pro account on file</strong><span>${escapeHtml4(account.username)}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>No AutoZone Pro account on file</strong><span>An owner or admin can record the shop account. ShopCrank encrypts it and never shows or copies the password to anyone.</span></div></div>`;
     const form = canSave ? `<form id="autozone-login-form" class="form-grid">
         <label>Username<input name="username" autocomplete="off" value="${escapeHtml4(account.username || "")}" required /></label>
         <label>Password<input name="password" type="password" autocomplete="new-password" required /></label>
-        <button class="primary" type="submit">${icon2("save", 14)} Save AutoZone Pro login</button>
-        ${connected ? `<button class="secondary danger" type="button" id="autozone-disconnect">${icon2("log-out", 14)} Remove saved login</button>` : ""}
-      </form>` : '<p class="ops-note">Ask an owner or admin to save the shop AutoZone Pro login.</p>';
-    const unavailable = account.unavailable ? '<p class="login-error">Sign in to the shop account to store or copy the AutoZone Pro login.</p>' : "";
+        <button class="primary" type="submit">${icon2("save", 14)} Save AutoZone Pro account</button>
+        ${connected ? `<button class="secondary danger" type="button" id="autozone-disconnect">${icon2("log-out", 14)} Remove saved account</button>` : ""}
+      </form>` : '<p class="ops-note">Ask an owner or admin for your own AutoZone Pro user.</p>';
+    const unavailable = account.unavailable ? '<p class="login-error">Sign in to the shop account to see the AutoZone Pro account status.</p>' : "";
     return `<section class="settings-panel autozone-ordering">
-      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from MechPro. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon2("shopping-cart", 20)}</div>
+      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open AutoZone Pro from ShopCrank and sign in with your own AutoZone Pro user. Saved passwords are never displayed or copied to the browser. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon2("shopping-cart", 20)}</div>
       ${status}
       ${unavailable}
       ${form}
@@ -2161,8 +2161,56 @@
       connectedAt: record.connectedAt || null
     };
   }
+  function parsePartstechMoney(value2) {
+    if (value2 === null || value2 === void 0 || value2 === "") return null;
+    if (typeof value2 === "object") return parsePartstechMoney(value2.amount ?? value2.value);
+    const number = typeof value2 === "number" ? value2 : Number(String(value2).replace(/[$,\s]/g, ""));
+    return Number.isFinite(number) && number > 0 ? roundMoney2(number) : null;
+  }
+  function partstechLineToEstimateLines(line = {}) {
+    const quantity = Math.max(1, Math.trunc(Number(line.quantity) || 1));
+    const unitPrice = Math.max(0, Number(line.unitPrice) || 0);
+    const lines = [{
+      ...line,
+      type: "part",
+      source: "partstech",
+      quantity,
+      unitPrice,
+      total: roundMoney2(quantity * unitPrice),
+      priceStatus: line.priceStatus || (unitPrice > 0 ? "priced" : "pending"),
+      partstech: { partNumber: line.partNumber || "", ...line.partstech }
+    }];
+    const core = parsePartstechMoney(line.partstech?.coreCharge);
+    if (core) {
+      lines.push({
+        id: `${line.id}-core`,
+        type: "part",
+        description: `Core charge \u2014 ${line.description}`,
+        partNumber: line.partNumber ? `${line.partNumber}-CORE` : "",
+        quantity: line.quantity || 1,
+        unitPrice: core,
+        total: roundMoney2((line.quantity || 1) * core),
+        priceStatus: "priced",
+        approvalStatus: "pending",
+        source: "partstech",
+        partstech: { ...line.partstech, isCore: true }
+      });
+    }
+    return lines;
+  }
+  function partstechQuoteRowHtml(item, { escapeHtml: escapeHtml4 = (v) => String(v ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, money: money5 = (v) => `$${Number(v).toFixed(2)}`, canAdd = true } = {}) {
+    const price = item.priceStatus === "pending" ? '<span class="login-error">Price unavailable</span>' : escapeHtml4(money5(item.unitPrice));
+    const cost = item.partstech?.cost ? `<small>Cost ${escapeHtml4(money5(item.partstech.cost))}</small>` : "";
+    const core = item.partstech?.coreCharge ? `<small>+ core ${escapeHtml4(money5(item.partstech.coreCharge))}</small>` : "";
+    const stock = item.partstech?.availability?.label ? `<small>${escapeHtml4(item.partstech.availability.label)}</small>` : "";
+    return `<tr><td>${escapeHtml4(item.description)}${stock}</td><td>${escapeHtml4(item.partNumber)}</td><td>${price}${cost}${core}</td><td><button type="button" class="mini-action" data-add-pt-line="${escapeAttr4(item.id)}" ${canAdd ? "" : "disabled"}>Add to RO</button></td></tr>`;
+  }
+  function partstechPanelStatus(account = {}) {
+    if (account?.connected === true) return { ...account, connected: true, status: "connected", label: account.label || "PartsTech connected" };
+    return partstechConnectionStatus(account);
+  }
   function partstechPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
-    const status = partstechConnectionStatus(account);
+    const status = partstechPanelStatus(account);
     const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>User ${escapeHtml4(status.userId || "")}${status.storeId ? ` \xB7 store ${escapeHtml4(status.storeId)}` : ""}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Connect PartsTech with partner and user API keys. Search, quote, and order stay server-side; unconfigured shops fail closed.</span></div></div>`;
     const form = canSave ? `<form id="partstech-connect-form" class="form-grid">
         <label>Partner ID<input name="partnerId" autocomplete="off" value="${escapeHtml4(account.partnerId || "")}" required/></label>
@@ -2179,16 +2227,61 @@
       <label>Store ID<input name="storeId" value="${escapeHtml4(account.storeId || "")}" ${status.connected ? "" : "disabled"}/></label>
       <button class="primary" type="submit" ${status.connected ? "" : "disabled"}>${icon2("search", 14)} Quote parts</button>
     </form>
-    <div id="partstech-results" class="data-panel"></div>`;
+    <div id="partstech-results" class="data-panel"></div>
+    <div class="messaging-actions"><button class="secondary" type="button" id="partstech-order-ro" ${status.connected ? "" : "disabled"}>${icon2("shopping-cart", 14)} Order this RO's PartsTech parts</button><button class="secondary" type="button" id="partstech-order-status" ${status.connected ? "" : "disabled"}>${icon2("refresh-cw", 14)} Check order status</button></div>`;
     return `<section class="settings-panel partstech-ordering">
-    <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>PartsTech</h2><p>Search and quote parts through PartsTech, add lines to the estimate, then place the order. Credentials are encrypted in D1.</p></div>${icon2("package", 20)}</div>
+    <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>PartsTech</h2><p>Quote parts through PartsTech, add them to the selected repair order, then send that RO's parts to PartsTech checkout. Credentials are encrypted in D1.</p></div>${icon2("package", 20)}</div>
     ${banner}
     ${form}
     ${search}
   </section>`;
   }
+  var roundMoney2;
   var init_partstech = __esm({
     "src/modules/partstech.js"() {
+      roundMoney2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+    }
+  });
+
+  // src/modules/diagnostic-ai.js
+  function clean(value2, max) {
+    return String(value2 ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+  }
+  function diagnosticDraftToOrderLines(action = {}, { laborRate = 0, scanId = "", codes = [] } = {}) {
+    const draft = action.draft || action;
+    const tag = codes.length ? ` (${codes.slice(0, 6).join(", ")})` : "";
+    const parts = (draft.parts || []).slice(0, 20).map((part, index) => ({
+      id: `ai-diag-part-${index + 1}`,
+      type: "part",
+      description: clean(part.description, 300) || "Part",
+      notes: clean(part.notes, 500),
+      partNumber: clean(part.partNumber, 60),
+      quantity: Math.max(1, Math.trunc(Number(part.quantity) || 1)),
+      unitPrice: 0,
+      priceStatus: "pending",
+      source: "ai_diagnostics",
+      aiDiagnostics: { scanId }
+    }));
+    const labor = (draft.labor || []).slice(0, 10).map((item, index) => ({
+      id: `ai-diag-labor-${index + 1}`,
+      type: "labor",
+      description: clean(item.description, 300) || "Diagnostic labor",
+      notes: clean(item.notes, 500),
+      hours: Math.min(40, Math.max(0, Number(item.hours) || 0)),
+      laborRate: Math.max(0, Number(laborRate) || 0),
+      laborSource: `AI suggestion from scan${tag}; verify against the labor guide before authorization`,
+      source: "ai_diagnostics",
+      aiDiagnostics: { scanId }
+    }));
+    return [...labor, ...parts];
+  }
+  function estimateDraftAction(result = {}) {
+    return (Array.isArray(result.actions) ? result.actions : []).find((action) => action?.kind === "estimate_work_order_draft") || null;
+  }
+  var SYSTEMS;
+  var init_diagnostic_ai = __esm({
+    "src/modules/diagnostic-ai.js"() {
+      SYSTEMS = Object.freeze({ P: "Powertrain", B: "Body", C: "Chassis", U: "Network/communication" });
     }
   });
 
@@ -2369,16 +2462,110 @@
     const selectedProvider = activeProvider === "anthropic" ? "anthropic" : "gemini";
     const selectedConsoleUrl = providerConsoleUrl(selectedProvider);
     const providerOptions = `<label class="full">AI provider<select name="provider" required><option value="anthropic"${selectedProvider === "anthropic" ? " selected" : ""}>Anthropic Claude</option><option value="gemini"${selectedProvider === "gemini" ? " selected" : ""}>Google Gemini</option></select></label>`;
-    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off">${providerOptions}<label class="full">API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "AIza..." : "sk-ant-..."}" required/></label><label class="full">Model (optional)<input name="model" type="text" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "gemini-3.8-flash" : "claude-sonnet-5"}"/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">Shop Crank tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
-    return `<section class="settings-panel shop-ai-settings" id="shop-ai-settings"><div class="statement-head"><div><div class="eyebrow">AI</div><h2>Shop Crank AI provider</h2><p>${escapeHtml4(SHOP_AI_PROMPT)}</p><p><a href="${status.consoleUrl || selectedConsoleUrl}" target="_blank" rel="noopener noreferrer">Get an API key for ${selectedProvider === "gemini" ? "Google Gemini at aistudio.google.com" : "Anthropic at console.anthropic.com"}</a></p></div>${icon2("sparkles", 20)}</div>${statusHtml}${errorHtml}${unavailableHtml}${form}</section>`;
+    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off">${providerOptions}<label class="full">API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "AIza..." : "sk-ant-..."}" required/></label><label class="full">Model (optional)<input name="model" type="text" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "gemini-3.8-flash" : "claude-sonnet-5"}"/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">ShopCrank tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
+    return `<section class="settings-panel shop-ai-settings" id="shop-ai-settings"><div class="statement-head"><div><div class="eyebrow">AI</div><h2>ShopCrank AI provider</h2><p>${escapeHtml4(SHOP_AI_PROMPT)}</p><p><a href="${status.consoleUrl || selectedConsoleUrl}" target="_blank" rel="noopener noreferrer">Get an API key for ${selectedProvider === "gemini" ? "Google Gemini at aistudio.google.com" : "Anthropic at console.anthropic.com"}</a></p></div>${icon2("sparkles", 20)}</div>${statusHtml}${errorHtml}${unavailableHtml}${form}</section>`;
   }
   var ANTHROPIC_CONSOLE_URL, GEMINI_CONSOLE_URL, SHOP_AI_PROMPT, MASK;
   var init_shop_ai_settings = __esm({
     "src/modules/shop-ai-settings.js"() {
       ANTHROPIC_CONSOLE_URL = "https://console.anthropic.com/settings/keys";
       GEMINI_CONSOLE_URL = "https://aistudio.google.com/app/apikey";
-      SHOP_AI_PROMPT = "Gemini is included with your Shop Crank subscription. If you prefer, you can switch this shop to your own Claude (Anthropic) or Gemini key at any time.";
+      SHOP_AI_PROMPT = "Gemini is included with your ShopCrank subscription. If you prefer, you can switch this shop to your own Claude (Anthropic) or Gemini key at any time.";
       MASK = "\u2022\u2022\u2022\u2022";
+    }
+  });
+
+  // src/modules/quickbooks.js
+  function quickbooksConnectionStatus(record) {
+    if (!record || typeof record !== "object") {
+      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
+    }
+    const connected = Boolean(record.realmId && (record.refreshToken || record.accessToken));
+    if (!connected) {
+      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
+    }
+    return {
+      connected: true,
+      status: "connected",
+      label: "QuickBooks Online connected",
+      realmId: record.realmId,
+      connectedAt: record.connectedAt || null,
+      tokenExpiresAt: record.tokenExpiresAt || null
+    };
+  }
+  function quickbooksPanelStatus(account = {}) {
+    if (account?.connected === true) return { ...account, connected: true, status: "connected", label: account.label || "QuickBooks Online connected" };
+    return quickbooksConnectionStatus(account);
+  }
+  function quickbooksPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
+    const status = quickbooksPanelStatus(account);
+    const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Company ${escapeHtml4(status.realmId || "")}</span></div></div>` : `<div class="messaging-status idle">${icon2("landmark", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Connect QuickBooks Online with OAuth 2.0. Sync stays fail-closed until authorized.</span></div></div>`;
+    const actions = canSave ? `<div class="messaging-actions">
+        ${status.connected ? `<button class="secondary" type="button" id="qbo-sync-now">${icon2("refresh-cw", 14)} Sync customers / invoices / payments</button>
+             <button class="secondary danger" type="button" id="qbo-disconnect">${icon2("log-out", 14)} Disconnect QuickBooks</button>` : `<button class="primary" type="button" id="qbo-connect">${icon2("link", 14)} Connect QuickBooks Online</button>`}
+      </div>` : '<p class="ops-note">Ask an owner or admin to connect QuickBooks Online.</p>';
+    return `<section class="settings-panel quickbooks-panel">
+    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>QuickBooks Online</h2><p>OAuth connect/disconnect and idempotent sync of customers, invoices, and payments.</p></div>${icon2("book", 20)}</div>
+    ${banner}
+    ${actions}
+    <div id="qbo-sync-status" class="ops-note"></div>
+  </section>`;
+  }
+  var init_quickbooks = __esm({
+    "src/modules/quickbooks.js"() {
+    }
+  });
+
+  // src/modules/revenue-recognition.js
+  function revrecStatusLabel(status = {}) {
+    if (status.unavailable) return "Revenue Recognition sync unavailable";
+    if (!status.stripeConfigured) return "Connect shop Stripe payments first";
+    if (!status.s3Configured) return "Platform S3 export is not configured yet";
+    if (status.enabled) return "Daily sync enabled";
+    return "Sync disabled";
+  }
+  function revrecReady(status = {}) {
+    return Boolean(status.stripeConfigured && status.s3Configured);
+  }
+  function revenueRecognitionPanelHtml(status = {}, {
+    canSave = false,
+    escapeHtml: escapeHtml4 = (v) => String(v ?? ""),
+    icon: icon2 = () => ""
+  } = {}) {
+    const enabled = Boolean(status.enabled);
+    const ready = revrecReady(status);
+    const label2 = revrecStatusLabel(status);
+    const tone = enabled && ready && !status.lastError ? "ready" : "idle";
+    const lastExport = status.lastExportedAt ? new Date(status.lastExportedAt).toLocaleString() : "Never";
+    const lastError = status.lastError ? `<p class="login-error">${escapeHtml4(status.lastError)}</p>` : "";
+    const folder = status.folderHint || (status.shopId ? `revrec/${status.shopId}/general/` : "revrec/{shopId}/general/");
+    const banner = `<div class="messaging-status ${tone}">${icon2(enabled && ready ? "circle-check" : "landmark", 17)}<div><strong>${escapeHtml4(label2)}</strong><span>Last export: ${escapeHtml4(lastExport)}${status.lastObjectKey ? ` \xB7 ${escapeHtml4(status.lastObjectKey)}` : ""}</span></div></div>`;
+    const checklist = `<ol class="ops-note revrec-checklist">
+    <li>Enable Stripe Revenue Recognition on this shop's Stripe account.</li>
+    <li>In Stripe Dashboard \u2192 Data Management, add an Amazon S3 connector.</li>
+    <li>Point the connector at folder <code>${escapeHtml4(folder)}</code> and map it to Revenue Recognition general import.</li>
+    <li>Turn on sync below. ShopCrank writes a CSV there daily at 06:00 UTC.</li>
+  </ol>`;
+    const actions = canSave ? `<form class="form-grid" id="revrec-config-form">
+        <label class="toggle-field full"><input type="checkbox" name="enabled" ${enabled ? "checked" : ""}/><span>Sync cash / check / bank payments and service periods to Stripe Revenue Recognition</span></label>
+        <label>Currency<input name="currency" maxlength="3" value="${escapeHtml4(status.currency || "usd")}"/></label>
+        <div class="full messaging-actions">
+          <button class="primary" type="submit">${icon2("save", 14)} Save sync settings</button>
+          <button class="secondary" type="button" id="revrec-export-now" ${ready ? "" : "disabled"}>${icon2("upload", 14)} Export now</button>
+          <button class="secondary" type="button" id="revrec-download-csv">${icon2("download", 14)} Download CSV</button>
+        </div>
+      </form>` : '<p class="ops-note">Ask an owner or admin to enable Revenue Recognition sync.</p>';
+    return `<section class="settings-panel revrec-panel">
+    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>Stripe Revenue Recognition</h2><p>Import non-Stripe payments and recognition service periods into this shop's Stripe RevRec reports.</p></div>${icon2("book-open", 20)}</div>
+    ${banner}
+    ${lastError}
+    ${checklist}
+    ${actions}
+    <div id="revrec-sync-status" class="ops-note"></div>
+  </section>`;
+  }
+  var init_revenue_recognition = __esm({
+    "src/modules/revenue-recognition.js"() {
     }
   });
 
@@ -2405,7 +2592,7 @@
     const unitPrice = Math.max(0, Number(line.unitPrice ?? (type === "part" ? line.price : type === "fee" ? line.amount : line.laborRate)) || 0);
     const hours = type === "labor" ? Math.max(0, Number(line.hours ?? quantity) || 0) : 0;
     const laborRate = type === "labor" ? Math.max(0, Number(line.laborRate ?? unitPrice) || 0) : 0;
-    const total = type === "labor" ? roundMoney2(hours * laborRate) : roundMoney2(quantity * unitPrice);
+    const total = type === "labor" ? roundMoney3(hours * laborRate) : roundMoney3(quantity * unitPrice);
     return {
       ...line,
       id: String(line.id || `line-${index + 1}`),
@@ -2444,27 +2631,27 @@
     const normalizedFees = fees.map((fee) => ({
       ...fee,
       description: String(fee.description || "Fee"),
-      amount: roundMoney2(Math.max(0, Number(fee.amount) || 0))
+      amount: roundMoney3(Math.max(0, Number(fee.amount) || 0))
     }));
-    const labor = roundMoney2(billableLines.filter((line) => line.type === "labor").reduce((sum, line) => sum + line.total, 0));
-    const parts = roundMoney2(billableLines.filter((line) => line.type === "part").reduce((sum, line) => sum + line.total, 0));
-    const lineFees = roundMoney2(billableLines.filter((line) => line.type === "fee").reduce((sum, line) => sum + line.total, 0));
-    const feeTotal = roundMoney2(lineFees + normalizedFees.reduce((sum, fee) => sum + fee.amount, 0));
-    const subtotal = roundMoney2(labor + parts + feeTotal);
+    const labor = roundMoney3(billableLines.filter((line) => line.type === "labor").reduce((sum, line) => sum + line.total, 0));
+    const parts = roundMoney3(billableLines.filter((line) => line.type === "part").reduce((sum, line) => sum + line.total, 0));
+    const lineFees = roundMoney3(billableLines.filter((line) => line.type === "fee").reduce((sum, line) => sum + line.total, 0));
+    const feeTotal = roundMoney3(lineFees + normalizedFees.reduce((sum, fee) => sum + fee.amount, 0));
+    const subtotal = roundMoney3(labor + parts + feeTotal);
     const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-    const tax = roundMoney2(subtotal * safeTaxRate / 100);
+    const tax = roundMoney3(subtotal * safeTaxRate / 100);
     return {
       lines: normalizedLines,
       fees: normalizedFees,
       labor,
-      laborHours: roundMoney2(billableLines.reduce((sum, line) => sum + line.hours, 0)),
+      laborHours: roundMoney3(billableLines.reduce((sum, line) => sum + line.hours, 0)),
       parts,
       lineFees,
       feeTotal,
       subtotal,
       taxRate: safeTaxRate,
       tax,
-      total: roundMoney2(subtotal + tax)
+      total: roundMoney3(subtotal + tax)
     };
   }
   function calculateShopTotals(lines, estimate, { repriceSupplies = false } = {}) {
@@ -2473,7 +2660,7 @@
     let totals = calculateEstimate(lines, taxRate, fees);
     const hasSuppliesFee = fees.some((fee) => /shop supplies/i.test(fee.description));
     if (repriceSupplies && hasSuppliesFee) {
-      const supplies = totals.labor > 0 ? roundMoney2(Math.min(
+      const supplies = totals.labor > 0 ? roundMoney3(Math.min(
         SHOP_SUPPLIES_RULES.shopSuppliesCap,
         totals.labor * SHOP_SUPPLIES_RULES.shopSuppliesRate / 100
       )) : 0;
@@ -2481,9 +2668,9 @@
       totals = calculateEstimate(lines, taxRate, fees);
     }
     const discountPercent = Math.min(100, Math.max(0, Number(estimate.discountPercent) || 0));
-    const discountAmount = roundMoney2(totals.subtotal * discountPercent / 100);
-    const subtotal = roundMoney2(totals.subtotal - discountAmount);
-    const tax = roundMoney2(subtotal * taxRate / 100);
+    const discountAmount = roundMoney3(totals.subtotal * discountPercent / 100);
+    const subtotal = roundMoney3(totals.subtotal - discountAmount);
+    const tax = roundMoney3(subtotal * taxRate / 100);
     return {
       ...totals,
       grossSubtotal: totals.subtotal,
@@ -2492,7 +2679,7 @@
       discountAmount,
       subtotal,
       tax,
-      total: roundMoney2(subtotal + tax)
+      total: roundMoney3(subtotal + tax)
     };
   }
   function approvedEstimate(estimate = {}, decisions = {}) {
@@ -2519,7 +2706,7 @@
     const number = `INV-${String(order.id || issuedAt.getTime()).replace(/^RO-/i, "").replace(/[^A-Za-z0-9-]/g, "")}`;
     const due = new Date(issuedAt);
     due.setDate(due.getDate() + 14);
-    const amount = source.lines?.length ? estimate.total : roundMoney2(order.total ?? estimate.total);
+    const amount = source.lines?.length ? estimate.total : roundMoney3(order.total ?? estimate.total);
     return {
       id: number,
       number,
@@ -2569,6 +2756,31 @@
       updatedAt: order.updatedAt
     };
   }
+  function ordersAcceptingEstimateLines(orders2 = []) {
+    return orders2.filter((order) => order?.id && !CLOSED_ORDER_STATUSES.has(String(order.status || "").toLowerCase()));
+  }
+  function appendEstimateLinesToOrder(order = {}, newLines = [], { editedAt = (/* @__PURE__ */ new Date()).toISOString(), taxRate } = {}) {
+    if (!order?.id) throw new TypeError("Select a repair order first");
+    if (CLOSED_ORDER_STATUSES.has(String(order.status || "").toLowerCase())) {
+      throw new TypeError(`${order.id} is ${order.status}; reopen it before adding lines`);
+    }
+    const estimate = order.estimate || {};
+    const existing = Array.isArray(estimate.lines) ? estimate.lines : [];
+    const usedIds = new Set(existing.map((line) => String(line.id)));
+    const additions = (Array.isArray(newLines) ? newLines : [newLines]).filter(Boolean).map((line, index) => {
+      const base = String(line.id || `line-${existing.length + index + 1}`);
+      let id = base;
+      for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${base}-${suffix}`;
+      usedIds.add(id);
+      return { ...line, id, approvalStatus: "pending", addedAt: editedAt };
+    });
+    if (!additions.length) return order;
+    return workOrderWithEditedEstimate(order, {
+      ...estimate,
+      taxRate: estimate.taxRate ?? taxRate ?? 0,
+      lines: [...existing, ...additions]
+    }, editedAt);
+  }
   function invoiceWithEditedWorkOrder(invoice = {}, order = {}, editedAt = (/* @__PURE__ */ new Date()).toISOString()) {
     const source = order.estimate || {};
     const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || []);
@@ -2585,10 +2797,10 @@
       revisedAt: editedAt
     };
   }
-  var roundMoney2, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET;
+  var roundMoney3, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET, CLOSED_ORDER_STATUSES;
   var init_estimate_workflow = __esm({
     "src/modules/estimate-workflow.js"() {
-      roundMoney2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      roundMoney3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
       SHOP_SUPPLIES_RULES = Object.freeze({
         shopSuppliesRate: 3,
         shopSuppliesCap: 20
@@ -2601,1683 +2813,7 @@
         unitPrice: 200,
         amount: 200
       });
-    }
-  });
-
-  // src/modules/estimate-templates.js
-  function calculateShopEstimate(lines = [], {
-    taxRate = 0,
-    laborRate = 0,
-    discountPercent = 0,
-    discountReason = "",
-    shopSupplies
-  } = {}) {
-    const normalizedLines = lines.map((line, index) => normalizeEstimateLine(
-      line.type === "labor" && line.laborRate == null ? { ...line, laborRate } : line,
-      index
-    ));
-    const labor = normalizedLines.filter((line) => line.type === "labor" && line.approvalStatus !== "declined").reduce((sum, line) => sum + line.total, 0);
-    const automaticSupplies = Math.min(
-      SHOP_SUPPLIES_RULES.shopSuppliesCap,
-      labor * SHOP_SUPPLIES_RULES.shopSuppliesRate / 100
-    );
-    const supplies = labor > 0 ? money(Math.min(SHOP_SUPPLIES_RULES.shopSuppliesCap, Math.max(0, shopSupplies ?? automaticSupplies))) : 0;
-    const base = calculateEstimate(
-      normalizedLines,
-      0,
-      supplies ? [{ description: "Shop supplies", amount: supplies }] : []
-    );
-    const safeDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
-    const discountAmount = money(base.subtotal * safeDiscountPercent / 100);
-    const subtotal = money(base.subtotal - discountAmount);
-    const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-    const tax = money(subtotal * safeTaxRate / 100);
-    return {
-      ...base,
-      grossSubtotal: base.subtotal,
-      discountPercent: safeDiscountPercent,
-      discountReason: String(discountReason || ""),
-      discountAmount,
-      subtotal,
-      taxRate: safeTaxRate,
-      tax,
-      total: money(subtotal + tax)
-    };
-  }
-  function workOrderDraftFromEstimate(estimate = REFERENCE_ESTIMATE) {
-    const customer = typeof estimate.customer === "object" ? estimate.customer : { name: estimate.customer };
-    const vehicle = typeof estimate.vehicle === "object" ? estimate.vehicle : { description: estimate.vehicle };
-    const insurance = estimate.insurance || {};
-    const laborSource = (estimate.lines || []).filter((line) => line.type === "labor").map((line) => line.notes || line.laborSource).filter(Boolean).join(" ");
-    const complaintParts = [
-      `Claimant: ${customer.name || "Not provided"}.`,
-      estimate.complaint,
-      insurance.company || insurance.policy ? `Insurance: ${insurance.company || "Carrier not provided"}; policy ${insurance.policy || "not provided"}; claim number ${insurance.claimNumber || "not yet assigned"}.` : "",
-      laborSource ? `Labor source: ${laborSource}` : ""
-    ].filter(Boolean);
-    return {
-      sourceEstimateNumber: estimate.number || "",
-      customer: customer.name || "",
-      phone: customer.phone || estimate.phone || "",
-      email: customer.email || estimate.email || "",
-      address: customer.address || "",
-      vehicle: vehicle.description || "",
-      vin: vehicle.vin || estimate.vin || "",
-      complaint: complaintParts.join("\n"),
-      requestedServices: (estimate.requestedServices || (estimate.lines || []).map((line) => line.description)).join("\n"),
-      estimate: calculateShopEstimate(estimate.lines || [], {
-        taxRate: estimate.taxRate,
-        laborRate: estimate.laborRate,
-        discountPercent: estimate.discountPercent,
-        discountReason: estimate.discountReason,
-        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount
-      }),
-      exclusions: estimate.exclusions || [],
-      insurance,
-      shopNotes: (estimate.shopNotes || []).map(String),
-      plate: vehicle.plate || ""
-    };
-  }
-  function estimateFromAssistantDraft(action = {}, { laborRate = 0, taxRate = 0, shopSupplies } = {}) {
-    const draft = action.draft || action;
-    const resolvedLaborRate = Math.max(0, Number(laborRate) || 0);
-    const partLines = (draft.parts || []).map((part, index) => ({
-      id: `assistant-part-${index + 1}`,
-      type: "part",
-      description: String(part.description || "Part"),
-      notes: String(part.notes || ""),
-      quantity: Math.max(0, Number(part.quantity) || 0),
-      unitPrice: Math.max(0, Number(part.unitPrice) || 0),
-      partNumber: String(part.partNumber || ""),
-      priceStatus: part.priceStatus === "pending" ? "pending" : "priced"
-    }));
-    const laborLines = (draft.labor || []).map((labor, index) => ({
-      id: `assistant-labor-${index + 1}`,
-      type: "labor",
-      description: String(labor.description || "Labor"),
-      notes: String(labor.notes || labor.source || ""),
-      hours: Math.max(0, Number(labor.hours) || 0),
-      laborRate: resolvedLaborRate,
-      laborSource: String(labor.source || "Customer conversation; verify before authorization")
-    }));
-    const feeLines = draft.afterMidnightFee ? [afterMidnightFeeLine("assistant-fee-after-midnight")] : [];
-    const totals = calculateShopEstimate([...partLines, ...laborLines, ...feeLines], {
-      laborRate: resolvedLaborRate,
-      taxRate,
-      discountPercent: draft.discountPercent,
-      discountReason: draft.discountReason,
-      shopSupplies
-    });
-    return {
-      id: `assistant-estimate-${Date.now()}`,
-      number: "",
-      status: "draft",
-      customer: {
-        name: String(draft.customer?.name || ""),
-        phone: String(draft.customer?.phone || ""),
-        email: String(draft.customer?.email || ""),
-        address: String(draft.customer?.address || "")
-      },
-      vehicle: {
-        description: String(draft.vehicle?.description || ""),
-        vin: String(draft.vehicle?.vin || ""),
-        plate: String(draft.vehicle?.plate || "")
-      },
-      complaint: String(draft.complaint || ""),
-      requestedServices: (draft.requestedServices || []).map(String),
-      exclusions: (draft.exclusions || []).map(String),
-      shopNotes: (draft.shopNotes || []).map(String),
-      lines: totals.lines,
-      ...totals
-    };
-  }
-  var money, REFERENCE_ESTIMATE_RULES, referenceLines, referenceTotals, REFERENCE_ESTIMATE;
-  var init_estimate_templates = __esm({
-    "src/modules/estimate-templates.js"() {
-      init_estimate_workflow();
-      money = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
-      REFERENCE_ESTIMATE_RULES = Object.freeze({ laborRate: 140, taxRate: 8.25 });
-      referenceLines = [
-        {
-          id: "part-headlamp",
-          type: "part",
-          description: "Passenger xenon headlamp",
-          notes: "Right side, xenon without adaptive. DEPO 3401157RMUSHM2.",
-          quantity: 1,
-          unitPrice: 493.79,
-          partNumber: "3401157RMUSHM2",
-          brand: "DEPO"
-        },
-        {
-          id: "part-fog-lamp",
-          type: "part",
-          description: "Passenger fog lamp",
-          notes: "Right side, without AMG styling package. TYC 19042100.",
-          quantity: 1,
-          unitPrice: 17.02,
-          partNumber: "19042100",
-          brand: "TYC"
-        },
-        {
-          id: "part-xenon-module",
-          type: "part",
-          description: "Xenon headlamp control module",
-          notes: "Listed as 222-900-33-00; confirm the module number before ordering.",
-          quantity: 1,
-          unitPrice: 116.4,
-          partNumber: "222-900-33-00"
-        },
-        {
-          id: "part-bumper",
-          type: "part",
-          description: "Front bumper cover",
-          notes: "Without AMG, without Parktronic, CAPA, primed. TECHPRO MB1000458.",
-          quantity: 1,
-          unitPrice: 362.79,
-          partNumber: "MB1000458",
-          brand: "TECHPRO"
-        },
-        {
-          id: "part-fender",
-          type: "part",
-          description: "Passenger front fender",
-          notes: "Front right, CAPA. TECHPRO MB1241149. Beyond repair.",
-          quantity: 1,
-          unitPrice: 374.79,
-          partNumber: "MB1241149",
-          brand: "TECHPRO"
-        },
-        {
-          id: "part-fender-covers",
-          type: "part",
-          description: "Upper and lower passenger fender covers",
-          notes: "Damaged; parts have not been matched to a listing and remain unpriced.",
-          quantity: 1,
-          unitPrice: 0,
-          priceStatus: "pending"
-        },
-        {
-          id: "labor-collision-repair",
-          type: "labor",
-          description: "Collision component replacement labor",
-          notes: "5.3 hours from Open Labor Project estimates for this vehicle: fender 3.7, headlamp 0.9, and one fender liner 0.7. These are not ALLDATA or Mitchell times, are not copied from a labor guide, and are not expert-verified.",
-          hours: 5.3,
-          laborRate: REFERENCE_ESTIMATE_RULES.laborRate,
-          laborSource: "Open Labor Project estimate"
-        }
-      ];
-      referenceTotals = calculateShopEstimate(referenceLines, {
-        taxRate: REFERENCE_ESTIMATE_RULES.taxRate,
-        discountPercent: 10,
-        discountReason: "Tech-student discount",
-        shopSupplies: 20
-      });
-      REFERENCE_ESTIMATE = Object.freeze({
-        id: "reference-estimate-est-2026-1004-01",
-        number: "EST-2026-1004-01",
-        date: "2026-10-04",
-        validThrough: "2026-10-18",
-        status: "draft",
-        template: true,
-        customer: {
-          name: "Jordan Example",
-          phone: "555-0100",
-          email: "customer@example.test",
-          address: "123 Example Street, Sample City, TX 00000",
-          role: "Claimant"
-        },
-        vehicle: {
-          description: "2016 Mercedes-Benz GLA250",
-          vin: "1M8GDM9AXKP042788",
-          plate: "DEMO-01"
-        },
-        insurance: {
-          company: "Example Insurance",
-          policy: "TEST-POLICY-001",
-          claimNumber: ""
-        },
-        complaint: "Deer collision. Claimant was not injured. No structural damage was found.",
-        inspectionNotes: "Passenger-side lighting, bumper, fender, and upper/lower fender covers are damaged.",
-        requestedServices: [
-          "Replace passenger xenon headlamp",
-          "Replace passenger fog lamp",
-          "Replace xenon headlamp control module",
-          "Replace front bumper cover",
-          "Replace passenger front fender",
-          "Replace upper and lower passenger fender covers (parts remain unpriced)"
-        ],
-        exclusions: [
-          "Paint is not included.",
-          "Upper and lower fender covers remain unpriced.",
-          "Hidden damage and any additional work require a revised estimate and customer authorization."
-        ],
-        shopNotes: [
-          "Obtain written authorization before sending the estimate or customer records.",
-          "Verify any billing or photo-delivery address with the customer before use."
-        ],
-        lines: referenceTotals.lines,
-        fees: referenceTotals.fees,
-        ...referenceTotals
-      });
-    }
-  });
-
-  // src/modules/technician-assignment.js
-  function classificationFor(user = {}) {
-    const explicit = String(user.classification || "").trim();
-    if (EMPLOYEE_CLASSIFICATIONS.some((item) => item.id === explicit)) return explicit;
-    if (user.role === "technician") return "technician";
-    if (user.role === "service_writer") return "service_writer";
-    if (user.role === "office") return "office";
-    return "custom";
-  }
-  function technicianName(user = {}) {
-    return String(user.techName || user.name || "").trim();
-  }
-  function isAssignableTechnician(user = {}) {
-    return user.active !== false && classificationFor(user) === "technician" && Boolean(technicianName(user));
-  }
-  function assignableTechnicians(users = []) {
-    return users.filter(isAssignableTechnician);
-  }
-  function clampShare(value2) {
-    const number = Number(value2);
-    if (!Number.isFinite(number) || number < 0) return 0;
-    return Math.min(100, Math.round(number * 100) / 100);
-  }
-  function normalizeAssignments(order = {}, users = []) {
-    const source = Array.isArray(order.assignments) ? order.assignments : [];
-    const cleaned = source.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean);
-    if (cleaned.length) return ensurePrimary(cleaned);
-    const legacy = String(order.tech || "").trim();
-    if (!legacy || legacy === "Unassigned") return [];
-    const match = users.find((user) => technicianName(user) === legacy);
-    return [{
-      id: `legacy-${order.id || "tech"}`,
-      employeeId: match?.id || null,
-      name: legacy,
-      role: "primary",
-      sharePercent: 100,
-      hoursWorked: hoursOf(order.laborHours),
-      writeIn: !match,
-      assignedAt: null
-    }];
-  }
-  function cleanAssignment(item = {}, index = 0, users = []) {
-    const employee = users.find((user) => item.employeeId && user.id === item.employeeId);
-    const name = String(employee ? technicianName(employee) : item.name || "").trim();
-    if (!name) return null;
-    return {
-      id: String(item.id || `asg-${index + 1}`),
-      employeeId: employee?.id || null,
-      name,
-      role: ROLES.includes(item.role) ? item.role : "secondary",
-      sharePercent: clampShare(item.sharePercent),
-      hoursWorked: hoursOf(item.hoursWorked),
-      writeIn: !employee,
-      assignedAt: item.assignedAt || null
-    };
-  }
-  function ensurePrimary(assignments) {
-    const withPrimary = assignments.some((item) => item.role === "primary") ? assignments : assignments.map((item, index) => index === 0 ? { ...item, role: "primary" } : item);
-    let seen = false;
-    const unique = withPrimary.map((item) => {
-      if (item.role !== "primary") return item;
-      if (seen) return { ...item, role: "secondary" };
-      seen = true;
-      return item;
-    });
-    return unique.sort((left, right) => Number(right.role === "primary") - Number(left.role === "primary"));
-  }
-  function applyAssignments(order = {}, assignments = [], users = []) {
-    const normalized = ensurePrimary(assignments.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean));
-    const primary = normalized.find((item) => item.role === "primary");
-    return {
-      ...order,
-      assignments: normalized,
-      tech: primary?.name || "Unassigned"
-    };
-  }
-  function orderIncludesTechnician(order = {}, user = {}, users = []) {
-    const name = technicianName(user);
-    if (!name && !user.id) return false;
-    return normalizeAssignments(order, users).some((item) => user.id && item.employeeId === user.id || name && item.name === name);
-  }
-  function clockedHours(clocks = [], workOrderId, userId) {
-    return hoursOf(clocks.filter((entry) => entry.workOrderId === workOrderId && entry.userId === userId && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
-  }
-  function shareFraction(assignments, assignment) {
-    const total = assignments.reduce((sum, item) => sum + (Number(item.sharePercent) || 0), 0);
-    if (!total) return assignments.length ? 1 / assignments.length : 0;
-    return (Number(assignment.sharePercent) || 0) / total;
-  }
-  function payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment) {
-    if (!employee) return 0;
-    if (employee.employmentType === "Salary" && plan === "hourly") return 0;
-    if (plan === "flat_rate" || plan === "team_split") return money2(laborRevenue * fraction);
-    if (plan === "commission") {
-      const percent = Number(employee.commissionPercent || assignment.sharePercent || 0);
-      return money2(laborRevenue * percent / 100);
-    }
-    return money2(usableHours * Number(employee.payRate || 0));
-  }
-  function payrollLinesForOrder({
-    order = {},
-    users = [],
-    clocks = [],
-    periodKey,
-    nowIso = null
-  } = {}) {
-    if (!["completed", "invoiced"].includes(order.status)) return [];
-    const assignments = normalizeAssignments(order, users);
-    if (!assignments.length) return [];
-    const laborRevenue = Number(order.labor || 0);
-    return assignments.flatMap((assignment) => {
-      const employee = users.find((user) => user.id === assignment.employeeId && user.active !== false) || null;
-      const tracked = employee ? clockedHours(clocks, order.id, employee.id) : 0;
-      const usableHours = hoursOf(tracked || assignment.hoursWorked || (assignment.role === "primary" ? order.laborHours : 0));
-      if (!usableHours) return [];
-      const plan = PAY_PLANS.some((item) => item.id === employee?.payPlan) ? employee.payPlan : "hourly";
-      const fraction = shareFraction(assignments, assignment);
-      const amount = payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment);
-      return [{
-        id: `${periodKey}#${order.id}#${assignment.id}`,
-        workOrderId: order.id,
-        employeeId: employee?.id || null,
-        technicianName: assignment.name,
-        role: assignment.role,
-        writeIn: !employee,
-        periodKey,
-        roNumber: order.id,
-        customer: order.customer || "",
-        vehicle: order.vehicle || "",
-        hours: usableHours,
-        rate: plan === "hourly" ? Number(employee?.payRate || 0) : 0,
-        amount,
-        grossPay: amount,
-        payPlan: employee ? plan : "unrated",
-        completedAt: nowIso
-      }];
-    });
-  }
-  function attributeClockHours(order, userId, clocks = [], users = []) {
-    const assignments = normalizeAssignments(order, users).map((item) => item.employeeId === userId ? { ...item, hoursWorked: clockedHours(clocks, order.id, userId) } : item);
-    const laborHours = hoursOf(clocks.filter((entry) => entry.workOrderId === order.id && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
-    return applyAssignments({ ...order, laborHours: laborHours || order.laborHours }, assignments, users);
-  }
-  function technicianPerformance(orders2 = [], users = [], clocks = []) {
-    const comebackTracked = orders2.some((order) => Object.prototype.hasOwnProperty.call(order, "comeback"));
-    return assignableTechnicians(users).map((user) => {
-      const mine = orders2.filter((order) => orderIncludesTechnician(order, user, users));
-      const completed = mine.filter((order) => ["completed", "invoiced"].includes(order.status));
-      const hours = hoursOf(completed.reduce((sum, order) => {
-        const tracked = clockedHours(clocks, order.id, user.id);
-        if (tracked) return sum + tracked;
-        const assignment = normalizeAssignments(order, users).find((item) => item.employeeId === user.id);
-        return sum + Number(assignment?.hoursWorked || (assignment?.role === "primary" ? order.laborHours : 0) || 0);
-      }, 0));
-      const revenue = money2(completed.reduce((sum, order) => sum + Number(order.labor || 0), 0));
-      const billedHours = hoursOf(completed.reduce((sum, order) => sum + Number(order.laborHours || 0), 0));
-      const efficiency = hours > 0 && billedHours > 0 ? Math.round(billedHours / hours * 1e3) / 10 : null;
-      const averageRepair = completed.length && hours ? hoursOf(hours / completed.length) : null;
-      const comebacks = comebackTracked ? completed.filter((order) => order.comeback === true).length : null;
-      return {
-        id: user.id,
-        name: technicianName(user),
-        open: mine.length - completed.length,
-        completed: completed.length,
-        hours,
-        revenue,
-        efficiency,
-        averageRepair,
-        comebacks,
-        averageTicket: completed.length ? money2(revenue / completed.length) : null
-      };
-    });
-  }
-  function escapeHtml2(value2) {
-    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    })[char]);
-  }
-  function technicianTrackerHtml(rows = []) {
-    const body = rows.map((row) => `<tr><td>${escapeHtml2(row.name)}</td><td>${row.open}</td><td>${row.completed}</td><td>${row.hours.toFixed(2)}</td><td>${currency(row.revenue)}</td><td>${row.efficiency == null ? "\u2014" : `${row.efficiency}%`}</td><td>${row.comebacks == null ? "\u2014" : row.comebacks}</td><td>${row.averageRepair == null ? "\u2014" : row.averageRepair.toFixed(2)}</td></tr>`).join("");
-    return `<section class="tech-tracker"><div class="home-panel-head"><div><h2>Technician performance</h2><p>Open jobs, completed jobs, clocked hours, and labor sold. Comebacks appear only after a job is marked as a comeback.</p></div></div><div class="data-panel"><table><thead><tr><th>Technician</th><th>Open</th><th>Completed</th><th>Hours</th><th>Labor sold</th><th>Efficiency</th><th>Comebacks</th><th>Avg hours</th></tr></thead><tbody>${body || '<tr><td colspan="8">No technicians are classified for assignment yet.</td></tr>'}</tbody></table></div></section>`;
-  }
-  function assignmentSummary(order = {}, users = []) {
-    const assignments = normalizeAssignments(order, users);
-    if (!assignments.length) return order.tech && order.tech !== "Unassigned" ? order.tech : "Unassigned";
-    const primary = assignments.find((item) => item.role === "primary") || assignments[0];
-    const extra = assignments.length - 1;
-    return extra > 0 ? `${primary.name} +${extra}` : primary.name;
-  }
-  var ROLES, EMPLOYEE_CLASSIFICATIONS, PAY_PLANS, money2, hoursOf, currency;
-  var init_technician_assignment = __esm({
-    "src/modules/technician-assignment.js"() {
-      ROLES = ["primary", "secondary", "apprentice"];
-      EMPLOYEE_CLASSIFICATIONS = [
-        { id: "technician", label: "Technician" },
-        { id: "service_writer", label: "Service Writer" },
-        { id: "parts_manager", label: "Parts Manager" },
-        { id: "shop_foreman", label: "Shop Foreman" },
-        { id: "office", label: "Office Staff" },
-        { id: "custom", label: "Custom" }
-      ];
-      PAY_PLANS = [
-        { id: "hourly", label: "Hourly" },
-        { id: "flat_rate", label: "Flat rate" },
-        { id: "commission", label: "Commission" },
-        { id: "team_split", label: "Team split" }
-      ];
-      money2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
-      hoursOf = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
-      currency = (value2) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value2) || 0);
-    }
-  });
-
-  // src/modules/intake-wizard.js
-  function escapeHtml3(value2) {
-    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    })[char]);
-  }
-  function escapeAttr3(value2) {
-    return escapeHtml3(value2);
-  }
-  function emptyIntakeDraft(now2 = /* @__PURE__ */ new Date()) {
-    return {
-      id: `intake-${now2.getTime()}`,
-      step: 0,
-      savedAt: null,
-      status: "draft",
-      customer: {
-        firstName: "",
-        lastName: "",
-        phone: "",
-        email: "",
-        company: "",
-        secondaryPhone: "",
-        address: "",
-        city: "",
-        state: "",
-        zip: "",
-        contact: { phone: true, text: false, email: true }
-      },
-      vehicle: {
-        vin: "",
-        plate: "",
-        plateState: "",
-        year: "",
-        make: "",
-        model: "",
-        trim: "",
-        engine: "",
-        transmission: "",
-        mileage: "",
-        color: ""
-      },
-      photos: [],
-      damage: [],
-      concern: {
-        description: "",
-        began: "",
-        frequency: "",
-        lights: "",
-        recentRepairs: "",
-        accident: "",
-        towed: "",
-        overheating: ""
-      },
-      diagnosis: {
-        visual: "",
-        roadTest: "",
-        fluids: "",
-        battery: "",
-        codes: "",
-        notes: "",
-        cause: "",
-        correction: "",
-        severity: "",
-        analysis: null
-      },
-      estimate: { lines: [], diagnosticCharge: 0, approval: "pending" },
-      aiFilledFields: {},
-      assignments: []
-    };
-  }
-  function customerDisplayName(draft = {}) {
-    const customer = draft.customer || {};
-    const person = [customer.firstName, customer.lastName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
-    const company = String(customer.company || "").trim();
-    if (person && company) return `${person} (${company})`;
-    return person || company;
-  }
-  function vehicleLabel(draft = {}) {
-    const vehicle = draft.vehicle || {};
-    return [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
-  }
-  function missingCustomerFields(draft = {}) {
-    const customer = draft.customer || {};
-    return ["firstName", "lastName", "phone", "email"].filter((field2) => !String(customer[field2] || "").trim());
-  }
-  function missingVehicleFields(draft = {}) {
-    const vehicle = draft.vehicle || {};
-    const identity = vehicleLabel(draft);
-    const missing = [];
-    if (!identity && !String(vehicle.vin || "").trim()) missing.push("vehicle");
-    return missing;
-  }
-  function missingRequiredPhotos(draft = {}) {
-    const taken = new Set((draft.photos || []).map((photo) => photo.slot));
-    return REQUIRED_PHOTO_SLOTS.filter((slot) => !taken.has(slot.id)).map((slot) => slot.label);
-  }
-  function applyVinDecode(draft, decoded = {}) {
-    const vehicle = { ...draft.vehicle };
-    const fill = (field2, value2) => {
-      if (!String(vehicle[field2] || "").trim() && String(value2 || "").trim()) vehicle[field2] = String(value2).trim();
-    };
-    fill("year", decoded.year);
-    fill("make", decoded.make);
-    fill("model", decoded.model);
-    fill("trim", decoded.trim);
-    const engine = [decoded.engineDisplacementLiters ? `${decoded.engineDisplacementLiters}L` : "", decoded.engineCylinders ? `${decoded.engineCylinders} cyl` : ""].filter(Boolean).join(" ");
-    fill("engine", engine);
-    if (decoded.vin) vehicle.vin = String(decoded.vin).toUpperCase();
-    return { ...draft, vehicle };
-  }
-  function applyAiAutofill(draft, formType, data = {}) {
-    const next = structuredClone(draft || emptyIntakeDraft());
-    next.aiFilledFields = { ...next.aiFilledFields || {} };
-    const markFilled = (path, value2) => {
-      const clean = String(value2 ?? "").trim();
-      if (!clean) return false;
-      next.aiFilledFields[path] = true;
-      return true;
-    };
-    if (formType === "vehicle_intake") {
-      const mapping = [
-        ["vin", data.vin ? String(data.vin).toUpperCase() : ""],
-        ["plate", data.plate ? String(data.plate).toUpperCase() : ""],
-        ["plateState", data.plate_state || data.plateState || ""],
-        ["year", data.year],
-        ["make", data.make],
-        ["model", data.model],
-        ["trim", data.trim],
-        ["engine", data.engine],
-        ["mileage", data.mileage],
-        ["color", data.color]
-      ];
-      for (const [key, value2] of mapping) {
-        if (markFilled(`vehicle.${key}`, value2)) {
-          next.vehicle[key] = String(value2).trim();
-        }
-      }
-      return next;
-    }
-    if (formType === "diagnostic_3c") {
-      if (markFilled("concern.description", data.complaint)) {
-        next.concern.description = String(data.complaint).trim();
-      }
-      if (markFilled("diagnosis.cause", data.cause)) {
-        next.diagnosis.cause = String(data.cause).trim();
-      }
-      if (markFilled("diagnosis.correction", data.correction)) {
-        next.diagnosis.correction = String(data.correction).trim();
-      }
-      if (markFilled("diagnosis.severity", data.severity)) {
-        next.diagnosis.severity = String(data.severity).trim();
-      }
-      if (Array.isArray(data.dtc_codes) && data.dtc_codes.length) {
-        const codes = data.dtc_codes.join(", ");
-        if (markFilled("diagnosis.codes", codes)) {
-          next.diagnosis.codes = codes;
-        }
-      }
-    }
-    if (formType === "dvi_estimate") {
-      if (Array.isArray(data.checklist_items) && data.checklist_items.length) {
-        const formatted = data.checklist_items.map((item) => `[${item.status || "YELLOW"}] ${item.component}: ${item.notes || ""}${item.measurement ? ` (${item.measurement})` : ""}`).join("\n");
-        if (markFilled("diagnosis.visual", formatted)) {
-          next.diagnosis.visual = formatted;
-        }
-      }
-    }
-    if (Array.isArray(data.suggested_line_items) && data.suggested_line_items.length) {
-      const mappedLines = data.suggested_line_items.map((item) => {
-        const rawType = String(item.item_type || "LABOR").toUpperCase();
-        const isPart = rawType === "PART";
-        return {
-          type: isPart ? "part" : "labor",
-          description: String(item.description || "").trim(),
-          quantity: isPart ? Math.max(1, Number(item.quantity) || 1) : Math.max(0.1, Number(item.estimated_hours || item.quantity) || 1),
-          unitPrice: 0,
-          partNumber: item.part_number || null,
-          source: "Filled by AI",
-          aiFilled: true
-        };
-      }).filter((line) => line.description);
-      if (mappedLines.length) {
-        next.estimate.lines = mappedLines;
-        next.aiFilledFields["estimate.lines"] = true;
-      }
-    }
-    return next;
-  }
-  function acceptAllAiFields(draft) {
-    const next = structuredClone(draft || emptyIntakeDraft());
-    next.aiFilledFields = {};
-    if (Array.isArray(next.estimate?.lines)) {
-      next.estimate.lines = next.estimate.lines.map((line) => ({ ...line, aiFilled: false }));
-    }
-    return next;
-  }
-  function searchLaborGuide(query2 = "", services = CANNED_MENU) {
-    const needle = String(query2 || "").trim().toLowerCase();
-    if (needle.length < 2) return [];
-    const shopHits = MECHPRO_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "MechPro guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
-    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "MechPro guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
-    return [...shopHits, ...canned].slice(0, 8);
-  }
-  function seedEstimateLines(draft = {}) {
-    if (Array.isArray(draft.estimate?.lines) && draft.estimate.lines.length) return draft.estimate.lines;
-    const hits = searchLaborGuide(draft.concern?.description || "");
-    const lines = hits.slice(0, 2).map((hit) => ({
-      type: "labor",
-      description: hit.name,
-      quantity: hit.hours || 1,
-      unitPrice: 0,
-      notes: hit.notes,
-      source: hit.source
-    }));
-    const charge = Number(draft.estimate?.diagnosticCharge || 0);
-    if (charge > 0) {
-      lines.unshift({ type: "labor", description: "Diagnostic charge", quantity: 1, unitPrice: charge, notes: "Initial diagnosis", source: "Shop" });
-    }
-    if (!lines.length) {
-      lines.push({
-        type: "labor",
-        description: String(draft.concern?.description || "Diagnose customer concern").slice(0, 120),
-        quantity: 1,
-        unitPrice: 0,
-        notes: "Hours stay at 1 until the technician confirms the job.",
-        source: "Shop"
-      });
-    }
-    return lines;
-  }
-  function priceIntakeEstimate(draft = {}, { laborRate = 165, taxRate = 0 } = {}) {
-    const lines = seedEstimateLines(draft).map((line) => ({
-      type: line.type === "part" ? "part" : "labor",
-      description: line.description,
-      quantity: Math.max(0, Number(line.quantity) || 0),
-      unitPrice: line.type === "part" ? Number(line.unitPrice) || 0 : void 0,
-      laborRate: line.type === "part" ? void 0 : Number(line.unitPrice) > 0 ? Number(line.unitPrice) : laborRate,
-      notes: line.notes || ""
-    }));
-    const priced = calculateShopEstimate(lines, { laborRate, taxRate });
-    return { ...priced, disclaimer: INTAKE_DISCLAIMER, lines };
-  }
-  function localDiagnosticChecklist(draft = {}) {
-    const text = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
-    const causes = [];
-    if (/misfire|stall|p030/.test(text)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
-    if (/p0171|lean|vacuum/.test(text)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
-    if (/p0420|catalyst/.test(text)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
-    if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
-    return {
-      source: "shop-checklist",
-      notice: "MechPro AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
-      causes
-    };
-  }
-  function phoneDigits(value2) {
-    const digits = String(value2 || "").replace(/\D/g, "");
-    return digits.length > 10 ? digits.slice(-10) : digits;
-  }
-  function findIntakeCustomer(customers2 = [], draft = {}) {
-    const phone = phoneDigits(draft.customer?.phone);
-    const email = String(draft.customer?.email || "").trim().toLowerCase();
-    return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
-  }
-  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
-    const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
-    const approval = draft.estimate?.approval || "pending";
-    const status = approval === "approved" ? "approved" : "estimate";
-    const assigned = applyAssignments({ id }, draft.assignments || [], users);
-    return {
-      id,
-      customer: customerDisplayName(draft),
-      phone: String(draft.customer?.phone || "").trim(),
-      vehicle: vehicleLabel(draft) || "Vehicle pending",
-      vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
-      complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
-      status,
-      priority: "normal",
-      tech: assigned.tech,
-      assignments: assigned.assignments,
-      bay: "Unassigned",
-      mobile: false,
-      promise: "",
-      notes: [draft.diagnosis?.notes, draft.concern?.recentRepairs ? `Recent repairs: ${draft.concern.recentRepairs}` : ""].filter(Boolean).join("\n"),
-      labor: priced.labor,
-      laborHours: priced.lines.filter((line) => line.type === "labor").reduce((sum, line) => sum + Number(line.quantity || 0), 0),
-      parts: priced.parts,
-      tax: priced.tax,
-      total: priced.total,
-      estimate: {
-        lines: priced.lines,
-        disclaimer: INTAKE_DISCLAIMER,
-        approvalStatus: approval
-      },
-      intake: {
-        id: draft.id,
-        status: "checked_in",
-        customer: draft.customer,
-        vehicle: draft.vehicle,
-        photos: draft.photos || [],
-        damage: draft.damage || [],
-        concern: draft.concern,
-        diagnosis: draft.diagnosis,
-        disclaimer: INTAKE_DISCLAIMER,
-        approval
-      }
-    };
-  }
-  function serializableIntake(draft = {}) {
-    return {
-      ...draft,
-      photos: (draft.photos || []).map((photo) => {
-        const copy = { ...photo };
-        delete copy.file;
-        return copy;
-      })
-    };
-  }
-  function canConvertIntake(draft = {}) {
-    const problems = [];
-    if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
-    if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
-    if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
-    return { ok: problems.length === 0, problems };
-  }
-  function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
-    const badge2 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
-    const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
-    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge2}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
-  }
-  function aiAcceptBanner(draft, prefix) {
-    const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
-    if (!filledKeys.length) return "";
-    return `<div class="ai-review-banner" role="status"><span><strong>Filled by AI</strong> \u2014 Review highlighted fields before saving.</span><button type="button" class="secondary" id="intake-ai-accept-all">Accept All</button></div>`;
-  }
-  function progress(step) {
-    return `<ol class="intake-progress">${INTAKE_STEPS.map((item, index) => `<li class="${index === step ? "current" : ""} ${index < step ? "done" : ""}"><span>${index + 1}</span>${escapeHtml3(item.label)}</li>`).join("")}</ol>`;
-  }
-  function savedStamp(draft) {
-    if (!draft.savedAt) return '<span class="intake-save">Not saved yet</span>';
-    const time = new Date(draft.savedAt);
-    const label2 = Number.isNaN(time.getTime()) ? "" : time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    return `<span class="intake-save">Draft saved${label2 ? ` ${escapeHtml3(label2)}` : ""}</span>`;
-  }
-  function customerStep(draft) {
-    const customer = draft.customer;
-    const contact = customer.contact || {};
-    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { required: true, type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
-<fieldset class="intake-choices"><legend>Communication preferences</legend>${["phone", "text", "email"].map((key) => `<label><input type="checkbox" name="contact-${key}" ${contact[key] ? "checked" : ""}/> ${key[0].toUpperCase()}${key.slice(1)}</label>`).join("")}</fieldset>`;
-  }
-  function vehicleStep(draft) {
-    const vehicle = draft.vehicle;
-    const ai = draft.aiFilledFields || {};
-    return `${aiAcceptBanner(draft, "vehicle.")}<div class="form-grid">${field("vin", "VIN", vehicle.vin, { full: true, aiFilled: Boolean(ai["vehicle.vin"]) })}${field("plate", "License plate", vehicle.plate, { aiFilled: Boolean(ai["vehicle.plate"]) })}${field("plateState", "Plate state", vehicle.plateState, { aiFilled: Boolean(ai["vehicle.plateState"]) })}${field("year", "Year", vehicle.year, { aiFilled: Boolean(ai["vehicle.year"]) })}${field("make", "Make", vehicle.make, { aiFilled: Boolean(ai["vehicle.make"]) })}${field("model", "Model", vehicle.model, { aiFilled: Boolean(ai["vehicle.model"]) })}${field("trim", "Trim", vehicle.trim, { aiFilled: Boolean(ai["vehicle.trim"]) })}${field("engine", "Engine", vehicle.engine, { aiFilled: Boolean(ai["vehicle.engine"]) })}${field("transmission", "Transmission", vehicle.transmission, { aiFilled: Boolean(ai["vehicle.transmission"]) })}${field("mileage", "Mileage", vehicle.mileage, { aiFilled: Boolean(ai["vehicle.mileage"]) })}${field("color", "Color", vehicle.color, { aiFilled: Boolean(ai["vehicle.color"]) })}</div>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button><label class="secondary">Scan VIN / Odometer photo (AI)<input id="intake-autofill-vehicle-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
-<p class="form-help" id="intake-vehicle-note">Plate lookup stays off until a DMV, Carfax, or registration provider is connected. VIN decode uses the shop vehicle decode service.</p>`;
-  }
-  function photoStep(draft) {
-    const slots = [...REQUIRED_PHOTO_SLOTS, ...EXTRA_PHOTO_SLOTS.filter((slot) => slot.id !== "extra")];
-    const cards = slots.map((slot) => {
-      const photos = (draft.photos || []).filter((photo) => photo.slot === slot.id);
-      const required = REQUIRED_PHOTO_SLOTS.some((item) => item.id === slot.id);
-      return `<article class="intake-photo ${photos.length ? "taken" : ""}"><strong>${escapeHtml3(slot.label)}${required ? " *" : ""}</strong><span>${photos.length ? photos.map((photo) => escapeHtml3(photo.name)).join(", ") : "Not added"}</span><label class="mini-action">Add photo<input class="intake-file" data-slot="${escapeAttr3(slot.id)}" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></article>`;
-    }).join("");
-    const extras = (draft.photos || []).filter((photo) => photo.slot === "extra").map((photo) => `<li>${escapeHtml3(photo.name)}</li>`).join("");
-    return `<div class="intake-photos">${cards}</div><div class="intake-actions-inline"><label class="secondary">+ Add photo<input class="intake-file" data-slot="extra" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>${extras ? `<ul class="intake-extra-photos">${extras}</ul>` : ""}
-<h3>Damage map</h3><div class="intake-damage">${DAMAGE_AREAS.map((area) => {
-      const marked = (draft.damage || []).find((item) => item.area === area);
-      return `<label><input type="checkbox" name="damage" value="${escapeAttr3(area)}" ${marked ? "checked" : ""}/> ${escapeHtml3(area)}</label><input name="damage-note-${escapeAttr3(area)}" placeholder="Dent, scratch, broken trim, cracked glass, previous damage" value="${escapeAttr3(marked?.note || "")}"/>`;
-    }).join("")}</div>`;
-  }
-  function concernStep(draft) {
-    const concern = draft.concern;
-    const ai = draft.aiFilledFields || {};
-    const badge2 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
-    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge2}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
-<div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
-  }
-  function diagnosisStep(draft) {
-    const diagnosis = draft.diagnosis;
-    const ai = draft.aiFilledFields || {};
-    const analysis = diagnosis.analysis;
-    const causes = analysis?.causes?.map((cause) => `<li><strong>${escapeHtml3(cause.name || cause.cause || "Check")}</strong><p>${escapeHtml3(cause.detail || cause.explanation || "")}</p></li>`).join("") || "";
-    return `${aiAcceptBanner(draft, "diagnosis.")}<div class="form-grid">${field("visual", "Visual inspection", diagnosis.visual, { full: true, aiFilled: Boolean(ai["diagnosis.visual"]) })}${field("roadTest", "Road test", diagnosis.roadTest)}${field("fluids", "Fluid levels", diagnosis.fluids)}${field("battery", "Battery test", diagnosis.battery)}${field("codes", "DTC codes", diagnosis.codes, { full: true, aiFilled: Boolean(ai["diagnosis.codes"]) })}${field("cause", "Root cause (3 C's)", diagnosis.cause, { full: true, aiFilled: Boolean(ai["diagnosis.cause"]) })}${field("correction", "Recommended correction (3 C's)", diagnosis.correction, { full: true, aiFilled: Boolean(ai["diagnosis.correction"]) })}</div>
-<label class="full">Technician notes<textarea name="notes">${escapeHtml3(diagnosis.notes)}</textarea></label>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
-${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || "")}</span></section><ul class="intake-causes">${causes}</ul>` : ""}`;
-  }
-  function estimateStep(draft, profile) {
-    const priced = priceIntakeEstimate(draft, profile);
-    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
-    return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
-<p class="form-help">Lookup uses the MechPro guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
-<div id="labor-results"></div>
-<table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
-<label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
-<div class="estimate-sign-summary"><span>Labor ${escapeHtml3(String(priced.labor))} \xB7 Parts ${escapeHtml3(String(priced.parts))} \xB7 Supplies ${escapeHtml3(String(priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0))} \xB7 Tax ${escapeHtml3(String(priced.tax))}</span><strong>${escapeHtml3(String(priced.total))}</strong></div>
-<pre class="intake-disclaimer">${escapeHtml3(INTAKE_DISCLAIMER)}</pre>
-<label>Customer approval<select name="approval">${["pending", "viewed", "approved", "denied"].map((status) => `<option value="${status}" ${draft.estimate.approval === status ? "selected" : ""}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}</select></label>
-<p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
-  }
-  function reviewStep(draft, users) {
-    const check2 = canConvertIntake(draft);
-    const techs = assignableTechnicians(users);
-    const options = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
-      const selected = (draft.assignments || []).find((item) => item.role === role);
-      return `<option value="${escapeAttr3(user.id)}" ${selected?.employeeId === user.id ? "selected" : ""}>${escapeHtml3(technicianName(user))}</option>`;
-    }).join("")}`;
-    return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
-<div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
-${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
-<p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
-  }
-  function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
-    const step = Math.min(INTAKE_STEPS.length - 1, Math.max(0, Number(draft.step) || 0));
-    const body = [
-      customerStep,
-      vehicleStep,
-      photoStep,
-      concernStep,
-      diagnosisStep,
-      (current) => estimateStep(current, { laborRate, taxRate }),
-      (current) => reviewStep(current, users)
-    ][step](draft);
-    return `<div class="modal-head"><div><span class="eyebrow">Customer intake</span><h2>${escapeHtml3(INTAKE_STEPS[step].label)}</h2></div><div class="intake-head-meta">${savedStamp(draft)}<button type="button" class="close" id="intake-cancel" aria-label="Cancel intake">\xD7</button></div></div>
-<div class="modal-body intake-body">${progress(step)}<form id="intake-form">${body}</form></div>
-<div class="modal-actions"><button type="button" class="secondary" id="intake-back" ${step === 0 ? "disabled" : ""}>Back</button><button type="button" class="secondary" id="intake-save">Save draft</button>${step < INTAKE_STEPS.length - 1 ? '<button type="button" class="primary" id="intake-next">Continue</button>' : '<button type="button" class="primary" id="intake-convert">Convert to work order</button>'}</div>`;
-  }
-  function readForm(draft, form) {
-    const next = structuredClone(draft);
-    const data = Object.fromEntries(new FormData(form).entries());
-    const step = INTAKE_STEPS[next.step]?.id;
-    if (step === "customer") {
-      ["firstName", "lastName", "phone", "email", "company", "secondaryPhone", "address", "city", "state", "zip"].forEach((key) => {
-        if (key in data) next.customer[key] = String(data[key] || "").trim();
-      });
-      next.customer.contact = {
-        phone: Boolean(form.querySelector('[name="contact-phone"]')?.checked),
-        text: Boolean(form.querySelector('[name="contact-text"]')?.checked),
-        email: Boolean(form.querySelector('[name="contact-email"]')?.checked)
-      };
-    }
-    if (step === "vehicle") {
-      ["vin", "plate", "plateState", "year", "make", "model", "trim", "engine", "transmission", "mileage", "color"].forEach((key) => {
-        if (key in data) next.vehicle[key] = String(data[key] || "").trim();
-      });
-      next.vehicle.vin = next.vehicle.vin.toUpperCase();
-    }
-    if (step === "photos") {
-      const marked = new Set([...form.querySelectorAll('[name="damage"]')].filter((input) => input.checked).map((input) => input.value));
-      next.damage = DAMAGE_AREAS.filter((area) => marked.has(area)).map((area) => ({ area, note: String(data[`damage-note-${area}`] || "").trim() }));
-    }
-    if (step === "concerns") {
-      ["description", "began", "frequency", "lights", "recentRepairs", "accident", "towed", "overheating"].forEach((key) => {
-        const source = key === "description" ? form.querySelector('[name="description"]')?.value : data[key];
-        next.concern[key] = String(source || "").trim();
-      });
-    }
-    if (step === "diagnosis") {
-      ["visual", "roadTest", "fluids", "battery", "codes", "cause", "correction", "notes"].forEach((key) => {
-        next.diagnosis[key] = String(form.querySelector(`[name="${key}"]`)?.value || data[key] || "").trim();
-      });
-    }
-    if (step === "estimate") {
-      const descriptions = [...form.querySelectorAll('[name="line-description"]')];
-      const hourInputs = [...form.querySelectorAll('[name="line-hours"]')];
-      next.estimate.lines = descriptions.map((input, index) => ({
-        type: "labor",
-        description: input.value.trim(),
-        quantity: Math.max(0, Number(hourInputs[index]?.value) || 0),
-        source: "Shop"
-      })).filter((line) => line.description);
-      next.estimate.diagnosticCharge = Math.max(0, Number(data.diagnosticCharge) || 0);
-      next.estimate.approval = data.approval || "pending";
-    }
-    if (step === "review") {
-      next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
-        const employeeId = data[`assign-${role}`];
-        if (!employeeId) return [];
-        return [{ employeeId, role, sharePercent: role === "primary" ? 100 : 0, assignedAt: (/* @__PURE__ */ new Date()).toISOString() }];
-      });
-    }
-    return next;
-  }
-  function mountIntakeWizard(host, {
-    draft,
-    users = [],
-    laborRate = 165,
-    taxRate = 0,
-    onSave,
-    onCancel,
-    onConvert,
-    decodeVin,
-    lookupPlate,
-    analyze,
-    autofill
-  } = {}) {
-    let current = structuredClone(draft || emptyIntakeDraft());
-    let timer = 0;
-    const paint = () => {
-      host.innerHTML = intakeWizardHtml(current, { users, laborRate, taxRate });
-      bind2();
-    };
-    const persist = (reason) => {
-      current.savedAt = (/* @__PURE__ */ new Date()).toISOString();
-      onSave?.(serializableIntake(current), reason);
-      const stamp = host.querySelector(".intake-save");
-      if (stamp) stamp.outerHTML = savedStamp(current);
-    };
-    const schedule2 = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => persist("autosave"), 400);
-    };
-    function bind2() {
-      const form = host.querySelector("#intake-form");
-      form?.addEventListener("input", () => {
-        current = readForm(current, form);
-        schedule2();
-      });
-      host.querySelector("#intake-save")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        persist("manual");
-      });
-      host.querySelector("#intake-cancel")?.addEventListener("click", () => onCancel?.(current));
-      host.querySelector("#intake-back")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        current.step = Math.max(0, current.step - 1);
-        persist("step");
-        paint();
-      });
-      host.querySelector("#intake-next")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        current.step = Math.min(INTAKE_STEPS.length - 1, current.step + 1);
-        if (INTAKE_STEPS[current.step]?.id === "estimate" && !current.estimate.lines.length) current.estimate.lines = seedEstimateLines(current);
-        persist("step");
-        paint();
-      });
-      host.querySelector("#intake-convert")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        const check2 = canConvertIntake(current);
-        if (!check2.ok) {
-          persist("blocked");
-          paint();
-          return;
-        }
-        await onConvert?.(current);
-      });
-      host.querySelector("#intake-decode")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        const note = host.querySelector("#intake-vehicle-note");
-        try {
-          const decoded = await decodeVin?.(current.vehicle.vin);
-          if (!decoded) throw new Error("Enter a 17-character VIN first.");
-          current = applyVinDecode(current, decoded);
-          persist("vin");
-          paint();
-        } catch (error) {
-          if (note) note.textContent = error.message || "VIN decode failed.";
-        }
-      });
-      host.querySelector("#intake-plate")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        const note = host.querySelector("#intake-vehicle-note");
-        const result = await lookupPlate?.(current.vehicle) || { available: false, message: "Plate lookup is not connected." };
-        if (note) note.textContent = result.message || "Plate lookup is not connected.";
-      });
-      host.querySelectorAll(".intake-file").forEach((input) => {
-        input.addEventListener("change", () => {
-          const file = input.files?.[0];
-          if (!file) return;
-          current.photos.push({
-            id: `photo-${Date.now()}-${current.photos.length}`,
-            slot: input.dataset.slot,
-            name: file.name,
-            contentType: file.type,
-            takenAt: (/* @__PURE__ */ new Date()).toISOString(),
-            file
-          });
-          persist("photo");
-          paint();
-        });
-      });
-      host.querySelector("#lookup-labor")?.addEventListener("click", () => {
-        const query2 = host.querySelector("#labor-query")?.value || "";
-        const hits = searchLaborGuide(query2);
-        const box = host.querySelector("#labor-results");
-        if (!box) return;
-        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No MechPro guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
-        box.querySelectorAll("[data-add-labor]").forEach((button) => {
-          button.addEventListener("click", () => {
-            if (form) current = readForm(current, form);
-            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "MechPro guide" });
-            persist("labor");
-            paint();
-          });
-        });
-      });
-      host.querySelector("#intake-analyze")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        current.diagnosis.analysis = await analyze?.(current) || localDiagnosticChecklist(current);
-        persist("analysis");
-        paint();
-      });
-      host.querySelector("#intake-ai-accept-all")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        current = acceptAllAiFields(current);
-        persist("accept-ai");
-        paint();
-      });
-      host.querySelector("#intake-autofill-3c")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        if (!autofill) return;
-        const notes = [current.concern?.description, current.diagnosis?.notes, current.diagnosis?.visual, current.diagnosis?.codes].filter(Boolean).join("\n");
-        const result = await autofill({ formType: "diagnostic_3c", notes, draft: current });
-        if (result?.data) {
-          current = applyAiAutofill(current, "diagnostic_3c", result.data);
-          persist("autofill-3c");
-          paint();
-        }
-      });
-      const bindPhotoAutofill = (selector, formType) => {
-        host.querySelector(selector)?.addEventListener("change", async (event) => {
-          const file = event.target?.files?.[0];
-          if (!file || !autofill) return;
-          if (form) current = readForm(current, form);
-          const result = await autofill({ formType, file, draft: current });
-          if (result?.data) {
-            current = applyAiAutofill(current, formType, result.data);
-            persist(`autofill-${formType}`);
-            paint();
-          }
-        });
-      };
-      bindPhotoAutofill("#intake-autofill-vehicle-photo", "vehicle_intake");
-      bindPhotoAutofill("#intake-autofill-diag-photo", "diagnostic_3c");
-    }
-    paint();
-    return {
-      current: () => current
-    };
-  }
-  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, MECHPRO_LABOR;
-  var init_intake_wizard = __esm({
-    "src/modules/intake-wizard.js"() {
-      init_estimate_templates();
-      init_canned_services();
-      init_technician_assignment();
-      INTAKE_STORAGE_KEY = "mechpro-intake-draft-v1";
-      INTAKE_DISCLAIMER = "PRELIMINARY ESTIMATE DISCLAIMER\n\nThis estimate is based on the information available at the time of inspection. Additional issues may be identified during diagnosis, testing, disassembly, or repair. Parts pricing, labor times, and availability may change. Authorization will be obtained before performing additional work. Final invoice amounts may differ from this estimate.";
-      INTAKE_STEPS = [
-        { id: "customer", label: "Customer" },
-        { id: "vehicle", label: "Vehicle" },
-        { id: "photos", label: "Photos" },
-        { id: "concerns", label: "Concerns" },
-        { id: "diagnosis", label: "Diagnosis" },
-        { id: "estimate", label: "Estimate" },
-        { id: "review", label: "Review" }
-      ];
-      REQUIRED_PHOTO_SLOTS = [
-        { id: "front", label: "Front" },
-        { id: "rear", label: "Rear" },
-        { id: "driver", label: "Driver side" },
-        { id: "passenger", label: "Passenger side" }
-      ];
-      EXTRA_PHOTO_SLOTS = [
-        { id: "odometer", label: "Odometer" },
-        { id: "vin_sticker", label: "VIN sticker" },
-        { id: "engine", label: "Engine bay" },
-        { id: "tires", label: "Tire condition" },
-        { id: "damage", label: "Damage" },
-        { id: "concern", label: "Customer concern area" },
-        { id: "extra", label: "Additional photo" }
-      ];
-      DAMAGE_AREAS = ["Front bumper", "Rear bumper", "Driver door", "Passenger door", "Hood", "Fenders", "Roof"];
-      MECHPRO_LABOR = [
-        { name: "Brake pads", hours: 1.5, notes: "One axle. Rotors and seized hardware are quoted separately." },
-        { name: "Water pump", hours: 2.5, notes: "Starting point. Confirm the labor time for this VIN before selling the job." },
-        { name: "Alternator", hours: 1.2, notes: "Replacement only. Programming or a stretch belt may add time." },
-        { name: "Starter", hours: 1.2, notes: "Starting point. Confirm access for this vehicle." }
-      ];
-    }
-  });
-
-  // src/modules/grok-voice-client.js
-  function grokWaveformButtonIcon(active = false, phase = "idle") {
-    if (!active) {
-      return `<svg class="grok-waveform-svg" width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="48" y1="96" x2="48" y2="160"/><line x1="88" y1="56" x2="88" y2="200"/><line x1="128" y1="32" x2="128" y2="224"/><line x1="168" y1="64" x2="168" y2="192"/><line x1="208" y1="96" x2="208" y2="160"/></svg>`;
-    }
-    return `<span class="grok-waveform-bars" data-phase="${phase}" aria-hidden="true"><span></span><span></span><span></span><span></span></span>`;
-  }
-  function grokPhasePlaceholder(phase = "idle") {
-    switch (phase) {
-      case "connecting":
-        return "Connecting\u2026";
-      case "listening":
-        return "Listening\u2026";
-      case "thinking":
-        return "Thinking\u2026";
-      case "speaking":
-        return "Speaking\u2026";
-      default:
-        return "";
-    }
-  }
-  function float32ToPcm16Base64(float32Samples, inputSampleRate = GROK_TARGET_SAMPLE_RATE, targetRate = GROK_TARGET_SAMPLE_RATE) {
-    if (!float32Samples?.length) return "";
-    let samples = float32Samples;
-    if (inputSampleRate !== targetRate && inputSampleRate > 0) {
-      const ratio = inputSampleRate / targetRate;
-      const outLength = Math.max(1, Math.round(float32Samples.length / ratio));
-      const resampled = new Float32Array(outLength);
-      for (let i = 0; i < outLength; i += 1) {
-        const srcIdx = i * ratio;
-        const i0 = Math.floor(srcIdx);
-        const i1 = Math.min(float32Samples.length - 1, i0 + 1);
-        const frac = srcIdx - i0;
-        resampled[i] = float32Samples[i0] * (1 - frac) + float32Samples[i1] * frac;
-      }
-      samples = resampled;
-    }
-    const buffer = new ArrayBuffer(samples.length * 2);
-    const view = new DataView(buffer);
-    for (let i = 0; i < samples.length; i += 1) {
-      const clamped = Math.max(-1, Math.min(1, samples[i]));
-      const int16 = clamped < 0 ? clamped * 32768 : clamped * 32767;
-      view.setInt16(i * 2, Math.round(int16), true);
-    }
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const chunkSize = 32768;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-    }
-    return globalThis.btoa(binary);
-  }
-  function pcm16Base64ToFloat32(base64) {
-    if (!base64) return new Float32Array(0);
-    const binary = globalThis.atob(String(base64));
-    const sampleCount = Math.floor(binary.length / 2);
-    const bytes = new Uint8Array(sampleCount * 2);
-    for (let i = 0; i < bytes.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const view = new DataView(bytes.buffer);
-    const float32 = new Float32Array(sampleCount);
-    for (let i = 0; i < sampleCount; i += 1) {
-      float32[i] = view.getInt16(i * 2, true) / 32768;
-    }
-    return float32;
-  }
-  function applyGrokCallToIntakeDraft(existingDraft = null, grokIntake = {}) {
-    const base = structuredClone(existingDraft || emptyIntakeDraft());
-    const source = grokIntake?.intakeDraft || grokIntake || {};
-    base.aiFilledFields = { ...base.aiFilledFields || {}, ...source.aiFilledFields || {} };
-    const setIfPresent = (target, key, value2, aiPath) => {
-      const clean = String(value2 ?? "").trim();
-      if (!clean) return;
-      target[key] = clean;
-      if (aiPath) base.aiFilledFields[aiPath] = true;
-    };
-    const cust = source.customer || {};
-    setIfPresent(base.customer, "firstName", cust.firstName, "customer.firstName");
-    setIfPresent(base.customer, "lastName", cust.lastName, "customer.lastName");
-    setIfPresent(base.customer, "phone", cust.phone, "customer.phone");
-    setIfPresent(base.customer, "email", cust.email, "customer.email");
-    setIfPresent(base.customer, "address", cust.address, "customer.address");
-    setIfPresent(base.customer, "city", cust.city, "customer.city");
-    setIfPresent(base.customer, "state", cust.state, "customer.state");
-    setIfPresent(base.customer, "zip", cust.zip, "customer.zip");
-    const veh = source.vehicle || {};
-    setIfPresent(base.vehicle, "vin", veh.vin ? String(veh.vin).toUpperCase() : "", "vehicle.vin");
-    setIfPresent(base.vehicle, "plate", veh.plate ? String(veh.plate).toUpperCase() : "", "vehicle.plate");
-    setIfPresent(base.vehicle, "plateState", veh.plateState, "vehicle.plateState");
-    setIfPresent(base.vehicle, "year", veh.year, "vehicle.year");
-    setIfPresent(base.vehicle, "make", veh.make, "vehicle.make");
-    setIfPresent(base.vehicle, "model", veh.model, "vehicle.model");
-    setIfPresent(base.vehicle, "trim", veh.trim, "vehicle.trim");
-    setIfPresent(base.vehicle, "engine", veh.engine, "vehicle.engine");
-    setIfPresent(base.vehicle, "mileage", veh.mileage, "vehicle.mileage");
-    setIfPresent(base.vehicle, "color", veh.color, "vehicle.color");
-    const concern = source.concern || {};
-    setIfPresent(base.concern, "description", concern.description, "concern.description");
-    setIfPresent(base.concern, "began", concern.began, "concern.began");
-    setIfPresent(base.concern, "frequency", concern.frequency, "concern.frequency");
-    setIfPresent(base.concern, "lights", concern.lights, "concern.lights");
-    setIfPresent(base.concern, "recentRepairs", concern.recentRepairs, "concern.recentRepairs");
-    setIfPresent(base.concern, "towed", concern.towed, "concern.towed");
-    setIfPresent(base.concern, "overheating", concern.overheating, "concern.overheating");
-    if (Array.isArray(source.estimate?.lines) && source.estimate.lines.length) {
-      base.estimate.lines = source.estimate.lines.map((line) => ({
-        type: line.type === "part" ? "part" : "labor",
-        description: String(line.description || line.service || "").trim(),
-        quantity: Number(line.quantity || line.hours || 1),
-        unitPrice: Number(line.unitPrice || 0),
-        source: line.source || "Grok Voice Estimate",
-        aiFilled: true
-      }));
-      base.aiFilledFields["estimate.lines"] = true;
-    }
-    base.savedAt = (/* @__PURE__ */ new Date()).toISOString();
-    return base;
-  }
-  function createGrokVoiceSession({
-    apiFetch: apiFetch2,
-    voice = "",
-    callerPhone = "",
-    greetAsReceptionist = false,
-    onPhaseChange = () => {
-    },
-    onUserTranscript = () => {
-    },
-    onAssistantTranscript = () => {
-    },
-    onIntakeSaved = () => {
-    },
-    onEstimateCalculated = () => {
-    },
-    onError = () => {
-    }
-  } = {}) {
-    let ws = null;
-    let audioCtx = null;
-    let mediaStream = null;
-    let sourceNode = null;
-    let processorNode = null;
-    let active = false;
-    let phase = "idle";
-    let nextPlayTime = 0;
-    const activeSources = /* @__PURE__ */ new Set();
-    const preOpenQueue = [];
-    const userItemMap = /* @__PURE__ */ new Map();
-    let currentAssistantText = "";
-    const setPhase = (next) => {
-      if (phase === next) return;
-      phase = next;
-      onPhaseChange(phase);
-    };
-    const stopPlayback = () => {
-      for (const src of activeSources) {
-        try {
-          src.stop();
-          src.disconnect();
-        } catch {
-        }
-      }
-      activeSources.clear();
-      if (audioCtx) {
-        nextPlayTime = audioCtx.currentTime;
-      }
-    };
-    const schedulePcmDelta = (base64Delta) => {
-      if (!audioCtx || !active) return;
-      const samples = pcm16Base64ToFloat32(base64Delta);
-      if (!samples.length) return;
-      const buffer = audioCtx.createBuffer(1, samples.length, GROK_TARGET_SAMPLE_RATE);
-      buffer.getChannelData(0).set(samples);
-      const source = audioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioCtx.destination);
-      const now2 = audioCtx.currentTime;
-      if (nextPlayTime < now2 + 0.02) {
-        nextPlayTime = now2 + PLAYBACK_LEAD_SECONDS;
-      }
-      source.start(nextPlayTime);
-      nextPlayTime += buffer.duration;
-      activeSources.add(source);
-      source.onended = () => {
-        activeSources.delete(source);
-        if (activeSources.size === 0 && active && phase === "speaking") {
-          setPhase("listening");
-        }
-      };
-    };
-    const stop = () => {
-      active = false;
-      stopPlayback();
-      try {
-        processorNode?.disconnect();
-        sourceNode?.disconnect();
-      } catch {
-      }
-      processorNode = null;
-      sourceNode = null;
-      if (mediaStream) {
-        mediaStream.getTracks().forEach((track) => track.stop());
-        mediaStream = null;
-      }
-      if (ws) {
-        try {
-          ws.close(1e3, "Client ended Grok Voice session");
-        } catch {
-        }
-        ws = null;
-      }
-      if (audioCtx) {
-        try {
-          void audioCtx.close();
-        } catch {
-        }
-        audioCtx = null;
-      }
-      setPhase("idle");
-    };
-    const sendTextTurn = (text) => {
-      const clean = String(text || "").trim();
-      if (!clean || !ws || ws.readyState !== globalThis.WebSocket.OPEN) return false;
-      stopPlayback();
-      ws.send(JSON.stringify({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: clean }]
-        }
-      }));
-      ws.send(JSON.stringify({ type: "response.create" }));
-      setPhase("thinking");
-      return true;
-    };
-    const start = async () => {
-      if (active) {
-        stop();
-        return;
-      }
-      active = true;
-      setPhase("connecting");
-      try {
-        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        audioCtx = new AudioContextCtor({ sampleRate: GROK_TARGET_SAMPLE_RATE });
-        if (audioCtx.state === "suspended") {
-          await audioCtx.resume();
-        }
-        const [stream, secretPayload] = await Promise.all([
-          navigator.mediaDevices.getUserMedia({
-            audio: {
-              channelCount: 1,
-              sampleRate: GROK_TARGET_SAMPLE_RATE,
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true
-            }
-          }),
-          apiFetch2("/ai/voice/client-secret", {
-            method: "POST",
-            body: JSON.stringify({ voice: voice || void 0, callerPhone: callerPhone || void 0 })
-          })
-        ]);
-        if (!active) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        mediaStream = stream;
-        sourceNode = audioCtx.createMediaStreamSource(stream);
-        const bufferSize = 2048;
-        processorNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-        let sampleAccumulator = [];
-        let accumulatedCount = 0;
-        const samplesPerChunk = Math.round(audioCtx.sampleRate * CAPTURE_CHUNK_MS / 1e3);
-        processorNode.onaudioprocess = (audioEvent) => {
-          if (!active) return;
-          const inputData = audioEvent.inputBuffer.getChannelData(0);
-          sampleAccumulator.push(new Float32Array(inputData));
-          accumulatedCount += inputData.length;
-          if (accumulatedCount < samplesPerChunk) return;
-          const merged = new Float32Array(accumulatedCount);
-          let offset = 0;
-          for (const chunk of sampleAccumulator) {
-            merged.set(chunk, offset);
-            offset += chunk.length;
-          }
-          sampleAccumulator = [];
-          accumulatedCount = 0;
-          const base64Audio = float32ToPcm16Base64(merged, audioCtx.sampleRate, GROK_TARGET_SAMPLE_RATE);
-          if (!base64Audio) return;
-          if (ws && ws.readyState === globalThis.WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: "input_audio_buffer.append",
-              audio: base64Audio
-            }));
-          } else if (preOpenQueue.length < MAX_PREOPEN_CHUNKS) {
-            preOpenQueue.push(base64Audio);
-          }
-        };
-        sourceNode.connect(processorNode);
-        processorNode.connect(audioCtx.destination);
-        const wsUrl = secretPayload.url || "wss://api.x.ai/v1/realtime?model=grok-voice-latest";
-        ws = new globalThis.WebSocket(wsUrl, ["realtime", `xai-client-secret.${secretPayload.token}`]);
-        ws.addEventListener("open", () => {
-          if (!active || !ws) return;
-          if (secretPayload.sessionUpdate) {
-            ws.send(JSON.stringify(secretPayload.sessionUpdate));
-          }
-          while (preOpenQueue.length > 0) {
-            const chunk = preOpenQueue.shift();
-            ws.send(JSON.stringify({
-              type: "input_audio_buffer.append",
-              audio: chunk
-            }));
-          }
-          setPhase("listening");
-          if (greetAsReceptionist) {
-            ws.send(JSON.stringify({
-              type: "conversation.item.create",
-              item: {
-                type: "message",
-                role: "user",
-                content: [{
-                  type: "input_text",
-                  text: "[A customer just called the shop phone line. Answer the phone warmly as Grok, the shop service advisor, and ask how you can help with their vehicle today.]"
-                }]
-              }
-            }));
-            ws.send(JSON.stringify({ type: "response.create" }));
-          }
-        });
-        ws.addEventListener("message", async (ev) => {
-          if (!active) return;
-          let event;
-          try {
-            event = JSON.parse(String(ev.data));
-          } catch {
-            return;
-          }
-          if (event.type === "input_audio_buffer.speech_started") {
-            stopPlayback();
-            setPhase("listening");
-            return;
-          }
-          if (event.type === "input_audio_buffer.speech_stopped") {
-            setPhase("thinking");
-            return;
-          }
-          if (event.type === "input_audio_buffer.committed" && event.item_id) {
-            userItemMap.set(event.item_id, "");
-            return;
-          }
-          if (event.type === "conversation.item.input_audio_transcription.updated" || event.type === "conversation.item.input_audio_transcription.completed") {
-            const transcript = String(event.transcript || "").trim();
-            if (transcript) {
-              const isFinal = event.type.endsWith(".completed");
-              userItemMap.set(event.item_id || "latest", transcript);
-              onUserTranscript(transcript, { itemId: event.item_id || "latest", final: isFinal });
-            }
-            return;
-          }
-          if (event.type === "response.created") {
-            currentAssistantText = "";
-            return;
-          }
-          if (event.type === "response.output_audio.delta" || event.type === "response.audio.delta") {
-            if (event.delta) {
-              setPhase("speaking");
-              schedulePcmDelta(event.delta);
-            }
-            return;
-          }
-          if (event.type === "response.output_audio_transcript.delta" || event.type === "response.audio_transcript.delta") {
-            currentAssistantText += String(event.delta || "");
-            onAssistantTranscript(currentAssistantText, { final: false });
-            return;
-          }
-          if (event.type === "response.output_audio_transcript.done" || event.type === "response.audio_transcript.done") {
-            const finalTranscript = String(event.transcript || currentAssistantText).trim();
-            if (finalTranscript) {
-              onAssistantTranscript(finalTranscript, { final: true });
-            }
-            currentAssistantText = "";
-            return;
-          }
-          if (event.type === "response.function_call_arguments.done") {
-            const toolName = String(event.name || "");
-            const callId = String(event.call_id || "");
-            let args = {};
-            try {
-              args = JSON.parse(event.arguments || "{}");
-            } catch {
-              args = {};
-            }
-            try {
-              const response = await apiFetch2("/ai/voice/tool", {
-                method: "POST",
-                body: JSON.stringify({ name: toolName, arguments: args, callerPhone })
-              });
-              const toolResult = response?.result || {};
-              if (toolName === "calculate_service_estimate") {
-                onEstimateCalculated(toolResult);
-              }
-              if (toolName === "save_call_intake_and_estimate" && toolResult?.action) {
-                onIntakeSaved(toolResult);
-              }
-              if (ws && ws.readyState === globalThis.WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                  type: "conversation.item.create",
-                  item: {
-                    type: "function_call_output",
-                    call_id: callId,
-                    output: JSON.stringify(toolResult)
-                  }
-                }));
-                ws.send(JSON.stringify({ type: "response.create" }));
-              }
-            } catch (toolErr) {
-              if (ws && ws.readyState === globalThis.WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                  type: "conversation.item.create",
-                  item: {
-                    type: "function_call_output",
-                    call_id: callId,
-                    output: JSON.stringify({ error: toolErr?.message || "Tool execution failed" })
-                  }
-                }));
-                ws.send(JSON.stringify({ type: "response.create" }));
-              }
-            }
-            return;
-          }
-          if (event.type === "response.done") {
-            if (activeSources.size === 0 && active) {
-              setPhase("listening");
-            }
-          }
-        });
-        ws.addEventListener("close", () => {
-          if (active) stop();
-        });
-        ws.addEventListener("error", () => {
-          onError(new Error("Grok Realtime WebSocket connection interrupted"));
-          if (active) stop();
-        });
-      } catch (err) {
-        onError(err instanceof Error ? err : new Error(String(err)));
-        stop();
-      }
-    };
-    return {
-      start,
-      stop,
-      sendTextTurn,
-      isActive: () => active,
-      getPhase: () => phase
-    };
-  }
-  var GROK_TARGET_SAMPLE_RATE, PLAYBACK_LEAD_SECONDS, CAPTURE_CHUNK_MS, MAX_PREOPEN_CHUNKS, GROK_VOICE_OPTIONS;
-  var init_grok_voice_client = __esm({
-    "src/modules/grok-voice-client.js"() {
-      init_intake_wizard();
-      GROK_TARGET_SAMPLE_RATE = 24e3;
-      PLAYBACK_LEAD_SECONDS = 0.15;
-      CAPTURE_CHUNK_MS = 100;
-      MAX_PREOPEN_CHUNKS = 30;
-      GROK_VOICE_OPTIONS = Object.freeze([
-        { id: "eve", label: "Eve (Warm & Capable \u2014 Default)" },
-        { id: "ara", label: "Ara (Upbeat & Friendly)" },
-        { id: "rex", label: "Rex (Calm & Professional)" },
-        { id: "sal", label: "Sal (Smooth & Balanced)" },
-        { id: "leo", label: "Leo (Authoritative & Clear)" }
-      ]);
-    }
-  });
-
-  // src/modules/quickbooks.js
-  function quickbooksConnectionStatus(record) {
-    if (!record || typeof record !== "object") {
-      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
-    }
-    const connected = Boolean(record.realmId && (record.refreshToken || record.accessToken));
-    if (!connected) {
-      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
-    }
-    return {
-      connected: true,
-      status: "connected",
-      label: "QuickBooks Online connected",
-      realmId: record.realmId,
-      connectedAt: record.connectedAt || null,
-      tokenExpiresAt: record.tokenExpiresAt || null
-    };
-  }
-  function quickbooksPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
-    const status = quickbooksConnectionStatus(account);
-    const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Company ${escapeHtml4(status.realmId || "")}</span></div></div>` : `<div class="messaging-status idle">${icon2("landmark", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Connect QuickBooks Online with OAuth 2.0. Sync stays fail-closed until authorized.</span></div></div>`;
-    const actions = canSave ? `<div class="messaging-actions">
-        ${status.connected ? `<button class="secondary" type="button" id="qbo-sync-now">${icon2("refresh-cw", 14)} Sync customers / invoices / payments</button>
-             <button class="secondary danger" type="button" id="qbo-disconnect">${icon2("log-out", 14)} Disconnect QuickBooks</button>` : `<button class="primary" type="button" id="qbo-connect">${icon2("link", 14)} Connect QuickBooks Online</button>`}
-      </div>` : '<p class="ops-note">Ask an owner or admin to connect QuickBooks Online.</p>';
-    return `<section class="settings-panel quickbooks-panel">
-    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>QuickBooks Online</h2><p>OAuth connect/disconnect and idempotent sync of customers, invoices, and payments.</p></div>${icon2("book", 20)}</div>
-    ${banner}
-    ${actions}
-    <div id="qbo-sync-status" class="ops-note"></div>
-  </section>`;
-  }
-  var init_quickbooks = __esm({
-    "src/modules/quickbooks.js"() {
+      CLOSED_ORDER_STATUSES = /* @__PURE__ */ new Set(["invoiced", "paid", "closed", "cancelled", "canceled", "archived"]);
     }
   });
 
@@ -4506,11 +3042,11 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     const source = String(name || "").toLocaleLowerCase();
     return normalizeCustomerSearch(query2).toLocaleLowerCase().split(" ").every((token) => source.includes(token));
   }
-  function vehicleLabel2(vehicle) {
+  function vehicleLabel(vehicle) {
     return [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(" ") || vehicle.vehicle || vehicle.description || "Vehicle on file";
   }
   function enrichCustomer(customer, vehicles) {
-    const linkedVehicles = vehicles.filter((vehicle) => customer.id && vehicle.customerId === customer.id || String(vehicle.customer || "").toLocaleLowerCase() === String(customer.name || "").toLocaleLowerCase()).map((vehicle) => ({ ...vehicle, label: vehicleLabel2(vehicle) }));
+    const linkedVehicles = vehicles.filter((vehicle) => customer.id && vehicle.customerId === customer.id || String(vehicle.customer || "").toLocaleLowerCase() === String(customer.name || "").toLocaleLowerCase()).map((vehicle) => ({ ...vehicle, label: vehicleLabel(vehicle) }));
     return {
       ...customer,
       id: String(customer.id || customer.name || ""),
@@ -4863,17 +3399,169 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     }
   });
 
+  // src/modules/print-document.js
+  function resolveBaseHref(target) {
+    const candidate = String(target?.document?.baseURI || target?.location?.href || "").trim();
+    if (!candidate || /^(?:about|blob|data|javascript):/i.test(candidate)) return "";
+    return candidate;
+  }
+  function withBaseHref(html, target) {
+    const markup = String(html ?? "");
+    if (/<base\b/i.test(markup)) return markup;
+    const baseHref = resolveBaseHref(target);
+    if (!baseHref) return markup;
+    const baseTag = `<base href="${escapeHtml(baseHref)}">`;
+    if (/<head\b[^>]*>/i.test(markup)) {
+      return markup.replace(/<head\b[^>]*>/i, (match) => `${match}${baseTag}`);
+    }
+    if (/<html\b[^>]*>/i.test(markup)) {
+      return markup.replace(/<html\b[^>]*>/i, (match) => `${match}<head>${baseTag}</head>`);
+    }
+    return `${baseTag}${markup}`;
+  }
+  function runPrint(win) {
+    try {
+      win.focus();
+      win.print();
+    } catch {
+    }
+  }
+  function armPrintControls(win, run) {
+    const doc = win.document;
+    if (!doc?.querySelectorAll) return;
+    doc.querySelectorAll("button").forEach((button) => {
+      const replacement = button.cloneNode(true);
+      replacement.removeAttribute("onclick");
+      button.replaceWith(replacement);
+      replacement.addEventListener("click", (event) => {
+        event.preventDefault();
+        run();
+      });
+    });
+  }
+  function schedulePrint(win, schedule2, autoPrint) {
+    let started = false;
+    const run = () => runPrint(win);
+    armPrintControls(win, run);
+    if (!autoPrint) return;
+    const start = () => {
+      if (started) return;
+      started = true;
+      schedule2(run);
+    };
+    if (win.document?.readyState === "complete") {
+      start();
+      return;
+    }
+    win.addEventListener?.("load", start, { once: true });
+  }
+  function printInFrame(target, html, schedule2, autoPrint) {
+    const doc = target.document;
+    if (!doc?.createElement || !doc.body) return false;
+    const frame = doc.createElement("iframe");
+    frame.setAttribute("title", "Print");
+    frame.style.cssText = "position:fixed;left:-10000px;top:0;width:850px;height:1100px;border:0";
+    doc.body.appendChild(frame);
+    const childDoc = frame.contentDocument;
+    const childWin = frame.contentWindow;
+    if (!childDoc || !childWin) {
+      frame.remove();
+      return false;
+    }
+    childDoc.open();
+    childDoc.write(String(html ?? ""));
+    childDoc.close();
+    const remove = () => frame.remove();
+    childWin.addEventListener?.("afterprint", remove, { once: true });
+    const fallback = setTimeout(remove, 12e4);
+    fallback.unref?.();
+    schedulePrint(childWin, schedule2, autoPrint);
+    return true;
+  }
+  function openBlobDocument(target, html, schedule2, autoPrint) {
+    if (typeof target.Blob !== "function" || typeof target.URL?.createObjectURL !== "function") return false;
+    const url = target.URL.createObjectURL(new target.Blob([String(html ?? "")], { type: "text/html" }));
+    let win = null;
+    try {
+      win = target.open?.(url, "_blank") ?? null;
+    } catch {
+      win = null;
+    }
+    const release = setTimeout(() => {
+      try {
+        target.URL.revokeObjectURL(url);
+      } catch {
+      }
+    }, 6e4);
+    release.unref?.();
+    if (!win) return false;
+    try {
+      win.opener = null;
+    } catch {
+    }
+    try {
+      win.addEventListener("load", () => schedulePrint(win, schedule2, autoPrint), { once: true });
+    } catch {
+    }
+    return true;
+  }
+  function openWritableDocument(target, html, schedule2, autoPrint) {
+    let win = null;
+    try {
+      win = target.open?.("", "_blank") ?? null;
+    } catch {
+      win = null;
+    }
+    if (!win?.document) return false;
+    try {
+      win.opener = null;
+    } catch {
+    }
+    try {
+      win.document.open();
+      win.document.write(String(html ?? ""));
+      win.document.close();
+      schedulePrint(win, schedule2, autoPrint);
+      return true;
+    } catch {
+      try {
+        win.close();
+      } catch {
+      }
+      return false;
+    }
+  }
+  function openPrintDocument(html, options = {}) {
+    const target = options.windowObject || globalThis;
+    const notify = options.toast || (() => {
+    });
+    const blockedMessage = options.blockedMessage || "Allow pop-ups to print";
+    const autoPrint = options.autoPrint !== false;
+    const schedule2 = options.schedule || ((fn) => setTimeout(fn, 0));
+    const markup = withBaseHref(html, target);
+    const blobAvailable = typeof target.Blob === "function" && typeof target.URL?.createObjectURL === "function";
+    if (blobAvailable) {
+      if (openBlobDocument(target, markup, schedule2, autoPrint)) return true;
+    } else if (openWritableDocument(target, markup, schedule2, autoPrint)) return true;
+    if (printInFrame(target, markup, schedule2, autoPrint)) return true;
+    notify(blockedMessage);
+    return false;
+  }
+  var init_print_document = __esm({
+    "src/modules/print-document.js"() {
+      init_html();
+    }
+  });
+
   // src/modules/filing/forms.js
-  function money3(n) {
+  function money(n) {
     return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
   }
   function esc(s) {
     return String(s ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
   }
   function printHtml(title, body) {
-    const win = window.open("", "_blank", "noopener");
-    if (!win) return false;
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+    return openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
 @page{size:letter;margin:.4in}
 body{font:11px/1.35 Arial,Helvetica,sans-serif;color:#111;margin:0;padding:12px}
@@ -4888,15 +3576,13 @@ h1{font-size:16px;margin:0 0 8px}
 .notice{margin-top:14px;padding:8px;border:1px solid #999;background:#f7f7f7;font-size:9px}
 @media print{button{display:none}}
 button{margin-top:12px;padding:8px 14px}
-</style></head><body>${body}<button type="button" onclick="window.print()">Print / Save as PDF</button></body></html>`);
-    win.document.close();
-    return true;
+</style></head><body>${body}<button type="button">Print / Save as PDF</button></body></html>`, { autoPrint: true });
   }
   function openW2Form(data) {
     const y = data.taxYear || (/* @__PURE__ */ new Date()).getFullYear();
     const body = `
 <h1>Form W-2 Wage and Tax Statement \u2014 ${y}</h1>
-<p class="meta">Copy B \u2014 To Be Filed With Employee\u2019s FEDERAL Tax Return \xB7 Generated by MechPro for filing / SSA Business Services Online upload prep. Verify EIN and SSN before submitting.</p>
+<p class="meta">Copy B \u2014 To Be Filed With Employee\u2019s FEDERAL Tax Return \xB7 Generated by ShopCrank for filing / SSA Business Services Online upload prep. Verify EIN and SSN before submitting.</p>
 <div class="grid">
   <div class="box"><label>a Employee\u2019s social security number</label><b>***-**-${esc(data.employee.ssnLast4 || "XXXX")}</b></div>
   <div class="box"><label>b Employer identification number (EIN)</label><b>${esc(data.employer.ein || "XX-XXXXXXX")}</b></div>
@@ -4906,34 +3592,34 @@ button{margin-top:12px;padding:8px 14px}
   <div class="box full"><label>f Employee\u2019s address and ZIP code</label><b>${esc(data.employee.address || "")}</b></div>
 </div>
 <div class="row3" style="margin-top:8px">
-  <div class="box"><label>1 Wages, tips, other compensation</label><b>${money3(data.wages)}</b></div>
-  <div class="box"><label>2 Federal income tax withheld</label><b>${money3(data.federal)}</b></div>
-  <div class="box"><label>3 Social security wages</label><b>${money3(data.socialSecurityWages)}</b></div>
-  <div class="box"><label>4 Social security tax withheld</label><b>${money3(data.socialSecurity)}</b></div>
-  <div class="box"><label>5 Medicare wages and tips</label><b>${money3(data.medicareWages)}</b></div>
-  <div class="box"><label>6 Medicare tax withheld</label><b>${money3(data.medicare)}</b></div>
+  <div class="box"><label>1 Wages, tips, other compensation</label><b>${money(data.wages)}</b></div>
+  <div class="box"><label>2 Federal income tax withheld</label><b>${money(data.federal)}</b></div>
+  <div class="box"><label>3 Social security wages</label><b>${money(data.socialSecurityWages)}</b></div>
+  <div class="box"><label>4 Social security tax withheld</label><b>${money(data.socialSecurity)}</b></div>
+  <div class="box"><label>5 Medicare wages and tips</label><b>${money(data.medicareWages)}</b></div>
+  <div class="box"><label>6 Medicare tax withheld</label><b>${money(data.medicare)}</b></div>
   <div class="box"><label>15 State</label><b>${esc(data.state || "")}</b></div>
-  <div class="box"><label>16 State wages, tips, etc.</label><b>${money3(data.stateWages || 0)}</b></div>
-  <div class="box"><label>17 State income tax</label><b>${money3(data.stateTax || 0)}</b></div>
+  <div class="box"><label>16 State wages, tips, etc.</label><b>${money(data.stateWages || 0)}</b></div>
+  <div class="box"><label>17 State income tax</label><b>${money(data.stateTax || 0)}</b></div>
 </div>
-<div class="notice">File Copy A electronically with SSA (ssa.gov/employer). Give Copies B, C, and 2 to the employee by January 31. MechPro generates this statement from shop payroll records; confirm SSN and EIN before e-filing.</div>`;
+<div class="notice">File Copy A electronically with SSA (ssa.gov/employer). Give Copies B, C, and 2 to the employee by January 31. ShopCrank generates this statement from shop payroll records; confirm SSN and EIN before e-filing.</div>`;
     return printHtml(`W-2 ${y} ${data.employee.name}`, body);
   }
   function open1099NecForm(data) {
     const y = data.taxYear || (/* @__PURE__ */ new Date()).getFullYear();
     const body = `
 <h1>Form 1099-NEC Nonemployee Compensation \u2014 ${y}</h1>
-<p class="meta">Copy B For Recipient \xB7 Generated by MechPro for IRS / recipient filing. File Copy A with the IRS (FIRE / IRIS) when required.</p>
+<p class="meta">Copy B For Recipient \xB7 Generated by ShopCrank for IRS / recipient filing. File Copy A with the IRS (FIRE / IRIS) when required.</p>
 <div class="grid">
   <div class="box"><label>PAYER\u2019S name, street address, city, state, ZIP</label><b>${esc(data.payer.name)}<br>${esc(data.payer.address)}</b></div>
   <div class="box"><label>PAYER\u2019S TIN</label><b>${esc(data.payer.tin || "")}</b></div>
   <div class="box"><label>RECIPIENT\u2019S name</label><b>${esc(data.recipient.name)}</b></div>
   <div class="box"><label>RECIPIENT\u2019S TIN</label><b>***-**-${esc(data.recipient.tinLast4 || "XXXX")}</b></div>
   <div class="box full"><label>Street address (including apt. no.) / City, state, and ZIP code</label><b>${esc(data.recipient.address || "")}</b></div>
-  <div class="box"><label>1 Nonemployee compensation</label><b>${money3(data.nonemployeeCompensation)}</b></div>
-  <div class="box"><label>4 Federal income tax withheld</label><b>${money3(data.federalTaxWithheld || 0)}</b></div>
+  <div class="box"><label>1 Nonemployee compensation</label><b>${money(data.nonemployeeCompensation)}</b></div>
+  <div class="box"><label>4 Federal income tax withheld</label><b>${money(data.federalTaxWithheld || 0)}</b></div>
 </div>
-<div class="notice">File with the IRS when nonemployee compensation is $600 or more. Recipients use this for Schedule C / income reporting. MechPro does not transmit to IRS FIRE until transmitter credentials are configured; download the e-file package and submit via IRS IRIS/FIRE or your CPA.</div>`;
+<div class="notice">File with the IRS when nonemployee compensation is $600 or more. Recipients use this for Schedule C / income reporting. ShopCrank does not transmit to IRS FIRE until transmitter credentials are configured; download the e-file package and submit via IRS IRIS/FIRE or your CPA.</div>`;
     return printHtml(`1099-NEC ${y} ${data.recipient.name}`, body);
   }
   function buildEfw2Text(employer, employees2, taxYear) {
@@ -4965,6 +3651,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   var init_forms = __esm({
     "src/modules/filing/forms.js"() {
+      init_print_document();
     }
   });
 
@@ -4998,7 +3685,7 @@ button{margin-top:12px;padding:8px 14px}
       ["6", "Total taxes before adjustments", summary.totalTax],
       [],
       ["Portal", "https://www.irs.gov/businesses/small-businesses-self-employed/e-file-employment-tax-forms"],
-      ["Note", "Enter these amounts in IRS e-file / EFTPS or provide to your CPA. MechPro prepares the worksheet from payroll records."]
+      ["Note", "Enter these amounts in IRS e-file / EFTPS or provide to your CPA. ShopCrank prepares the worksheet from payroll records."]
     ];
     return csvFromRows(rows);
   }
@@ -5062,10 +3749,10 @@ button{margin-top:12px;padding:8px 14px}
     const safeEmail = escapeText(email);
     const device = portable ? "drive" : "computer";
     const shortDevice = portable ? "drive" : "PC";
-    const storage = portable ? "Shop Crank Demo Data folder beside the executable on this drive" : "Shop Crank Offline folder on this computer";
+    const storage = portable ? "ShopCrank Demo Data folder beside the executable on this drive" : "ShopCrank Offline folder on this computer";
     const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="name" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
     const confirmField = hasAccount ? "" : `<label for="offline-confirm">Confirm password</label><input id="offline-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8"/>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "Shop Crank Demo" : "Shop Crank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. Shop Crank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "ShopCrank Demo" : "ShopCrank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. ShopCrank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
   }
   function stripOfflineSecrets(value2) {
     if (Array.isArray(value2)) return value2.map(stripOfflineSecrets);
@@ -5082,8 +3769,8 @@ button{margin-top:12px;padding:8px 14px}
   }
   function applyShopSnapshot(state2, snapshot) {
     if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return false;
-    const clean = stripOfflineSecrets(snapshot);
-    for (const [key, value2] of Object.entries(clean)) state2[key] = value2;
+    const clean2 = stripOfflineSecrets(snapshot);
+    for (const [key, value2] of Object.entries(clean2)) state2[key] = value2;
     return true;
   }
   function ensureOfflineOwner(state2, account) {
@@ -5299,13 +3986,11 @@ button{margin-top:12px;padding:8px 14px}
     const profile = app.shopProfile();
     const brand = app.printableBrand(profile);
     const body = customerInspectionDocument(inspection, profile, app.escapeHtml, app.cloudflareConfig.apiUrl);
-    const win = window.open("", "_blank", "noopener");
-    if (!win) {
-      app.toast("Allow pop-ups to print the inspection");
-      return;
-    }
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button" onclick="window.print()">Print inspection</button></body></html>`);
-    win.document.close();
+    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
+      toast: app.toast,
+      blockedMessage: "Allow pop-ups to print the inspection",
+      autoPrint: true
+    });
   }
   function presentCatalogInspection(app, existing = null, catalogId = existing?.catalogId) {
     const catalog = shopInspection(catalogId);
@@ -5390,6 +4075,7 @@ button{margin-top:12px;padding:8px 14px}
   var init_catalog_inspection_ui = __esm({
     "src/runtime/catalog-inspection-ui.js"() {
       init_shop_inspections();
+      init_print_document();
     }
   });
 
@@ -5511,17 +4197,17 @@ button{margin-top:12px;padding:8px 14px}
     legacyPaid = false
   } = {}) {
     const history = paymentsForTarget(payments2, targetType, targetId, linkedTargetId);
-    const recordedPaid = roundMoney3(history.reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
-    const amount = roundMoney3(total);
+    const recordedPaid = roundMoney4(history.reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+    const amount = roundMoney4(total);
     const paid = legacyPaid && recordedPaid === 0 ? amount : Math.min(amount, recordedPaid);
-    const balance = roundMoney3(Math.max(0, amount - paid));
+    const balance = roundMoney4(Math.max(0, amount - paid));
     const status = balance === 0 && amount > 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
     return { total: amount, paid, balance, status, history };
   }
-  var roundMoney3;
+  var roundMoney4;
   var init_payments = __esm({
     "src/modules/payments.js"() {
-      roundMoney3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      roundMoney4 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
     }
   });
 
@@ -5771,7 +4457,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "login",
           roles: ["*"],
           title: "Sign in",
-          summary: "Open MechPro with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.",
+          summary: "Open ShopCrank with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.",
           steps: [
             "Enter your work email and request a sign-in link, or use Google when that button is shown.",
             "Open the email on this device and follow the link within fifteen minutes.",
@@ -5795,7 +4481,7 @@ button{margin-top:12px;padding:8px 14px}
             "Sign out and sign in again after the profile is active."
           ],
           limits: [
-            "MechPro will not invent an employee profile from Access alone for non-owner roles."
+            "ShopCrank will not invent an employee profile from Access alone for non-owner roles."
           ],
           keywords: ["pending", "employee", "profile", "deactivated"]
         },
@@ -5804,7 +4490,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "superadmin",
           roles: ["super_admin"],
           title: "Platform console",
-          summary: "Manage customer shops on MechPro: create accounts, credits, suspension, and Stripe keys for a shop.",
+          summary: "Manage customer shops on ShopCrank: create accounts, credits, suspension, and Stripe keys for a shop.",
           steps: [
             "Review the customer shop list and each shop\u2019s subscription status.",
             "Create a shop with owner name, email, shop name, and shop ID when onboarding a customer.",
@@ -5928,7 +4614,7 @@ button{margin-top:12px;padding:8px 14px}
             "Cancel on the reader from this screen if the customer walks away."
           ],
           limits: [
-            "Card numbers are never typed into MechPro on the reader path.",
+            "Card numbers are never typed into ShopCrank on the reader path.",
             "Technicians do not have Card terminal."
           ],
           keywords: ["pos", "terminal", "reader", "card present", "debit"]
@@ -5944,10 +4630,10 @@ button{margin-top:12px;padding:8px 14px}
             "Select Phone order, then choose the work order or invoice.",
             "Enter the amount and choose Enter card to open Stripe\u2019s Payment Element.",
             "Type the card only in the Stripe fields. Confirm the charge when the form is complete.",
-            "Keep this tab open until MechPro shows the payment recorded."
+            "Keep this tab open until ShopCrank shows the payment recorded."
           ],
           limits: [
-            "Never paste a card number into a MechPro note, chat, or work-order field.",
+            "Never paste a card number into a ShopCrank note, chat, or work-order field.",
             "Phone entry needs the publishable key saved on Payments.",
             "Mail-order / telephone (MOTO) may fall back to a normal keyed charge if Stripe has not enabled MOTO on the account."
           ],
@@ -5982,7 +4668,7 @@ button{margin-top:12px;padding:8px 14px}
           ],
           limits: [
             "Plate lookup and Carfax stay off until those providers are connected.",
-            "AutoZone Pro ordering needs a saved login on this screen."
+            "AutoZone Pro ordering opens AutoZone Pro; each user signs in with their own AutoZone Pro user."
           ],
           keywords: ["shopops", "vehicles", "inventory", "parts", "inspections"]
         },
@@ -6009,16 +4695,16 @@ button{margin-top:12px;padding:8px 14px}
           route: "obd",
           roles: FLOOR,
           title: "OBD bay",
-          summary: "Shop-bay OBD tools tied to a repair order when the bay simulator or host is available.",
+          summary: "Live SAE J1979 OBD-II diagnostics over a J2534 Pass-Thru VCI or ELM327 serial adapter tied to a repair order.",
           steps: [
-            "Select the work order for the vehicle in the bay.",
-            "Run the scan the bay supports and copy codes into the RO notes.",
-            "Verify safety-critical findings before releasing the vehicle."
+            "Connect your J2534 Pass-Thru VCI or USB/Bluetooth ELM327 adapter with the vehicle ignition ON.",
+            "Select the work order for the vehicle in the bay and click Read vehicle to pull the VIN, stored/pending/permanent trouble codes, and live engine PIDs.",
+            "Copy scan findings into the RO notes or send trouble codes to the AI workbench."
           ],
           limits: [
-            "Simulated bay results are not a substitute for a live tool on a customer vehicle."
+            "Clearing trouble codes (Mode 04) also resets freeze-frame data and readiness monitors."
           ],
-          keywords: ["obd", "codes", "scan", "bay"]
+          keywords: ["obd", "codes", "scan", "bay", "j2534", "elm327"]
         },
         {
           id: "keys",
@@ -6032,7 +4718,7 @@ button{margin-top:12px;padding:8px 14px}
             "Document the result on the work order."
           ],
           limits: [
-            "MechPro does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.",
+            "ShopCrank does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.",
             "Unsupported gateway or make combinations stay blocked."
           ],
           keywords: ["keys", "programming", "fob", "immobilizer"]
@@ -6126,7 +4812,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "imports",
           roles: ADMIN_ONLY,
           title: "Import data",
-          summary: "Bring customers, vehicles, or other supported lists into MechPro from a file.",
+          summary: "Bring customers, vehicles, or other supported lists into ShopCrank from a file.",
           steps: [
             "Pick the import type the screen lists.",
             "Preview rows before you confirm the write.",
@@ -6148,7 +4834,7 @@ button{margin-top:12px;padding:8px 14px}
             "Send only to customers who asked for contact on that channel."
           ],
           limits: [
-            "Do not send unsolicited mail from MechPro.",
+            "Do not send unsolicited mail from ShopCrank.",
             "Email routing on the apex domain stays with Google Workspace MX."
           ],
           keywords: ["messaging", "sms", "email"]
@@ -6214,6 +4900,1169 @@ button{margin-top:12px;padding:8px 14px}
         lastKey: "",
         keybound: false
       };
+    }
+  });
+
+  // src/modules/technician-assignment.js
+  function classificationFor(user = {}) {
+    const explicit = String(user.classification || "").trim();
+    if (EMPLOYEE_CLASSIFICATIONS.some((item) => item.id === explicit)) return explicit;
+    if (user.role === "technician") return "technician";
+    if (user.role === "service_writer") return "service_writer";
+    if (user.role === "office") return "office";
+    return "custom";
+  }
+  function technicianName(user = {}) {
+    return String(user.techName || user.name || "").trim();
+  }
+  function isAssignableTechnician(user = {}) {
+    return user.active !== false && classificationFor(user) === "technician" && Boolean(technicianName(user));
+  }
+  function assignableTechnicians(users = []) {
+    return users.filter(isAssignableTechnician);
+  }
+  function clampShare(value2) {
+    const number = Number(value2);
+    if (!Number.isFinite(number) || number < 0) return 0;
+    return Math.min(100, Math.round(number * 100) / 100);
+  }
+  function normalizeAssignments(order = {}, users = []) {
+    const source = Array.isArray(order.assignments) ? order.assignments : [];
+    const cleaned = source.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean);
+    if (cleaned.length) return ensurePrimary(cleaned);
+    const legacy = String(order.tech || "").trim();
+    if (!legacy || legacy === "Unassigned") return [];
+    const match = users.find((user) => technicianName(user) === legacy);
+    return [{
+      id: `legacy-${order.id || "tech"}`,
+      employeeId: match?.id || null,
+      name: legacy,
+      role: "primary",
+      sharePercent: 100,
+      hoursWorked: hoursOf(order.laborHours),
+      writeIn: !match,
+      assignedAt: null
+    }];
+  }
+  function cleanAssignment(item = {}, index = 0, users = []) {
+    const employee = users.find((user) => item.employeeId && user.id === item.employeeId);
+    const name = String(employee ? technicianName(employee) : item.name || "").trim();
+    if (!name) return null;
+    return {
+      id: String(item.id || `asg-${index + 1}`),
+      employeeId: employee?.id || null,
+      name,
+      role: ROLES.includes(item.role) ? item.role : "secondary",
+      sharePercent: clampShare(item.sharePercent),
+      hoursWorked: hoursOf(item.hoursWorked),
+      writeIn: !employee,
+      assignedAt: item.assignedAt || null
+    };
+  }
+  function ensurePrimary(assignments) {
+    const withPrimary = assignments.some((item) => item.role === "primary") ? assignments : assignments.map((item, index) => index === 0 ? { ...item, role: "primary" } : item);
+    let seen = false;
+    const unique = withPrimary.map((item) => {
+      if (item.role !== "primary") return item;
+      if (seen) return { ...item, role: "secondary" };
+      seen = true;
+      return item;
+    });
+    return unique.sort((left, right) => Number(right.role === "primary") - Number(left.role === "primary"));
+  }
+  function applyAssignments(order = {}, assignments = [], users = []) {
+    const normalized = ensurePrimary(assignments.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean));
+    const primary = normalized.find((item) => item.role === "primary");
+    return {
+      ...order,
+      assignments: normalized,
+      tech: primary?.name || "Unassigned"
+    };
+  }
+  function orderIncludesTechnician(order = {}, user = {}, users = []) {
+    const name = technicianName(user);
+    if (!name && !user.id) return false;
+    return normalizeAssignments(order, users).some((item) => user.id && item.employeeId === user.id || name && item.name === name);
+  }
+  function clockedHours(clocks = [], workOrderId, userId) {
+    return hoursOf(clocks.filter((entry) => entry.workOrderId === workOrderId && entry.userId === userId && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
+  }
+  function shareFraction(assignments, assignment) {
+    const total = assignments.reduce((sum, item) => sum + (Number(item.sharePercent) || 0), 0);
+    if (!total) return assignments.length ? 1 / assignments.length : 0;
+    return (Number(assignment.sharePercent) || 0) / total;
+  }
+  function payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment) {
+    if (!employee) return 0;
+    if (employee.employmentType === "Salary" && plan === "hourly") return 0;
+    if (plan === "flat_rate" || plan === "team_split") return money2(laborRevenue * fraction);
+    if (plan === "commission") {
+      const percent = Number(employee.commissionPercent || assignment.sharePercent || 0);
+      return money2(laborRevenue * percent / 100);
+    }
+    return money2(usableHours * Number(employee.payRate || 0));
+  }
+  function payrollLinesForOrder({
+    order = {},
+    users = [],
+    clocks = [],
+    periodKey,
+    nowIso = null
+  } = {}) {
+    if (!["completed", "invoiced"].includes(order.status)) return [];
+    const assignments = normalizeAssignments(order, users);
+    if (!assignments.length) return [];
+    const laborRevenue = Number(order.labor || 0);
+    return assignments.flatMap((assignment) => {
+      const employee = users.find((user) => user.id === assignment.employeeId && user.active !== false) || null;
+      const tracked = employee ? clockedHours(clocks, order.id, employee.id) : 0;
+      const usableHours = hoursOf(tracked || assignment.hoursWorked || (assignment.role === "primary" ? order.laborHours : 0));
+      if (!usableHours) return [];
+      const plan = PAY_PLANS.some((item) => item.id === employee?.payPlan) ? employee.payPlan : "hourly";
+      const fraction = shareFraction(assignments, assignment);
+      const amount = payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment);
+      return [{
+        id: `${periodKey}#${order.id}#${assignment.id}`,
+        workOrderId: order.id,
+        employeeId: employee?.id || null,
+        technicianName: assignment.name,
+        role: assignment.role,
+        writeIn: !employee,
+        periodKey,
+        roNumber: order.id,
+        customer: order.customer || "",
+        vehicle: order.vehicle || "",
+        hours: usableHours,
+        rate: plan === "hourly" ? Number(employee?.payRate || 0) : 0,
+        amount,
+        grossPay: amount,
+        payPlan: employee ? plan : "unrated",
+        completedAt: nowIso
+      }];
+    });
+  }
+  function attributeClockHours(order, userId, clocks = [], users = []) {
+    const assignments = normalizeAssignments(order, users).map((item) => item.employeeId === userId ? { ...item, hoursWorked: clockedHours(clocks, order.id, userId) } : item);
+    const laborHours = hoursOf(clocks.filter((entry) => entry.workOrderId === order.id && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
+    return applyAssignments({ ...order, laborHours: laborHours || order.laborHours }, assignments, users);
+  }
+  function technicianPerformance(orders2 = [], users = [], clocks = []) {
+    const comebackTracked = orders2.some((order) => Object.prototype.hasOwnProperty.call(order, "comeback"));
+    return assignableTechnicians(users).map((user) => {
+      const mine = orders2.filter((order) => orderIncludesTechnician(order, user, users));
+      const completed = mine.filter((order) => ["completed", "invoiced"].includes(order.status));
+      const hours = hoursOf(completed.reduce((sum, order) => {
+        const tracked = clockedHours(clocks, order.id, user.id);
+        if (tracked) return sum + tracked;
+        const assignment = normalizeAssignments(order, users).find((item) => item.employeeId === user.id);
+        return sum + Number(assignment?.hoursWorked || (assignment?.role === "primary" ? order.laborHours : 0) || 0);
+      }, 0));
+      const revenue = money2(completed.reduce((sum, order) => sum + Number(order.labor || 0), 0));
+      const billedHours = hoursOf(completed.reduce((sum, order) => sum + Number(order.laborHours || 0), 0));
+      const efficiency = hours > 0 && billedHours > 0 ? Math.round(billedHours / hours * 1e3) / 10 : null;
+      const averageRepair = completed.length && hours ? hoursOf(hours / completed.length) : null;
+      const comebacks = comebackTracked ? completed.filter((order) => order.comeback === true).length : null;
+      return {
+        id: user.id,
+        name: technicianName(user),
+        open: mine.length - completed.length,
+        completed: completed.length,
+        hours,
+        revenue,
+        efficiency,
+        averageRepair,
+        comebacks,
+        averageTicket: completed.length ? money2(revenue / completed.length) : null
+      };
+    });
+  }
+  function escapeHtml2(value2) {
+    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[char]);
+  }
+  function technicianTrackerHtml(rows = []) {
+    const body = rows.map((row) => `<tr><td>${escapeHtml2(row.name)}</td><td>${row.open}</td><td>${row.completed}</td><td>${row.hours.toFixed(2)}</td><td>${currency(row.revenue)}</td><td>${row.efficiency == null ? "\u2014" : `${row.efficiency}%`}</td><td>${row.comebacks == null ? "\u2014" : row.comebacks}</td><td>${row.averageRepair == null ? "\u2014" : row.averageRepair.toFixed(2)}</td></tr>`).join("");
+    return `<section class="tech-tracker"><div class="home-panel-head"><div><h2>Technician performance</h2><p>Open jobs, completed jobs, clocked hours, and labor sold. Comebacks appear only after a job is marked as a comeback.</p></div></div><div class="data-panel"><table><thead><tr><th>Technician</th><th>Open</th><th>Completed</th><th>Hours</th><th>Labor sold</th><th>Efficiency</th><th>Comebacks</th><th>Avg hours</th></tr></thead><tbody>${body || '<tr><td colspan="8">No technicians are classified for assignment yet.</td></tr>'}</tbody></table></div></section>`;
+  }
+  function assignmentSummary(order = {}, users = []) {
+    const assignments = normalizeAssignments(order, users);
+    if (!assignments.length) return order.tech && order.tech !== "Unassigned" ? order.tech : "Unassigned";
+    const primary = assignments.find((item) => item.role === "primary") || assignments[0];
+    const extra = assignments.length - 1;
+    return extra > 0 ? `${primary.name} +${extra}` : primary.name;
+  }
+  var ROLES, EMPLOYEE_CLASSIFICATIONS, PAY_PLANS, money2, hoursOf, currency;
+  var init_technician_assignment = __esm({
+    "src/modules/technician-assignment.js"() {
+      ROLES = ["primary", "secondary", "apprentice"];
+      EMPLOYEE_CLASSIFICATIONS = [
+        { id: "technician", label: "Technician" },
+        { id: "service_writer", label: "Service Writer" },
+        { id: "parts_manager", label: "Parts Manager" },
+        { id: "shop_foreman", label: "Shop Foreman" },
+        { id: "office", label: "Office Staff" },
+        { id: "custom", label: "Custom" }
+      ];
+      PAY_PLANS = [
+        { id: "hourly", label: "Hourly" },
+        { id: "flat_rate", label: "Flat rate" },
+        { id: "commission", label: "Commission" },
+        { id: "team_split", label: "Team split" }
+      ];
+      money2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      hoursOf = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      currency = (value2) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value2) || 0);
+    }
+  });
+
+  // src/modules/estimate-templates.js
+  function calculateShopEstimate(lines = [], {
+    taxRate = 0,
+    laborRate = 0,
+    discountPercent = 0,
+    discountReason = "",
+    shopSupplies
+  } = {}) {
+    const normalizedLines = lines.map((line, index) => normalizeEstimateLine(
+      line.type === "labor" && line.laborRate == null ? { ...line, laborRate } : line,
+      index
+    ));
+    const labor = normalizedLines.filter((line) => line.type === "labor" && line.approvalStatus !== "declined").reduce((sum, line) => sum + line.total, 0);
+    const automaticSupplies = Math.min(
+      SHOP_SUPPLIES_RULES.shopSuppliesCap,
+      labor * SHOP_SUPPLIES_RULES.shopSuppliesRate / 100
+    );
+    const supplies = labor > 0 ? money3(Math.min(SHOP_SUPPLIES_RULES.shopSuppliesCap, Math.max(0, shopSupplies ?? automaticSupplies))) : 0;
+    const base = calculateEstimate(
+      normalizedLines,
+      0,
+      supplies ? [{ description: "Shop supplies", amount: supplies }] : []
+    );
+    const safeDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    const discountAmount = money3(base.subtotal * safeDiscountPercent / 100);
+    const subtotal = money3(base.subtotal - discountAmount);
+    const safeTaxRate = Math.max(0, Number(taxRate) || 0);
+    const tax = money3(subtotal * safeTaxRate / 100);
+    return {
+      ...base,
+      grossSubtotal: base.subtotal,
+      discountPercent: safeDiscountPercent,
+      discountReason: String(discountReason || ""),
+      discountAmount,
+      subtotal,
+      taxRate: safeTaxRate,
+      tax,
+      total: money3(subtotal + tax)
+    };
+  }
+  function workOrderDraftFromEstimate(estimate = REFERENCE_ESTIMATE) {
+    const customer = typeof estimate.customer === "object" ? estimate.customer : { name: estimate.customer };
+    const vehicle = typeof estimate.vehicle === "object" ? estimate.vehicle : { description: estimate.vehicle };
+    const insurance = estimate.insurance || {};
+    const laborSource = (estimate.lines || []).filter((line) => line.type === "labor").map((line) => line.notes || line.laborSource).filter(Boolean).join(" ");
+    const complaintParts = [
+      `Claimant: ${customer.name || "Not provided"}.`,
+      estimate.complaint,
+      insurance.company || insurance.policy ? `Insurance: ${insurance.company || "Carrier not provided"}; policy ${insurance.policy || "not provided"}; claim number ${insurance.claimNumber || "not yet assigned"}.` : "",
+      laborSource ? `Labor source: ${laborSource}` : ""
+    ].filter(Boolean);
+    return {
+      sourceEstimateNumber: estimate.number || "",
+      customer: customer.name || "",
+      phone: customer.phone || estimate.phone || "",
+      email: customer.email || estimate.email || "",
+      address: customer.address || "",
+      vehicle: vehicle.description || "",
+      vin: vehicle.vin || estimate.vin || "",
+      complaint: complaintParts.join("\n"),
+      requestedServices: (estimate.requestedServices || (estimate.lines || []).map((line) => line.description)).join("\n"),
+      estimate: calculateShopEstimate(estimate.lines || [], {
+        taxRate: estimate.taxRate,
+        laborRate: estimate.laborRate,
+        discountPercent: estimate.discountPercent,
+        discountReason: estimate.discountReason,
+        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount
+      }),
+      exclusions: estimate.exclusions || [],
+      insurance,
+      shopNotes: (estimate.shopNotes || []).map(String),
+      plate: vehicle.plate || ""
+    };
+  }
+  function estimateFromAssistantDraft(action = {}, { laborRate = 0, taxRate = 0, shopSupplies } = {}) {
+    const draft = action.draft || action;
+    const resolvedLaborRate = Math.max(0, Number(laborRate) || 0);
+    const partLines = (draft.parts || []).map((part, index) => ({
+      id: `assistant-part-${index + 1}`,
+      type: "part",
+      description: String(part.description || "Part"),
+      notes: String(part.notes || ""),
+      quantity: Math.max(0, Number(part.quantity) || 0),
+      unitPrice: Math.max(0, Number(part.unitPrice) || 0),
+      partNumber: String(part.partNumber || ""),
+      priceStatus: part.priceStatus === "pending" ? "pending" : "priced"
+    }));
+    const laborLines = (draft.labor || []).map((labor, index) => ({
+      id: `assistant-labor-${index + 1}`,
+      type: "labor",
+      description: String(labor.description || "Labor"),
+      notes: String(labor.notes || labor.source || ""),
+      hours: Math.max(0, Number(labor.hours) || 0),
+      laborRate: resolvedLaborRate,
+      laborSource: String(labor.source || "Customer conversation; verify before authorization")
+    }));
+    const feeLines = draft.afterMidnightFee ? [afterMidnightFeeLine("assistant-fee-after-midnight")] : [];
+    const totals = calculateShopEstimate([...partLines, ...laborLines, ...feeLines], {
+      laborRate: resolvedLaborRate,
+      taxRate,
+      discountPercent: draft.discountPercent,
+      discountReason: draft.discountReason,
+      shopSupplies
+    });
+    return {
+      id: `assistant-estimate-${Date.now()}`,
+      number: "",
+      status: "draft",
+      customer: {
+        name: String(draft.customer?.name || ""),
+        phone: String(draft.customer?.phone || ""),
+        email: String(draft.customer?.email || ""),
+        address: String(draft.customer?.address || "")
+      },
+      vehicle: {
+        description: String(draft.vehicle?.description || ""),
+        vin: String(draft.vehicle?.vin || ""),
+        plate: String(draft.vehicle?.plate || "")
+      },
+      complaint: String(draft.complaint || ""),
+      requestedServices: (draft.requestedServices || []).map(String),
+      exclusions: (draft.exclusions || []).map(String),
+      shopNotes: (draft.shopNotes || []).map(String),
+      lines: totals.lines,
+      ...totals
+    };
+  }
+  var money3, REFERENCE_ESTIMATE_RULES, referenceLines, referenceTotals, REFERENCE_ESTIMATE;
+  var init_estimate_templates = __esm({
+    "src/modules/estimate-templates.js"() {
+      init_estimate_workflow();
+      money3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      REFERENCE_ESTIMATE_RULES = Object.freeze({ laborRate: 140, taxRate: 8.25 });
+      referenceLines = [
+        {
+          id: "part-headlamp",
+          type: "part",
+          description: "Passenger xenon headlamp",
+          notes: "Right side, xenon without adaptive. DEPO 3401157RMUSHM2.",
+          quantity: 1,
+          unitPrice: 493.79,
+          partNumber: "3401157RMUSHM2",
+          brand: "DEPO"
+        },
+        {
+          id: "part-fog-lamp",
+          type: "part",
+          description: "Passenger fog lamp",
+          notes: "Right side, without AMG styling package. TYC 19042100.",
+          quantity: 1,
+          unitPrice: 17.02,
+          partNumber: "19042100",
+          brand: "TYC"
+        },
+        {
+          id: "part-xenon-module",
+          type: "part",
+          description: "Xenon headlamp control module",
+          notes: "Listed as 222-900-33-00; confirm the module number before ordering.",
+          quantity: 1,
+          unitPrice: 116.4,
+          partNumber: "222-900-33-00"
+        },
+        {
+          id: "part-bumper",
+          type: "part",
+          description: "Front bumper cover",
+          notes: "Without AMG, without Parktronic, CAPA, primed. TECHPRO MB1000458.",
+          quantity: 1,
+          unitPrice: 362.79,
+          partNumber: "MB1000458",
+          brand: "TECHPRO"
+        },
+        {
+          id: "part-fender",
+          type: "part",
+          description: "Passenger front fender",
+          notes: "Front right, CAPA. TECHPRO MB1241149. Beyond repair.",
+          quantity: 1,
+          unitPrice: 374.79,
+          partNumber: "MB1241149",
+          brand: "TECHPRO"
+        },
+        {
+          id: "part-fender-covers",
+          type: "part",
+          description: "Upper and lower passenger fender covers",
+          notes: "Damaged; parts have not been matched to a listing and remain unpriced.",
+          quantity: 1,
+          unitPrice: 0,
+          priceStatus: "pending"
+        },
+        {
+          id: "labor-collision-repair",
+          type: "labor",
+          description: "Collision component replacement labor",
+          notes: "5.3 hours from Open Labor Project estimates for this vehicle: fender 3.7, headlamp 0.9, and one fender liner 0.7. These are not ALLDATA or Mitchell times, are not copied from a labor guide, and are not expert-verified.",
+          hours: 5.3,
+          laborRate: REFERENCE_ESTIMATE_RULES.laborRate,
+          laborSource: "Open Labor Project estimate"
+        }
+      ];
+      referenceTotals = calculateShopEstimate(referenceLines, {
+        taxRate: REFERENCE_ESTIMATE_RULES.taxRate,
+        discountPercent: 10,
+        discountReason: "Tech-student discount",
+        shopSupplies: 20
+      });
+      REFERENCE_ESTIMATE = Object.freeze({
+        id: "reference-estimate-est-2026-1004-01",
+        number: "EST-2026-1004-01",
+        date: "2026-10-04",
+        validThrough: "2026-10-18",
+        status: "draft",
+        template: true,
+        customer: {
+          name: "Jordan Example",
+          phone: "555-0100",
+          email: "customer@example.test",
+          address: "123 Example Street, Sample City, TX 00000",
+          role: "Claimant"
+        },
+        vehicle: {
+          description: "2016 Mercedes-Benz GLA250",
+          vin: "1M8GDM9AXKP042788",
+          plate: "DEMO-01"
+        },
+        insurance: {
+          company: "Example Insurance",
+          policy: "TEST-POLICY-001",
+          claimNumber: ""
+        },
+        complaint: "Deer collision. Claimant was not injured. No structural damage was found.",
+        inspectionNotes: "Passenger-side lighting, bumper, fender, and upper/lower fender covers are damaged.",
+        requestedServices: [
+          "Replace passenger xenon headlamp",
+          "Replace passenger fog lamp",
+          "Replace xenon headlamp control module",
+          "Replace front bumper cover",
+          "Replace passenger front fender",
+          "Replace upper and lower passenger fender covers (parts remain unpriced)"
+        ],
+        exclusions: [
+          "Paint is not included.",
+          "Upper and lower fender covers remain unpriced.",
+          "Hidden damage and any additional work require a revised estimate and customer authorization."
+        ],
+        shopNotes: [
+          "Obtain written authorization before sending the estimate or customer records.",
+          "Verify any billing or photo-delivery address with the customer before use."
+        ],
+        lines: referenceTotals.lines,
+        fees: referenceTotals.fees,
+        ...referenceTotals
+      });
+    }
+  });
+
+  // src/modules/intake-wizard.js
+  function escapeHtml3(value2) {
+    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[char]);
+  }
+  function escapeAttr3(value2) {
+    return escapeHtml3(value2);
+  }
+  function emptyIntakeDraft(now2 = /* @__PURE__ */ new Date()) {
+    return {
+      id: `intake-${now2.getTime()}`,
+      step: 0,
+      savedAt: null,
+      status: "draft",
+      customer: {
+        firstName: "",
+        lastName: "",
+        phone: "",
+        email: "",
+        company: "",
+        secondaryPhone: "",
+        address: "",
+        city: "",
+        state: "",
+        zip: "",
+        contact: { phone: true, text: false, email: true }
+      },
+      vehicle: {
+        vin: "",
+        plate: "",
+        plateState: "",
+        year: "",
+        make: "",
+        model: "",
+        trim: "",
+        engine: "",
+        transmission: "",
+        mileage: "",
+        color: ""
+      },
+      photos: [],
+      damage: [],
+      concern: {
+        description: "",
+        began: "",
+        frequency: "",
+        lights: "",
+        recentRepairs: "",
+        accident: "",
+        towed: "",
+        overheating: ""
+      },
+      diagnosis: {
+        visual: "",
+        roadTest: "",
+        fluids: "",
+        battery: "",
+        codes: "",
+        notes: "",
+        cause: "",
+        correction: "",
+        severity: "",
+        analysis: null
+      },
+      estimate: { lines: [], diagnosticCharge: 0, approval: "pending" },
+      aiFilledFields: {},
+      assignments: []
+    };
+  }
+  function customerDisplayName(draft = {}) {
+    const customer = draft.customer || {};
+    const person = [customer.firstName, customer.lastName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+    const company = String(customer.company || "").trim();
+    if (person && company) return `${person} (${company})`;
+    return person || company;
+  }
+  function vehicleLabel2(draft = {}) {
+    const vehicle = draft.vehicle || {};
+    return [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  }
+  function missingCustomerFields(draft = {}) {
+    const customer = draft.customer || {};
+    return ["firstName", "lastName", "phone", "email"].filter((field2) => !String(customer[field2] || "").trim());
+  }
+  function missingVehicleFields(draft = {}) {
+    const vehicle = draft.vehicle || {};
+    const identity = vehicleLabel2(draft);
+    const missing = [];
+    if (!identity && !String(vehicle.vin || "").trim()) missing.push("vehicle");
+    return missing;
+  }
+  function missingRequiredPhotos(draft = {}) {
+    const taken = new Set((draft.photos || []).map((photo) => photo.slot));
+    return REQUIRED_PHOTO_SLOTS.filter((slot) => !taken.has(slot.id)).map((slot) => slot.label);
+  }
+  function applyVinDecode(draft, decoded = {}) {
+    const vehicle = { ...draft.vehicle };
+    const fill = (field2, value2) => {
+      if (!String(vehicle[field2] || "").trim() && String(value2 || "").trim()) vehicle[field2] = String(value2).trim();
+    };
+    fill("year", decoded.year);
+    fill("make", decoded.make);
+    fill("model", decoded.model);
+    fill("trim", decoded.trim);
+    const engine = [decoded.engineDisplacementLiters ? `${decoded.engineDisplacementLiters}L` : "", decoded.engineCylinders ? `${decoded.engineCylinders} cyl` : ""].filter(Boolean).join(" ");
+    fill("engine", engine);
+    if (decoded.vin) vehicle.vin = String(decoded.vin).toUpperCase();
+    return { ...draft, vehicle };
+  }
+  function applyAiAutofill(draft, formType, data = {}) {
+    const next = structuredClone(draft || emptyIntakeDraft());
+    next.aiFilledFields = { ...next.aiFilledFields || {} };
+    const markFilled = (path, value2) => {
+      const clean2 = String(value2 ?? "").trim();
+      if (!clean2) return false;
+      next.aiFilledFields[path] = true;
+      return true;
+    };
+    if (formType === "vehicle_intake") {
+      const mapping = [
+        ["vin", data.vin ? String(data.vin).toUpperCase() : ""],
+        ["plate", data.plate ? String(data.plate).toUpperCase() : ""],
+        ["plateState", data.plate_state || data.plateState || ""],
+        ["year", data.year],
+        ["make", data.make],
+        ["model", data.model],
+        ["trim", data.trim],
+        ["engine", data.engine],
+        ["mileage", data.mileage],
+        ["color", data.color]
+      ];
+      for (const [key, value2] of mapping) {
+        if (markFilled(`vehicle.${key}`, value2)) {
+          next.vehicle[key] = String(value2).trim();
+        }
+      }
+      return next;
+    }
+    if (formType === "diagnostic_3c") {
+      if (markFilled("concern.description", data.complaint)) {
+        next.concern.description = String(data.complaint).trim();
+      }
+      if (markFilled("diagnosis.cause", data.cause)) {
+        next.diagnosis.cause = String(data.cause).trim();
+      }
+      if (markFilled("diagnosis.correction", data.correction)) {
+        next.diagnosis.correction = String(data.correction).trim();
+      }
+      if (markFilled("diagnosis.severity", data.severity)) {
+        next.diagnosis.severity = String(data.severity).trim();
+      }
+      if (Array.isArray(data.dtc_codes) && data.dtc_codes.length) {
+        const codes = data.dtc_codes.join(", ");
+        if (markFilled("diagnosis.codes", codes)) {
+          next.diagnosis.codes = codes;
+        }
+      }
+    }
+    if (formType === "dvi_estimate") {
+      if (Array.isArray(data.checklist_items) && data.checklist_items.length) {
+        const formatted = data.checklist_items.map((item) => `[${item.status || "YELLOW"}] ${item.component}: ${item.notes || ""}${item.measurement ? ` (${item.measurement})` : ""}`).join("\n");
+        if (markFilled("diagnosis.visual", formatted)) {
+          next.diagnosis.visual = formatted;
+        }
+      }
+    }
+    if (Array.isArray(data.suggested_line_items) && data.suggested_line_items.length) {
+      const mappedLines = data.suggested_line_items.map((item) => {
+        const rawType = String(item.item_type || "LABOR").toUpperCase();
+        const isPart = rawType === "PART";
+        return {
+          type: isPart ? "part" : "labor",
+          description: String(item.description || "").trim(),
+          quantity: isPart ? Math.max(1, Number(item.quantity) || 1) : Math.max(0.1, Number(item.estimated_hours || item.quantity) || 1),
+          unitPrice: 0,
+          partNumber: item.part_number || null,
+          source: "Filled by AI",
+          aiFilled: true
+        };
+      }).filter((line) => line.description);
+      if (mappedLines.length) {
+        next.estimate.lines = mappedLines;
+        next.aiFilledFields["estimate.lines"] = true;
+      }
+    }
+    return next;
+  }
+  function acceptAllAiFields(draft) {
+    const next = structuredClone(draft || emptyIntakeDraft());
+    next.aiFilledFields = {};
+    if (Array.isArray(next.estimate?.lines)) {
+      next.estimate.lines = next.estimate.lines.map((line) => ({ ...line, aiFilled: false }));
+    }
+    return next;
+  }
+  function searchLaborGuide(query2 = "", services = CANNED_MENU) {
+    const needle = String(query2 || "").trim().toLowerCase();
+    if (needle.length < 2) return [];
+    const shopHits = SHOP_CRANK_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
+    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
+    return [...shopHits, ...canned].slice(0, 8);
+  }
+  function seedEstimateLines(draft = {}) {
+    if (Array.isArray(draft.estimate?.lines) && draft.estimate.lines.length) return draft.estimate.lines;
+    const hits = searchLaborGuide(draft.concern?.description || "");
+    const lines = hits.slice(0, 2).map((hit) => ({
+      type: "labor",
+      description: hit.name,
+      quantity: hit.hours || 1,
+      unitPrice: 0,
+      notes: hit.notes,
+      source: hit.source
+    }));
+    const charge = Number(draft.estimate?.diagnosticCharge || 0);
+    if (charge > 0) {
+      lines.unshift({ type: "labor", description: "Diagnostic charge", quantity: 1, unitPrice: charge, notes: "Initial diagnosis", source: "Shop" });
+    }
+    if (!lines.length) {
+      lines.push({
+        type: "labor",
+        description: String(draft.concern?.description || "Diagnose customer concern").slice(0, 120),
+        quantity: 1,
+        unitPrice: 0,
+        notes: "Hours stay at 1 until the technician confirms the job.",
+        source: "Shop"
+      });
+    }
+    return lines;
+  }
+  function priceIntakeEstimate(draft = {}, { laborRate = 165, taxRate = 0 } = {}) {
+    const lines = seedEstimateLines(draft).map((line) => ({
+      type: line.type === "part" ? "part" : "labor",
+      description: line.description,
+      quantity: Math.max(0, Number(line.quantity) || 0),
+      unitPrice: line.type === "part" ? Number(line.unitPrice) || 0 : void 0,
+      laborRate: line.type === "part" ? void 0 : Number(line.unitPrice) > 0 ? Number(line.unitPrice) : laborRate,
+      notes: line.notes || ""
+    }));
+    const priced = calculateShopEstimate(lines, { laborRate, taxRate });
+    return { ...priced, disclaimer: INTAKE_DISCLAIMER, lines };
+  }
+  function localDiagnosticChecklist(draft = {}) {
+    const text = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
+    const causes = [];
+    if (/misfire|stall|p030/.test(text)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
+    if (/p0171|lean|vacuum/.test(text)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
+    if (/p0420|catalyst/.test(text)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
+    if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
+    return {
+      source: "shop-checklist",
+      notice: "ShopCrank AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
+      causes
+    };
+  }
+  function phoneDigits(value2) {
+    const digits = String(value2 || "").replace(/\D/g, "");
+    return digits.length > 10 ? digits.slice(-10) : digits;
+  }
+  function findIntakeCustomer(customers2 = [], draft = {}) {
+    const phone = phoneDigits(draft.customer?.phone);
+    const email = String(draft.customer?.email || "").trim().toLowerCase();
+    return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
+  }
+  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
+    const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
+    const approval = draft.estimate?.approval || "pending";
+    const status = approval === "approved" ? "approved" : "estimate";
+    const assigned = applyAssignments({ id }, draft.assignments || [], users);
+    return {
+      id,
+      customer: customerDisplayName(draft),
+      phone: String(draft.customer?.phone || "").trim(),
+      vehicle: vehicleLabel2(draft) || "Vehicle pending",
+      vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
+      complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
+      status,
+      priority: "normal",
+      tech: assigned.tech,
+      assignments: assigned.assignments,
+      bay: "Unassigned",
+      mobile: false,
+      promise: "",
+      notes: [draft.diagnosis?.notes, draft.concern?.recentRepairs ? `Recent repairs: ${draft.concern.recentRepairs}` : ""].filter(Boolean).join("\n"),
+      labor: priced.labor,
+      laborHours: priced.lines.filter((line) => line.type === "labor").reduce((sum, line) => sum + Number(line.quantity || 0), 0),
+      parts: priced.parts,
+      tax: priced.tax,
+      total: priced.total,
+      estimate: {
+        lines: priced.lines,
+        disclaimer: INTAKE_DISCLAIMER,
+        approvalStatus: approval
+      },
+      intake: {
+        id: draft.id,
+        status: "checked_in",
+        customer: draft.customer,
+        vehicle: draft.vehicle,
+        photos: draft.photos || [],
+        damage: draft.damage || [],
+        concern: draft.concern,
+        diagnosis: draft.diagnosis,
+        disclaimer: INTAKE_DISCLAIMER,
+        approval
+      }
+    };
+  }
+  function serializableIntake(draft = {}) {
+    return {
+      ...draft,
+      photos: (draft.photos || []).map((photo) => {
+        const copy = { ...photo };
+        delete copy.file;
+        return copy;
+      })
+    };
+  }
+  function canConvertIntake(draft = {}) {
+    const problems = [];
+    if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
+    if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
+    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
+    if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
+    return { ok: problems.length === 0, problems };
+  }
+  function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
+    const badge2 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
+    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge2}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
+  }
+  function aiAcceptBanner(draft, prefix) {
+    const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
+    if (!filledKeys.length) return "";
+    return `<div class="ai-review-banner" role="status"><span><strong>Filled by AI</strong> \u2014 Review highlighted fields before saving.</span><button type="button" class="secondary" id="intake-ai-accept-all">Accept All</button></div>`;
+  }
+  function progress(step) {
+    return `<ol class="intake-progress">${INTAKE_STEPS.map((item, index) => `<li class="${index === step ? "current" : ""} ${index < step ? "done" : ""}"><span>${index + 1}</span>${escapeHtml3(item.label)}</li>`).join("")}</ol>`;
+  }
+  function savedStamp(draft) {
+    if (!draft.savedAt) return '<span class="intake-save">Not saved yet</span>';
+    const time = new Date(draft.savedAt);
+    const label2 = Number.isNaN(time.getTime()) ? "" : time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `<span class="intake-save">Draft saved${label2 ? ` ${escapeHtml3(label2)}` : ""}</span>`;
+  }
+  function customerStep(draft) {
+    const customer = draft.customer;
+    const contact = customer.contact || {};
+    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { required: true, type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
+<fieldset class="intake-choices"><legend>Communication preferences</legend>${["phone", "text", "email"].map((key) => `<label><input type="checkbox" name="contact-${key}" ${contact[key] ? "checked" : ""}/> ${key[0].toUpperCase()}${key.slice(1)}</label>`).join("")}</fieldset>`;
+  }
+  function vehicleStep(draft) {
+    const vehicle = draft.vehicle;
+    const ai = draft.aiFilledFields || {};
+    return `${aiAcceptBanner(draft, "vehicle.")}<div class="form-grid">${field("vin", "VIN", vehicle.vin, { full: true, aiFilled: Boolean(ai["vehicle.vin"]) })}${field("plate", "License plate", vehicle.plate, { aiFilled: Boolean(ai["vehicle.plate"]) })}${field("plateState", "Plate state", vehicle.plateState, { aiFilled: Boolean(ai["vehicle.plateState"]) })}${field("year", "Year", vehicle.year, { aiFilled: Boolean(ai["vehicle.year"]) })}${field("make", "Make", vehicle.make, { aiFilled: Boolean(ai["vehicle.make"]) })}${field("model", "Model", vehicle.model, { aiFilled: Boolean(ai["vehicle.model"]) })}${field("trim", "Trim", vehicle.trim, { aiFilled: Boolean(ai["vehicle.trim"]) })}${field("engine", "Engine", vehicle.engine, { aiFilled: Boolean(ai["vehicle.engine"]) })}${field("transmission", "Transmission", vehicle.transmission, { aiFilled: Boolean(ai["vehicle.transmission"]) })}${field("mileage", "Mileage", vehicle.mileage, { aiFilled: Boolean(ai["vehicle.mileage"]) })}${field("color", "Color", vehicle.color, { aiFilled: Boolean(ai["vehicle.color"]) })}</div>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button><label class="secondary">Scan VIN / Odometer photo (AI)<input id="intake-autofill-vehicle-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
+<p class="form-help" id="intake-vehicle-note">Plate lookup stays off until a DMV, Carfax, or registration provider is connected. VIN decode uses the shop vehicle decode service.</p>`;
+  }
+  function photoStep(draft) {
+    const slots = [...REQUIRED_PHOTO_SLOTS, ...EXTRA_PHOTO_SLOTS.filter((slot) => slot.id !== "extra")];
+    const cards = slots.map((slot) => {
+      const photos = (draft.photos || []).filter((photo) => photo.slot === slot.id);
+      const required = REQUIRED_PHOTO_SLOTS.some((item) => item.id === slot.id);
+      return `<article class="intake-photo ${photos.length ? "taken" : ""}"><strong>${escapeHtml3(slot.label)}${required ? " *" : ""}</strong><span>${photos.length ? photos.map((photo) => escapeHtml3(photo.name)).join(", ") : "Not added"}</span><label class="mini-action">Add photo<input class="intake-file" data-slot="${escapeAttr3(slot.id)}" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></article>`;
+    }).join("");
+    const extras = (draft.photos || []).filter((photo) => photo.slot === "extra").map((photo) => `<li>${escapeHtml3(photo.name)}</li>`).join("");
+    return `<div class="intake-photos">${cards}</div><div class="intake-actions-inline"><label class="secondary">+ Add photo<input class="intake-file" data-slot="extra" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>${extras ? `<ul class="intake-extra-photos">${extras}</ul>` : ""}
+<h3>Damage map</h3><div class="intake-damage">${DAMAGE_AREAS.map((area) => {
+      const marked = (draft.damage || []).find((item) => item.area === area);
+      return `<label><input type="checkbox" name="damage" value="${escapeAttr3(area)}" ${marked ? "checked" : ""}/> ${escapeHtml3(area)}</label><input name="damage-note-${escapeAttr3(area)}" placeholder="Dent, scratch, broken trim, cracked glass, previous damage" value="${escapeAttr3(marked?.note || "")}"/>`;
+    }).join("")}</div>`;
+  }
+  function concernStep(draft) {
+    const concern = draft.concern;
+    const ai = draft.aiFilledFields || {};
+    const badge2 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge2}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
+<div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
+  }
+  function diagnosisStep(draft) {
+    const diagnosis = draft.diagnosis;
+    const ai = draft.aiFilledFields || {};
+    const analysis = diagnosis.analysis;
+    const causes = analysis?.causes?.map((cause) => `<li><strong>${escapeHtml3(cause.name || cause.cause || "Check")}</strong><p>${escapeHtml3(cause.detail || cause.explanation || "")}</p></li>`).join("") || "";
+    return `${aiAcceptBanner(draft, "diagnosis.")}<div class="form-grid">${field("visual", "Visual inspection", diagnosis.visual, { full: true, aiFilled: Boolean(ai["diagnosis.visual"]) })}${field("roadTest", "Road test", diagnosis.roadTest)}${field("fluids", "Fluid levels", diagnosis.fluids)}${field("battery", "Battery test", diagnosis.battery)}${field("codes", "DTC codes", diagnosis.codes, { full: true, aiFilled: Boolean(ai["diagnosis.codes"]) })}${field("cause", "Root cause (3 C's)", diagnosis.cause, { full: true, aiFilled: Boolean(ai["diagnosis.cause"]) })}${field("correction", "Recommended correction (3 C's)", diagnosis.correction, { full: true, aiFilled: Boolean(ai["diagnosis.correction"]) })}</div>
+<label class="full">Technician notes<textarea name="notes">${escapeHtml3(diagnosis.notes)}</textarea></label>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
+${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || "")}</span></section><ul class="intake-causes">${causes}</ul>` : ""}`;
+  }
+  function estimateStep(draft, profile) {
+    const priced = priceIntakeEstimate(draft, profile);
+    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
+    return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
+<p class="form-help">Lookup uses the ShopCrank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
+<div id="labor-results"></div>
+<table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
+<label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
+<div class="estimate-sign-summary"><span>Labor ${escapeHtml3(String(priced.labor))} \xB7 Parts ${escapeHtml3(String(priced.parts))} \xB7 Supplies ${escapeHtml3(String(priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0))} \xB7 Tax ${escapeHtml3(String(priced.tax))}</span><strong>${escapeHtml3(String(priced.total))}</strong></div>
+<pre class="intake-disclaimer">${escapeHtml3(INTAKE_DISCLAIMER)}</pre>
+<label>Customer approval<select name="approval">${["pending", "viewed", "approved", "denied"].map((status) => `<option value="${status}" ${draft.estimate.approval === status ? "selected" : ""}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}</select></label>
+<p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
+  }
+  function reviewStep(draft, users) {
+    const check2 = canConvertIntake(draft);
+    const techs = assignableTechnicians(users);
+    const options = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
+      const selected = (draft.assignments || []).find((item) => item.role === role);
+      return `<option value="${escapeAttr3(user.id)}" ${selected?.employeeId === user.id ? "selected" : ""}>${escapeHtml3(technicianName(user))}</option>`;
+    }).join("")}`;
+    return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel2(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
+<div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
+${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+<p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
+  }
+  function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
+    const step = Math.min(INTAKE_STEPS.length - 1, Math.max(0, Number(draft.step) || 0));
+    const body = [
+      customerStep,
+      vehicleStep,
+      photoStep,
+      concernStep,
+      diagnosisStep,
+      (current) => estimateStep(current, { laborRate, taxRate }),
+      (current) => reviewStep(current, users)
+    ][step](draft);
+    return `<div class="modal-head"><div><span class="eyebrow">Customer intake</span><h2>${escapeHtml3(INTAKE_STEPS[step].label)}</h2></div><div class="intake-head-meta">${savedStamp(draft)}<button type="button" class="close" id="intake-cancel" aria-label="Cancel intake">\xD7</button></div></div>
+<div class="modal-body intake-body">${progress(step)}<form id="intake-form">${body}</form></div>
+<div class="modal-actions"><button type="button" class="secondary" id="intake-back" ${step === 0 ? "disabled" : ""}>Back</button><button type="button" class="secondary" id="intake-save">Save draft</button>${step < INTAKE_STEPS.length - 1 ? '<button type="button" class="primary" id="intake-next">Continue</button>' : '<button type="button" class="primary" id="intake-convert">Convert to work order</button>'}</div>`;
+  }
+  function readForm(draft, form) {
+    const next = structuredClone(draft);
+    const data = Object.fromEntries(new FormData(form).entries());
+    const step = INTAKE_STEPS[next.step]?.id;
+    if (step === "customer") {
+      ["firstName", "lastName", "phone", "email", "company", "secondaryPhone", "address", "city", "state", "zip"].forEach((key) => {
+        if (key in data) next.customer[key] = String(data[key] || "").trim();
+      });
+      next.customer.contact = {
+        phone: Boolean(form.querySelector('[name="contact-phone"]')?.checked),
+        text: Boolean(form.querySelector('[name="contact-text"]')?.checked),
+        email: Boolean(form.querySelector('[name="contact-email"]')?.checked)
+      };
+    }
+    if (step === "vehicle") {
+      ["vin", "plate", "plateState", "year", "make", "model", "trim", "engine", "transmission", "mileage", "color"].forEach((key) => {
+        if (key in data) next.vehicle[key] = String(data[key] || "").trim();
+      });
+      next.vehicle.vin = next.vehicle.vin.toUpperCase();
+    }
+    if (step === "photos") {
+      const marked = new Set([...form.querySelectorAll('[name="damage"]')].filter((input) => input.checked).map((input) => input.value));
+      next.damage = DAMAGE_AREAS.filter((area) => marked.has(area)).map((area) => ({ area, note: String(data[`damage-note-${area}`] || "").trim() }));
+    }
+    if (step === "concerns") {
+      ["description", "began", "frequency", "lights", "recentRepairs", "accident", "towed", "overheating"].forEach((key) => {
+        const source = key === "description" ? form.querySelector('[name="description"]')?.value : data[key];
+        next.concern[key] = String(source || "").trim();
+      });
+    }
+    if (step === "diagnosis") {
+      ["visual", "roadTest", "fluids", "battery", "codes", "cause", "correction", "notes"].forEach((key) => {
+        next.diagnosis[key] = String(form.querySelector(`[name="${key}"]`)?.value || data[key] || "").trim();
+      });
+    }
+    if (step === "estimate") {
+      const descriptions = [...form.querySelectorAll('[name="line-description"]')];
+      const hourInputs = [...form.querySelectorAll('[name="line-hours"]')];
+      next.estimate.lines = descriptions.map((input, index) => ({
+        type: "labor",
+        description: input.value.trim(),
+        quantity: Math.max(0, Number(hourInputs[index]?.value) || 0),
+        source: "Shop"
+      })).filter((line) => line.description);
+      next.estimate.diagnosticCharge = Math.max(0, Number(data.diagnosticCharge) || 0);
+      next.estimate.approval = data.approval || "pending";
+    }
+    if (step === "review") {
+      next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
+        const employeeId = data[`assign-${role}`];
+        if (!employeeId) return [];
+        return [{ employeeId, role, sharePercent: role === "primary" ? 100 : 0, assignedAt: (/* @__PURE__ */ new Date()).toISOString() }];
+      });
+    }
+    return next;
+  }
+  function mountIntakeWizard(host, {
+    draft,
+    users = [],
+    laborRate = 165,
+    taxRate = 0,
+    onSave,
+    onCancel,
+    onConvert,
+    decodeVin,
+    lookupPlate,
+    analyze,
+    autofill
+  } = {}) {
+    let current = structuredClone(draft || emptyIntakeDraft());
+    let timer = 0;
+    const paint = () => {
+      host.innerHTML = intakeWizardHtml(current, { users, laborRate, taxRate });
+      bind2();
+    };
+    const persist = (reason) => {
+      current.savedAt = (/* @__PURE__ */ new Date()).toISOString();
+      onSave?.(serializableIntake(current), reason);
+      const stamp = host.querySelector(".intake-save");
+      if (stamp) stamp.outerHTML = savedStamp(current);
+    };
+    const schedule2 = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => persist("autosave"), 400);
+    };
+    function bind2() {
+      const form = host.querySelector("#intake-form");
+      form?.addEventListener("input", () => {
+        current = readForm(current, form);
+        schedule2();
+      });
+      host.querySelector("#intake-save")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        persist("manual");
+      });
+      host.querySelector("#intake-cancel")?.addEventListener("click", () => onCancel?.(current));
+      host.querySelector("#intake-back")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        current.step = Math.max(0, current.step - 1);
+        persist("step");
+        paint();
+      });
+      host.querySelector("#intake-next")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        current.step = Math.min(INTAKE_STEPS.length - 1, current.step + 1);
+        if (INTAKE_STEPS[current.step]?.id === "estimate" && !current.estimate.lines.length) current.estimate.lines = seedEstimateLines(current);
+        persist("step");
+        paint();
+      });
+      host.querySelector("#intake-convert")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        const check2 = canConvertIntake(current);
+        if (!check2.ok) {
+          persist("blocked");
+          paint();
+          return;
+        }
+        await onConvert?.(current);
+      });
+      host.querySelector("#intake-decode")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        const note = host.querySelector("#intake-vehicle-note");
+        try {
+          const decoded = await decodeVin?.(current.vehicle.vin);
+          if (!decoded) throw new Error("Enter a 17-character VIN first.");
+          current = applyVinDecode(current, decoded);
+          persist("vin");
+          paint();
+        } catch (error) {
+          if (note) note.textContent = error.message || "VIN decode failed.";
+        }
+      });
+      host.querySelector("#intake-plate")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        const note = host.querySelector("#intake-vehicle-note");
+        const result = await lookupPlate?.(current.vehicle) || { available: false, message: "Plate lookup is not connected." };
+        if (note) note.textContent = result.message || "Plate lookup is not connected.";
+      });
+      host.querySelectorAll(".intake-file").forEach((input) => {
+        input.addEventListener("change", () => {
+          const file = input.files?.[0];
+          if (!file) return;
+          current.photos.push({
+            id: `photo-${Date.now()}-${current.photos.length}`,
+            slot: input.dataset.slot,
+            name: file.name,
+            contentType: file.type,
+            takenAt: (/* @__PURE__ */ new Date()).toISOString(),
+            file
+          });
+          persist("photo");
+          paint();
+        });
+      });
+      host.querySelector("#lookup-labor")?.addEventListener("click", () => {
+        const query2 = host.querySelector("#labor-query")?.value || "";
+        const hits = searchLaborGuide(query2);
+        const box = host.querySelector("#labor-results");
+        if (!box) return;
+        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No ShopCrank guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
+        box.querySelectorAll("[data-add-labor]").forEach((button) => {
+          button.addEventListener("click", () => {
+            if (form) current = readForm(current, form);
+            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "ShopCrank guide" });
+            persist("labor");
+            paint();
+          });
+        });
+      });
+      host.querySelector("#intake-analyze")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        current.diagnosis.analysis = await analyze?.(current) || localDiagnosticChecklist(current);
+        persist("analysis");
+        paint();
+      });
+      host.querySelector("#intake-ai-accept-all")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        current = acceptAllAiFields(current);
+        persist("accept-ai");
+        paint();
+      });
+      host.querySelector("#intake-autofill-3c")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        if (!autofill) return;
+        const notes = [current.concern?.description, current.diagnosis?.notes, current.diagnosis?.visual, current.diagnosis?.codes].filter(Boolean).join("\n");
+        const result = await autofill({ formType: "diagnostic_3c", notes, draft: current });
+        if (result?.data) {
+          current = applyAiAutofill(current, "diagnostic_3c", result.data);
+          persist("autofill-3c");
+          paint();
+        }
+      });
+      const bindPhotoAutofill = (selector, formType) => {
+        host.querySelector(selector)?.addEventListener("change", async (event) => {
+          const file = event.target?.files?.[0];
+          if (!file || !autofill) return;
+          if (form) current = readForm(current, form);
+          const result = await autofill({ formType, file, draft: current });
+          if (result?.data) {
+            current = applyAiAutofill(current, formType, result.data);
+            persist(`autofill-${formType}`);
+            paint();
+          }
+        });
+      };
+      bindPhotoAutofill("#intake-autofill-vehicle-photo", "vehicle_intake");
+      bindPhotoAutofill("#intake-autofill-diag-photo", "diagnostic_3c");
+    }
+    paint();
+    return {
+      current: () => current
+    };
+  }
+  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR;
+  var init_intake_wizard = __esm({
+    "src/modules/intake-wizard.js"() {
+      init_estimate_templates();
+      init_canned_services();
+      init_technician_assignment();
+      INTAKE_STORAGE_KEY = "ShopCrank-intake-draft-v1";
+      INTAKE_DISCLAIMER = "PRELIMINARY ESTIMATE DISCLAIMER\n\nThis estimate is based on the information available at the time of inspection. Additional issues may be identified during diagnosis, testing, disassembly, or repair. Parts pricing, labor times, and availability may change. Authorization will be obtained before performing additional work. Final invoice amounts may differ from this estimate.";
+      INTAKE_STEPS = [
+        { id: "customer", label: "Customer" },
+        { id: "vehicle", label: "Vehicle" },
+        { id: "photos", label: "Photos" },
+        { id: "concerns", label: "Concerns" },
+        { id: "diagnosis", label: "Diagnosis" },
+        { id: "estimate", label: "Estimate" },
+        { id: "review", label: "Review" }
+      ];
+      REQUIRED_PHOTO_SLOTS = [
+        { id: "front", label: "Front" },
+        { id: "rear", label: "Rear" },
+        { id: "driver", label: "Driver side" },
+        { id: "passenger", label: "Passenger side" }
+      ];
+      EXTRA_PHOTO_SLOTS = [
+        { id: "odometer", label: "Odometer" },
+        { id: "vin_sticker", label: "VIN sticker" },
+        { id: "engine", label: "Engine bay" },
+        { id: "tires", label: "Tire condition" },
+        { id: "damage", label: "Damage" },
+        { id: "concern", label: "Customer concern area" },
+        { id: "extra", label: "Additional photo" }
+      ];
+      DAMAGE_AREAS = ["Front bumper", "Rear bumper", "Driver door", "Passenger door", "Hood", "Fenders", "Roof"];
+      SHOP_CRANK_LABOR = [
+        { name: "Brake pads", hours: 1.5, notes: "One axle. Rotors and seized hardware are quoted separately." },
+        { name: "Water pump", hours: 2.5, notes: "Starting point. Confirm the labor time for this VIN before selling the job." },
+        { name: "Alternator", hours: 1.2, notes: "Replacement only. Programming or a stretch belt may add time." },
+        { name: "Starter", hours: 1.2, notes: "Starting point. Confirm access for this vehicle." }
+      ];
     }
   });
 
@@ -6290,9 +6139,21 @@ button{margin-top:12px;padding:8px 14px}
   });
 
   // src/modules/shop-os/bay.js
-  function signedEstimateForOrder(order, estimates = []) {
+  function signedEstimateForOrder(order, _estimates = []) {
     if (!order?.id) return null;
-    return estimates.find((estimate) => estimate.workOrderId === order.id && estimate.status === "approved" && estimate.signedAt && String(estimate.authorizationName || "").trim()) || null;
+    const approval = order.estimateApproval;
+    if (approval && approval.status === "approved" && approval.signedAt && String(approval.authorizationName || "").trim()) {
+      return {
+        id: order.id,
+        workOrderId: order.id,
+        status: "approved",
+        signedAt: approval.signedAt,
+        authorizationName: approval.authorizationName,
+        signatureKey: approval.signatureKey || null,
+        type: approval.type || "signature"
+      };
+    }
+    return null;
   }
   function isRoAuthorizedForKeys(order, estimates = []) {
     return Boolean(signedEstimateForOrder(order, estimates));
@@ -6346,7 +6207,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function assertLiveKeySession({ order, estimates = [], operation, notes, vehicleVin, deviceConnected }) {
     assertKeyJobAllowed({ order, estimates, operation, notes });
-    if (!deviceConnected) throw new Error("Connect the J2534 adapter in the Shop Crank desktop app before a live key job.");
+    if (!deviceConnected) throw new Error("Connect the J2534 adapter in the ShopCrank desktop app before a live key job.");
     const roVin = normalizeVin(order?.vin);
     if (roVin.length !== 17) throw new Error("Add the 17-character VIN to this repair order before a live key job.");
     const carVin = normalizeVin(vehicleVin);
@@ -6383,7 +6244,240 @@ button{margin-top:12px;padding:8px 14px}
       createdAt: now2
     };
   }
-  var KEY_OPERATIONS, FORBIDDEN_KEY_REQUEST, LIVE_KEY_PROCEDURES;
+  function elmFrameBytes(line, command = "") {
+    let value2 = String(line || "").toUpperCase().trim();
+    if (!value2 || value2.replace(/\s/g, "") === String(command).toUpperCase().replace(/\s/g, "") || /^(SEARCHING|BUS INIT|STOPPED|OK\b|ELM327|AT\b)/.test(value2)) {
+      return [];
+    }
+    const numbered = /^\s*\d+\s*:\s*/.test(value2);
+    value2 = value2.replace(/^\s*\d+\s*:\s*/, "");
+    let header = false;
+    if (!numbered && /^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value2.replace(/\s/g, ""))) {
+      const compact = value2.replace(/\s/g, "");
+      value2 = compact.slice(compact.startsWith("18") ? 8 : 3);
+      header = true;
+    }
+    let parts = value2.match(/[0-9A-F]+/g) || [];
+    if (!numbered && !header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
+      parts.shift();
+      header = true;
+    }
+    if (parts.length === 1 && parts[0].length % 2 === 0) {
+      parts = parts[0].match(/../g) || [];
+    } else {
+      parts = parts.flatMap((part) => part.length === 2 ? [part] : part.length % 2 === 0 ? part.match(/../g) || [] : []);
+    }
+    let bytes = parts.map((part) => parseInt(part, 16)).filter(Number.isFinite);
+    if (numbered) return bytes;
+    if (header && bytes.length && bytes[0] <= 15) bytes.shift();
+    if (bytes[0] >= 16 && bytes[0] <= 31) bytes = bytes.slice(2);
+    else if (bytes[0] >= 32 && bytes[0] <= 47) bytes = bytes.slice(1);
+    else if (bytes[0] <= 15 && bytes[0] === bytes.length - 1) bytes = bytes.slice(1);
+    return bytes;
+  }
+  function parseElmPayload(raw, command = "") {
+    const text = String(raw ?? "").trim();
+    const upper = text.toUpperCase();
+    const noData = /\bNO\s*DATA\b/.test(upper);
+    const adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || "";
+    const lines = text.replace(/>/g, "\n").split(/[\r\n]+/);
+    const frames = lines.map((line) => elmFrameBytes(line, command)).filter((frame) => frame.length);
+    const bytes = frames.flat();
+    return { raw: text, noData, adapterError, frames, bytes };
+  }
+  function findServiceReply(bytes, responseService, pid) {
+    for (let index = 0; index < bytes.length; index++) {
+      if (bytes[index] === responseService && (pid === void 0 || bytes[index + 1] === pid)) {
+        return bytes.slice(index + (pid === void 0 ? 1 : 2));
+      }
+    }
+    return null;
+  }
+  function formatDtcBytes(first, second) {
+    const systems = ["P", "C", "B", "U"];
+    const system = systems[(first & 192) >> 6];
+    const digit = (first & 48) >> 4;
+    return `${system}${digit}${(first & 15).toString(16).toUpperCase()}${second.toString(16).padStart(2, "0").toUpperCase()}`;
+  }
+  function parseElmModeDtcs(raw, mode = 3) {
+    const cmd = mode.toString(16).padStart(2, "0").toUpperCase();
+    const parsed = parseElmPayload(raw, cmd);
+    if (parsed.noData) return [];
+    if (parsed.adapterError) throw new Error(`Adapter reported ${parsed.adapterError}`);
+    const markerByte = 64 + mode;
+    const replies = [];
+    let current = null;
+    for (const frame of parsed.frames) {
+      const marker = frame.indexOf(markerByte);
+      if (marker >= 0) {
+        const after = frame.slice(marker + 1);
+        const payload = after.length % 2 === 1 ? after.slice(1) : after;
+        current = [...payload];
+        replies.push(current);
+      } else if (current) {
+        current.push(...frame);
+      }
+    }
+    const codes = [];
+    for (const data of replies) {
+      for (let i = 0; i + 1 < data.length; i += 2) {
+        if (data[i] === 0 && data[i + 1] === 0) continue;
+        codes.push(formatDtcBytes(data[i], data[i + 1]));
+      }
+    }
+    return [...new Set(codes)];
+  }
+  function parseElmClearDtcs(raw) {
+    const parsed = parseElmPayload(raw, "04");
+    if (parsed.adapterError) throw new Error(`Adapter reported ${parsed.adapterError}`);
+    if (parsed.noData) throw new Error("Vehicle ECU returned NO DATA for Mode 04 clear codes");
+    const rejected = parsed.frames.find((frame) => frame[0] === 127 && frame[1] === 4);
+    if (rejected) {
+      const nrc = (rejected[2] ?? 0).toString(16).padStart(2, "0").toUpperCase();
+      throw new Error(`Vehicle ECU rejected Mode 04 clear codes (NRC 0x${nrc})`);
+    }
+    if (!parsed.frames.some((frame) => frame[0] === 68)) {
+      throw new Error("Vehicle ECU did not confirm Mode 04 code clear");
+    }
+    return { ok: true };
+  }
+  function parseElmVin(raw) {
+    const parsed = parseElmPayload(raw, "0902");
+    if (parsed.noData || parsed.adapterError || !parsed.bytes.length) return "";
+    const ascii = parsed.bytes.filter((byte) => byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90).map((byte) => String.fromCharCode(byte)).join("");
+    const cleaned = normalizeVin(ascii);
+    return cleaned.length >= 17 ? cleaned.slice(-17) : "";
+  }
+  function parseElmMonitorStatus(raw) {
+    const parsed = parseElmPayload(raw, "0101");
+    if (parsed.noData || parsed.adapterError) return null;
+    const data = findServiceReply(parsed.bytes, 65, 1);
+    if (!data || data.length < 1) return null;
+    const a = data[0];
+    return {
+      milOn: Boolean(a & 128),
+      dtcCount: a & 127
+    };
+  }
+  function decodeElmPidReading(pid, raw) {
+    const meta = ELM_SNAPSHOT_PIDS.find((item) => item.pid === pid);
+    if (!meta) return null;
+    const parsed = parseElmPayload(raw, meta.command);
+    if (parsed.noData || parsed.adapterError) return null;
+    const data = findServiceReply(parsed.bytes, 65, pid);
+    if (!data || !data.length) return null;
+    const A = data[0];
+    const B = data[1] ?? 0;
+    const AB = A * 256 + B;
+    let value2 = null;
+    switch (pid) {
+      case 4:
+      case 17:
+      case 47:
+        value2 = Math.round(A * 100 / 255 * 10) / 10;
+        break;
+      case 5:
+      case 15:
+        value2 = A - 40;
+        break;
+      case 11:
+      case 13:
+        value2 = A;
+        break;
+      case 12:
+        if (data.length < 2) return null;
+        value2 = Math.round(AB / 4 * 10) / 10;
+        break;
+      case 16:
+        if (data.length < 2) return null;
+        value2 = Math.round(AB / 100 * 100) / 100;
+        break;
+      case 66:
+        if (data.length < 2) return null;
+        value2 = Math.round(AB / 1e3 * 100) / 100;
+        break;
+      default:
+        return null;
+    }
+    return {
+      pid: meta.code,
+      name: meta.name,
+      value: value2,
+      unit: meta.unit,
+      raw: data.slice(0, 2).map((b) => b.toString(16).padStart(2, "0").toUpperCase()).join("")
+    };
+  }
+  async function runElmObdSnapshot(sendCommand) {
+    const errors = [];
+    let vin = "";
+    try {
+      vin = parseElmVin(await sendCommand("0902"));
+    } catch (error) {
+      errors.push(`VIN: ${error.message}`);
+    }
+    let monitor = null;
+    try {
+      monitor = parseElmMonitorStatus(await sendCommand("0101"));
+    } catch (error) {
+      errors.push(`Monitor status: ${error.message}`);
+    }
+    const readings = [];
+    for (const item of ELM_SNAPSHOT_PIDS) {
+      try {
+        const reading = decodeElmPidReading(item.pid, await sendCommand(item.command));
+        if (reading) readings.push(reading);
+      } catch (error) {
+        errors.push(`${item.name}: ${error.message}`);
+      }
+    }
+    let storedDtcs = [];
+    let pendingDtcs = [];
+    let permanentDtcs = [];
+    try {
+      storedDtcs = parseElmModeDtcs(await sendCommand("03"), 3);
+    } catch (error) {
+      errors.push(`Stored codes: ${error.message}`);
+    }
+    try {
+      pendingDtcs = parseElmModeDtcs(await sendCommand("07"), 7);
+    } catch (error) {
+      errors.push(`Pending codes: ${error.message}`);
+    }
+    try {
+      permanentDtcs = parseElmModeDtcs(await sendCommand("0A"), 10);
+    } catch {
+    }
+    let voltage = null;
+    try {
+      const rawVolt = await sendCommand("ATRV");
+      const match = /(\d+(?:\.\d+)?)\s*V/i.exec(String(rawVolt || ""));
+      if (match) voltage = Number(match[1]);
+    } catch {
+    }
+    const responded = Boolean(vin || monitor || readings.length || storedDtcs.length || pendingDtcs.length || permanentDtcs.length);
+    if (!responded && !errors.length) {
+      errors.push("No reply from the vehicle ECU. Verify ignition is ON and the OBD-II connector is seated.");
+    }
+    return {
+      source: "live",
+      simulator: false,
+      adapterName: "ELM327 OBD-II adapter",
+      protocol: "SAE J1979 OBD-II (ELM327 Serial)",
+      responded,
+      vin,
+      milOn: monitor?.milOn ?? null,
+      reportedDtcCount: monitor?.dtcCount ?? storedDtcs.length,
+      supportedPids: readings.map((r) => r.pid),
+      readings,
+      storedDtcs,
+      pendingDtcs,
+      permanentDtcs,
+      errors,
+      voltage,
+      readAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  var KEY_OPERATIONS, FORBIDDEN_KEY_REQUEST, LIVE_KEY_PROCEDURES, ELM_SNAPSHOT_PIDS;
   var init_bay = __esm({
     "src/modules/shop-os/bay.js"() {
       KEY_OPERATIONS = [
@@ -6394,6 +6488,18 @@ button{margin-top:12px;padding:8px 14px}
       ];
       FORBIDDEN_KEY_REQUEST = /bypass|clon(?:e|ing)|rolling[-\s]?code|stolen|immobilizer\s+bypass|\bfrp\b/i;
       LIVE_KEY_PROCEDURES = Object.freeze({ add: "add_key", program: "program_remote" });
+      ELM_SNAPSHOT_PIDS = [
+        { pid: 4, code: "0x04", command: "0104", name: "Calculated engine load", unit: "%" },
+        { pid: 5, code: "0x05", command: "0105", name: "Coolant temperature", unit: "C" },
+        { pid: 11, code: "0x0B", command: "010B", name: "Intake manifold pressure", unit: "kPa" },
+        { pid: 12, code: "0x0C", command: "010C", name: "Engine speed", unit: "rpm" },
+        { pid: 13, code: "0x0D", command: "010D", name: "Vehicle speed", unit: "km/h" },
+        { pid: 15, code: "0x0F", command: "010F", name: "Intake air temperature", unit: "C" },
+        { pid: 16, code: "0x10", command: "0110", name: "Mass air flow", unit: "g/s" },
+        { pid: 17, code: "0x11", command: "0111", name: "Throttle position", unit: "%" },
+        { pid: 47, code: "0x2F", command: "012F", name: "Fuel level", unit: "%" },
+        { pid: 66, code: "0x42", command: "0142", name: "Control module voltage", unit: "V" }
+      ];
     }
   });
 
@@ -6730,7 +6836,7 @@ button{margin-top:12px;padding:8px 14px}
     const shopId = status?.shopId || sessionClaimShopId(authSession()?.claims) || "";
     const webhookUrl = status?.webhookUrl || (shopId ? `${location.origin}${cloudflareConfig2.apiUrl}/payments/webhook/${encodeURIComponent(shopId)}` : "");
     const statusLabel3 = configured ? `Connected${config.accountLabel ? ` \xB7 ${escapeHtml(config.accountLabel)}` : ""}` : "Stripe keys not saved yet";
-    return shell(`${heading("Online payments", "Payment service", "Connect this shop's Stripe account so customers can pay invoices online with a hosted Checkout link.", false)}<section class="messaging-panel"><div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "credit-card", 17)}<div><strong>${configured ? "Online card payments ready" : "Online card payments not connected"}</strong><span>${statusLabel3}. Secrets stay encrypted on the Worker \u2014 the browser never stores them.</span></div></div><div class="service-contract"><h2>Stripe Checkout for invoices</h2><p>Paste your Stripe secret key and webhook signing secret. Shop Crank creates Checkout Sessions through <code>POST /payments/checkout-session</code> and records payments when Stripe posts <code>checkout.session.completed</code> to your shop webhook.</p><label class="full">Webhook endpoint (Stripe Dashboard \u2192 Developers \u2192 Webhooks)<input id="stripe-webhook-url" readonly value="${escapeAttr(webhookUrl)}" placeholder="Sign in to load the shop webhook URL"/><div class="messaging-actions"><button class="secondary" type="button" id="copy-stripe-webhook" ${webhookUrl ? "" : "disabled"}>${icon("copy", 14)} Copy webhook URL</button></div></label><p class="ai-disclaimer">Subscribe the webhook to event <b>checkout.session.completed</b> only. Use test keys (<code>sk_test_</code>) until you are ready for live cards.</p></div><form class="form-grid" id="billing-form"><label class="full">Stripe secret key *<input name="secretKey" type="password" autocomplete="off" placeholder="sk_test_\u2026 or sk_live_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved key. Enter a new key only to replace it." : "Required. Starts with sk_test_ or sk_live_."}</small></label><label class="full">Webhook signing secret *<input name="webhookSecret" type="password" autocomplete="off" placeholder="whsec_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved signing secret." : "From the Stripe webhook endpoint details."}</small></label><label class="full">Stripe publishable key<input name="publishableKey" autocomplete="off" placeholder="pk_test_\u2026 or pk_live_\u2026"/><small>${status?.hasPublishableKey ? "Saved. Enter a new key only to replace it. Required for phone orders." : "Starts with pk_test_ or pk_live_. Required before the office can type a card for a phone order."}</small></label><label>Account label<input name="accountLabel" value="${escapeAttr(config.accountLabel || "")}" placeholder="e.g. Main shop Stripe"/></label><label>Shop name on receipts<input name="shopName" value="${escapeAttr(config.shopName || "Your Car Guy")}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled || configured ? "checked" : ""}/><span>Enable Pay online on open invoices</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="refresh-stripe-status">${icon("refresh-cw", 14)} Refresh status</button><button class="primary" type="submit">${icon("save", 14)} Save Stripe keys</button></div></form></section>`);
+    return shell(`${heading("Online payments", "Payment service", "Connect this shop's Stripe account so customers can pay invoices online with a hosted Checkout link.", false)}<section class="messaging-panel"><div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "credit-card", 17)}<div><strong>${configured ? "Online card payments ready" : "Online card payments not connected"}</strong><span>${statusLabel3}. Secrets stay encrypted on the Worker \u2014 the browser never stores them.</span></div></div><div class="service-contract"><h2>Stripe Checkout for invoices</h2><p>Paste your Stripe secret key and webhook signing secret. ShopCrank creates Checkout Sessions through <code>POST /payments/checkout-session</code> and records payments when Stripe posts <code>checkout.session.completed</code> to your shop webhook.</p><label class="full">Webhook endpoint (Stripe Dashboard \u2192 Developers \u2192 Webhooks)<input id="stripe-webhook-url" readonly value="${escapeAttr(webhookUrl)}" placeholder="Sign in to load the shop webhook URL"/><div class="messaging-actions"><button class="secondary" type="button" id="copy-stripe-webhook" ${webhookUrl ? "" : "disabled"}>${icon("copy", 14)} Copy webhook URL</button></div></label><p class="ai-disclaimer">Subscribe the webhook to event <b>checkout.session.completed</b> only. Use test keys (<code>sk_test_</code>) until you are ready for live cards.</p></div><form class="form-grid" id="billing-form"><label class="full">Stripe secret key *<input name="secretKey" type="password" autocomplete="off" placeholder="sk_test_\u2026 or sk_live_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved key. Enter a new key only to replace it." : "Required. Starts with sk_test_ or sk_live_."}</small></label><label class="full">Webhook signing secret *<input name="webhookSecret" type="password" autocomplete="off" placeholder="whsec_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved signing secret." : "From the Stripe webhook endpoint details."}</small></label><label class="full">Stripe publishable key<input name="publishableKey" autocomplete="off" placeholder="pk_test_\u2026 or pk_live_\u2026"/><small>${status?.hasPublishableKey ? "Saved. Enter a new key only to replace it. Required for phone orders." : "Starts with pk_test_ or pk_live_. Required before the office can type a card for a phone order."}</small></label><label>Account label<input name="accountLabel" value="${escapeAttr(config.accountLabel || "")}" placeholder="e.g. Main shop Stripe"/></label><label>Shop name on receipts<input name="shopName" value="${escapeAttr(config.shopName || "Your Car Guy")}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled || configured ? "checked" : ""}/><span>Enable Pay online on open invoices</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="refresh-stripe-status">${icon("refresh-cw", 14)} Refresh status</button><button class="primary" type="submit">${icon("save", 14)} Save Stripe keys</button></div></form></section>`);
   }
   function cardTerminal() {
     const model = cardTerminalModel({
@@ -6752,13 +6858,13 @@ button{margin-top:12px;padding:8px 14px}
     const identity = `<div class="full pos-identity"><span>Customer</span><strong>${escapeHtml(selected?.customer || "Select a work order")}</strong><span>Vehicle</span><strong>${escapeHtml(selected?.vehicle || "Vehicle comes from the work order")}</strong></div>`;
     const amountField = `<label>Amount<input name="amount" id="pos-amount" type="number" min="0.50" step="0.01" value="${selected && selected.balance >= 0.5 ? selected.balance.toFixed(2) : ""}" required/></label>`;
     const orderField = `<label class="full">Work order<select name="orderId" id="pos-order" required>${options || `<option value="">No work orders</option>`}</select></label>`;
-    const phoneNotice = posPhoneEntry ? "Type the card number, expiration, security code, and postal code from the phone call. Stripe collects the card. Shop Crank stores the approval on the work order." : "Add the Stripe publishable key on the Payments page first. It starts with pk_test_ or pk_live_ and must belong to the same account as the secret key.";
+    const phoneNotice = posPhoneEntry ? "Type the card number, expiration, security code, and postal code from the phone call. Stripe collects the card. ShopCrank stores the approval on the work order." : "Add the Stripe publishable key on the Payments page first. It starts with pk_test_ or pk_live_ and must belong to the same account as the secret key.";
     const counter = posMode === "phone" ? `<form class="form-grid" id="pos-phone-form">${orderField}${identity}${amountField}<div class="full" id="pos-card-element"></div><p class="ai-disclaimer">${escapeHtml(phoneNotice)}</p><div class="full messaging-actions"><button class="primary" type="submit" id="pos-phone-prepare" ${!selected || selected.balance < 0.5 || !posPhoneEntry ? "disabled" : ""}>${icon("credit-card", 14)} Enter card</button><button class="primary" type="button" id="pos-phone-charge" hidden>${icon("check", 14)} Charge card</button></div><p class="pos-status" id="pos-phone-status" hidden></p></form>` : `<form class="form-grid" id="pos-form">${orderField}${identity}${amountField}<label>Reader<select name="readerId" id="pos-reader" required>${readerOptions || `<option value="">No reader</option>`}</select></label><div class="full messaging-actions"><button class="secondary" type="button" id="pos-refresh">${icon("refresh-cw", 14)} Refresh readers</button><button class="secondary" type="button" id="pos-cancel" ${posCharge ? "" : "disabled"}>${icon("x", 14)} Cancel on reader</button><button class="primary" type="submit" id="pos-charge" ${!selected || selected.balance < 0.5 || !model.readers.length ? "disabled" : ""}>${icon("credit-card", 14)} Charge card</button></div>${chargeNote}</form>`;
     return shell(`${heading("Front counter", "Card terminal", "Take a card on the reader, or type a card for a purchase made over the phone.", false)}<section class="messaging-panel pos-terminal"><div class="messaging-status ${model.configured ? "ready" : "idle"}">${icon("credit-card", 17)}<div><strong>${posMode === "phone" ? "Phone order" : model.configured ? "Card reader ready" : "Card reader not connected"}</strong><span>${escapeHtml(posMode === "phone" ? phoneNotice : connection)}</span></div></div><div class="accounting-tabs"><button class="tab ${posMode === "reader" ? "active" : ""}" type="button" data-pos-mode="reader">Card reader</button><button class="tab ${posMode === "phone" ? "active" : ""}" type="button" data-pos-mode="phone">Phone order</button></div>${counter}<section class="pos-writeup"><h2>Technician write-up</h2><p>The recovery note uses the customer and vehicle on the selected work order.</p><pre id="pos-writeup">${escapeHtml(writeup.ready ? writeup.text : "Select a work order that has both a customer name and a vehicle. Those details are written into the note. They are not filled in from memory.")}</pre><button class="secondary" type="button" id="pos-save-writeup" ${writeup.ready ? "" : "disabled"}>${icon("save", 14)} Save on work order</button></section></section>`);
   }
   function messaging() {
     const config = state.messagingSettings;
-    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; Shop Crank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${config.shopName || "Your Car Guy"}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
+    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${config.shopName || "Your Car Guy"}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
   }
   async function loadIntegrationStatus() {
     try {
@@ -6782,7 +6888,7 @@ button{margin-top:12px;padding:8px 14px}
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from Shop Crank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>Shop Crank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button></div></form></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
   }
   function support() {
     if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -6791,7 +6897,7 @@ button{margin-top:12px;padding:8px 14px}
     <section class="messaging-panel"><div class="statement-head"><div><div class="eyebrow">Help center</div><h2>Common questions</h2></div>${icon("life-buoy", 20)}</div>
       <details><summary>Why does a labor time say unverified?</summary><p>MOTOR or ALLDATA has not returned a licensed operation. Confirm the vehicle and operation, then enter shop time manually.</p></details>
       <details><summary>Why is texting unavailable?</summary><p>The platform Twilio number, webhook, and A2P 10DLC campaign must be configured. Customers who text STOP remain blocked until they text START.</p></details>
-      <details><summary>How do I connect accounting?</summary><p>An admin opens Integrations, connects the approved Intuit app, and syncs Shop Crank records one way to QuickBooks Online.</p></details>
+      <details><summary>How do I connect accounting?</summary><p>An admin opens Integrations, connects the approved Intuit app, and syncs ShopCrank records one way to QuickBooks Online.</p></details>
       <details><summary>How do I import existing shop data?</summary><p>Use Import data for supported CSV files. Request assisted migration below for mapping, validation, and reconciliation.</p></details>
       ${statusUrl ? `<p><a class="secondary" href="${escapeAttr(statusUrl)}" target="_blank" rel="noopener noreferrer">${icon("activity", 14)} Service status</a></p>` : ""}</section>
     <section class="messaging-panel"><h2>Contact support</h2><form class="form-grid" id="support-ticket-form"><label>Category<select name="category"><option value="technical">Technical issue</option><option value="billing">Billing</option><option value="onboarding">Onboarding</option><option value="data_migration">Data migration</option><option value="feedback">Feedback</option></select></label><label>Priority<select name="priority"><option value="normal">Normal</option><option value="urgent">Urgent \u2014 shop blocked</option></select></label><label class="full">Subject<input name="subject" maxlength="160" required/></label><label class="full">What happened?<textarea name="description" maxlength="8000" required placeholder="Include the affected work order, expected result, and exact error. Do not include passwords or card data."></textarea></label><div class="full"><button class="primary" type="submit">${icon("send", 14)} Submit ticket</button></div></form></section>`);
@@ -6841,7 +6947,32 @@ button{margin-top:12px;padding:8px 14px}
       const data = Object.fromEntries(new FormData(event.target));
       try {
         const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) });
-        toast(`Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`);
+        toast(result.tax?.mismatch ? `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId}. QuickBooks calculated tax ${money4(result.tax.quickBooks)} vs ShopCrank ${money4(result.tax.expected)} \u2014 review the invoice in QuickBooks.` : `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`);
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    const renderQuickbooksTax = (settings2) => {
+      const panel = document.querySelector("#quickbooks-tax-settings");
+      if (!panel) return;
+      const modeLabel = { ast: "Automated Sales Tax (QuickBooks calculates tax)", manual: "Manual sales tax rate", global: "Tax codes per line (non-US company)", none: "Sales tax is off in QuickBooks" }[settings2.mode] || settings2.mode;
+      const options = (selected, taxable) => `<option value="">Choose\u2026</option>${(settings2.taxCodes || []).filter((code) => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map((code) => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`;
+      const pickers = settings2.mode === "manual" || settings2.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options(settings2.taxCodeId, true)}</select></label>${settings2.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options(settings2.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : "";
+      panel.innerHTML = `<form class="form-grid" id="quickbooks-tax-form"><p class="full ops-note"><b>${escapeHtml(modeLabel)}</b>${settings2.needsChoice ? " \xB7 choose a rate before syncing taxed invoices" : ""}</p>${pickers}</form>`;
+      panel.querySelector("#quickbooks-tax-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          const saved = await apiFetch("/quickbooks/tax-settings", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(event.target))) });
+          renderQuickbooksTax(saved);
+          toast("QuickBooks tax settings saved");
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+    };
+    document.querySelector("#quickbooks-tax-load")?.addEventListener("click", async () => {
+      try {
+        renderQuickbooksTax(await apiFetch("/quickbooks/tax-settings"));
       } catch (error) {
         toast(error.message);
       }
@@ -6863,7 +6994,7 @@ button{margin-top:12px;padding:8px 14px}
     });
   }
   function openGlobalAssistant() {
-    showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>Shop Crank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`);
+    showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>ShopCrank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`);
     bindLiveAssistant();
   }
   function toggleAssistantPause() {
@@ -6881,8 +7012,8 @@ button{margin-top:12px;padding:8px 14px}
     });
   }
   function liveAssistant() {
-    const rows = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
-    return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Live voice assistant</div><h2>Ask Shop Crank anything</h2><p>Talk or type questions about shop operations, vehicles, work orders, invoices, and repair decisions.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Your live assistant is ready. Ask a question to begin.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Ask about a customer, repair, invoice, or shop task..."></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Speak to Shop Crank">${icon("mic", 15)} Speak</button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div></form></section>`;
+    const rows = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
+    return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Live voice assistant</div><h2>Ask ShopCrank anything</h2><p>Talk or type questions about shop operations, vehicles, work orders, invoices, and repair decisions.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Your live assistant is ready. Ask a question to begin.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Ask about a customer, repair, invoice, or shop task..."></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Speak to ShopCrank">${icon("mic", 15)} Speak</button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div></form></section>`;
   }
   function aiWorkbench() {
     const tabs = [["workflow", "RO workflow"], ["diagnostics", "Diagnostics"], ["estimate", "Estimator"], ["saved-estimates", "Estimates"], ["guide", "Repair guide"], ["phone", "Phone intake"]], body = { workflow: aiWorkflowForm(), diagnostics: aiDiagnosticsForm(), estimate: aiEstimateForm(), "saved-estimates": savedEstimates(), guide: aiGuideForm(), phone: aiPhoneForm() }[aiTab];
@@ -6943,7 +7074,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function workflowResult(result) {
     const order = result.order || {}, causes = result.diagnostics.causes.map((cause) => `<article class="cause-card"><div class="cause-title"><h3>${escapeHtml(cause.cause)}</h3><span class="ai-tag ${cause.likelihood.toLowerCase()}">${cause.likelihood}</span></div><p>${escapeHtml(cause.explanation)}</p><small><b>Evidence that raises likelihood:</b> ${escapeHtml(cause.evidence)}</small><div class="cause-tools"><b>Tools:</b> ${cause.tools.map(escapeHtml).join(" \xB7 ")}</div>${cause.tests.map((test, index) => `<section class="test-procedure"><h4>Test ${index + 1}: ${escapeHtml(test.name)}</h4><ol>${test.procedure.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol><div class="expected-readings"><p><b>Pass / normal:</b> ${escapeHtml(test.good)}</p><p><b>Fail / supports cause:</b> ${escapeHtml(test.bad)}</p></div><div class="worksheet-reading">Actual reading / observation: ______________________________________________</div></section>`).join("")}<h4>Repair options after confirmation</h4><ul class="repair-options">${cause.repairs.map((option) => worksheetCheck("Option", option)).join("")}</ul></article>`).join(""), parts = result.estimate.lines.map((line) => `<tr><td>${escapeHtml(line.service)}</td><td>${line.hours.toFixed(2)}</td><td>${money4(line.parts)}</td><td><b>${money4(line.total)}</b></td></tr>`).join(""), steps = result.guide.steps.map((step, index) => worksheetCheck(`Step ${index + 1}`, stepText(step))).join(""), safety = result.guide.safety.map((item) => `<li>${escapeHtml(item)}</li>`).join(""), qc = result.guide.postRepair.map((item, index) => worksheetCheck(`QC ${index + 1}`, item)).join("");
-    return `<section class="ai-result"><div class="ai-result-head no-print"><div><div class="eyebrow">Generated technician workflow</div><h2>${escapeHtml(result.orderId)}</h2><p>Ranked causes, detailed tests, repair choices, and final quality control.</p></div><div class="ai-result-actions"><button class="secondary" type="button" onclick="window.print()">${icon("printer", 14)} Print technician packet</button><button class="primary" id="apply-ai-workflow">${icon("save", 14)} Apply to work order</button></div></div><div class="technician-worksheet" id="ai-technician-printable"><header class="worksheet-header"><div><div class="eyebrow">Shop Crank diagnostic & repair worksheet</div><h2>${escapeHtml(result.orderId)} \xB7 ${escapeHtml(order.vehicle || result.diagnostics.vehicle)}</h2></div><div class="worksheet-assignment"><span>Assigned technician</span><b>${escapeHtml(order.technician || "Unassigned")}</b></div></header><section class="worksheet-meta"><div><span>Customer</span><b>${escapeHtml(order.customer || "Not recorded")}</b></div><div><span>VIN</span><b class="mono">${escapeHtml(order.vin || "VIN pending")}</b></div><div><span>Bay / assignment</span><b>${escapeHtml(order.bay || "Unassigned")}</b></div><div><span>Promise</span><b>${escapeHtml(order.promise || "Not scheduled")}</b></div><div class="wide"><span>Customer complaint</span><b>${escapeHtml(order.complaint || result.diagnostics.symptoms)}</b></div></section><aside class="worksheet-warning"><b>Technician verification required.</b> Likelihood ranks prioritize testing; they are not a diagnosis or authorization to replace parts. Use current manufacturer information and record objective results.</aside><section class="worksheet-section"><div class="worksheet-section-head"><div><span>01</span><h2>Ranked causes & diagnostic procedures</h2></div><div class="likelihood-key"><b class="high">High</b><b class="medium">Medium</b><b class="minor">Minor</b></div></div><div class="cause-list">${causes}</div></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>02</span><h2>Preliminary estimate</h2></div></div><table><thead><tr><th>Service</th><th>Labor hours</th><th>Parts</th><th>Line total</th></tr></thead><tbody>${parts}</tbody></table><div class="ai-total"><span>Preliminary estimated total</span><b>${money4(result.estimate.total)}</b></div><p class="worksheet-fineprint">Inspect and obtain customer authorization before additional work. Part fitment, labor operations, taxes, fluids, programming, sublet work, and hidden damage may change the final estimate.</p></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>03</span><h2>Detailed repair checklist</h2></div></div><h3>Safety and stop-work conditions</h3><ul class="safety-list">${safety}</ul><ul class="worksheet-checklist">${steps}</ul></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>04</span><h2>Post-repair verification</h2></div></div><ul class="worksheet-checklist two-column">${qc}</ul><div class="worksheet-notes"><b>Technician findings, actual readings, torque references, parts used, and additional recommendations</b><div></div><div></div><div></div><div></div></div><footer class="worksheet-signoff"><label>Technician signature <span></span></label><label>Date / time <span></span></label><label>QC signature <span></span></label></footer></section></div></section>`;
+    return `<section class="ai-result"><div class="ai-result-head no-print"><div><div class="eyebrow">Generated technician workflow</div><h2>${escapeHtml(result.orderId)}</h2><p>Ranked causes, detailed tests, repair choices, and final quality control.</p></div><div class="ai-result-actions"><button class="secondary" type="button" onclick="window.print()">${icon("printer", 14)} Print technician packet</button><button class="primary" id="apply-ai-workflow">${icon("save", 14)} Apply to work order</button></div></div><div class="technician-worksheet" id="ai-technician-printable"><header class="worksheet-header"><div><div class="eyebrow">ShopCrank diagnostic & repair worksheet</div><h2>${escapeHtml(result.orderId)} \xB7 ${escapeHtml(order.vehicle || result.diagnostics.vehicle)}</h2></div><div class="worksheet-assignment"><span>Assigned technician</span><b>${escapeHtml(order.technician || "Unassigned")}</b></div></header><section class="worksheet-meta"><div><span>Customer</span><b>${escapeHtml(order.customer || "Not recorded")}</b></div><div><span>VIN</span><b class="mono">${escapeHtml(order.vin || "VIN pending")}</b></div><div><span>Bay / assignment</span><b>${escapeHtml(order.bay || "Unassigned")}</b></div><div><span>Promise</span><b>${escapeHtml(order.promise || "Not scheduled")}</b></div><div class="wide"><span>Customer complaint</span><b>${escapeHtml(order.complaint || result.diagnostics.symptoms)}</b></div></section><aside class="worksheet-warning"><b>Technician verification required.</b> Likelihood ranks prioritize testing; they are not a diagnosis or authorization to replace parts. Use current manufacturer information and record objective results.</aside><section class="worksheet-section"><div class="worksheet-section-head"><div><span>01</span><h2>Ranked causes & diagnostic procedures</h2></div><div class="likelihood-key"><b class="high">High</b><b class="medium">Medium</b><b class="minor">Minor</b></div></div><div class="cause-list">${causes}</div></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>02</span><h2>Preliminary estimate</h2></div></div><table><thead><tr><th>Service</th><th>Labor hours</th><th>Parts</th><th>Line total</th></tr></thead><tbody>${parts}</tbody></table><div class="ai-total"><span>Preliminary estimated total</span><b>${money4(result.estimate.total)}</b></div><p class="worksheet-fineprint">Inspect and obtain customer authorization before additional work. Part fitment, labor operations, taxes, fluids, programming, sublet work, and hidden damage may change the final estimate.</p></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>03</span><h2>Detailed repair checklist</h2></div></div><h3>Safety and stop-work conditions</h3><ul class="safety-list">${safety}</ul><ul class="worksheet-checklist">${steps}</ul></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>04</span><h2>Post-repair verification</h2></div></div><ul class="worksheet-checklist two-column">${qc}</ul><div class="worksheet-notes"><b>Technician findings, actual readings, torque references, parts used, and additional recommendations</b><div></div><div></div><div></div><div></div></div><footer class="worksheet-signoff"><label>Technician signature <span></span></label><label>Date / time <span></span></label><label>QC signature <span></span></label></footer></section></div></section>`;
   }
   function diagnosticsResult(result) {
     return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Diagnostic report</div><h2>${escapeHtml(result.vehicle)}</h2><p>${escapeHtml(result.urgency)} priority \xB7 ${result.hours.toFixed(2)} labor hours estimated</p></div></div><div class="ai-result-grid"><section><h3>Probable causes</h3><ul class="ai-causes">${result.causes.map((c) => `<li><b>${escapeHtml(c.cause)}</b><span class="ai-tag ${escapeAttr(c.likelihood.toLowerCase())}">${escapeHtml(c.likelihood)}</span><small>${escapeHtml(c.explanation)}</small></li>`).join("")}</ul></section><section><h3>Recommended tests</h3><ul class="ai-checklist">${result.tests.map((test) => `<li>${icon("check-circle-2", 13)}${escapeHtml(test)}</li>`).join("")}</ul><p class="ai-disclaimer">${escapeHtml(result.notes)}</p></section></div></section>`;
@@ -7164,7 +7295,7 @@ button{margin-top:12px;padding:8px 14px}
     try {
       response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/" }) });
     } catch (error) {
-      if (error instanceof TypeError) throw new Error("Could not reach Shop Crank sign-in. Check your internet connection and try again.");
+      if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again.");
       throw error;
     }
     const payload = await response.json().catch(() => ({}));
@@ -7214,7 +7345,7 @@ button{margin-top:12px;padding:8px 14px}
     closeModal();
     save();
     render();
-    toast("Signed out of Shop Crank");
+    toast("Signed out of ShopCrank");
   }
   function readMutationQueue() {
     return mutationQueueStore.read().filter((item) => item?.method === "DELETE" || item?.body);
@@ -7251,15 +7382,15 @@ button{margin-top:12px;padding:8px 14px}
       desktopEntitlementVerified = true;
       return true;
     }
-    if (!navigator.onLine) throw new Error("Shop Crank Desktop requires an internet connection to verify your subscription.");
+    if (!navigator.onLine) throw new Error("ShopCrank Desktop requires an internet connection to verify your subscription.");
     let response;
     try {
       response = await authorizedApiRequest("/subscription/entitlement", { cache: "no-store" });
     } catch {
-      throw new Error("Shop Crank could not reach the subscription service. Check your internet connection and try again.");
+      throw new Error("ShopCrank could not reach the subscription service. Check your internet connection and try again.");
     }
     const body = await response.json().catch(() => ({}));
-    if (!response.ok || body.active !== true) throw new Error(body.status === "expired" ? "Your Shop Crank subscription has expired." : body.status === "suspended" ? "This Shop Crank subscription is suspended." : "An active Shop Crank subscription is required for the Windows app.");
+    if (!response.ok || body.active !== true) throw new Error(body.status === "expired" ? "Your ShopCrank subscription has expired." : body.status === "suspended" ? "This ShopCrank subscription is suspended." : "An active ShopCrank subscription is required for the Windows app.");
     desktopEntitlementVerified = true;
     desktopLoginMessage = "";
     return true;
@@ -7302,13 +7433,13 @@ button{margin-top:12px;padding:8px 14px}
   async function apiFetch(path, options = {}) {
     if (isOfflineDesktop()) {
       if (String(path).startsWith("/ai/")) {
-        const aiError = new Error("Shop Crank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
+        const aiError = new Error("ShopCrank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
         aiError.retryable = false;
         throw aiError;
       }
       const method = String(options.method || "GET").toUpperCase();
       if (method === "GET" || method === "HEAD") {
-        const offlineError = new Error("This copy of Shop Crank keeps shop records on this computer.");
+        const offlineError = new Error("This copy of ShopCrank keeps shop records on this computer.");
         offlineError.retryable = false;
         throw offlineError;
       }
@@ -7328,7 +7459,7 @@ button{margin-top:12px;padding:8px 14px}
     } catch (error) {
       if (mutation.queueable && (error.retryable || !navigator.onLine || error instanceof TypeError)) {
         queueEntityMutation(mutation);
-        if (!options.silent) toast("Saved offline. Shop Crank will sync when the connection returns.");
+        if (!options.silent) toast("Saved offline. ShopCrank will sync when the connection returns.");
         return { queued: true };
       }
       throw error;
@@ -7727,7 +7858,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function shell(content) {
     const user = currentUser(), profile = shopProfile(), shift = openShift(user.id);
-    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Shop operating system</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
+    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
   }
   function heading(kicker, title, description, action = true) {
     return `<div class="page-head"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p>${description}</p></div><div class="head-actions"><button class="secondary" id="export-button">${icon("download", 15)} Export</button>${action ? `<button class="primary" id="new-ro-button">${icon("plus", 15)} New work order</button>` : ""}</div></div>`;
@@ -7865,13 +7996,86 @@ button{margin-top:12px;padding:8px 14px}
     const output = state.elmOutput || "Connect an ELM327 for generic OBD-II data. OEM programming, module coding, and bidirectional controls are in OEM diagnostics.", friendly = typeof output === "string" ? output : output.friendly, raw = typeof output === "object" ? output.raw : "";
     return `<section class="diagnostics-console"><div class="messaging-status ${elmPort ? "ready" : "idle"}">${icon(elmPort ? "circle-check" : "usb", 17)}<div><strong>${elmPort ? "ELM327 connected" : "No diagnostic adapter connected"}</strong><span>Chrome or Edge desktop \xB7 compatible USB or Bluetooth-COM ELM327 adapter</span></div></div><div class="ops-actions"><button class="primary" id="elm-connect">${icon("plug-zap", 14)} ${elmPort ? "Disconnect" : "Connect adapter"}</button><button class="secondary" data-elm-command="live" ${elmPort ? "" : "disabled"}>${icon("activity", 14)} Live data</button><button class="secondary" data-elm-command="dtc" ${elmPort ? "" : "disabled"}>${icon("scan-line", 14)} Read DTCs</button><button class="secondary danger" data-elm-command="clear" ${elmPort ? "" : "disabled"}>${icon("eraser", 14)} Clear DTCs</button><button class="primary" id="open-oem-programming" type="button">${icon("radio-tower", 14)} OEM programming, coding, and bidirectional</button></div><pre id="elm-output">${escapeHtml(friendly)}</pre>${raw ? `<details class="elm-raw"><summary>Raw adapter response</summary><pre>${escapeHtml(raw)}</pre></details>` : ""}</section>`;
   }
+  function orderingTargetHtml() {
+    const orders2 = ordersAcceptingEstimateLines(state.orders);
+    if (!orders2.some((order) => order.id === orderingTargetOrderId)) orderingTargetOrderId = orders2[0]?.id || "";
+    const options = orders2.map((order) => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} \xB7 ${escapeHtml(order.customer || "")} \xB7 ${escapeHtml(order.vehicle || "")}</option>`).join("");
+    return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
+  }
+  async function addLinesToTargetOrder(lines, label2, orderId = orderingTargetOrderId) {
+    const order = state.orders.find((item) => item.id === orderId);
+    if (!order) {
+      toast("Choose an open repair order first");
+      return false;
+    }
+    try {
+      const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+      const saved = await updateOrderInApi(revised, { throwOnError: true });
+      Object.assign(order, saved?.queued ? revised : saved);
+      save();
+      toast(`Added ${label2} to ${order.id}`);
+      return true;
+    } catch (error) {
+      toast(error.message || `Could not add ${label2} to ${order.id}`);
+      return false;
+    }
+  }
+  async function orderTargetPartstechParts() {
+    const order = state.orders.find((item) => item.id === orderingTargetOrderId);
+    if (!order) {
+      toast("Choose an open repair order first");
+      return;
+    }
+    const lines = (order.estimate?.lines || []).filter((line) => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
+    if (!lines.length) {
+      toast(`${order.id} has no un-ordered PartsTech part lines`);
+      return;
+    }
+    const checkout = window.open("about:blank", "_blank");
+    if (checkout) checkout.opener = null;
+    try {
+      const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+      const placedAt = now();
+      const revised = { ...order, partsOrders: [...order.partsOrders || [], { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map((line) => lines.some((item) => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
+      const saved = await updateOrderInApi(revised, { throwOnError: true });
+      Object.assign(order, saved?.queued ? revised : saved);
+      save();
+      if (checkout) checkout.location.href = result.redirectUrl;
+      else window.location.assign(result.redirectUrl);
+      toast(`PartsTech checkout opened for ${order.id}. Submit the cart there to place the order.`);
+    } catch (error) {
+      checkout?.close();
+      toast(error.message || "Could not start the PartsTech order");
+    }
+  }
+  async function refreshTargetPartstechOrder() {
+    const order = state.orders.find((item) => item.id === orderingTargetOrderId);
+    const session = [...order?.partsOrders || []].reverse().find((item) => item.provider === "partstech");
+    if (!session) {
+      toast("No PartsTech order session on this RO yet");
+      return;
+    }
+    try {
+      const result = await apiFetch("/integrations/partstech/order/status", { method: "POST", body: JSON.stringify({ sessionId: session.sessionId }) });
+      const status = result.order?.status || "submitted", orderId = result.order?.orderId || "";
+      const revised = { ...order, partsOrders: order.partsOrders.map((item) => item.sessionId === session.sessionId ? { ...item, status, orderId, checkedAt: now() } : item), estimate: { ...order.estimate, lines: order.estimate.lines.map((line) => line.partstechOrder?.sessionId === session.sessionId ? { ...line, partstechOrder: { ...line.partstechOrder, status, orderId } } : line) } };
+      const saved = await updateOrderInApi(revised, { throwOnError: true });
+      Object.assign(order, saved?.queued ? revised : saved);
+      save();
+      toast(`PartsTech order ${orderId || session.sessionId}: ${status}`);
+    } catch (error) {
+      toast(error.message || "Could not check the PartsTech order");
+    }
+  }
   function operationsOrdering() {
     const canSave = ["owner", "admin"].includes(currentUser()?.role);
     return [
+      orderingTargetHtml(),
       orderingPanelHtml(autozoneAccount, { canSave, escapeHtml, icon }),
       partstechPanelHtml(partstechAccount, { canSave, escapeHtml, icon }),
       laborGuidePanelHtml(laborGuideAccount, { canSave, escapeHtml, icon }),
-      quickbooksPanelHtml(quickbooksAccount, { canSave, escapeHtml, icon })
+      quickbooksPanelHtml(quickbooksAccount, { canSave, escapeHtml, icon }),
+      revenueRecognitionPanelHtml(revrecStatus, { canSave, escapeHtml, icon })
     ].join("");
   }
   async function loadAutozoneAccount(force = false) {
@@ -7918,6 +8122,17 @@ button{margin-top:12px;padding:8px 14px}
     }
     if (state.route === "shopops" && shopOpsTab === "ordering") render();
   }
+  async function loadRevrecStatus(force = false) {
+    if (revrecStatus.loaded && !force) return;
+    revrecStatus = { ...revrecStatus, loaded: true };
+    try {
+      const status = await apiFetch("/revenue-recognition/status");
+      revrecStatus = { ...status, loaded: true };
+    } catch {
+      revrecStatus = { enabled: false, loaded: true, unavailable: true };
+    }
+    if (state.route === "shopops" && shopOpsTab === "ordering") render();
+  }
   async function openAutozoneOrder(keyword) {
     const url = autozoneProLoginUrl(keyword);
     const opened = window.open(url, "_blank", "noopener,noreferrer");
@@ -7925,21 +8140,7 @@ button{margin-top:12px;padding:8px 14px}
       toast("Allow pop-ups to open AutoZone Pro.");
       return;
     }
-    if (!autozoneAccount.connected) {
-      toast("AutoZone Pro opened. Save the shop login on Ordering to copy the password next time.");
-      return;
-    }
-    try {
-      const detail = await apiFetch("/ordering/autozone?reveal=1");
-      if (detail?.password && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(detail.password);
-        toast(`AutoZone Pro opened for ${detail.username}. Password copied \u2014 paste it on their sign-in page.`);
-        return;
-      }
-      toast(`AutoZone Pro opened. Sign in as ${detail?.username || "the saved user"}.`);
-    } catch (error) {
-      toast(error.message || "AutoZone Pro opened. The saved password could not be copied.");
-    }
+    toast(autozoneAccount.connected ? `AutoZone Pro opened. Sign in with your own AutoZone Pro user (shop account ${autozoneAccount.username}).` : "AutoZone Pro opened. Sign in with your AutoZone Pro user.");
   }
   async function saveAutozoneLogin(form) {
     const data = Object.fromEntries(new FormData(form));
@@ -8448,6 +8649,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       void loadPartstechAccount();
       void loadLaborGuideAccount();
       void loadQuickbooksAccount();
+      void loadRevrecStatus();
     }
     document.querySelector("#partstech-connect-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -8470,6 +8672,15 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
         toast(error.message || "Could not disconnect PartsTech");
       }
     });
+    document.querySelector("#ordering-target-order")?.addEventListener("change", (event) => {
+      orderingTargetOrderId = event.target.value;
+    });
+    document.querySelector("#partstech-order-ro")?.addEventListener("click", () => {
+      void orderTargetPartstechParts();
+    });
+    document.querySelector("#partstech-order-status")?.addEventListener("click", () => {
+      void refreshTargetPartstechOrder();
+    });
     document.querySelector("#partstech-search-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(event.target));
@@ -8477,15 +8688,14 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       if (panel) panel.innerHTML = "<p>Quoting\u2026</p>";
       try {
         const result = await apiFetch("/integrations/partstech/quote", { method: "POST", body: JSON.stringify(data) });
-        const rows = (result.items || []).map((item) => `<tr><td>${escapeHtml(item.description)}</td><td>${escapeHtml(item.partNumber)}</td><td>${money4(item.unitPrice)}</td><td><button type="button" class="mini-action" data-add-pt-line="${escapeAttr(item.id)}">Add</button></td></tr>`).join("");
+        const rows = (result.items || []).map((item) => partstechQuoteRowHtml(item, { escapeHtml, escapeAttr, money: money4, canAdd: Boolean(orderingTargetOrderId) })).join("");
         if (panel) panel.innerHTML = `<table><thead><tr><th>Part</th><th>#</th><th>Price</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No quotes returned</td></tr>"}</tbody></table>`;
         window.__SHOP_CRANK_PARTSTECH_LINES__ = Object.fromEntries((result.items || []).map((item) => [item.id, item]));
         document.querySelectorAll("[data-add-pt-line]").forEach((button) => {
           button.onclick = () => {
             const line = window.__SHOP_CRANK_PARTSTECH_LINES__?.[button.dataset.addPtLine];
             if (!line) return;
-            state.pendingEstimateLines = [...state.pendingEstimateLines || [], line];
-            toast(`Added ${line.description} to pending estimate lines`);
+            void addLinesToTargetOrder(partstechLineToEstimateLines(line), line.description);
           };
         });
       } catch (error) {
@@ -8542,8 +8752,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
           button.onclick = () => {
             const line = window.__SHOP_CRANK_LABOR_LINES__?.[button.dataset.addLaborLine];
             if (!line) return;
-            state.pendingEstimateLines = [...state.pendingEstimateLines || [], line];
-            toast(`Added ${line.description}`);
+            void addLinesToTargetOrder([line], line.description);
           };
         });
       } catch (error) {
@@ -8559,8 +8768,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
         hours: data.hours,
         laborRate: data.laborRate
       });
-      state.pendingEstimateLines = [...state.pendingEstimateLines || [], line];
-      toast(`Added manual labor: ${line.description}`);
+      void addLinesToTargetOrder([line], `manual labor: ${line.description}`);
     });
     document.querySelector("#qbo-connect")?.addEventListener("click", async () => {
       try {
@@ -8589,6 +8797,57 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       const status = document.querySelector("#qbo-sync-status");
       if (status) status.textContent = "Sync uses per-record POST /integrations/quickbooks/sync from invoices and customers.";
       toast("Open a customer or invoice and sync from there, or call the sync API with entityType/localId");
+    });
+    document.querySelector("#revrec-config-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      try {
+        const status = await apiFetch("/revenue-recognition/configure", {
+          method: "POST",
+          body: JSON.stringify({
+            enabled: data.enabled === "on",
+            currency: String(data.currency || "usd").trim().toLowerCase()
+          })
+        });
+        revrecStatus = { ...status, loaded: true };
+        toast(status.enabled ? "Revenue Recognition sync enabled" : "Revenue Recognition sync disabled");
+        render();
+      } catch (error) {
+        toast(error.message || "Could not save Revenue Recognition settings");
+      }
+    });
+    document.querySelector("#revrec-export-now")?.addEventListener("click", async () => {
+      const note = document.querySelector("#revrec-sync-status");
+      if (note) note.textContent = "Uploading CSV to S3\u2026";
+      try {
+        const status = await apiFetch("/revenue-recognition/export", { method: "POST", body: "{}" });
+        revrecStatus = { ...status, loaded: true };
+        if (note) note.textContent = `Exported ${status.rowCount ?? 0} row(s) to ${status.objectKey || "S3"}`;
+        toast("Revenue Recognition export uploaded");
+        render();
+      } catch (error) {
+        if (note) note.textContent = error.message || "Export failed";
+        toast(error.message || "Could not export Revenue Recognition CSV");
+      }
+    });
+    document.querySelector("#revrec-download-csv")?.addEventListener("click", async () => {
+      try {
+        const response = await authorizedApiRequest("/revenue-recognition/export.csv", { method: "GET", headers: { Accept: "text/csv" } });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.message || `Download failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `shopcrank-revrec-${revrecStatus.shopId || "export"}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast("Revenue Recognition CSV downloaded");
+      } catch (error) {
+        toast(error.message || "Could not download Revenue Recognition CSV");
+      }
     });
     document.querySelectorAll("[data-ops-tab]").forEach((button) => button.onclick = () => {
       shopOpsTab = button.dataset.opsTab;
@@ -8836,12 +9095,12 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   }
   function settings() {
     const t = state.taxSettings, stateOptions = usStates.map((s) => `<option value="${s.code}" ${t.state === s.code ? "selected" : ""}>${s.name}</option>`).join("");
-    return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout Shop Crank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="Your Car Guy"/></label><label>Phone<input value="555-0100"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`);
+    return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout ShopCrank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="Your Car Guy"/></label><label>Phone<input value="555-0100"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`);
   }
   function loginScreen() {
     if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon });
     const googleUrl = `${cloudflareConfig2.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Dispatch & work orders</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to Shop Crank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open Shop Crank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active Shop Crank customer or employee profile."}</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
   }
   async function upgradeShopPlan() {
     const plans = [["shop", "Shop \xB7 $139/mo"], ["solo", "Solo \xB7 $69/mo"], ["shop_pro", "Shop Pro \xB7 $279/mo"], ["enterprise", "Enterprise \xB7 $559/mo"]];
@@ -8882,7 +9141,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   }
   function platformShell(content) {
     const user = currentUser();
-    return `<div class="app-shell platform-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Platform console</small></div></div><div class="nav-label">Platform</div><nav class="nav">${nav("superadmin", "building-2", "Customer shops")}<a class="nav-button" href="/downloads" target="_blank" rel="noopener">${icon("download")} Downloads</a><a class="nav-button" href="/pricing" target="_blank" rel="noopener">${icon("badge-dollar-sign")} Pricing</a></nav><div class="sidebar-foot"><div class="shop-card"><strong>Platform admin</strong><span>${escapeHtml(user?.email || "")}</span></div><button class="user-row" id="sign-out" type="button"><div class="avatar">${initials(user?.name || "P")}</div><div><strong>${escapeHtml(user?.name || "Platform")}</strong><span>Sign out</span></div></button></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation">${icon("menu")}</button><div class="top-actions"><button class="secondary" id="refresh-platform" type="button">${icon("refresh-cw", 14)} Refresh</button><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Get apps</a></div></header><div class="content">${content}</div></main></div>`;
+    return `<div class="app-shell platform-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Platform console</small></div></div><div class="nav-label">Platform</div><nav class="nav">${nav("superadmin", "building-2", "Customer shops")}<a class="nav-button" href="/downloads" target="_blank" rel="noopener">${icon("download")} Downloads</a><a class="nav-button" href="/pricing" target="_blank" rel="noopener">${icon("badge-dollar-sign")} Pricing</a></nav><div class="sidebar-foot"><div class="shop-card"><strong>Platform admin</strong><span>${escapeHtml(user?.email || "")}</span></div><button class="user-row" id="sign-out" type="button"><div class="avatar">${initials(user?.name || "P")}</div><div><strong>${escapeHtml(user?.name || "Platform")}</strong><span>Sign out</span></div></button></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation">${icon("menu")}</button><div class="top-actions"><button class="secondary" id="refresh-platform" type="button">${icon("refresh-cw", 14)} Refresh</button><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Get apps</a></div></header><div class="content">${content}</div></main></div>`;
   }
   function subscriptionBadge(account) {
     const status = String(account.subscriptionStatus || "missing");
@@ -9186,7 +9445,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     const input = form.elements.message, sendButton = form.querySelector("button[type=submit]"), append = (role, content) => {
       assistantConversation.push({ role, content });
       const list = document.querySelector("#assistant-messages");
-      list.innerHTML = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
+      list.innerHTML = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
       list.scrollTop = list.scrollHeight;
     };
     form.onsubmit = async (event) => {
@@ -9903,7 +10162,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         state.users = sanitizeUsers(state.users);
         return local;
       }
-      if (error instanceof TypeError) throw new Error("Could not reach Shop Crank. Sign in from the online desktop window or check your internet connection.");
+      if (error instanceof TypeError) throw new Error("Could not reach ShopCrank. Sign in from the online desktop window or check your internet connection.");
       throw error;
     }
     const active = employees2.find((user) => user.active && String(user.email || "").trim().toLowerCase() === normalized);
@@ -9933,7 +10192,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function pendingProfileScreen() {
     const pending = pendingAuthProfile || {};
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Account almost ready</small></div></div><div class="eyebrow">Employee profile required</div><h1>${pending.reason === "deactivated" ? "Your shop profile is deactivated" : "Ask an admin to finish setup"}</h1><p>${pending.reason === "deactivated" ? `The Cloudflare Access identity <strong>${escapeHtml(pending.email || "")}</strong> works, but the matching employee profile is inactive.` : `You signed in as <strong>${escapeHtml(pending.email || "")}</strong> (${escapeHtml(roleLabel[pending.role] || pending.role || "team member")}), but this shop does not have an active employee profile for that email yet.`}</p><div class="service-contract"><p>Ask a shop administrator to open <b>Employees</b> and create (or reactivate) a profile using exactly this email:</p><code>${escapeHtml(pending.email || "")}</code></div><div class="modal-actions" style="justify-content:flex-start;margin-top:18px"><button class="primary" id="pending-sign-out">${icon("log-out", 14)} Sign out</button></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Account almost ready</small></div></div><div class="eyebrow">Employee profile required</div><h1>${pending.reason === "deactivated" ? "Your shop profile is deactivated" : "Ask an admin to finish setup"}</h1><p>${pending.reason === "deactivated" ? `The Cloudflare Access identity <strong>${escapeHtml(pending.email || "")}</strong> works, but the matching employee profile is inactive.` : `You signed in as <strong>${escapeHtml(pending.email || "")}</strong> (${escapeHtml(roleLabel[pending.role] || pending.role || "team member")}), but this shop does not have an active employee profile for that email yet.`}</p><div class="service-contract"><p>Ask a shop administrator to open <b>Employees</b> and create (or reactivate) a profile using exactly this email:</p><code>${escapeHtml(pending.email || "")}</code></div><div class="modal-actions" style="justify-content:flex-start;margin-top:18px"><button class="primary" id="pending-sign-out">${icon("log-out", 14)} Sign out</button></div></section></main>`;
   }
   function safeHexColor(value2, fallback) {
     const color = String(value2 || "").trim();
@@ -10031,7 +10290,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function payroll() {
     syncAllPayroll();
     const period = weekPeriod(), admin = currentUser().role === "admin", people = admin ? state.users.filter((user) => user.active) : [currentUser()], stubs = people.map((user) => payStub(user, period));
-    return shell(`${heading("Compensation", "Payroll", admin ? `Weekly payroll for ${period.start} - ${period.end}. Completed jobs automatically add labor hours to the assigned employee.` : `Your weekly pay stub for ${period.start} - ${period.end}.`, false)}<div class="ai-notice">${icon("landmark", 16)}<span>Payroll figures are a small-shop estimate for planning only. Shop Crank does not file taxes, generate W-2/1099 forms, or replace a payroll processor.</span></div>${admin ? `<div class="payroll-actions"><button class="secondary" id="payroll-export">${icon("download", 14)} Export payroll</button><button class="primary" id="sync-payroll">${icon("refresh-cw", 14)} Sync completed jobs</button></div>` : ""}<div class="payroll-summary"><span>Pay period</span><strong>${period.start} - ${period.end}</strong><span>${stubs.reduce((sum, stub) => sum + stub.hours, 0).toFixed(2)} labor hours</span><strong>${money4(stubs.reduce((sum, stub) => sum + stub.net, 0))} net pay</strong></div><div class="payroll-grid">${stubs.map(payStubMarkup).join("") || empty("No active payroll employees")}</div>`);
+    return shell(`${heading("Compensation", "Payroll", admin ? `Weekly payroll for ${period.start} - ${period.end}. Completed jobs automatically add labor hours to the assigned employee.` : `Your weekly pay stub for ${period.start} - ${period.end}.`, false)}<div class="ai-notice">${icon("landmark", 16)}<span>Payroll figures are a small-shop estimate for planning only. ShopCrank does not file taxes, generate W-2/1099 forms, or replace a payroll processor.</span></div>${admin ? `<div class="payroll-actions"><button class="secondary" id="payroll-export">${icon("download", 14)} Export payroll</button><button class="primary" id="sync-payroll">${icon("refresh-cw", 14)} Sync completed jobs</button></div>` : ""}<div class="payroll-summary"><span>Pay period</span><strong>${period.start} - ${period.end}</strong><span>${stubs.reduce((sum, stub) => sum + stub.hours, 0).toFixed(2)} labor hours</span><strong>${money4(stubs.reduce((sum, stub) => sum + stub.net, 0))} net pay</strong></div><div class="payroll-grid">${stubs.map(payStubMarkup).join("") || empty("No active payroll employees")}</div>`);
   }
   function payStub(user, period) {
     const lines = state.payrollEntries.filter((entry) => entry.employeeId === user.id && entry.periodKey === period.key), hours = lines.reduce((sum, line) => sum + line.hours, 0), shiftHours = state.shiftEntries.filter((entry) => entry.userId === user.id && entry.clockOut && String(entry.clockIn).slice(0, 10) >= period.key).reduce((sum, entry) => sum + Number(entry.hours || 0), 0), jobPay = lines.reduce((sum, line) => sum + line.amount, 0), salaryPay = user.employmentType === "Salary" ? Number(user.payRate || 0) / 52 : 0, gross = jobPay + salaryPay, federal = Math.round(gross * 0.12 * 100) / 100, fica = Math.round(gross * 0.0765 * 100) / 100, other = 0;
@@ -10153,7 +10412,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function imports() {
     const cards = Object.entries(importTypes).map(([type, def]) => `<article class="import-card"><div class="import-card-icon">${icon(def.icon, 20)}</div><div><h3>${def.title}</h3><p>Required: ${def.required}</p><p class="import-columns">Columns: ${def.columns}</p></div><button class="secondary" data-import-type="${type}">${icon("upload", 14)} Choose CSV</button><button class="template-link" data-template="${type}">${icon("download", 13)} Template</button></article>`).join("");
-    return shell(`${heading("Data management", "Import records", "Bring historical CSV data into Shop Crank. Records are checked before they are added.", false)}<input id="csv-input" type="file" accept=".csv,text/csv" hidden/><div class="import-note">${icon("shield-check", 16)}<span>Review each batch before confirming it. Valid rows are added to this shop and synced when you are signed in.</span></div><div class="import-grid">${cards}</div>${importPreview ? previewMarkup() : ""}`);
+    return shell(`${heading("Data management", "Import records", "Bring historical CSV data into ShopCrank. Records are checked before they are added.", false)}<input id="csv-input" type="file" accept=".csv,text/csv" hidden/><div class="import-note">${icon("shield-check", 16)}<span>Review each batch before confirming it. Valid rows are added to this shop and synced when you are signed in.</span></div><div class="import-grid">${cards}</div>${importPreview ? previewMarkup() : ""}`);
   }
   function entityName(type) {
     return type === "orders" ? "work order" : type.slice(0, -1);
@@ -10267,6 +10526,11 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span{color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice summary</h2><table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody><tr><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money4(breakdown.subtotal)}</td></tr><tr><td>Sales tax (${Number(breakdown.taxRate || 0)}%)</td><td>${money4(breakdown.tax)}</td></tr></tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
     win.document.close();
   }
+  function printableLineType(type) {
+    if (type === "fee") return "Fee";
+    if (type === "part") return "Part";
+    return "Labor";
+  }
   function invoiceNumberForOrder(order) {
     return `INV-${String(order.id || Date.now()).replace(/^RO-/i, "").replace(/[^A-Za-z0-9-]/g, "")}`;
   }
@@ -10317,7 +10581,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
   }
   function openOnboardingCleanup(count) {
-    showModal(`<div class="modal" id="onboarding-cleanup"><div class="modal-head"><h2>Start with a clean shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status ready">${icon("sparkles", 17)}<div><strong>${count} sample record${count === 1 ? "" : "s"} detected</strong><span>Starting onboarding removes only Shop Crank demo customers, work orders, invoices, and expenses. Employee access and real shop records stay in place.</span></div></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Keep for now</button><button type="button" class="primary" id="start-onboarding-cleanup">${icon("play", 14)} Start onboarding</button></div></div>`);
+    showModal(`<div class="modal" id="onboarding-cleanup"><div class="modal-head"><h2>Start with a clean shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status ready">${icon("sparkles", 17)}<div><strong>${count} sample record${count === 1 ? "" : "s"} detected</strong><span>Starting onboarding removes only ShopCrank demo customers, work orders, invoices, and expenses. Employee access and real shop records stay in place.</span></div></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Keep for now</button><button type="button" class="primary" id="start-onboarding-cleanup">${icon("play", 14)} Start onboarding</button></div></div>`);
     document.querySelector("#start-onboarding-cleanup").onclick = startOnboardingCleanup;
   }
   async function checkOnboardingSamples() {
@@ -10740,36 +11004,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       analyze: async (current) => {
         try {
           const response = await apiFetch("/api/ai/assistant", { method: "POST", body: JSON.stringify({ message: `Shop intake review only. Vehicle ${current.vehicle?.year || ""} ${current.vehicle?.make || ""} ${current.vehicle?.model || ""}. Concern: ${current.concern?.description || ""}. Codes: ${current.diagnosis?.codes || "none"}.` }) });
-          if (response?.reply || response?.message) return { source: "assistant", notice: "Shop Crank assistant response. Confirm every test on the vehicle before selling parts.", causes: [{ name: "Assistant notes", detail: response.reply || response.message }] };
+          if (response?.reply || response?.message) return { source: "assistant", notice: "ShopCrank assistant response. Confirm every test on the vehicle before selling parts.", causes: [{ name: "Assistant notes", detail: response.reply || response.message }] };
         } catch {
         }
         return localDiagnosticChecklist(current);
-      },
-      autofill: async ({ formType, notes = "", file = null, draft: current }) => {
-        try {
-          const images = [];
-          if (file) {
-            const dataUrl = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(String(reader.result || ""));
-              reader.onerror = () => reject(new Error("Could not read image"));
-              reader.readAsDataURL(file);
-            });
-            images.push({ mimeType: file.type || "image/jpeg", data: dataUrl });
-          }
-          return await apiFetch("/api/ai/autofill", {
-            method: "POST",
-            body: JSON.stringify({
-              formType,
-              notes,
-              images,
-              vehicleContext: current?.vehicle || null
-            })
-          });
-        } catch (error) {
-          toast(error.message || "AI autofill is unavailable right now.");
-          return null;
-        }
       },
       onConvert: async (current) => {
         const name = [current.customer.firstName, current.customer.lastName].filter(Boolean).join(" ");
@@ -11343,8 +11581,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     if (!to || to === "Not provided") return toast(`Add a customer ${channel === "email" ? "email address" : "phone number"} first`);
     try {
       const link = await ensureCustomerDocumentLink("estimate", order.id);
-      const subject = `Estimate ${order.id} \u2014 ${state.messagingSettings.shopName || "Shop Crank"}`;
-      const body = `${state.messagingSettings.shopName || "Shop Crank"} estimate for ${order.vehicle}: ${money4(order.total)}. Review each recommended line and sign to approve: ${link.url}`;
+      const subject = `Estimate ${order.id} \u2014 ${state.messagingSettings.shopName || "ShopCrank"}`;
+      const body = `${state.messagingSettings.shopName || "ShopCrank"} estimate for ${order.vehicle}: ${money4(order.total)}. Review each recommended line and sign to approve: ${link.url}`;
       const delivery = await deliverShopMessage({ channel, to, subject, body, metadata: { type: "estimate", workOrderId: order.id, approvalUrl: link.url } });
       order.lastEstimateLink = { url: link.url, expiresAt: link.expiresAt, sentAt: now(), channel, deliveryMode: delivery.mode };
       await updateOrderInApi(order);
@@ -11372,7 +11610,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const lineChoices = kind === "estimate" ? `<fieldset class="onsite-line-choices"><legend>Approve or decline each line</legend>${estimate.lines.map((line) => `<label><input type="checkbox" name="approvedLine" value="${escapeAttr(line.id)}" checked><span><b>${escapeHtml(line.description)}</b><small>${line.type === "part" ? `${line.quantity} \xD7 ${money4(line.unitPrice)}` : line.type === "fee" ? `Flat fee \xB7 ${money4(line.total)}` : `${line.hours.toFixed(2)} hr \xD7 ${money4(line.laborRate)}`}</small></span><strong>${money4(line.total)}</strong></label>`).join("")}</fieldset>` : "";
     const typeOptions = ESTIMATE_APPROVAL_TYPES.map((option) => `<option value="${option.value}">${escapeHtml(option.label)}</option>`).join("");
     const approvalFields = kind === "estimate" ? `<div class="form-grid approval-method-fields"><label>Approval type *<select name="approvalType" id="approval-type">${typeOptions}</select></label><label id="custom-approval-label" hidden>Custom approval type *<input name="customLabel" maxlength="${APPROVAL_CUSTOM_LABEL_MAX}" placeholder="e.g. Approved via fleet manager email"/></label><label class="full">Approval note (optional)<textarea name="approvalNote" maxlength="${APPROVAL_NOTE_MAX}" placeholder="Who approved, callback number, or other audit detail"></textarea></label></div>` : "";
-    showModal(`<form class="modal wide" id="document-signature-form"><div class="modal-head"><h2>${kind === "estimate" ? "Authorize estimate" : "Sign invoice"} on this device</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(number)} \xB7 ${escapeHtml(record.vehicle || "")}</span><strong>${money4(estimate.total ?? estimate.amount)}</strong></div>${lineChoices}${approvalFields}<label>Approver name *<input name="authorizationName" maxlength="100" required value="${escapeAttr(record.customer || "")}"/></label><label class="signature-label" id="signature-capture">Draw signature *<canvas id="signature-pad" width="720" height="220"></canvas></label><p class="ai-disclaimer" id="approval-disclaimer">${kind === "estimate" ? "A signature authorizes the selected work. For phone, in-person, email, text, or other approval, Shop Crank records the current staff user and time instead." : "Signing acknowledges this invoice and the completed work listed on it."}</p></div><div class="modal-actions"><button type="button" class="secondary" id="clear-signature">Clear</button><button type="submit" class="primary" id="save-document-approval">${icon("signature", 14)} ${kind === "estimate" ? "Sign & approve" : "Sign invoice"}</button></div></form>`);
+    showModal(`<form class="modal wide" id="document-signature-form"><div class="modal-head"><h2>${kind === "estimate" ? "Authorize estimate" : "Sign invoice"} on this device</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(number)} \xB7 ${escapeHtml(record.vehicle || "")}</span><strong>${money4(estimate.total ?? estimate.amount)}</strong></div>${lineChoices}${approvalFields}<label>Approver name *<input name="authorizationName" maxlength="100" required value="${escapeAttr(record.customer || "")}"/></label><label class="signature-label" id="signature-capture">Draw signature *<canvas id="signature-pad" width="720" height="220"></canvas></label><p class="ai-disclaimer" id="approval-disclaimer">${kind === "estimate" ? "A signature authorizes the selected work. For phone, in-person, email, text, or other approval, ShopCrank records the current staff user and time instead." : "Signing acknowledges this invoice and the completed work listed on it."}</p></div><div class="modal-actions"><button type="button" class="secondary" id="clear-signature">Clear</button><button type="submit" class="primary" id="save-document-approval">${icon("signature", 14)} ${kind === "estimate" ? "Sign & approve" : "Sign invoice"}</button></div></form>`);
     const canvas = document.querySelector("#signature-pad"), context = canvas.getContext("2d");
     let drawing = false, drawn = false;
     const position = (event) => {
@@ -11507,14 +11745,20 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const billableLines = billableEstimateLines(estimate.lines);
     const technicianRows = laborLinePrintRows(billableLines, state.users.map((user) => ({ id: user.id, name: user.techName || user.name })));
     const laborRows = technicianRows.map(({ line, technicianName: name }) => `<tr><td><b>${escapeHtml(line.description)}</b><small>${escapeHtml(line.notes || "")}</small></td><td>${escapeHtml(name)}</td><td>${Number(line.hours).toFixed(2)}</td><td>${money4(line.laborRate)}</td><td>${money4(line.total)}</td></tr>`).join("");
-    const partRows = billableLines.filter((line) => ["part", "fee"].includes(line.type)).map((line) => `<tr><td><b>${line.type === "fee" ? "Fee \xB7 " : ""}${escapeHtml(line.description)}</b><small>${escapeHtml(line.notes || "")}</small></td><td>${line.type === "fee" ? "Flat fee" : Number(line.quantity)}</td><td>${line.priceStatus === "pending" ? "Pending" : money4(line.unitPrice)}</td><td>${line.priceStatus === "pending" ? "Pending" : money4(line.total)}</td></tr>`).join("");
+    const partRows = billableLines.filter((line) => ["part", "fee"].includes(line.type)).map((line) => {
+      const prefix = line.type === "fee" ? "Fee \xB7 " : "";
+      const qtyText = line.type === "fee" ? "Flat fee" : Number(line.quantity);
+      const unitPriceText = line.priceStatus === "pending" ? "Pending" : money4(line.unitPrice);
+      const totalText = line.priceStatus === "pending" ? "Pending" : money4(line.total);
+      return `<tr><td><b>${prefix}${escapeHtml(line.description)}</b><small>${escapeHtml(line.notes || "")}</small></td><td>${qtyText}</td><td>${unitPriceText}</td><td>${totalText}</td></tr>`;
+    }).join("");
     const supplies = estimate.fees.find((fee) => /shop supplies/i.test(fee.description))?.amount || 0;
     const approvalMarkup = estimateApprovalMarkup(order.estimateApproval);
-    const win = window.open("", "_blank");
-    if (!win) return toast("Allow pop-ups to print the job card");
-    win.opener = null;
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(order.id)} job card</title><style>${brand.style}body{font:12px/1.45 system-ui,sans-serif;max-width:920px;margin:auto;padding:24px;color:#17231e}h2{margin:20px 0 7px;color:var(--brand);font-size:16px;text-transform:uppercase}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}.meta div,.concern{padding:10px;border:1px solid #d9dedb}.meta span{display:block;color:#64726b;font-size:9px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d9dedb;text-align:left;vertical-align:top}th{background:#eef3f0;font-size:9px;text-transform:uppercase}td small{display:block;margin-top:3px;color:#59665f}.totals{width:360px;margin:18px 0 0 auto}.totals div{display:flex;justify-content:space-between;padding:4px}.totals .total{margin-top:5px;border-top:2px solid #17231e;font-size:16px;font-weight:800}.notes{margin-top:18px;padding:10px;border:1px solid #e1d3a9;background:#fff8e7}.estimate-approval-record{display:flex;justify-content:space-between;gap:20px;margin-top:20px;padding:14px;border:1px solid #b9d0c2;background:#edf5ef}.estimate-approval-record span,.estimate-approval-record strong{display:block}.estimate-approval-record span{font-size:9px;text-transform:uppercase}.estimate-approval-record img{max-width:260px;max-height:90px;object-fit:contain}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:50px}.signatures div{border-top:1px solid #17231e;padding-top:5px;font-size:9px}@media print{body{padding:0}}</style></head><body>${brand.header}<h1>Work order ${escapeHtml(order.id)}</h1><div class="meta"><div><span>Customer</span><b>${escapeHtml(order.customer)}</b><br>${escapeHtml(order.phone || "")}</div><div><span>Vehicle</span><b>${escapeHtml(order.vehicle)}</b><br>VIN ${escapeHtml(order.vin || "Not provided")}</div></div><div class="concern"><b>Customer complaint</b><p>${escapeHtml(order.complaint || "")}</p></div><h2>Labor assignments</h2><table><thead><tr><th>Labor line</th><th>Technician</th><th>Hours</th><th>Rate</th><th>Line total</th></tr></thead><tbody>${laborRows || `<tr><td colspan="5">No labor lines.</td></tr>`}</tbody></table><h2>Parts</h2><table><thead><tr><th>Part</th><th>Quantity</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${partRows || `<tr><td colspan="4">No parts.</td></tr>`}</tbody></table><div class="totals"><div><span>Parts</span><b>${money4(estimate.parts)}</b></div><div><span>Labor</span><b>${money4(estimate.labor)}</b></div><div><span>Shop supplies</span><b>${money4(supplies)}</b></div><div><span>Discount</span><b>-${money4(estimate.discountAmount || 0)}</b></div><div><span>Tax</span><b>${money4(estimate.tax)}</b></div><div class="total"><span>Total</span><b>${money4(estimate.total)}</b></div></div>${estimate.exclusions?.length ? `<div class="notes"><b>Not included / pending</b><ul>${estimate.exclusions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}${approvalMarkup}<div class="signatures"><div>Service writer / date</div><div>Technician / date</div></div><script>window.addEventListener('load',()=>window.print())<\/script></body></html>`);
-    win.document.close();
+    const emptyLaborRow = '<tr><td colspan="5">No labor lines.</td></tr>';
+    const emptyPartsRow = '<tr><td colspan="4">No parts.</td></tr>';
+    const exclusionsList = (estimate.exclusions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    const exclusionsMarkup = exclusionsList ? `<div class="notes"><b>Not included / pending</b><ul>${exclusionsList}</ul></div>` : "";
+    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(order.id)} job card</title><style>${brand.style}body{font:12px/1.45 system-ui,sans-serif;max-width:920px;margin:auto;padding:24px;color:#17231e}h2{margin:20px 0 7px;color:var(--brand);font-size:16px;text-transform:uppercase}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}.meta div,.concern{padding:10px;border:1px solid #d9dedb}.meta span{display:block;color:#64726b;font-size:9px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d9dedb;text-align:left;vertical-align:top}th{background:#eef3f0;font-size:9px;text-transform:uppercase}td small{display:block;margin-top:3px;color:#59665f}.totals{width:360px;margin:18px 0 0 auto}.totals div{display:flex;justify-content:space-between;padding:4px}.totals .total{margin-top:5px;border-top:2px solid #17231e;font-size:16px;font-weight:800}.notes{margin-top:18px;padding:10px;border:1px solid #e1d3a9;background:#fff8e7}.estimate-approval-record{display:flex;justify-content:space-between;gap:20px;margin-top:20px;padding:14px;border:1px solid #b9d0c2;background:#edf5ef}.estimate-approval-record span,.estimate-approval-record strong{display:block}.estimate-approval-record span{font-size:9px;text-transform:uppercase}.estimate-approval-record img{max-width:260px;max-height:90px;object-fit:contain}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:50px}.signatures div{border-top:1px solid #17231e;padding-top:5px;font-size:9px}@media print{body{padding:0}}</style></head><body>${brand.header}<h1>Work order ${escapeHtml(order.id)}</h1><div class="meta"><div><span>Customer</span><b>${escapeHtml(order.customer)}</b><br>${escapeHtml(order.phone || "")}</div><div><span>Vehicle</span><b>${escapeHtml(order.vehicle)}</b><br>VIN ${escapeHtml(order.vin || "Not provided")}</div></div><div class="concern"><b>Customer complaint</b><p>${escapeHtml(order.complaint || "")}</p></div><h2>Labor assignments</h2><table><thead><tr><th>Labor line</th><th>Technician</th><th>Hours</th><th>Rate</th><th>Line total</th></tr></thead><tbody>${laborRows || emptyLaborRow}</tbody></table><h2>Parts</h2><table><thead><tr><th>Part</th><th>Quantity</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${partRows || emptyPartsRow}</tbody></table><div class="totals"><div><span>Parts</span><b>${money4(estimate.parts)}</b></div><div><span>Labor</span><b>${money4(estimate.labor)}</b></div><div><span>Shop supplies</span><b>${money4(supplies)}</b></div><div><span>Discount</span><b>-${money4(estimate.discountAmount || 0)}</b></div><div><span>Tax</span><b>${money4(estimate.tax)}</b></div><div class="total"><span>Total</span><b>${money4(estimate.total)}</b></div></div>${exclusionsMarkup}${approvalMarkup}<div class="signatures"><div>Service writer / date</div><div>Technician / date</div></div></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the job card", autoPrint: true });
   }
   function jobWorkflowSteps(order, invoice) {
     const approval = !order.estimateRevisionPending && (order.estimateApproval?.status === "approved" || ["approved", "in_progress", "waiting_parts", "completed", "invoiced"].includes(order.status));
@@ -11747,7 +11991,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function assistantMessageMarkup(item, index) {
     const actions = (item.actions || []).map((action, actionIndex) => action.kind === "estimate_work_order_draft" ? `<button type="button" class="assistant-draft-action" data-assistant-draft="${index}:${actionIndex}">${icon("clipboard-plus", 14)} Save estimate & fill work order</button>` : "").join("");
-    return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${actions}</article>`;
+    return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${actions}</article>`;
   }
   function assistantProviderLabel(provider = "") {
     const value2 = String(provider || "").trim().toLowerCase();
@@ -11993,7 +12237,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function filingCenterMarkup() {
     if (!filingCenterOpen) return "";
     const shop = shopFilingProfile();
-    return `<section class="messaging-panel no-print" style="margin-top:16px"><div class="statement-head"><div><div class="eyebrow">E-file center</div><h2>IRS \xB7 Texas Comptroller \xB7 SSA</h2><p>Shop Crank builds portal-ready packages. Transmit via the linked government portals (or your CPA). Configure transmitter credentials in Shop settings when you enroll as an e-file provider.</p></div><button type="button" class="secondary" id="close-filing-center">Close</button></div>
+    return `<section class="messaging-panel no-print" style="margin-top:16px"><div class="statement-head"><div><div class="eyebrow">E-file center</div><h2>IRS \xB7 Texas Comptroller \xB7 SSA</h2><p>ShopCrank builds portal-ready packages. Transmit via the linked government portals (or your CPA). Configure transmitter credentials in Shop settings when you enroll as an e-file provider.</p></div><button type="button" class="secondary" id="close-filing-center">Close</button></div>
 <div class="accounting-grid" style="margin-top:12px">
 <section class="statement"><div class="eyebrow">Sales tax</div><h3>Texas WebFile / EDI</h3><p>List-supplement CSV with 7-digit jurisdiction codes for WebFile or Texas EDI software.</p><a class="secondary" href="https://comptroller.texas.gov/taxes/file-pay/about-webfile.php" target="_blank" rel="noopener">Open WebFile</a></section>
 <section class="statement"><div class="eyebrow">Employment tax</div><h3>IRS Form 941 + EFTPS</h3><p>Quarterly 941 worksheet from payroll withholdings. Pay deposits via EFTPS.</p><a class="secondary" href="https://www.irs.gov/businesses/small-businesses-self-employed/e-file-employment-tax-forms" target="_blank" rel="noopener">IRS employment e-file</a></section>
@@ -12120,7 +12364,7 @@ ${catRows}
 <small>${pack.payments} payments \xB7 Sales tax ${money4(pack.salesTax)} held in 2100</small>
 </section>
 <section class="statement"><div class="statement-head"><div><div class="eyebrow">Filing note</div><h2>Income tax package</h2></div></div>
-<p>Export these CSVs for your CPA or Schedule C. Revenue excludes sales tax collected. Shop Crank does not e-file Form 1040/1120 \u2014 use the package with your preparer or tax software.</p>
+<p>Export these CSVs for your CPA or Schedule C. Revenue excludes sales tax collected. ShopCrank does not e-file Form 1040/1120 \u2014 use the package with your preparer or tax software.</p>
 </section></div></div>`;
   }
   function exportTaxPackagePl() {
@@ -12322,31 +12566,124 @@ ${catRows}
   function orderChoices() {
     return state.orders.map((order) => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} \xB7 ${escapeHtml(order.vehicle)} \xB7 ${escapeHtml(order.customer)}</option>`).join("");
   }
+  function ensureBrowserDiagnosticsClient() {
+    if (typeof window === "undefined" || window.shopcrankDiagnostics) return;
+    const invokeHttp = async (method, payload = {}) => {
+      const response = await fetch(`${cloudflareConfig2.apiUrl}/diagnostics/j2534/${encodeURIComponent(method)}`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-ShopCrank-Local-Client": "1"
+        },
+        body: JSON.stringify(payload || {})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.ok === false) {
+        throw new Error(data?.error || data?.message || `Diagnostics host request failed (${response.status})`);
+      }
+      return data.result ?? data;
+    };
+    window.shopcrankDiagnostics = Object.freeze({
+      listAdapters: () => invokeHttp("listAdapters"),
+      autoDetectAndConnect: () => invokeHttp("autoDetectAndConnect"),
+      connect: (params) => invokeHttp("connect", params),
+      disconnect: () => invokeHttp("disconnect"),
+      getConnectionStatus: () => invokeHttp("getConnectionStatus"),
+      readVin: () => invokeHttp("readVin"),
+      identifyEcus: () => invokeHttp("identifyEcus"),
+      readDtcs: () => invokeHttp("readDtcs"),
+      clearDtcs: (params) => invokeHttp("clearDtcs", params),
+      securityAccess: (params) => invokeHttp("securityAccess", params),
+      programKey: (params) => invokeHttp("programKey", params),
+      codeModule: (params) => invokeHttp("codeModule", params),
+      bidirectionalControl: (params) => invokeHttp("bidirectionalControl", params),
+      flashModule: (params) => invokeHttp("flashModule", params),
+      startLiveLog: () => invokeHttp("startLiveLog"),
+      stopLiveLog: () => invokeHttp("stopLiveLog"),
+      pollLiveLog: (since) => invokeHttp("pollLiveLog", { since }),
+      identifyVehicle: () => invokeHttp("identifyVehicle"),
+      obdSnapshot: () => invokeHttp("obdSnapshot"),
+      obdClearDtcs: (params) => invokeHttp("obdClearDtcs", params),
+      keyProcedureSupport: (params) => invokeHttp("keyProcedureSupport", params)
+    });
+  }
+  function normalizeBayAdapter(adapter) {
+    if (!adapter) return null;
+    const id = String(adapter.id ?? adapter.Id ?? "");
+    if (!id || id === "simulator") return null;
+    return {
+      id,
+      name: adapter.name ?? adapter.Name ?? "J2534 adapter",
+      vendor: adapter.vendor ?? adapter.Vendor ?? "",
+      dllPath: adapter.dllPath ?? adapter.DllPath ?? "",
+      bitness: adapter.bitness ?? adapter.Bitness ?? "",
+      usable: adapter.usable ?? adapter.Usable ?? true,
+      usabilityNote: adapter.usabilityNote ?? adapter.UsabilityNote ?? ""
+    };
+  }
   function bayHw() {
-    if (!globalThis.__shopcrankBayHardware) globalThis.__shopcrankBayHardware = { adapters: null, status: null, snapshot: null, snapshotOrderId: "", busy: "", error: "", checked: false, refreshing: false };
+    ensureBrowserDiagnosticsClient();
+    if (!globalThis.__shopcrankBayHardware) {
+      globalThis.__shopcrankBayHardware = {
+        adapters: null,
+        status: null,
+        snapshot: null,
+        snapshotOrderId: "",
+        busy: "",
+        error: "",
+        checked: false,
+        refreshing: false
+      };
+    }
     const hw = globalThis.__shopcrankBayHardware;
-    hw.available = Boolean(window.shopcrankDesktop && window.shopcrankDiagnostics);
+    hw.j2534Available = Boolean(window.shopcrankDiagnostics);
+    hw.serialAvailable = typeof navigator !== "undefined" && Boolean(navigator.serial);
+    hw.available = hw.j2534Available || hw.serialAvailable;
     return hw;
   }
-  function bayLive() {
+  function bayJ2534Live() {
     const status = bayHw().status;
-    return Boolean(status?.connected && !status?.simulator);
+    return Boolean((status?.connected ?? status?.Connected) && !(status?.simulator ?? status?.Simulator));
+  }
+  function bayElmLive() {
+    return Boolean(elmPort?.readable && elmPort?.writable);
+  }
+  function bayLive() {
+    return bayJ2534Live() || bayElmLive();
   }
   function bayNavLabel(item) {
-    return (item.route === "obd" || item.route === "keys") && !bayLive() ? `${item.label} (Simulator)` : item.label;
+    return item.label;
   }
   async function refreshBayHardware(withAdapters = false) {
     const hw = bayHw();
-    if (!hw.available) return;
+    if (!hw.j2534Available) {
+      hw.checked = true;
+      return;
+    }
     try {
       if (withAdapters || !hw.adapters) {
         const listed = await window.shopcrankDiagnostics.listAdapters();
-        hw.adapters = (listed?.adapters || []).filter((adapter) => adapter.id !== "simulator");
+        const rawAdapters = listed?.adapters || listed?.Adapters || [];
+        hw.adapters = rawAdapters.map(normalizeBayAdapter).filter(Boolean);
       }
-      hw.status = await window.shopcrankDiagnostics.getConnectionStatus();
+      const status = await window.shopcrankDiagnostics.getConnectionStatus();
+      hw.status = status ? {
+        connected: Boolean(status.connected ?? status.Connected),
+        simulator: Boolean(status.simulator ?? status.Simulator),
+        adapterId: status.adapterId ?? status.AdapterId ?? null,
+        adapterName: status.adapterName ?? status.AdapterName ?? null,
+        protocol: status.protocol ?? status.Protocol ?? "ISO15765",
+        voltage: status.voltage ?? status.Voltage ?? null
+      } : { connected: false };
       hw.error = "";
     } catch (error) {
-      hw.error = error.message || "The diagnostics host is not available.";
+      if (!hw.adapters) hw.adapters = [];
+      hw.status = { connected: false };
+      if (window.shopcrankDesktop) {
+        hw.error = error.message || "The J2534 diagnostics host is not available.";
+      }
     }
     hw.checked = true;
   }
@@ -12361,42 +12698,169 @@ ${catRows}
       console.error("Could not record diagnostics audit", error);
     }
   }
+  function formatBayAdapterOption(adapter) {
+    const disabledAttr = adapter.usable === false ? " disabled" : "";
+    const bitnessSuffix = adapter.bitness ? ` \xB7 ${escapeHtml(adapter.bitness)}-bit` : "";
+    const usabilitySuffix = adapter.usable === false ? " (wrong driver bitness)" : "";
+    return `<option value="${escapeAttr(adapter.id)}"${disabledAttr}>${escapeHtml(adapter.name)} \xB7 ${escapeHtml(adapter.vendor || "")}${bitnessSuffix}${usabilitySuffix}</option>`;
+  }
+  function baySerialConnectButton(hw) {
+    if (!hw.serialAvailable) return "";
+    const disabledAttr = hw.busy ? " disabled" : "";
+    const buttonLabel = hw.busy === "elm" ? "Connecting ELM327..." : "Connect USB / Bluetooth ELM327";
+    return `<button class="secondary" type="button" id="bay-elm-connect"${disabledAttr}>${icon("usb", 14)} ${buttonLabel}</button>`;
+  }
   function bayHardwarePanel() {
     const hw = bayHw();
-    if (!hw.available) return `<div class="messaging-status idle">${icon("monitor", 17)}<div><strong>Simulator</strong><span>Live OBD-II and key work run in the Shop Crank Windows app with a J2534 adapter such as the TOPDON RLink X7. In the browser this bay uses the bench simulator.</span></div></div>`;
     const status = hw.status || {};
-    if (bayLive()) return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Live: ${escapeHtml(status.adapterName || "J2534 adapter")}</strong><span>${escapeHtml(status.protocol || "ISO15765")} \xB7 ${escapeHtml(String(status.voltage ?? "?"))} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${hw.busy ? " disabled" : ""}>Disconnect</button></div>`;
+    const disabledAttr = hw.busy ? " disabled" : "";
+    if (bayJ2534Live()) {
+      const adapterTitle = escapeHtml(status.adapterName || "J2534 adapter");
+      const protocolText = escapeHtml(status.protocol || "ISO15765");
+      const voltageText = escapeHtml(String(status.voltage ?? "?"));
+      return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Connected: ${adapterTitle}</strong><span>${protocolText} \xB7 ${voltageText} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${disabledAttr}>Disconnect</button></div>`;
+    }
+    if (bayElmLive()) {
+      return `<div class="messaging-status ready">${icon("usb", 17)}<div><strong>Connected: ELM327 OBD-II adapter</strong><span>SAE J1979 OBD-II over USB / Bluetooth-COM serial</span></div><button class="ghost" type="button" id="bay-elm-disconnect"${disabledAttr}>Disconnect</button></div>`;
+    }
     const adapters = hw.adapters || [];
-    const choices = adapters.map((adapter) => `<option value="${escapeAttr(adapter.id)}"${adapter.usable === false ? " disabled" : ""}>${escapeHtml(adapter.name)} \xB7 ${escapeHtml(adapter.vendor || "")}${adapter.bitness ? ` \xB7 ${escapeHtml(adapter.bitness)}-bit` : ""}${adapter.usable === false ? " (wrong driver bitness)" : ""}</option>`).join("");
-    const empty2 = `<p>No J2534 driver found. Install RLink Platform and the TOPDON J2534 driver, plug the RLink X7 into USB and the vehicle, then refresh.</p>`;
+    const choices = adapters.map(formatBayAdapterOption).join("");
+    const empty2 = `<p>No J2534 Pass-Thru driver detected yet. Plug in your J2534 VCI (such as TOPDON RLink / ArtiDiag) and click Refresh, or connect a USB/Bluetooth ELM327 OBD-II adapter.</p>`;
+    const adapterSelectHtml = adapters.length ? `<div class="form-grid"><label class="full">J2534 Pass-Thru adapter<select id="bay-adapter">${choices}</select></label></div>` : empty2;
+    const errorHtml = hw.error ? `<p class="form-error">${escapeHtml(hw.error)}</p>` : "";
     const canConnect = adapters.some((adapter) => adapter.usable !== false) && !hw.busy;
-    return `<section class="data-panel bay-hardware"><h3>J2534 adapter</h3>${hw.error ? `<p class="form-error">${escapeHtml(hw.error)}</p>` : ""}${adapters.length ? `<div class="form-grid"><label class="full">Adapter<select id="bay-adapter">${choices}</select></label></div>` : empty2}<div class="job-actions"><button class="primary" type="button" id="bay-connect"${canConnect ? "" : " disabled"}>${icon("plug", 14)} ${hw.busy === "connect" ? "Connecting..." : "Connect"}</button><button class="ghost" type="button" id="bay-refresh"${hw.busy ? " disabled" : ""}>${icon("refresh-cw", 14)} Refresh</button></div><p class="ledger-note">Until an adapter is connected, this bay runs the bench simulator.</p></section>`;
+    const connectDisabledAttr = canConnect ? "" : " disabled";
+    const connectLabel = hw.busy === "connect" ? "Connecting..." : "Connect J2534";
+    return `<section class="data-panel bay-hardware"><h3>Vehicle diagnostic adapter</h3>${errorHtml}${adapterSelectHtml}<div class="job-actions"><button class="primary" type="button" id="bay-connect"${connectDisabledAttr}>${icon("plug", 14)} ${connectLabel}</button>${baySerialConnectButton(hw)}<button class="ghost" type="button" id="bay-refresh"${disabledAttr}>${icon("refresh-cw", 14)} Refresh adapters</button></div><p class="ledger-note">Connect a J2534 Pass-Thru VCI or ELM327 OBD-II interface with the vehicle ignition ON to read VIN, trouble codes, and live engine PIDs.</p></section>`;
+  }
+  function formatObdMilState(milOn) {
+    if (milOn === true) return "ON";
+    if (milOn === false) return "off";
+    return "unknown";
+  }
+  function formatObdReadingRow(reading) {
+    const name = escapeHtml(reading.name || reading.Name || "");
+    const rawValue = reading.value ?? reading.Value;
+    const displayValue = rawValue === null || rawValue === void 0 ? "-" : String(rawValue);
+    const unit = escapeHtml(reading.unit || reading.Unit || "");
+    return `<tr><td>${name}</td><td class="mono">${escapeHtml(displayValue)} ${unit}</td></tr>`;
+  }
+  function formatObdDtcList(labelText, list) {
+    const formatted = list?.length ? list.map((code) => `<span class="mono">${escapeHtml(code)}</span>`).join(", ") : "none";
+    return `<p><b>${labelText}:</b> ${formatted}</p>`;
+  }
+  function obdSnapshotResultPanel(snap, order, busy) {
+    if (!snap) return "";
+    const readings = (snap.readings || []).map(formatObdReadingRow).join("");
+    const readingsTableHtml = readings ? `<table><thead><tr><th>Live PID reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>` : "";
+    const errorItems = (snap.errors || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    const errorsHtml = errorItems ? `<ul class="ledger-note">${errorItems}</ul>` : "";
+    const voltageSuffix = snap.voltage ? ` \xB7 ${escapeHtml(String(snap.voltage))} V` : "";
+    const hasReportedCount = snap.reportedDtcCount !== void 0 && snap.reportedDtcCount !== null;
+    const reportedCountSuffix = hasReportedCount ? ` \xB7 ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : "";
+    const copyDisabledAttr = busy ? " disabled" : "";
+    const clearDisabledAttr = busy || !snap.responded ? " disabled" : "";
+    const readTimeText = escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString());
+    const storedHtml = formatObdDtcList("Stored (Mode 03)", snap.storedDtcs);
+    const pendingHtml = formatObdDtcList("Pending (Mode 07)", snap.pendingDtcs);
+    const permanentHtml = formatObdDtcList("Permanent (Mode 0A)", snap.permanentDtcs);
+    return `<section class="data-panel"><h3>Live OBD-II scan \xB7 ${escapeHtml(snap.adapterName || "Vehicle adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}${voltageSuffix}</p><p>Check engine light (MIL): <b>${formatObdMilState(snap.milOn)}</b>${reportedCountSuffix}</p>${storedHtml}${pendingHtml}${permanentHtml}${readingsTableHtml}${errorsHtml}<p class="ledger-note">${escapeHtml(snap.protocol || "")} \xB7 read ${readTimeText}</p><div class="job-actions"><button class="secondary" type="button" id="obd-copy-to-ro"${copyDisabledAttr}>${icon("file-text", 14)} Copy findings to ${escapeHtml(order?.id || "RO")} notes</button><button class="ghost" type="button" id="obd-live-clear"${clearDisabledAttr}>${icon("eraser", 14)} Clear codes (Mode 04)...</button></div></section>`;
+  }
+  function obdReadButtonLabel(busy, connected) {
+    if (busy === "scan") return "Reading vehicle...";
+    if (connected) return "Read vehicle (VIN, DTCs & live PIDs)";
+    return "Connect an adapter to read vehicle";
   }
   function obdLiveSection() {
     const hw = bayHw();
+    const connected = bayLive();
     const snap = hw.snapshot;
-    const order = state.orders.find((item) => item.id === hw.snapshotOrderId);
-    const vinWarning = snap && order?.vin && snap.vin && normalizeVin(order.vin) !== normalizeVin(snap.vin) ? `<div class="messaging-status idle">${icon("triangle-alert", 17)}<div><strong>VIN mismatch</strong><span>The vehicle reports ${escapeHtml(snap.vin)}, but ${escapeHtml(order.id)} lists ${escapeHtml(order.vin)}.</span></div></div>` : "";
-    const codes = (label2, list) => `<p><b>${label2}:</b> ${list?.length ? list.map((code) => `<span class="mono">${escapeHtml(code)}</span>`).join(", ") : "none"}</p>`;
-    const readings = (snap?.readings || []).map((reading) => `<tr><td>${escapeHtml(reading.name)}</td><td class="mono">${escapeHtml(reading.value === null || reading.value === void 0 ? "-" : String(reading.value))} ${escapeHtml(reading.unit || "")}</td></tr>`).join("");
-    const mil = snap?.milOn === true ? "ON" : snap?.milOn === false ? "off" : "unknown";
-    const result = snap ? `<section class="data-panel"><h3>${snap.simulator ? "Simulator" : "Live"} scan \xB7 ${escapeHtml(snap.adapterName || "J2534 adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}</p><p>Check engine light: <b>${mil}</b>${snap.reportedDtcCount !== void 0 && snap.reportedDtcCount !== null ? ` \xB7 ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : ""}</p>${codes("Stored", snap.storedDtcs)}${codes("Pending", snap.pendingDtcs)}${codes("Permanent", snap.permanentDtcs)}${readings ? `<table><thead><tr><th>Reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>` : ""}${(snap.errors || []).length ? `<ul class="ledger-note">${snap.errors.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}<p class="ledger-note">${escapeHtml(snap.protocol || "")} \xB7 read ${escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString())}</p><div class="job-actions"><button class="ghost" type="button" id="obd-live-clear"${hw.busy || !snap.responded ? " disabled" : ""}>${icon("eraser", 14)} Clear codes...</button></div></section>` : "";
-    return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit"${hw.busy ? " disabled" : ""}>${icon("activity", 14)} ${hw.busy === "scan" ? "Reading vehicle..." : "Read vehicle"}</button></div></form>${result}`;
+    const selectedId = hw.snapshotOrderId || state.orders[0]?.id || "";
+    const order = state.orders.find((item) => item.id === selectedId);
+    const hasVinMismatch = Boolean(snap && order?.vin && snap.vin && normalizeVin(order.vin) !== normalizeVin(snap.vin));
+    const vinWarning = hasVinMismatch ? `<div class="messaging-status idle">${icon("triangle-alert", 17)}<div><strong>VIN mismatch</strong><span>The vehicle reports ${escapeHtml(snap.vin)}, but ${escapeHtml(order.id)} lists ${escapeHtml(order.vin)}.</span></div></div>` : "";
+    const allCodes = [...snap?.storedDtcs || [], ...snap?.pendingDtcs || [], ...snap?.permanentDtcs || []];
+    const orderOpts = state.orders.map((item) => {
+      const selectedAttr = item.id === selectedId ? " selected" : "";
+      return `<option value="${escapeHtml(item.id)}"${selectedAttr}>${escapeHtml(item.id)} \xB7 ${escapeHtml(item.vehicle)} \xB7 ${escapeHtml(item.customer)}</option>`;
+    }).join("");
+    const fallbackOption = '<option value="">No repair orders</option>';
+    const submitDisabledAttr = hw.busy || !connected ? " disabled" : "";
+    const aiButtonHtml = allCodes.length && order ? `<button class="secondary" type="button" id="obd-send-ai">${icon("sparkles", 14)} Diagnose codes in AI workbench</button>` : "";
+    return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderOpts || fallbackOption}</select></label><div class="full job-actions"><button class="primary" type="submit"${submitDisabledAttr}>${icon("activity", 14)} ${obdReadButtonLabel(hw.busy, connected)}</button>${aiButtonHtml}</div></form>${obdSnapshotResultPanel(snap, order, hw.busy)}`;
+  }
+  function formatLatestObdSession(latest) {
+    if (!latest) {
+      return `<div class="home-empty"><p>No vehicle scans recorded yet. Connect your J2534 or ELM327 adapter above and click Read vehicle.</p></div>`;
+    }
+    const dtcItems = (latest.dtcs || []).map((dtc) => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("");
+    const dtcsHtml = dtcItems ? `<ul>${dtcItems}</ul>` : `<p>No trouble codes recorded.</p>`;
+    const readingParts = (latest.readings || []).map((r) => `${escapeHtml(r.name || r.Name)}: ${escapeHtml(String(r.value ?? r.Value ?? "-"))} ${escapeHtml(r.unit || r.Unit || "")}`).join(" \xB7 ");
+    const readingsHtml = readingParts ? `<p class="ledger-note">${readingParts}</p>` : "";
+    const scannedTime = escapeHtml(new Date(latest.scannedAt || Date.now()).toLocaleString());
+    const performerHtml = latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)} \xB7 ${scannedTime}</p>` : "";
+    return `<section class="data-panel"><h3>Latest vehicle scan record</h3><p>${escapeHtml(latest.label || "Live OBD-II scan")}</p><p class="mono">${escapeHtml(latest.vin || "VIN not reported")} \xB7 ${escapeHtml(latest.vehicle || "")} (${escapeHtml(latest.orderId || "")})</p>${dtcsHtml}${readingsHtml}${performerHtml}${scanAiPanel(latest)}</section>`;
+  }
+  function scanAiPanel(scan) {
+    const analysis = scan.aiAnalysis;
+    const analyzeButton = `<button class="secondary" type="button" data-ai-scan-analyze="${escapeAttr(scan.id)}" ${scanAiBusy ? "disabled" : ""}>${icon("sparkles", 14)} ${scanAiBusy === scan.id ? "Analyzing codes\u2026" : analysis ? "Re-analyze with AI" : "Analyze codes with AI"}</button>`;
+    if (!analysis) return `<div class="messaging-actions">${analyzeButton}</div>`;
+    const apply = analysis.draft ? `<button class="primary" type="button" data-ai-scan-apply="${escapeAttr(scan.id)}" ${analysis.appliedAt ? "disabled" : ""}>${icon("clipboard-plus", 14)} ${analysis.appliedAt ? `Added to ${escapeHtml(scan.orderId)}` : `Add AI estimate to ${escapeHtml(scan.orderId)}`}</button>` : "";
+    return `<div class="ai-panel"><div class="eyebrow">AI likely cause \xB7 advisory, verify with tests</div><p style="white-space:pre-wrap">${escapeHtml(analysis.message || "")}</p><p class="ai-disclaimer">Codes: ${escapeHtml((analysis.codes || []).join(", ") || "none")} \xB7 ${escapeHtml(analysis.model || "")}. Parts are added unpriced and labor hours are AI suggestions to verify against the labor guide.</p><div class="messaging-actions">${apply}${analyzeButton}</div></div>`;
+  }
+  async function analyzeScanWithAi(scanId) {
+    const scan = state.diagnosticSessions.find((item) => item.id === scanId);
+    if (!scan) return;
+    scanAiBusy = scanId;
+    render();
+    try {
+      const result = await apiFetch("/diagnostics/analyze", { method: "POST", body: JSON.stringify({ orderId: scan.orderId, scanId: scan.id, dtcs: scan.dtcs || [], vin: scan.vin, vehicle: scan.vehicle, readings: scan.readings || [], milOn: scan.milOn ?? null }) });
+      await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { message: result.message || "", model: result.model || "", at: now(), codes: (result.dtcs || []).map((item) => item.code), draft: estimateDraftAction(result) } });
+      if (result.invalidCodes?.length) toast(`Ignored unreadable codes: ${result.invalidCodes.join(", ")}`);
+    } catch (error) {
+      toast(error.message || "AI analysis failed");
+    }
+    scanAiBusy = "";
+    render();
+  }
+  async function applyScanAiEstimate(scanId) {
+    const scan = state.diagnosticSessions.find((item) => item.id === scanId);
+    if (!scan?.aiAnalysis?.draft) return;
+    const lines = diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes: scan.aiAnalysis.codes || [] });
+    if (!lines.length) {
+      toast("The AI draft had no labor or parts to add");
+      return;
+    }
+    if (await addLinesToTargetOrder(lines, "the AI diagnostic estimate", scan.orderId)) {
+      await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: now() } });
+      render();
+    }
   }
   function obdBay() {
     const live = bayLive();
-    const latest = [...state.diagnosticSessions].reverse()[0];
-    const latestTitle = latest?.mode === "live" ? "Latest live record" : "Latest simulated scan";
-    const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} \xB7 ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map((dtc) => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value2]) => `${name} ${value2}`).join(" \xB7 "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
+    const sessions = live ? state.diagnosticSessions.filter((session) => session?.mode !== "simulator" && !session?.simulator) : state.diagnosticSessions;
+    const latest = [...sessions].reverse()[0];
+    const subtitle = live ? "Live SAE J1979 OBD-II diagnostics over J2534 Pass-Thru or ELM327: read VIN, stored/pending/permanent trouble codes, live engine PIDs, and clear codes." : "Bench simulator until a J2534 adapter is connected in the ShopCrank Windows app.";
     const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
-    const subtitle = live ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes." : "Bench simulator until a J2534 adapter is connected in the Shop Crank Windows app.";
-    return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${result}`);
+    return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${formatLatestObdSession(latest)}`);
+  }
+  function formatKeyJobRow(job) {
+    const modeLabel = job.simulated ? "Logged" : "Live";
+    const resultText = job.result ? `${job.result}: ${job.message || ""}` : job.message || "";
+    return `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${modeLabel}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(resultText)}</td></tr>`;
   }
   function keyProgrammingBay() {
-    const live = bayLive();
-    const rows = [...state.keyJobs].reverse().map((job) => `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${job.simulated ? "Simulator" : "Live"}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(job.result ? `${job.result}: ${job.message || ""}` : job.message || "")}</td></tr>`).join("");
-    const modes = `<option value="simulator">Simulator</option><option value="live"${live ? "" : " disabled"}>Live (J2534 adapter)${live ? "" : " - connect an adapter first"}</option>`;
-    return shell(`${heading("Authorized keys", live ? "Key programming" : "Key programming (Simulator)", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs also need the connected vehicle's VIN to match the repair order and a confirmation before anything is written. Every live session is logged. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><label>Operation<select name="operation">${KEY_OPERATIONS.map((item) => `<option value="${item.id}">${item.label}</option>`).join("")}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${live ? "Start key job" : "Record key job"}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No key jobs recorded.</td></tr>`}</tbody></table></div>`);
+    const live = bayJ2534Live();
+    const rows = [...state.keyJobs].reverse().map(formatKeyJobRow).join("");
+    const emptyKeyRows = '<tr><td colspan="6">No key jobs recorded.</td></tr>';
+    const liveOptionAttrs = live ? " selected" : " disabled";
+    const liveOptionSuffix = live ? "" : " - connect an adapter first";
+    const simOptionAttrs = live ? "" : " selected";
+    const modes = `<option value="live"${liveOptionAttrs}>Live (J2534 adapter)${liveOptionSuffix}</option><option value="simulator"${simOptionAttrs}>Log authorized key job</option>`;
+    const operationOptions = KEY_OPERATIONS.map((item) => `<option value="${item.id}">${item.label}</option>`).join("");
+    const fallbackOrderOption = '<option value="">No repair orders</option>';
+    const submitLabel = live ? "Start key job" : "Record key job";
+    return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs also need the connected vehicle's VIN to match the repair order and a confirmation before anything is written. Every live session is logged. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
   }
   async function rememberBayRecord(type, collection, record) {
     const list = state[collection];
@@ -12410,6 +12874,33 @@ ${catRows}
       console.error(`Could not sync ${type}`, error);
     }
   }
+  function normalizeObdSnapshot(snap = {}) {
+    const readings = (snap.readings ?? snap.Readings ?? []).map((r) => ({
+      pid: r.pid ?? r.Pid ?? "",
+      name: r.name ?? r.Name ?? "",
+      value: r.value ?? r.Value ?? null,
+      unit: r.unit ?? r.Unit ?? "",
+      raw: r.raw ?? r.Raw ?? ""
+    }));
+    return {
+      source: snap.source ?? snap.Source ?? "live",
+      simulator: Boolean(snap.simulator ?? snap.Simulator),
+      adapterName: snap.adapterName ?? snap.AdapterName ?? "J2534 adapter",
+      protocol: snap.protocol ?? snap.Protocol ?? "ISO 15765-4 CAN 11-bit 500 kbps",
+      responded: Boolean(snap.responded ?? snap.Responded),
+      vin: snap.vin ?? snap.Vin ?? "",
+      milOn: snap.milOn ?? snap.MilOn ?? null,
+      reportedDtcCount: snap.reportedDtcCount ?? snap.ReportedDtcCount ?? null,
+      supportedPids: snap.supportedPids ?? snap.SupportedPids ?? [],
+      readings,
+      storedDtcs: snap.storedDtcs ?? snap.StoredDtcs ?? [],
+      pendingDtcs: snap.pendingDtcs ?? snap.PendingDtcs ?? [],
+      permanentDtcs: snap.permanentDtcs ?? snap.PermanentDtcs ?? [],
+      errors: snap.errors ?? snap.Errors ?? [],
+      voltage: snap.voltage ?? snap.Voltage ?? null,
+      readAt: snap.readAt ?? snap.ReadAt ?? now()
+    };
+  }
   async function runLiveObdScan(orderId) {
     const hw = bayHw();
     const order = state.orders.find((item) => item.id === orderId);
@@ -12417,24 +12908,35 @@ ${catRows}
       toast("Select a repair order");
       return;
     }
+    if (!bayLive()) {
+      toast("Connect a J2534 or ELM327 adapter first");
+      return;
+    }
     hw.busy = "scan";
+    hw.error = "";
     render();
     try {
-      const snap = await window.shopcrankDiagnostics.obdSnapshot();
+      const rawSnap = bayElmLive() ? await runElmObdSnapshot(elmCommand) : await window.shopcrankDiagnostics.obdSnapshot();
+      const snap = normalizeObdSnapshot(rawSnap);
       hw.snapshot = snap;
       hw.snapshotOrderId = order.id;
+      if (snap.vin && (!order.vin || /^DEMO|^SIMULATED|pending/i.test(order.vin))) {
+        order.vin = snap.vin;
+        save();
+        void updateOrderInApi(order);
+      }
       const dtcs = [
-        ...(snap.storedDtcs || []).map((code) => ({ code, description: "Stored" })),
-        ...(snap.pendingDtcs || []).map((code) => ({ code, description: "Pending" })),
-        ...(snap.permanentDtcs || []).map((code) => ({ code, description: "Permanent" }))
+        ...(snap.storedDtcs || []).map((code) => ({ code, description: "Stored (Mode 03)" })),
+        ...(snap.pendingDtcs || []).map((code) => ({ code, description: "Pending (Mode 07)" })),
+        ...(snap.permanentDtcs || []).map((code) => ({ code, description: "Permanent (Mode 0A)" }))
       ];
       await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
         id: `scan-${Date.now()}`,
         orderId: order.id,
         customer: order.customer,
         vehicle: order.vehicle,
-        mode: snap.simulator ? "simulator" : "live",
-        label: `${snap.simulator ? "Simulator" : "Live"} scan via ${snap.adapterName || "J2534 adapter"}`,
+        mode: "live",
+        label: `Live OBD-II scan via ${snap.adapterName || "Vehicle adapter"}`,
         vin: snap.vin || "",
         roVin: order.vin || "",
         milOn: snap.milOn ?? null,
@@ -12445,7 +12947,7 @@ ${catRows}
         performedBy: bayPerformer(),
         scannedAt: snap.readAt || now()
       });
-      toast(snap.responded ? "Vehicle read" : "No reply from the vehicle");
+      toast(snap.responded ? "Vehicle read complete" : "No reply from the vehicle ECU");
     } catch (error) {
       hw.error = error.message || "Scan failed";
       toast(hw.error);
@@ -12475,14 +12977,18 @@ ${catRows}
       render();
       const before = [...snap.storedDtcs || [], ...snap.pendingDtcs || []];
       try {
-        await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
+        if (bayElmLive()) {
+          parseElmClearDtcs(await elmCommand("04"));
+        } else {
+          await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
+        }
         await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
           id: `clear-${Date.now()}`,
           kind: "clear",
           orderId: order.id,
           customer: order.customer,
           vehicle: order.vehicle,
-          mode: snap.simulator ? "simulator" : "live",
+          mode: "live",
           label: "Codes cleared (OBD-II mode 04)",
           vin: snap.vin || "",
           dtcs: before.map((code) => ({ code, description: "Cleared" })),
@@ -12490,7 +12996,7 @@ ${catRows}
           performedBy: bayPerformer(),
           scannedAt: now()
         });
-        await recordBayAudit({ kind: "obd.clear_dtcs", orderId: order.id, vin: snap.vin || "", cleared: before, adapter: snap.adapterName || "", simulator: Boolean(snap.simulator) });
+        await recordBayAudit({ kind: "obd.clear_dtcs", orderId: order.id, vin: snap.vin || "", cleared: before, adapter: snap.adapterName || "", simulator: false });
         toast("Codes cleared. Reading the vehicle again.");
         hw.busy = "";
         await runLiveObdScan(order.id);
@@ -12559,7 +13065,7 @@ ${catRows}
       step("Checked live procedure support", support2?.reason || "");
       if (!support2?.supported) {
         await saveSession("not_supported", support2?.reason || "This procedure is not supported for this vehicle.");
-        showModal(`<div class="modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Not supported for this vehicle</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>${escapeHtml(support2?.reason || "Shop Crank cannot run this key procedure on this vehicle.")}</p><p class="ledger-note">Nothing was written to the vehicle. This attempt is in the key job log.</p><div class="modal-actions"><button class="primary" type="button" data-close>OK</button></div></div>`);
+        showModal(`<div class="modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Not supported for this vehicle</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>${escapeHtml(support2?.reason || "ShopCrank cannot run this key procedure on this vehicle.")}</p><p class="ledger-note">Nothing was written to the vehicle. This attempt is in the key job log.</p><div class="modal-actions"><button class="primary" type="button" data-close>OK</button></div></div>`);
         return;
       }
       openLiveKeyConfirm({ order, authorization, vehicleVin, procedure, support: support2, step, saveSession });
@@ -12619,12 +13125,13 @@ ${catRows}
       const adapterId = document.querySelector("#bay-adapter")?.value;
       if (!adapterId) return;
       hw.busy = "connect";
+      hw.error = "";
       hw.snapshot = null;
       render();
       try {
         await window.shopcrankDiagnostics.connect({ adapterId, protocol: "ISO15765" });
         await refreshBayHardware();
-        toast("Adapter connected");
+        toast("J2534 adapter connected");
       } catch (error) {
         hw.error = error.message || "Could not connect to the adapter";
       }
@@ -12645,11 +13152,39 @@ ${catRows}
       hw.busy = "";
       render();
     });
+    document.querySelector("#bay-elm-connect")?.addEventListener("click", async () => {
+      const hw = bayHw();
+      hw.busy = "elm";
+      hw.error = "";
+      render();
+      await connectElm();
+      hw.busy = "";
+      render();
+    });
+    document.querySelector("#bay-elm-disconnect")?.addEventListener("click", async () => {
+      const hw = bayHw();
+      hw.busy = "disconnect";
+      hw.snapshot = null;
+      render();
+      await connectElm();
+      hw.busy = "";
+      render();
+    });
     document.querySelector("#obd-live-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       void runLiveObdScan(new FormData(event.target).get("orderId"));
     });
     document.querySelector("#obd-live-clear")?.addEventListener("click", openObdClearConfirm);
+    document.querySelectorAll("[data-ai-scan-analyze]").forEach((button) => {
+      button.onclick = () => {
+        void analyzeScanWithAi(button.dataset.aiScanAnalyze);
+      };
+    });
+    document.querySelectorAll("[data-ai-scan-apply]").forEach((button) => {
+      button.onclick = () => {
+        void applyScanAiEstimate(button.dataset.aiScanApply);
+      };
+    });
     document.querySelector("#obd-scan-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const order = state.orders.find((item) => item.id === new FormData(event.target).get("orderId"));
@@ -12660,6 +13195,37 @@ ${catRows}
       const scan = simulateObdScan(order);
       await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { id: `scan-${Date.now()}`, orderId: order.id, customer: order.customer, performedBy: bayPerformer(), ...scan });
       toast("Simulated scan saved");
+      render();
+    });
+    document.querySelector("#obd-copy-to-ro")?.addEventListener("click", async () => {
+      const hw = bayHw();
+      const snap = hw.snapshot;
+      const order = state.orders.find((item) => item.id === hw.snapshotOrderId);
+      if (!snap || !order) return;
+      const codes = [
+        ...(snap.storedDtcs || []).map((c) => `${c} (stored)`),
+        ...(snap.pendingDtcs || []).map((c) => `${c} (pending)`),
+        ...(snap.permanentDtcs || []).map((c) => `${c} (permanent)`)
+      ];
+      const pidSummary = (snap.readings || []).filter((r) => r.value !== null && r.value !== void 0).map((r) => `${r.name}: ${r.value} ${r.unit || ""}`.trim()).join(", ");
+      const mil = formatObdMilState(snap.milOn);
+      const line = `OBD-II scan (${new Date(snap.readAt || Date.now()).toLocaleString()}, ${snap.adapterName || "adapter"})${snap.vin ? ` \xB7 VIN ${snap.vin}` : ""} \xB7 MIL ${mil} \xB7 Codes: ${codes.length ? codes.join(", ") : "none"}${pidSummary ? ` \xB7 PIDs: ${pidSummary}` : ""}`;
+      order.notes = `${order.notes || ""}
+${line}`.trim();
+      save();
+      await updateOrderInApi(order);
+      toast(`OBD-II scan copied to ${order.id} notes`);
+    });
+    document.querySelector("#obd-send-ai")?.addEventListener("click", () => {
+      const hw = bayHw();
+      const snap = hw.snapshot;
+      const order = state.orders.find((item) => item.id === hw.snapshotOrderId);
+      if (!snap || !order) return;
+      const codes = [...snap.storedDtcs || [], ...snap.pendingDtcs || [], ...snap.permanentDtcs || []].join(", ");
+      aiTab = "diagnostics";
+      aiResult = diagnoseLocal(order.vehicle, order.complaint || "Check engine light / DTC scan", codes);
+      state.route = "ai";
+      save();
       render();
     });
     document.querySelector("#key-job-form")?.addEventListener("submit", async (event) => {
@@ -12709,184 +13275,7 @@ ${catRows}
     }
     if (state.route === "settings") render();
   }
-  async function loadGrokVoiceSettings(force = false) {
-    if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
-    grokVoiceSettings = { ...grokVoiceSettings, loading: true };
-    try {
-      const res = await apiFetch("/voice/grok/status");
-      grokVoiceSettings = { ...res, loaded: true, loading: false };
-    } catch {
-      grokVoiceSettings = { ...grokVoiceSettings, loaded: true, loading: false };
-    }
-    if (state.route === "settings" || state.route === "ai" && aiTab === "phone") render();
-  }
-  function syncGrokSavedRecordsToLocalState(toolResult) {
-    const action = toolResult?.action;
-    if (!action) return;
-    if (action.intakeDraft) {
-      const mergedIntake = applyGrokCallToIntakeDraft(loadIntakeDraft(), action.intakeDraft);
-      saveIntakeDraft(mergedIntake);
-    }
-    if (action.estimate && !state.estimates.some((e) => e.id === action.estimate.id)) {
-      state.estimates.unshift(action.estimate);
-    }
-    if (action.order && !state.orders.some((o) => o.id === action.order.id)) {
-      state.orders.unshift(action.order);
-    }
-    if (action.draft?.customer?.name) {
-      const existingCust = state.customers.find((c) => String(c.name || "").toLowerCase() === action.draft.customer.name.toLowerCase());
-      if (!existingCust) {
-        state.customers.unshift({
-          id: action.customerId || `cust-${Date.now()}`,
-          name: action.draft.customer.name,
-          phone: action.draft.customer.phone || "",
-          email: action.draft.customer.email || "",
-          billingAddress: action.draft.customer.address || ""
-        });
-      }
-    }
-    save();
-  }
-  function updateGrokVoiceUiControls() {
-    const isLive = Boolean(activeGrokSession?.isActive());
-    const phase = isLive ? activeGrokPhase : "idle";
-    const placeholder = grokPhasePlaceholder(phase);
-    const composerBtn = document.querySelector("#assistant-grok-voice");
-    if (composerBtn) {
-      composerBtn.classList.toggle("is-live", isLive);
-      composerBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
-      composerBtn.title = isLive ? `End Grok Voice (${placeholder || "Live"})` : "Start Grok Voice Mode";
-      composerBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "Voice live" : "Grok Voice"}</span>`;
-    }
-    const textarea = document.querySelector("#assistant-form textarea[name=message]");
-    if (textarea) {
-      if (!textarea.dataset.defaultPlaceholder) {
-        textarea.dataset.defaultPlaceholder = textarea.getAttribute("placeholder") || "Create an estimate and work order for\u2026";
-      }
-      textarea.setAttribute("placeholder", isLive && placeholder ? placeholder : textarea.dataset.defaultPlaceholder);
-    }
-    const srStatus = document.querySelector("#assistant-voice-sr-status");
-    if (srStatus) {
-      srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
-    }
-    const phoneBtn = document.querySelector("#grok-phone-live-btn");
-    if (phoneBtn) {
-      phoneBtn.classList.toggle("is-live", isLive);
-      phoneBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span>`;
-    }
-    const intakeBtn = document.querySelector("#intake-grok-voice-btn");
-    if (intakeBtn) {
-      intakeBtn.classList.toggle("is-live", isLive);
-      intakeBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "End Grok Voice" : "Grok Voice Intake"}</span>`;
-    }
-  }
-  function startOrStopGrokVoice({ target = "assistant", greetAsReceptionist = false, onWizardIntakeUpdate = null } = {}) {
-    if (activeGrokSession?.isActive()) {
-      activeGrokSession.stop();
-      activeGrokSession = null;
-      activeGrokPhase = "idle";
-      activeGrokTarget = null;
-      updateGrokVoiceUiControls();
-      return;
-    }
-    activeGrokTarget = target;
-    let liveUserMsgIndex = -1;
-    let liveAssistantMsgIndex = -1;
-    const refreshAssistantList = () => {
-      const list = document.querySelector("#assistant-messages");
-      if (!list) return;
-      list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
-      list.scrollTop = list.scrollHeight;
-      bindAssistantDraftActions();
-    };
-    activeGrokSession = createGrokVoiceSession({
-      apiFetch,
-      voice: grokVoiceSettings.voice || "eve",
-      greetAsReceptionist,
-      onPhaseChange: (nextPhase) => {
-        activeGrokPhase = nextPhase;
-        updateGrokVoiceUiControls();
-      },
-      onUserTranscript: (text, { final }) => {
-        if (liveUserMsgIndex < 0 || assistantConversation[liveUserMsgIndex]?.role !== "user") {
-          liveUserMsgIndex = assistantConversation.length;
-          assistantConversation.push({ role: "user", content: text });
-        } else {
-          assistantConversation[liveUserMsgIndex].content = text;
-        }
-        if (final) liveUserMsgIndex = -1;
-        refreshAssistantList();
-      },
-      onAssistantTranscript: (text, { final }) => {
-        if (liveAssistantMsgIndex < 0 || assistantConversation[liveAssistantMsgIndex]?.role !== "assistant") {
-          liveAssistantMsgIndex = assistantConversation.length;
-          assistantConversation.push({ role: "assistant", content: text, actions: [] });
-        } else {
-          assistantConversation[liveAssistantMsgIndex].content = text;
-        }
-        if (final) liveAssistantMsgIndex = -1;
-        refreshAssistantList();
-      },
-      onEstimateCalculated: (calc) => {
-        aiResult = {
-          kind: "estimate",
-          vehicle: calc.vehicle || "Customer Vehicle",
-          lines: (calc.lines || []).map((l) => ({
-            service: l.description,
-            hours: l.hours || (l.type === "labor" ? l.quantity : 0),
-            labor: l.type === "labor" ? l.total : 0,
-            parts: l.type === "part" ? l.total : 0,
-            total: l.total,
-            notes: l.source || ""
-          })),
-          fees: calc.fees || [],
-          subtotal: calc.subtotal || 0,
-          tax: calc.tax || 0,
-          total: calc.total || 0,
-          summary: calc.disclaimer || "Preliminary phone estimate prepared by Grok."
-        };
-        toast(`Grok calculated estimate: ${money4(calc.total || 0)}`);
-      },
-      onIntakeSaved: (toolResult) => {
-        syncGrokSavedRecordsToLocalState(toolResult);
-        const action = toolResult.action;
-        if (action) {
-          assistantConversation.push({
-            role: "assistant",
-            content: `Saved Customer Intake (${toolResult.customer} \xB7 ${toolResult.vehicle}), Estimate ${toolResult.estimateNumber} (${money4(toolResult.estimateTotal)}), and Work Order ${toolResult.orderId}.`,
-            actions: [action]
-          });
-          refreshAssistantList();
-        }
-        if (typeof onWizardIntakeUpdate === "function" && action?.intakeDraft) {
-          onWizardIntakeUpdate(action.intakeDraft);
-        }
-        toast(`Grok filled intake & created ${toolResult.orderId} (${money4(toolResult.estimateTotal)})`);
-        if (state.route === "ai" && aiTab === "phone") render();
-      },
-      onError: (err) => {
-        toast(err.message || "Grok Voice could not connect");
-        activeGrokPhase = "idle";
-        updateGrokVoiceUiControls();
-      }
-    });
-    void activeGrokSession.start();
-  }
-  function grokPhoneWebhookUrl() {
-    if (grokVoiceSettings.twilioVoiceWebhookUrl) return grokVoiceSettings.twilioVoiceWebhookUrl;
-    const shopId = sessionClaimShopId(authSession()?.claims) || "your-shop-id";
-    return `${cloudflareConfig2.apiUrl}/voice/twilio/incoming/${encodeURIComponent(shopId)}`;
-  }
-  function grokSettingsPanelHtml() {
-    const canManage = canManageShopAi();
-    const webhookUrl = grokPhoneWebhookUrl();
-    const statusLabel3 = grokVoiceSettings.configured ? `Grok Voice connected (${grokVoiceSettings.keySource === "shop" ? `shop key ${grokVoiceSettings.maskedKey}` : "platform key"}) \xB7 Voice: ${String(grokVoiceSettings.voice || "eve").toUpperCase()}` : "Add your xAI API key (console.x.ai) to enable Grok Phone Call Answering and Live Voice Mode";
-    const voiceSelectOptions = GROK_VOICE_OPTIONS.map((opt) => `<option value="${escapeAttr(opt.id)}" ${(grokVoiceSettings.voice || "eve") === opt.id ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("");
-    const removeBtn = grokVoiceSettings.configured && grokVoiceSettings.keySource === "shop" ? `<button type="button" class="secondary" id="grok-voice-remove-key">${icon("trash-2", 14)} Remove xAI key</button>` : "";
-    const formHtml = canManage ? `<form class="form-grid" id="grok-voice-config-form" autocomplete="off"><label>xAI API Key (Grok)<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.configured ? "Leave blank to keep existing key, or paste xai-..." : "xai-..."}" ${grokVoiceSettings.configured ? "" : "required"}/></label><label>Grok Receptionist Voice<select name="voice">${voiceSelectOptions}</select></label><label>Shop Business Hours (spoken to callers)<input name="shopHours" value="${escapeAttr(grokVoiceSettings.shopHours || "Monday\u2013Friday 8:00 AM \u2013 5:30 PM")}"/></label><label>Shop / Twilio Forwarding Number<input name="forwardingPhone" placeholder="+18065550199" value="${escapeAttr(grokVoiceSettings.forwardingPhone || "")}"/></label><label class="full">Custom Opening Greeting (optional)<input name="greeting" placeholder="Thanks for calling! I'm Grok, the shop's automated service advisor. How can I help with your vehicle today?" value="${escapeAttr(grokVoiceSettings.greeting || "")}"/></label><label class="full">Receptionist Instructions & Shop Policies (optional)<textarea name="instructions" rows="2" placeholder="e.g., Standard diagnostic fee is $140 waived with repair. We service domestic and Asian vehicles; no heavy diesel.">${escapeHtml(grokVoiceSettings.instructions || "")}</textarea></label><div class="full agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL (Paste in Twilio Console \u2192 Phone Numbers \u2192 Voice \u2192 "A call comes in" HTTP POST)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">To forward your existing shop phone line: enable Unconditional (*72) or Busy/No-Answer (*71) call forwarding on your shop phone carrier to your Twilio number. When a call arrives, Grok answers immediately, quotes estimates, and saves the Customer Intake, Vehicle, Estimate, and Work Order in Shop Crank.</small></div><div class="full"><button class="primary" type="submit">${icon("phone-call", 14)} Save Grok Voice & Phone Settings</button>${removeBtn}</div></form>` : `<div class="agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL</span><code>${escapeHtml(webhookUrl)}</code></div><p class="form-help">Only shop owners and admins can update Grok Voice settings.</p>`;
-    return `<section class="settings-panel grok-voice-settings" id="grok-voice-settings"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice & Call Forwarding</div><h2>Have Grok Answer Shop Phone Calls</h2><p>${escapeHtml(statusLabel3)}</p></div>${icon("phone-incoming", 20)}</div>${formHtml}</section>`;
-  }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -12900,10 +13289,11 @@ ${catRows}
       init_shop_inspections();
       init_autozone_pro();
       init_partstech();
+      init_diagnostic_ai();
       init_labor_guide();
       init_shop_ai_settings();
-      init_grok_voice_client();
       init_quickbooks();
+      init_revenue_recognition();
       init_repair_order_flow();
       init_file_upload();
       init_ai_workflow();
@@ -12919,6 +13309,7 @@ ${catRows}
       init_payments();
       init_card_terminal();
       init_help_menu();
+      init_print_document();
       init_technician_assignment();
       init_intake_wizard();
       init_work_order_editor();
@@ -13077,6 +13468,8 @@ ${catRows}
       partstechAccount = { connected: false, loaded: false };
       laborGuideAccount = { connected: false, provider: "manual", loaded: false };
       quickbooksAccount = { connected: false, loaded: false };
+      orderingTargetOrderId = "";
+      revrecStatus = { enabled: false, loaded: false };
       globalThis.mechProElm327 = { normalizeElmResponse, parseElmPid, parseElmDtcs, formatElmResult };
       financeDerivedCache = null;
       modalAutosaveFlush = null;
@@ -13369,16 +13762,12 @@ ${catRows}
         const balance = invoiceBalance(invoice);
         const customer = state.customers.find((item) => item.name === invoice.customer);
         const order = state.orders.find((item) => item.id === invoice.ro);
-        const itemRows = invoicePrintLineItems(invoice).map((item) => `<tr><td>${escapeHtml(item.type === "fee" ? "Fee" : item.type === "part" ? "Part" : "Labor")}</td><td><b>${escapeHtml(item.description)}</b><small>${escapeHtml(item.detail)}</small></td><td>${money4(item.amount)}</td></tr>`).join("");
+        const itemRows = invoicePrintLineItems(invoice).map((item) => `<tr><td>${escapeHtml(printableLineType(item.type))}</td><td><b>${escapeHtml(item.description)}</b><small>${escapeHtml(item.detail)}</small></td><td>${money4(item.amount)}</td></tr>`).join("");
         const fallbackRow = `<tr><td>Summary</td><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money4(breakdown.subtotal)}</td></tr>`;
         const paymentRows = paymentRecords().filter((payment) => payment.invoiceNumber === invoice.number).map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${escapeHtml(payment.reference || "")}</td><td>${money4(Number(payment.amount || 0))}</td></tr>`).join("");
-        const win = window.open("", "_blank", "noopener");
-        if (!win) {
-          toast("Allow pop-ups to print the invoice");
-          return;
-        }
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
-        win.document.close();
+        const billingAddressHtml = customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : "";
+        const paymentSectionHtml = paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : "";
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${billingAddressHtml}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentSectionHtml}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print invoice</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the invoice", autoPrint: true });
       };
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
@@ -13404,26 +13793,43 @@ ${catRows}
         });
       };
       printCustomerStatement = function(name) {
-        const invoices2 = state.invoices.filter((invoice) => invoice.customer === name), payments2 = paymentRecords().filter((payment) => payment.customer === name), balance = customerBalance(name), profile = shopProfile(), brand = printableBrand(profile), invoiceRows = invoices2.map((invoice) => `<tr><td>${escapeHtml(invoice.number)}</td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.status || "")}</td><td>${money4(invoice.amount)}</td><td>${money4(invoiceBalance(invoice))}</td></tr>`).join(""), paymentRows = payments2.map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${money4(Number(payment.amount || 0))}</td><td>${escapeHtml(payment.invoiceNumber || "")}</td></tr>`).join(""), win = window.open("", "_blank", "noopener");
-        if (!win) {
-          toast("Allow pop-ups to print the statement");
-          return;
-        }
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(name)} statement</title><style>${brand.style}body{font:12px/1.6 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.total{margin-top:18px;padding:12px;border-top:4px solid var(--brand);font-size:16px;text-align:right}</style></head><body>${brand.header}<h2>Customer Statement: ${escapeHtml(name)}</h2><p>Generated ${escapeHtml((/* @__PURE__ */ new Date()).toLocaleDateString())}</p><h3>Invoices</h3><table><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invoiceRows || `<tr><td colspan="5">No invoices.</td></tr>`}</tbody></table><h3>Payments</h3><table><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${paymentRows || `<tr><td colspan="4">No payments.</td></tr>`}</tbody></table><p class="total">Account Balance: ${money4(balance)}</p><button type="button" onclick="window.print()">Print statement</button></body></html>`);
-        win.document.close();
+        const invoices2 = state.invoices.filter((invoice) => invoice.customer === name);
+        const payments2 = paymentRecords().filter((payment) => payment.customer === name);
+        const balance = customerBalance(name);
+        const profile = shopProfile();
+        const brand = printableBrand(profile);
+        const invoiceRows = invoices2.map((invoice) => `<tr><td>${escapeHtml(invoice.number)}</td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.status || "")}</td><td>${money4(invoice.amount)}</td><td>${money4(invoiceBalance(invoice))}</td></tr>`).join("");
+        const paymentRows = payments2.map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${money4(Number(payment.amount || 0))}</td><td>${escapeHtml(payment.invoiceNumber || "")}</td></tr>`).join("");
+        const emptyInvoicesRow = '<tr><td colspan="5">No invoices.</td></tr>';
+        const emptyPaymentsRow = '<tr><td colspan="4">No payments.</td></tr>';
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(name)} statement</title><style>${brand.style}body{font:12px/1.6 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.total{margin-top:18px;padding:12px;border-top:4px solid var(--brand);font-size:16px;text-align:right}</style></head><body>${brand.header}<h2>Customer Statement: ${escapeHtml(name)}</h2><p>Generated ${escapeHtml((/* @__PURE__ */ new Date()).toLocaleDateString())}</p><h3>Invoices</h3><table><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invoiceRows || emptyInvoicesRow}</tbody></table><h3>Payments</h3><table><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${paymentRows || emptyPaymentsRow}</tbody></table><p class="total">Account Balance: ${money4(balance)}</p><button type="button">Print statement</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the statement", autoPrint: true });
       };
       printInspectionReport = function(inspection) {
         if (inspection?.catalogId) {
           printCatalogInspection(catalogInspectionApp(), inspection);
           return;
         }
-        const profile = shopProfile(), brand = printableBrand(profile), counts = (inspection.items || []).reduce((total, item) => (total[item.status] = (total[item.status] || 0) + 1, total), {}), itemRows = (inspection.items || []).map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.status === "not_checked" ? "Not checked" : item.status || "")}</td><td>${escapeHtml(item.note || "")}</td></tr>`).join(""), damage = (inspection.damageZones || []).map(escapeHtml).join(", "), approvalRows = (inspection.approvalHistory || []).map((entry) => `<tr><td>${escapeHtml(entry.status)}</td><td>${escapeHtml(entry.actorName || "")}</td><td>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</td><td>${escapeHtml(entry.note || "")}</td></tr>`).join(""), photos = (inspection.photoKeys || []).map((key) => `<img src="${escapeHtml(`${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}`)}" alt="Inspection photo"/>`).join(""), win = window.open("", "_blank", "noopener");
-        if (!win) {
-          toast("Allow pop-ups to print the inspection");
-          return;
-        }
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} \xB7 <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} \xB7 <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damage ? `<p><b>Damage zones:</b> ${damage}</p>` : ""}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${inspection.recommendations ? `<h3>Recommendations</h3><p>${escapeHtml(inspection.recommendations)}</p>` : ""}${photos ? `<h3>Photos</h3><div class="photos">${photos}</div>` : ""}${approvalRows ? `<h3>Approval history</h3><table><thead><tr><th>Decision</th><th>By</th><th>Date</th><th>Note</th></tr></thead><tbody>${approvalRows}</tbody></table>` : ""}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print inspection</button></body></html>`);
-        win.document.close();
+        const profile = shopProfile();
+        const brand = printableBrand(profile);
+        const counts = (inspection.items || []).reduce((total, item) => {
+          total[item.status] = (total[item.status] || 0) + 1;
+          return total;
+        }, {});
+        const itemRows = (inspection.items || []).map((item) => {
+          const statusText = item.status === "not_checked" ? "Not checked" : item.status || "";
+          return `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(statusText)}</td><td>${escapeHtml(item.note || "")}</td></tr>`;
+        }).join("");
+        const damage = (inspection.damageZones || []).map(escapeHtml).join(", ");
+        const approvalRows = (inspection.approvalHistory || []).map((entry) => `<tr><td>${escapeHtml(entry.status)}</td><td>${escapeHtml(entry.actorName || "")}</td><td>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</td><td>${escapeHtml(entry.note || "")}</td></tr>`).join("");
+        const photos = (inspection.photoKeys || []).map((key) => {
+          const photoUrl = `${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}`;
+          return `<img src="${escapeHtml(photoUrl)}" alt="Inspection photo"/>`;
+        }).join("");
+        const damageHtml = damage ? `<p><b>Damage zones:</b> ${damage}</p>` : "";
+        const recommendationsHtml = inspection.recommendations ? `<h3>Recommendations</h3><p>${escapeHtml(inspection.recommendations)}</p>` : "";
+        const photosHtml = photos ? `<h3>Photos</h3><div class="photos">${photos}</div>` : "";
+        const approvalHtml = approvalRows ? `<h3>Approval history</h3><table><thead><tr><th>Decision</th><th>By</th><th>Date</th><th>Note</th></tr></thead><tbody>${approvalRows}</tbody></table>` : "";
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} \xB7 <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} \xB7 <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damageHtml}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${recommendationsHtml}${photosHtml}${approvalHtml}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print inspection</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the inspection", autoPrint: true });
       };
       updateOrderWithInvoiceCore = updateOrderInApi;
       updateOrderInApi = async function(record, options) {
@@ -13531,13 +13937,13 @@ ${catRows}
       settings = function() {
         const page = settingsAgentPhoneCore();
         if (currentUser()?.role !== "admin") return page;
-        return page.replace("</main>", `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Voice and messaging</div><h2>Connect AgentPhone.ai</h2><p>Give this shop's AgentPhone agent access to the live Shop Crank assistant for calls and messages. Credentials are encrypted by the Worker and never stored in the browser.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section></main>`);
+        return page.replace("</main>", `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Voice and messaging</div><h2>Connect AgentPhone.ai</h2><p>Give this shop's AgentPhone agent access to the live ShopCrank assistant for calls and messages. Credentials are encrypted by the Worker and never stored in the browser.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section></main>`);
       };
       settingsAppsBillingCore = settings;
       settings = function() {
         const page = settingsAppsBillingCore();
         if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page;
-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install Shop Crank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`);
+        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`);
       };
       bindAgentPhoneSettingsCore = bindExpandedFeatures;
       bindExpandedFeatures = function() {
@@ -13566,7 +13972,7 @@ ${catRows}
           return;
         }
         if (existing) return;
-        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open Shop Crank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
+        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
         document.querySelector("#global-assistant").onclick = openGlobalAssistant;
         document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
         lucide.createIcons();
@@ -14356,7 +14762,7 @@ ${catRows}
         const rows = assistantConversation.map(assistantMessageMarkup).join("");
         const provider = assistantProviderFromSettings();
         const providerLabel2 = assistantProviderLabel(provider);
-        return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel2} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Speak or type the customer, vehicle, complaint, parts, labor hours and source, and exclusions. Shop Crank prepares both records for review; it never auto-submits the work order.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for\u2026"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel2}. Missing configuration is reported without a simulated answer.</p></form></section>`;
+        return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel2} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Speak or type the customer, vehicle, complaint, parts, labor hours and source, and exclusions. ShopCrank prepares both records for review; it never auto-submits the work order.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for\u2026"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel2}. Missing configuration is reported without a simulated answer.</p></form></section>`;
       };
       bindLiveAssistant = function() {
         const form = document.querySelector("#assistant-form");
@@ -14692,7 +15098,7 @@ ${currentUser().role === "admin" ? `<div class="payroll-actions" style="margin-t
           hours: acc.hours + s.hours
         }), { federal: 0, ss: 0, med: 0, net: 0, hours: 0 });
         return shell(`${heading("Compensation", "Payroll", admin ? `Weekly payroll for ${period.start} \u2013 ${period.end}. Pub 15-T (2026) withholding \xB7 fileable register & 941/W-2 packages.` : `Your weekly pay stub for ${period.start} \u2013 ${period.end}.`, false)}
-<div class="ai-notice">${icon("landmark", 16)}<span>Withholding uses IRS Pub 15-T (2026) percentage method, employee W-4 fields, and FICA. Shop Crank prepares e-file packages for IRS / SSA portals; it does not transmit until you upload via those portals or configure transmitter credentials.</span></div>
+<div class="ai-notice">${icon("landmark", 16)}<span>Withholding uses IRS Pub 15-T (2026) percentage method, employee W-4 fields, and FICA. ShopCrank prepares e-file packages for IRS / SSA portals; it does not transmit until you upload via those portals or configure transmitter credentials.</span></div>
 ${admin ? `<div class="payroll-actions"><button class="secondary" id="payroll-export">${icon("download", 14)} Export register</button><button class="secondary" id="payroll-export-detail">${icon("download", 14)} Export detail</button><button class="secondary" id="payroll-export-941">${icon("file-text", 14)} 941 worksheet</button><button class="secondary" id="payroll-export-efw2">${icon("upload", 14)} SSA EFW2</button><button class="primary" id="sync-payroll">${icon("refresh-cw", 14)} Sync jobs</button></div>` : ""}
 <div class="payroll-period-controls" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
 <button type="button" class="secondary" id="payroll-prev">${icon("chevron-left", 14)} Prev</button>
@@ -14942,6 +15348,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           }, { capture: true });
         }
       };
+      scanAiBusy = "";
       renderShopOsCore = render;
       render = function() {
         if (currentUser() && (state.route === "obd" || state.route === "keys")) {
@@ -14992,7 +15399,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
             form.reset();
             shopAiSettings = { ...result, loaded: true, loading: false };
             const providerLabel2 = provider === "gemini" ? "Gemini" : "Claude";
-            toast(result.warning ? `${providerLabel2} key saved. ${result.warning}` : `${providerLabel2} key saved. Shop Crank AI now uses ${providerLabel2} for this shop.`);
+            toast(result.warning ? `${providerLabel2} key saved. ${result.warning}` : `${providerLabel2} key saved. ShopCrank AI now uses ${providerLabel2} for this shop.`);
             render();
           } catch (error) {
             button.disabled = false;
@@ -15001,7 +15408,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           }
         });
         document.querySelector("#shop-ai-remove-key")?.addEventListener("click", async (event) => {
-          if (!confirm("Remove this shop's AI provider key? Shop Crank AI will go back to the included AI provider for your subscription.")) return;
+          if (!confirm("Remove this shop's AI provider key? ShopCrank AI will go back to the included AI provider for your subscription.")) return;
           event.currentTarget.disabled = true;
           try {
             const result = await apiFetch("/settings/ai", { method: "DELETE" });
@@ -15022,169 +15429,6 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           shopAiSettings = { ...shopAiSettings, loaded: false };
         }
         return result;
-      };
-      grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
-      activeGrokSession = null;
-      activeGrokPhase = "idle";
-      activeGrokTarget = null;
-      liveAssistantBeforeGrok = liveAssistant;
-      liveAssistant = function() {
-        const html = liveAssistantBeforeGrok();
-        const isLive = Boolean(activeGrokSession?.isActive());
-        const phase = isLive ? activeGrokPhase : "idle";
-        const placeholder = grokPhasePlaceholder(phase);
-        const grokBtnHtml = `<button class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" type="button" id="assistant-grok-voice" aria-pressed="${isLive ? "true" : "false"}" title="${isLive ? "End Grok Voice" : "Start Grok Voice Mode"}">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "Voice live" : "Grok Voice"}</span></button><span class="sr-only" role="status" id="assistant-voice-sr-status">${isLive && placeholder ? `Grok Voice: ${placeholder}` : ""}</span>`;
-        return html.replace(
-          '<button class="secondary" type="button" id="assistant-mic"',
-          `${grokBtnHtml}<button class="secondary" type="button" id="assistant-mic"`
-        );
-      };
-      bindLiveAssistantBeforeGrok = bindLiveAssistant;
-      bindLiveAssistant = function() {
-        bindLiveAssistantBeforeGrok();
-        const grokBtn = document.querySelector("#assistant-grok-voice");
-        if (grokBtn) {
-          grokBtn.onclick = () => startOrStopGrokVoice({ target: "assistant", greetAsReceptionist: false });
-        }
-        const form = document.querySelector("#assistant-form");
-        if (form) {
-          const origSubmit = form.onsubmit;
-          form.onsubmit = async (event) => {
-            if (activeGrokSession?.isActive()) {
-              event.preventDefault();
-              const input = form.elements.message;
-              const text = String(input?.value || "").trim();
-              if (!text) return;
-              input.value = "";
-              assistantConversation.push({ role: "user", content: text });
-              const list = document.querySelector("#assistant-messages");
-              if (list) {
-                list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
-                list.scrollTop = list.scrollHeight;
-              }
-              activeGrokSession.sendTextTurn(text);
-              return;
-            }
-            if (typeof origSubmit === "function") return origSubmit.call(form, event);
-          };
-        }
-        updateGrokVoiceUiControls();
-      };
-      aiPhoneFormBeforeGrok = aiPhoneForm;
-      aiPhoneForm = function() {
-        if (!grokVoiceSettings.loaded && !grokVoiceSettings.loading && !isOfflineDesktop()) {
-          void loadGrokVoiceSettings();
-        }
-        const isLive = Boolean(activeGrokSession?.isActive());
-        const phase = isLive ? activeGrokPhase : "idle";
-        const placeholder = grokPhasePlaceholder(phase);
-        const webhookUrl = grokPhoneWebhookUrl();
-        const grokOrders = state.orders.filter((o) => o.source === "grok_voice_call" || o.intake?.source === "grok_voice_call").slice(0, 10);
-        const callRows = grokOrders.map((order) => `<tr><td class="mono"><b>${escapeHtml(order.id)}</b></td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "No phone")}</small></td><td>${escapeHtml(order.vehicle)}<small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${escapeHtml(order.complaint || "")}</td><td><b>${money4(order.total || 0)}</b></td><td><div class="estimate-actions"><button type="button" class="mini-action" data-grok-open-intake="${escapeAttr(order.id)}">${icon("clipboard-Signature", 13)} Open Intake Form</button><button type="button" class="mini-action" data-order="${escapeAttr(order.id)}">${icon("file-text", 13)} Open RO</button></div></td></tr>`).join("");
-        const grokReceptionistCard = `<section class="ai-panel grok-phone-panel"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice (grok-voice-latest)</div><h2>Grok Phone Call Answering & Auto-Intake</h2><p>Forward your shop phone line to Twilio so Grok answers customer calls 24/7, gives ballpark estimates using your $${Number(shopProfile().laborRate || 140).toFixed(2)}/hr labor rate, and automatically fills in Customer Intake forms, Estimates, and Work Orders.</p></div><div class="head-actions"><button type="button" class="primary grok-voice-btn ${isLive ? "is-live" : ""}" id="grok-phone-live-btn">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span></button><button type="button" class="secondary" id="grok-open-intake-modal">${icon("clipboard-list", 14)} Open Intake Form</button></div></div><div class="agentphone-webhook-preview"><span>Twilio Voice Webhook URL (HTTP POST when a call comes in)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">Forward your shop phone number (e.g. dial <b>*72</b> + your Twilio number, or enable No-Answer Call Forwarding with your carrier) to your Twilio Voice number pointing to this webhook. Configure your xAI API key and voice in <b>Settings \u2192 Grok Voice & Phone Call Forwarding</b>.</small></div><div class="data-panel" style="margin-top:12px"><table><thead><tr><th>RO</th><th>Caller</th><th>Vehicle</th><th>Concern / Symptoms</th><th>Quoted Estimate</th><th>Actions</th></tr></thead><tbody>${callRows || `<tr><td colspan="6">No Grok phone intakes recorded yet. Click <b>Answer / Test Call with Grok</b> above or call your forwarded shop number to see forms fill automatically.</td></tr>`}</tbody></table></div></section>`;
-        return `${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
-      };
-      settingsBeforeGrok = settings;
-      settings = function() {
-        const page = settingsBeforeGrok();
-        if (isOfflineDesktop()) return page;
-        return page.replace("</main>", `${grokSettingsPanelHtml()}</main>`);
-      };
-      openCustomerIntakeBeforeGrok = openCustomerIntake;
-      openCustomerIntake = function(initialDraftOverride = null) {
-        if (initialDraftOverride) {
-          saveIntakeDraft(initialDraftOverride);
-        }
-        openCustomerIntakeBeforeGrok();
-        const meta = document.querySelector("#intake-host .intake-head-meta");
-        if (meta && !meta.querySelector("#intake-grok-voice-btn")) {
-          const isLive = Boolean(activeGrokSession?.isActive());
-          const phase = isLive ? activeGrokPhase : "idle";
-          const placeholder = grokPhasePlaceholder(phase);
-          meta.insertAdjacentHTML(
-            "afterbegin",
-            `<button type="button" class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" id="intake-grok-voice-btn" title="Have Grok listen to the call and fill this intake form">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "End Grok Voice" : "Grok Voice Intake"}</span></button>`
-          );
-          document.querySelector("#intake-grok-voice-btn")?.addEventListener("click", () => {
-            startOrStopGrokVoice({
-              target: "intake",
-              greetAsReceptionist: true,
-              onWizardIntakeUpdate: (newDraft) => {
-                const merged = applyGrokCallToIntakeDraft(loadIntakeDraft(), newDraft);
-                saveIntakeDraft(merged);
-                openCustomerIntake(merged);
-              }
-            });
-          });
-        }
-      };
-      bindBeforeGrok = bind;
-      bind = function() {
-        bindBeforeGrok();
-        if (!currentUser() || isOfflineDesktop()) return;
-        if (state.route === "settings" && !grokVoiceSettings.loaded) {
-          void loadGrokVoiceSettings();
-        }
-        document.querySelector("#grok-voice-config-form")?.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          const form = event.target;
-          const button = form.querySelector("button[type=submit]");
-          const data = Object.fromEntries(new FormData(form));
-          button.disabled = true;
-          try {
-            const result = await apiFetch("/voice/grok/configure", {
-              method: "POST",
-              body: JSON.stringify({
-                apiKey: String(data.apiKey || "").trim() || void 0,
-                voice: data.voice,
-                shopHours: data.shopHours,
-                forwardingPhone: data.forwardingPhone,
-                greeting: data.greeting,
-                instructions: data.instructions
-              })
-            });
-            grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
-            toast("Grok Voice & Phone Call Forwarding settings saved");
-            render();
-          } catch (error) {
-            button.disabled = false;
-            toast(error.message || "Could not save Grok Voice settings");
-          }
-        });
-        document.querySelector("#grok-voice-remove-key")?.addEventListener("click", async (event) => {
-          if (!confirm("Remove this shop's xAI API key?")) return;
-          event.currentTarget.disabled = true;
-          try {
-            const result = await apiFetch("/voice/grok/configure", { method: "DELETE" });
-            grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
-            toast("xAI API key removed");
-            render();
-          } catch (error) {
-            toast(error.message || "Could not remove xAI API key");
-            render();
-          }
-        });
-        document.querySelector("#grok-phone-live-btn")?.addEventListener("click", () => {
-          startOrStopGrokVoice({ target: "phone", greetAsReceptionist: true });
-        });
-        document.querySelector("#grok-open-intake-modal")?.addEventListener("click", () => {
-          openCustomerIntake();
-        });
-        document.querySelectorAll("[data-grok-open-intake]").forEach((btn) => {
-          btn.onclick = () => {
-            const order = state.orders.find((o) => o.id === btn.dataset.grokOpenIntake);
-            if (order?.intake) {
-              openCustomerIntake(order.intake);
-            } else if (order) {
-              const draft = applyGrokCallToIntakeDraft(emptyIntakeDraft(), {
-                customer: { firstName: order.customer, phone: order.phone },
-                vehicle: { vin: order.vin, model: order.vehicle },
-                concern: { description: order.complaint }
-              });
-              openCustomerIntake(draft);
-            }
-          };
-        });
       };
       void startApp();
     }
@@ -15287,7 +15531,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
     console.error("Legacy app bootstrap failed", error);
     const root = document.querySelector("#root");
     if (root && !root.innerHTML.trim()) {
-      root.innerHTML = '<main class="login-screen"><section class="login-panel"><h1>Shop Crank could not open</h1><p>Reload the page. If this continues, clear site data for this host and sign in again.</p></section></main>';
+      root.innerHTML = '<main class="login-screen"><section class="login-panel"><h1>ShopCrank could not open</h1><p>Reload the page. If this continues, clear site data for this host and sign in again.</p></section></main>';
     }
   });
 })();
