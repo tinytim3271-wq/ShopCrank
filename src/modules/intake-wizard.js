@@ -478,6 +478,13 @@ function estimateStep(draft, profile) {
 <p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
 }
 
+function photoWaiver(draft) {
+  const missing = missingRequiredPhotos(draft);
+  if (!missing.length) return '';
+  const checked = draft.photosWaived ? 'checked' : '';
+  return `<label class="intake-waiver"><input type="checkbox" name="photosWaived" ${checked}/> Convert without the required photos (${escapeHtml(missing.join(', '))}). The work order notes they are missing.</label>`;
+}
+
 function reviewStep(draft, users) {
   const check = canConvertIntake(draft);
   const techs = assignableTechnicians(users);
@@ -487,7 +494,7 @@ function reviewStep(draft, users) {
   }).join('')}`;
   return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml(customerDisplayName(draft) || 'Missing')}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml(vehicleLabel(draft) || draft.vehicle.vin || 'Missing')}</dd></div><div><dt>Concern</dt><dd>${escapeHtml(draft.concern.description || 'Missing')}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options('primary')}</select></label><label>Secondary technician<select name="assign-secondary">${options('secondary')}</select></label><label>Apprentice<select name="assign-apprentice">${options('apprentice')}</select></label></div>
-${missingRequiredPhotos(draft).length ? `<label class="intake-waiver"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? 'checked' : ''}/> Convert without the required photos (${escapeHtml(missingRequiredPhotos(draft).join(', '))}). The work order notes they are missing.</label>` : ''}
+${photoWaiver(draft)}
 ${check.ok ? '' : `<div class="import-errors">${check.problems.map(problem => `<span>${escapeHtml(problem)}</span>`).join('')}</div>`}
 ${draft.convertError ? `<div class="import-errors"><span>Could not create the work order: ${escapeHtml(draft.convertError)}</span></div>` : ''}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;

@@ -559,8 +559,9 @@ function printEmployeeAnnualForm(userId) {
 }
 
 openEmployee = function (existing = null) {
+  const selectedRole = existing ? existing.role : "office";
   const roleOptions = ["technician", "office", "service_writer", "admin"]
-    .map(role => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role] || role}</option>`)
+    .map(role => `<option value="${role}" ${selectedRole === role ? "selected" : ""}>${roleLabel[role] || role}</option>`)
     .join("");
   const employmentOptions = ["Hourly", "Salary", "Contractor"]
     .map(value => `<option ${existing?.employmentType === value ? "selected" : ""}>${value}</option>`)
