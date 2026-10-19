@@ -236,6 +236,8 @@ app.post('/api/support', (req, res) => {
 // ----------------------------------------------------
 
 let geminiClient = null;
+const sessionInteractionIds = new Map();
+
 function getGeminiClient() {
   if (!geminiClient) {
     try {
@@ -247,7 +249,7 @@ function getGeminiClient() {
   return geminiClient;
 }
 
-async function callGeminiWithSearch({ prompt, systemInstruction, history = [], shopContext = {} }) {
+async function callGeminiWithSearch({ prompt, systemInstruction, history = [], shopContext = {}, previousInteractionId = null }) {
   const client = getGeminiClient();
   if (!client) {
     throw new Error('Gemini API client is unavailable. Ensure GEMINI_API_KEY is configured.');
@@ -293,6 +295,25 @@ When responding:
 3. If the user asks about an estimate, repair order, or work order, offer clear breakdowns (labor hours, parts, precautions).
 4. If the user refers to current shop work, use the provided shop context (active ROs, mobile dispatches, vehicles, customers).`;
 
+  if (typeof client.interactions?.create === 'function') {
+    try {
+      const interaction = await client.interactions.create({
+        model: 'gemini-3.8-flash',
+        input: fullPrompt,
+        system_instruction: systemInstruction || defaultSystem,
+        ...(previousInteractionId ? { previous_interaction_id: previousInteractionId } : {}),
+      });
+      return {
+        text: interaction.output_text || '',
+        interactionId: interaction.id || null,
+        searchQueries: [],
+        sources: [],
+      };
+    } catch {
+      // Fall back to generateContent if interactions is unavailable
+    }
+  }
+
   const response = await client.models.generateContent({
     model: 'gemini-3.8-flash',
     contents,
@@ -313,8 +334,76 @@ When responding:
 
   return {
     text,
+    interactionId: null,
     searchQueries: webSearchQueries,
     sources,
+  };
+}
+
+async function synthesizeGeminiTts({
+  text = '',
+  turns = null,
+  voice = 'Kore',
+  style = 'cheerful and friendly',
+  speakers = null,
+  model = 'gemini-3.8-flash-tts',
+  mimeType = 'audio/wav',
+  sampleRate = 24000,
+}) {
+  const client = getGeminiClient();
+  if (!client || typeof client.interactions?.create !== 'function') {
+    throw new Error('Gemini Interactions client is unavailable.');
+  }
+  const content = Array.isArray(turns) && turns.length > 0
+    ? turns.map(turn => ({
+      type: 'text',
+      text: String(turn.text || ''),
+      annotations: [{
+        type: 'speech_metadata',
+        ...(turn.speaker ? { speaker: String(turn.speaker) } : {}),
+        ...(turn.style ? { style: String(turn.style) } : {}),
+      }],
+    }))
+    : [{
+      type: 'text',
+      text: String(text || ''),
+      ...(style ? { annotations: [{ type: 'speech_metadata', style: String(style) }] } : {}),
+    }];
+
+  const responseFormat = { type: 'audio' };
+  if (mimeType && mimeType !== 'audio/wav') responseFormat.mime_type = mimeType;
+  if (sampleRate && Number(sampleRate) !== 24000) responseFormat.sample_rate = Number(sampleRate);
+
+  const speechConfig = Array.isArray(speakers) && speakers.length > 0
+    ? { speakers }
+    : [{ voice }];
+
+  const interaction = await client.interactions.create({
+    model,
+    input: [{
+      type: 'user_input',
+      content,
+    }],
+    response_format: responseFormat,
+    generation_config: {
+      speech_config: speechConfig,
+    },
+  });
+
+  const audioData = interaction.output_audio?.data
+    || interaction.steps
+      ?.filter(s => s?.type === 'model_output' && Array.isArray(s.content))
+      .flatMap(s => s.content)
+      .filter(c => c?.type === 'audio' && c?.data)
+      .at(-1)?.data
+    || '';
+
+  return {
+    audio: audioData,
+    mimeType: interaction.output_audio?.mime_type || mimeType || 'audio/wav',
+    model,
+    voice: Array.isArray(speakers) && speakers.length ? null : voice,
+    interactionId: interaction.id || null,
   };
 }
 
@@ -353,6 +442,11 @@ app.post('/api/ai/assistant', async (req, res) => {
   const query = req.body?.message || req.body?.prompt || '';
   const history = req.body?.history || [];
   const shopContext = req.body?.context || {};
+  const sessionId = req.body?.sessionId || `session-${Date.now()}`;
+  const previousInteractionId = req.body?.previousInteractionId
+    || req.body?.previous_interaction_id
+    || sessionInteractionIds.get(sessionId)
+    || null;
 
   if (!query) {
     return res.status(400).json({ error: 'Message prompt is required' });
@@ -363,17 +457,22 @@ app.post('/api/ai/assistant', async (req, res) => {
       prompt: query,
       history,
       shopContext,
+      previousInteractionId,
     });
+    if (result.interactionId) {
+      sessionInteractionIds.set(sessionId, result.interactionId);
+    }
 
     res.json({
       role: 'assistant',
       message: result.text,
       content: result.text,
+      ...(result.interactionId ? { interactionId: result.interactionId } : {}),
       grounding: {
         queries: result.searchQueries,
         sources: result.sources,
       },
-      sessionId: req.body?.sessionId || `session-${Date.now()}`,
+      sessionId,
     });
   } catch (error) {
     console.error('Gemini Assistant Error:', error);
@@ -385,6 +484,67 @@ app.post('/api/ai/assistant', async (req, res) => {
       grounding: { queries: [query], sources: [] },
       error: error.message,
     });
+  }
+});
+
+app.post('/api/ai/tts', async (req, res) => {
+  try {
+    const text = req.body?.text || req.body?.input || '';
+    const turns = Array.isArray(req.body?.turns) ? req.body.turns : null;
+    if (!text && !turns?.length) {
+      return res.status(400).json({ error: 'Text is required for speech synthesis' });
+    }
+    const result = await synthesizeGeminiTts({
+      text,
+      turns,
+      voice: req.body?.voice || 'Kore',
+      style: req.body?.style ?? 'cheerful and friendly',
+      speakers: Array.isArray(req.body?.speakers) ? req.body.speakers : null,
+      model: req.body?.model || 'gemini-3.8-flash-tts',
+      mimeType: req.body?.mimeType || req.body?.mime_type || 'audio/wav',
+      sampleRate: req.body?.sampleRate || req.body?.sample_rate || 24000,
+    });
+    res.json(result);
+  } catch (error) {
+    console.error('Gemini TTS error:', error);
+    res.status(500).json({ error: error.message || 'Speech synthesis failed' });
+  }
+});
+
+app.post('/api/ai/autofill', async (req, res) => {
+  try {
+    const client = getGeminiClient();
+    if (!client) {
+      return res.status(503).json({ message: 'Gemini API client is unavailable.' });
+    }
+    const formType = String(req.body?.formType || req.body?.form_type || 'diagnostic_3c').toLowerCase();
+    const notes = String(req.body?.notes || req.body?.text || req.body?.input || '').trim();
+    const images = Array.isArray(req.body?.images) ? req.body.images : [];
+    const parts = [{ text: `Form type: ${formType}\nTechnician input:\n${notes}` }];
+    for (const img of images.slice(0, 6)) {
+      if (img?.data) {
+        parts.push({
+          inlineData: {
+            mimeType: img.mimeType || 'image/jpeg',
+            data: String(img.data).replace(/^data:[^;]+;base64,/, ''),
+          },
+        });
+      }
+    }
+    const response = await client.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts }],
+      config: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+        systemInstruction: 'You are an automated assistant for an automotive shop management system. Extract technician notes and photos into clean, professional JSON form data. Never invent fake part numbers.',
+      },
+    });
+    const parsed = JSON.parse(response.text || '{}');
+    res.json({ formType, data: parsed, model: 'gemini-3.8-flash', provider: 'gemini' });
+  } catch (error) {
+    console.error('Gemini Autofill error:', error);
+    res.status(500).json({ message: error.message || 'Structured autofill failed' });
   }
 });
 

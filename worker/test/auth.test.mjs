@@ -486,6 +486,117 @@ test('Google sign-in from the apex host uses the registered www callback', async
   );
 });
 
+test('Google sign-in bridges through GOOGLE_REDIRECT_ORIGIN and hands session back to canonical origin', async (t) => {
+  const clientId = 'google-client.apps.googleusercontent.com';
+  const keyPair = await crypto.subtle.generateKey(
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: 'SHA-256',
+    },
+    true,
+    ['sign', 'verify'],
+  );
+  const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  publicJwk.kid = 'google-key';
+  const env = {
+    GOOGLE_CLIENT_ID: clientId,
+    GOOGLE_CLIENT_SECRET: 'google-secret',
+    GOOGLE_REDIRECT_ORIGIN: 'https://www.yourcarguy806.com',
+    ALLOWED_ORIGINS: 'https://www.shopcrank.com,https://www.yourcarguy806.com',
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) {
+            return {
+              async first() {
+                if (/FROM founding_invites/i.test(sql)) {
+                  throw new Error('D1_ERROR: no such table: founding_invites: SQLITE_ERROR');
+                }
+                assert.match(sql, /FROM users WHERE email/);
+                return {
+                  id: 'user-google',
+                  email: 'owner@example.test',
+                  shop_id: 'shop-google',
+                  role: 'admin',
+                  name: 'Google Owner',
+                  enabled: 1,
+                };
+              },
+              async run() {
+                assert.match(sql, /INSERT INTO login_tokens/);
+                assert.equal(args[1], 'owner@example.test');
+                assert.equal(args[3], '/dispatch');
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+
+  const firstHop = await worker.fetch(
+    new Request('https://www.shopcrank.com/api/auth/google?returnTo=%2Fdispatch'),
+    env,
+  );
+  assert.equal(firstHop.status, 302);
+  assert.equal(
+    firstHop.headers.get('location'),
+    'https://www.yourcarguy806.com/api/auth/google?returnTo=%2Fdispatch&origin=https%3A%2F%2Fwww.shopcrank.com',
+  );
+
+  const secondHop = await worker.fetch(new Request(firstHop.headers.get('location')), env);
+  assert.equal(secondHop.status, 302);
+  const authorizationUrl = new URL(secondHop.headers.get('location'));
+  assert.equal(
+    authorizationUrl.searchParams.get('redirect_uri'),
+    'https://www.yourcarguy806.com/api/auth/google/callback',
+  );
+  const state = authorizationUrl.searchParams.get('state');
+  const nonce = authorizationUrl.searchParams.get('nonce');
+  const cookies = secondHop.headers.getSetCookie().map((value) => value.split(';', 1)[0]).join('; ');
+
+  const encode = (value) => base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)));
+  const header = encode({ alg: 'RS256', kid: publicJwk.kid, typ: 'JWT' });
+  const payload = encode({
+    iss: 'https://accounts.google.com',
+    aud: clientId,
+    sub: 'google-subject',
+    email: 'owner@example.test',
+    email_verified: true,
+    name: 'Google Owner',
+    nonce,
+    iat: Math.floor(Date.now() / 1000) - 5,
+    exp: Math.floor(Date.now() / 1000) + 300,
+  });
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    keyPair.privateKey,
+    new TextEncoder().encode(`${header}.${payload}`),
+  );
+  const idToken = `${header}.${payload}.${base64UrlEncode(new Uint8Array(signature))}`;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url) === 'https://oauth2.googleapis.com/token') {
+      return Response.json({ id_token: idToken });
+    }
+    return Response.json({ keys: [publicJwk] });
+  });
+
+  const callback = await worker.fetch(
+    new Request(
+      `https://www.yourcarguy806.com/api/auth/google/callback?code=authorization-code&state=${encodeURIComponent(state)}`,
+      { headers: { Cookie: cookies } },
+    ),
+    env,
+  );
+  assert.equal(callback.status, 302);
+  const handoff = new URL(callback.headers.get('location'));
+  assert.equal(handoff.origin, 'https://www.shopcrank.com');
+  assert.equal(handoff.pathname, '/api/auth/callback');
+  assert.match(handoff.searchParams.get('token') || '', /^[a-f0-9]{32}$/);
+});
+
 test('Google callback rejects a mismatched OAuth state before token exchange', async (t) => {
   const fetched = t.mock.method(globalThis, 'fetch', async () => {
     assert.fail('invalid state must not be exchanged');

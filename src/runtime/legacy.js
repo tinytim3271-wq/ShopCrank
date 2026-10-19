@@ -1402,6 +1402,32 @@ function openCustomerIntake() {
       } catch { /* the assistant stays off unless the shop enables it */ }
       return localDiagnosticChecklist(current);
     },
+    autofill: async ({ formType, notes = "", file = null, draft: current }) => {
+      try {
+        const images = [];
+        if (file) {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ""));
+            reader.onerror = () => reject(new Error("Could not read image"));
+            reader.readAsDataURL(file);
+          });
+          images.push({ mimeType: file.type || "image/jpeg", data: dataUrl });
+        }
+        return await apiFetch("/api/ai/autofill", {
+          method: "POST",
+          body: JSON.stringify({
+            formType,
+            notes,
+            images,
+            vehicleContext: current?.vehicle || null,
+          }),
+        });
+      } catch (error) {
+        toast(error.message || "AI autofill is unavailable right now.");
+        return null;
+      }
+    },
     onConvert: async current => {
       const name = [current.customer.firstName, current.customer.lastName].filter(Boolean).join(" ");
       const display = current.customer.company ? `${name} (${current.customer.company})` : name;

@@ -43,12 +43,17 @@ export class AiChatSession {
     const history = Array.isArray(storedHistory) && storedHistory.length
       ? storedHistory
       : Array.isArray(body.history) ? body.history : [];
+    const storedInteractionId = await this.state.storage.get('lastInteractionId');
+    const previousInteractionId = String(
+      body.previousInteractionId || body.previous_interaction_id || storedInteractionId || '',
+    ).trim() || null;
     const result = await runAnthropicTurn(this.env, {
       shopId,
       message,
       history,
       requestedModel: body.model,
       autoEscalate: body.autoEscalate === true,
+      previousInteractionId,
     });
     const costs = usageCostsForResult(this.env, result);
     await recordAiUsage(this.env, {
@@ -65,6 +70,7 @@ export class AiChatSession {
         sessionId,
         source: 'assistant',
         keySource: result.keySource || null,
+        ...(result.interactionId ? { interactionId: result.interactionId } : {}),
         ...(result.fallbackFrom ? { fallbackFrom: result.fallbackFrom, failureKind: result.failureKind } : {}),
       },
     });
@@ -74,6 +80,9 @@ export class AiChatSession {
       { role: 'assistant', content: result.text },
     ].slice(-MAX_STORED_MESSAGES);
     await this.state.storage.put('history', nextHistory);
+    if (result.interactionId) {
+      await this.state.storage.put('lastInteractionId', result.interactionId);
+    }
     await this.state.storage.put('updatedAt', new Date().toISOString());
     return json({
       message: result.text,
@@ -82,6 +91,7 @@ export class AiChatSession {
       modelFamily: result.family,
       routingReason: result.routingReason,
       sessionId,
+      ...(result.interactionId ? { interactionId: result.interactionId } : {}),
       usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
       provider: result.provider,
       keySource: result.keySource || null,

@@ -53,10 +53,12 @@ import {
 } from './plans.mjs';
 import {
   calculateVoiceCost,
+  extractStructuredShopForm,
   isAiEnabled,
   readAudioWithinLimit,
   recordAiUsage,
   runAnthropicTurn,
+  synthesizeGeminiSpeech,
   transcribeDeepgramAudio,
   usageCostsForResult,
 } from './ai.mjs';
@@ -96,6 +98,7 @@ const GOOGLE_NONCE_COOKIE = '__Host-shopcrank_google_nonce';
 const GOOGLE_VERIFIER_COOKIE = '__Host-shopcrank_google_verifier';
 const GOOGLE_RETURN_COOKIE = '__Host-shopcrank_google_return';
 const GOOGLE_DESKTOP_COOKIE = '__Host-shopcrank_google_desktop';
+const GOOGLE_ORIGIN_COOKIE = '__Host-shopcrank_google_origin';
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
@@ -1375,6 +1378,73 @@ async function handleVoiceTranscription(request, env, context) {
   return json({ transcript: result.transcript, model: result.model });
 }
 
+async function handleVoiceTts(request, env, context) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+  await enforceAiRateLimit(env, context);
+  const body = await requestJson(request);
+  const result = await synthesizeGeminiSpeech(env, {
+    shopId: context.shopId,
+    text: body.text || body.input || '',
+    turns: Array.isArray(body.turns) ? body.turns : null,
+    voice: body.voice,
+    style: body.style,
+    speakers: Array.isArray(body.speakers) ? body.speakers : null,
+    model: body.model,
+    mimeType: body.mimeType || body.mime_type || 'audio/wav',
+    sampleRate: body.sampleRate || body.sample_rate || 24000,
+  });
+  await recordAiUsage(env, {
+    shopId: context.shopId,
+    userId: context.userId,
+    channel: 'voice',
+    provider: 'gemini',
+    model: result.model,
+    metadata: {
+      source: 'tts',
+      voice: result.voice,
+      ...(result.interactionId ? { interactionId: result.interactionId } : {}),
+    },
+  });
+  return json(result);
+}
+
+async function handleAiAutofill(request, env, context, analytics) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+  await enforceAiRateLimit(env, context);
+  const body = await requestJson(request);
+  const result = await extractStructuredShopForm(env, {
+    shopId: context.shopId,
+    formType: body.formType || body.form_type || 'diagnostic_3c',
+    notes: body.notes || body.text || body.input || '',
+    images: Array.isArray(body.images) ? body.images : [],
+    audio: body.audio || null,
+    vehicleContext: body.vehicleContext || body.vehicle || null,
+  });
+  const costs = usageCostsForResult(env, result);
+  await recordAiUsage(env, {
+    shopId: context.shopId,
+    userId: context.userId,
+    channel: 'text',
+    provider: result.provider,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    ...costs,
+    metadata: {
+      source: 'autofill',
+      formType: result.formType,
+      keySource: result.keySource,
+    },
+  });
+  captureForContext(analytics, context, 'ai_form_autofilled', {
+    form_type: result.formType,
+    model: result.model,
+  });
+  return json(result);
+}
+
 async function saveIntegrationSecret(env, shopId, name, value) {
   const encrypted = await encryptSecret(value, env.INTEGRATION_ENCRYPTION_KEY);
   await env.DB.prepare(`
@@ -2188,6 +2258,38 @@ function desktopHandoffPage(token) {
 </html>`;
 }
 
+const GOOGLE_AUTH_COOKIES = Object.freeze([
+  GOOGLE_STATE_COOKIE,
+  GOOGLE_NONCE_COOKIE,
+  GOOGLE_VERIFIER_COOKIE,
+  GOOGLE_RETURN_COOKIE,
+  GOOGLE_DESKTOP_COOKIE,
+  GOOGLE_ORIGIN_COOKIE,
+]);
+
+function allowedWebOrigins(env) {
+  const configured = String(env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return new Set([CANONICAL_ORIGIN, ...configured]);
+}
+
+function safeGoogleTargetOrigin(rawOrigin, fallbackOrigin, env) {
+  const candidate = String(rawOrigin || '').trim();
+  if (!candidate) return fallbackOrigin;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return fallbackOrigin;
+    if (parsed.origin === fallbackOrigin || allowedWebOrigins(env).has(parsed.origin)) {
+      return parsed.origin;
+    }
+  } catch {
+    return fallbackOrigin;
+  }
+  return fallbackOrigin;
+}
+
 function googleAuthOrigin(request, env) {
   const configured = String(env.GOOGLE_REDIRECT_ORIGIN || '').trim();
   if (configured) return new URL(configured).origin;
@@ -2210,8 +2312,17 @@ async function handleGoogleSignIn(request, env) {
   const returnTo = safeReturnPath(requestUrl.searchParams.get('returnTo') || '/');
   const desktop = requestUrl.searchParams.get('desktop') === '1';
   const origin = googleAuthOrigin(request, env);
+  const callerOrigin = requestUrl.hostname === APEX_HOST ? CANONICAL_ORIGIN : requestUrl.origin;
+  const targetOrigin = safeGoogleTargetOrigin(
+    requestUrl.searchParams.get('origin') || callerOrigin,
+    origin,
+    env,
+  );
   if (requestUrl.origin !== origin) {
     const next = new URL(`${requestUrl.pathname}${requestUrl.search}`, origin);
+    if (targetOrigin !== origin && !next.searchParams.has('origin')) {
+      next.searchParams.set('origin', targetOrigin);
+    }
     return new Response(null, {
       status: 302,
       headers: { Location: next.toString(), 'Cache-Control': 'no-store' },
@@ -2235,6 +2346,7 @@ async function handleGoogleSignIn(request, env) {
   headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_VERIFIER_COOKIE, verifier));
   headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_RETURN_COOKIE, returnTo));
   headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_DESKTOP_COOKIE, desktop ? '1' : '0'));
+  headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_ORIGIN_COOKIE, targetOrigin));
   return new Response(null, { status: 302, headers });
 }
 
@@ -2277,8 +2389,10 @@ async function handleGoogleCallback(request, env) {
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
   }
+  const returnTo = safeReturnPath(getCookieValue(request, GOOGLE_RETURN_COOKIE), '/');
+  const targetOrigin = safeGoogleTargetOrigin(getCookieValue(request, GOOGLE_ORIGIN_COOKIE), url.origin, env);
   const isDesktop = getCookieValue(request, GOOGLE_DESKTOP_COOKIE) === '1';
-  if (isDesktop) {
+  if (isDesktop || targetOrigin !== url.origin) {
     const handoffToken = crypto.randomUUID().replaceAll('-', '');
     const handoffHash = await hashValue(handoffToken);
     const now = new Date().toISOString();
@@ -2296,20 +2410,33 @@ async function handleGoogleCallback(request, env) {
       crypto.randomUUID(),
       email,
       handoffHash,
-      safeReturnPath(getCookieValue(request, GOOGLE_RETURN_COOKIE), '/'),
+      returnTo,
       new Date(Date.now() + 2 * 60 * 1000).toISOString(),
       now,
     ).run();
+    if (isDesktop) {
+      const headers = new Headers({
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      });
+      for (const name of GOOGLE_AUTH_COOKIES) {
+        headers.append('Set-Cookie', clearCookieHeader(name));
+      }
+      return new Response(desktopHandoffPage(handoffToken), { status: 200, headers });
+    }
+    const handoffUrl = new URL('/api/auth/callback', targetOrigin);
+    handoffUrl.searchParams.set('token', handoffToken);
     const headers = new Headers({
-      'Content-Type': 'text/html; charset=utf-8',
+      Location: handoffUrl.toString(),
       'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
     });
-    for (const name of [GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE, GOOGLE_VERIFIER_COOKIE, GOOGLE_RETURN_COOKIE, GOOGLE_DESKTOP_COOKIE]) {
+    for (const name of GOOGLE_AUTH_COOKIES) {
       headers.append('Set-Cookie', clearCookieHeader(name));
     }
-    return new Response(desktopHandoffPage(handoffToken), { status: 200, headers });
+    return new Response(null, { status: 302, headers });
   }
   const sessionToken = crypto.randomUUID().replaceAll('-', '');
   const sessionId = crypto.randomUUID();
@@ -2329,11 +2456,11 @@ async function handleGoogleCallback(request, env) {
     actor_role: user.role,
   });
   const headers = new Headers({
-    Location: new URL(safeReturnPath(getCookieValue(request, GOOGLE_RETURN_COOKIE), '/'), url.origin).toString(),
+    Location: new URL(returnTo, url.origin).toString(),
     'Cache-Control': 'no-store',
   });
   headers.append('Set-Cookie', sessionCookieHeader(sessionToken));
-  for (const name of [GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE, GOOGLE_VERIFIER_COOKIE, GOOGLE_RETURN_COOKIE, GOOGLE_DESKTOP_COOKIE]) {
+  for (const name of GOOGLE_AUTH_COOKIES) {
     headers.append('Set-Cookie', clearCookieHeader(name));
   }
   return new Response(null, { status: 302, headers });
@@ -2978,6 +3105,8 @@ async function route(request, env, analytics) {
   if (path === '/settings/ai') return handleShopAiSettings(request, env, context, { recordAudit: recordDiagnosticAudit });
   if (path === '/ai/assistant') return handleAssistant(request, env, context, analytics);
   if (path === '/ai/transcribe') return handleVoiceTranscription(request, env, context);
+  if (path === '/ai/tts') return handleVoiceTts(request, env, context);
+  if (path === '/ai/autofill') return handleAiAutofill(request, env, context, analytics);
   if (path === '/ai/voice/session') return handleVoiceSession(request, env, context);
   if (path === '/agentphone/configure') return handleAgentPhoneConfigure(request, env, context, analytics);
   if (segments[0] === 'files') return handleFiles(request, env, context, segments, analytics);

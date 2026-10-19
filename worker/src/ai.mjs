@@ -6,6 +6,7 @@ import {
   anthropicFailureMessage,
   GeminiApiError,
   GEMINI_GENERATE_URL,
+  GEMINI_INTERACTIONS_URL,
   geminiFailureMessage,
   isShopKeyProblem,
   loadShopProviderConfig,
@@ -16,8 +17,11 @@ export const DEFAULT_SONNET_MODEL = 'claude-sonnet-5';
 export const DEFAULT_OPUS_MODEL = 'claude-opus-5';
 // Cloudflare Workers AI fallback used only when no Anthropic key is configured.
 export const DEFAULT_WORKERS_AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 export const DEFAULT_GEMINI_PRO_MODEL = 'gemini-2.5-pro';
+export const DEFAULT_GEMINI_TTS_MODEL = 'gemini-3.8-flash-tts';
+export const DEFAULT_GEMINI_TTS_LITE_MODEL = 'gemini-3.8-flash-lite-tts';
+export const DEFAULT_GEMINI_TTS_VOICE = 'Kore';
 
 const DEFAULT_SHOP_PRICING = Object.freeze({ laborRate: 140, taxRate: 8.25 });
 
@@ -425,7 +429,46 @@ async function anthropicRequest(env, payload, fetcher, apiKey = env.ANTHROPIC_AP
   return body;
 }
 
-async function geminiRequest(payload, fetcher, { apiKey, model }) {
+async function geminiInteractionRequest(payload, fetcher, { apiKey }) {
+  let response;
+  try {
+    response = await fetcher(GEMINI_INTERACTIONS_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: 'Gemini interactions request failed',
+      status: 0,
+      type: 'network',
+      error: String(error?.message || error).slice(0, 200),
+    }));
+    throw new GeminiApiError({ status: 0, type: 'network' });
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error(JSON.stringify({
+      message: 'Gemini interactions request failed',
+      status: response.status,
+      type: body?.error?.status || 'unknown',
+    }));
+    throw new GeminiApiError({
+      status: response.status,
+      type: body?.error?.status || '',
+      message: body?.error?.message || body?.message || '',
+    });
+  }
+  return body;
+}
+
+async function geminiRequest(payload, fetcher, { apiKey, model, interactionPayload = null, useInteractions = false }) {
+  if (useInteractions && interactionPayload) {
+    return geminiInteractionRequest(interactionPayload, fetcher, { apiKey });
+  }
   const url = `${GEMINI_GENERATE_URL}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   let response;
   try {
@@ -443,6 +486,9 @@ async function geminiRequest(payload, fetcher, { apiKey, model }) {
     }));
     throw new GeminiApiError({ status: 0, type: 'network' });
   }
+  if (response.status === 404 && interactionPayload) {
+    return geminiInteractionRequest(interactionPayload, fetcher, { apiKey });
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.error(JSON.stringify({
@@ -457,6 +503,176 @@ async function geminiRequest(payload, fetcher, { apiKey, model }) {
     });
   }
   return body;
+}
+
+function extractGeminiText(response = {}) {
+  if (typeof response.output_text === 'string' && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+  if (Array.isArray(response.outputs)) {
+    const fromOutputs = response.outputs
+      .map((item) => item?.text || '')
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (fromOutputs) return fromOutputs;
+  }
+  if (Array.isArray(response.steps)) {
+    const fromSteps = response.steps
+      .filter((step) => step?.type === 'model_output' && Array.isArray(step.content))
+      .flatMap((step) => step.content)
+      .filter((part) => part?.type === 'text' || typeof part?.text === 'string')
+      .map((part) => part.text)
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (fromSteps) return fromSteps;
+  }
+  return (response?.candidates?.[0]?.content?.parts || [])
+    .map((part) => part?.text)
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function extractGeminiUsage(response = {}) {
+  const inputTokens = Number(
+    response?.usageMetadata?.promptTokenCount
+      ?? response?.usage?.total_input_tokens
+      ?? response?.usage?.input_tokens
+      ?? 0,
+  );
+  const outputTokens = Number(
+    response?.usageMetadata?.candidatesTokenCount
+      ?? response?.usage?.total_output_tokens
+      ?? response?.usage?.output_tokens
+      ?? 0,
+  );
+  return { inputTokens, outputTokens };
+}
+
+function extractGeminiAudio(response = {}) {
+  if (response?.output_audio?.data) {
+    return {
+      data: String(response.output_audio.data),
+      mimeType: String(response.output_audio.mime_type || response.output_audio.mimeType || 'audio/wav'),
+    };
+  }
+  if (Array.isArray(response?.steps)) {
+    const audioParts = response.steps
+      .filter((step) => step?.type === 'model_output' && Array.isArray(step.content))
+      .flatMap((step) => step.content)
+      .filter((part) => part?.type === 'audio' && part?.data);
+    const last = audioParts.at(-1);
+    if (last) {
+      return {
+        data: String(last.data),
+        mimeType: String(last.mime_type || last.mimeType || 'audio/wav'),
+      };
+    }
+  }
+  if (Array.isArray(response?.outputs)) {
+    const audioOutputs = response.outputs.filter((item) => item?.type === 'audio' && item?.data);
+    const last = audioOutputs.at(-1);
+    if (last) {
+      return {
+        data: String(last.data),
+        mimeType: String(last.mime_type || last.mimeType || 'audio/wav'),
+      };
+    }
+  }
+  return null;
+}
+
+export async function synthesizeGeminiSpeech(env, {
+  shopId,
+  text = '',
+  turns = null,
+  voice = DEFAULT_GEMINI_TTS_VOICE,
+  style = 'cheerful and friendly',
+  speakers = null,
+  model = '',
+  mimeType = 'audio/wav',
+  sampleRate = 24000,
+  fetcher = fetch,
+  shopProvider,
+} = {}) {
+  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
+  const resolvedShopConfig = shopProvider ?? (shopId ? await loadShopProviderConfig(env, shopId, 'gemini') : null);
+  const apiKey = String(
+    (resolvedShopConfig?.provider === 'gemini' ? resolvedShopConfig.apiKey : '')
+      || env.GEMINI_API_KEY
+      || '',
+  ).trim();
+  if (!apiKey) throw new HttpError(503, 'Gemini TTS is not configured');
+
+  const resolvedModel = String(model || env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL).trim();
+  let contentItems;
+  if (Array.isArray(turns) && turns.length > 0) {
+    contentItems = turns
+      .map((turn) => {
+        const turnText = String(turn?.text || '').trim();
+        if (!turnText) return null;
+        const metadata = { type: 'speech_metadata' };
+        if (turn?.speaker) metadata.speaker = String(turn.speaker);
+        if (turn?.style) metadata.style = String(turn.style);
+        return {
+          type: 'text',
+          text: turnText,
+          ...(metadata.speaker || metadata.style ? { annotations: [metadata] } : {}),
+        };
+      })
+      .filter(Boolean);
+  } else {
+    const cleanText = String(text || '').trim();
+    if (!cleanText) throw new HttpError(400, 'Text is required for speech synthesis');
+    const annotation = style ? [{ type: 'speech_metadata', style: String(style) }] : undefined;
+    contentItems = [{
+      type: 'text',
+      text: cleanText,
+      ...(annotation ? { annotations: annotation } : {}),
+    }];
+  }
+  if (!contentItems.length) throw new HttpError(400, 'Text is required for speech synthesis');
+
+  const responseFormat = { type: 'audio' };
+  if (mimeType && mimeType !== 'audio/wav') responseFormat.mime_type = String(mimeType);
+  if (sampleRate && Number(sampleRate) !== 24000) responseFormat.sample_rate = Number(sampleRate);
+
+  const speechConfig = Array.isArray(speakers) && speakers.length > 0
+    ? {
+      mode: 'conversational',
+      speakers: speakers.map((s) => ({
+        speaker: String(s.speaker || ''),
+        voice: String(s.voice || DEFAULT_GEMINI_TTS_VOICE),
+      })),
+    }
+    : [{ voice: String(voice || DEFAULT_GEMINI_TTS_VOICE) }];
+
+  const payload = {
+    model: resolvedModel,
+    input: [{
+      type: 'user_input',
+      content: contentItems,
+    }],
+    response_format: responseFormat,
+    generation_config: {
+      speech_config: speechConfig,
+    },
+  };
+
+  const response = await geminiInteractionRequest(payload, fetcher, { apiKey });
+  const audio = extractGeminiAudio(response);
+  if (!audio?.data) {
+    throw new HttpError(502, 'Gemini TTS did not return audio data');
+  }
+  return {
+    audio: audio.data,
+    mimeType: audio.mimeType || mimeType || 'audio/wav',
+    model: resolvedModel,
+    voice: Array.isArray(speakers) && speakers.length ? null : String(voice || DEFAULT_GEMINI_TTS_VOICE),
+    interactionId: response?.id ? String(response.id) : null,
+  };
 }
 
 
@@ -521,6 +737,7 @@ export async function runAnthropicTurn(env, {
   requestedModel = 'sonnet',
   autoEscalate = false,
   allowEstimatePreparation = true,
+  previousInteractionId = null,
   fetcher = fetch,
   shopAnthropic,
 } = {}) {
@@ -545,6 +762,7 @@ export async function runAnthropicTurn(env, {
         history,
         requestedModel,
         autoEscalate,
+        previousInteractionId,
         fetcher,
         apiKey: keySource === 'shop' ? shopConfig.apiKey : env.GEMINI_API_KEY,
         modelOverride: keySource === 'shop' ? shopConfig.model : '',
@@ -635,6 +853,7 @@ async function runGeminiConversation(env, {
   history,
   requestedModel,
   autoEscalate,
+  previousInteractionId = null,
   fetcher,
   apiKey,
   modelOverride,
@@ -648,24 +867,40 @@ async function runGeminiConversation(env, {
   const systemPrompt = `${buildAssistantSystemPrompt(pricing, { allowEstimatePreparation: false })}
 
 Use the attached read-only advanced search results for factual grounding when relevant. Never claim you changed any records. Ask for more detail when the records are insufficient.`;
-  const contents = geminiContentsFromHistory(history, `${String(message || '')}
+  const groundedPrompt = `${String(message || '')}
 
-Advanced search context (read-only JSON): ${advancedContext}`);
+Advanced search context (read-only JSON): ${advancedContext}`;
+  const contents = geminiContentsFromHistory(history, groundedPrompt);
+  const maxOutputTokens = Math.min(2048, Math.max(256, Number(env.GEMINI_MAX_OUTPUT_TOKENS) || 1400));
+  const prevId = String(previousInteractionId || '').trim();
+  const interactionPayload = {
+    model: route.model,
+    input: groundedPrompt,
+    system_instruction: systemPrompt,
+    generation_config: {
+      temperature: 0.2,
+      max_output_tokens: maxOutputTokens,
+    },
+    ...(prevId ? { previous_interaction_id: prevId } : {}),
+  };
+  const useInteractions = Boolean(prevId) || String(env.GEMINI_USE_INTERACTIONS || '').trim() === '1';
   const response = await geminiRequest({
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents,
     generationConfig: {
       temperature: 0.2,
-      maxOutputTokens: Math.min(2048, Math.max(256, Number(env.GEMINI_MAX_OUTPUT_TOKENS) || 1400)),
+      maxOutputTokens,
     },
-  }, fetcher, { apiKey, model: route.model });
+  }, fetcher, {
+    apiKey,
+    model: route.model,
+    interactionPayload,
+    useInteractions,
+  });
 
-  const text = (response?.candidates?.[0]?.content?.parts || [])
-    .map(part => part?.text)
-    .filter(Boolean)
-    .join('\n')
-    .trim();
+  const text = extractGeminiText(response);
   if (!text) throw new HttpError(502, 'The Shop Crank assistant did not return a final answer');
+  const { inputTokens, outputTokens } = extractGeminiUsage(response);
   return {
     text,
     actions: [],
@@ -673,8 +908,9 @@ Advanced search context (read-only JSON): ${advancedContext}`);
     model: route.model,
     routingReason: route.routingReason,
     provider: 'gemini',
-    inputTokens: Number(response?.usageMetadata?.promptTokenCount || 0),
-    outputTokens: Number(response?.usageMetadata?.candidatesTokenCount || 0),
+    inputTokens,
+    outputTokens,
+    ...(response?.id ? { interactionId: String(response.id) } : {}),
   };
 }
 
@@ -872,6 +1108,275 @@ export async function loadVoiceShopContext(env, shopId) {
       updatedAt: row.updated_at,
     };
   });
+}
+
+export const AUTOFILL_SCHEMAS = Object.freeze({
+  vehicle_intake: {
+    type: 'OBJECT',
+    properties: {
+      vin: { type: 'STRING', description: '17-character Vehicle Identification Number if visible or mentioned, else empty string' },
+      plate: { type: 'STRING', description: 'License plate number if visible or mentioned, else empty string' },
+      plate_state: { type: 'STRING', description: 'Two-letter US state or jurisdiction for the license plate' },
+      year: { type: 'STRING', description: '4-digit model year if identified' },
+      make: { type: 'STRING', description: 'Vehicle manufacturer make (e.g., Ford, Ram, Honda)' },
+      model: { type: 'STRING', description: 'Vehicle model name (e.g., F-150, 1500, CR-V)' },
+      trim: { type: 'STRING', description: 'Trim level if identified' },
+      engine: { type: 'STRING', description: 'Engine displacement/configuration if identified' },
+      mileage: { type: 'STRING', description: 'Odometer reading digits only' },
+      odometer_units: { type: 'STRING', enum: ['mi', 'km'], description: 'Odometer unit (mi or km)' },
+      color: { type: 'STRING', description: 'Exterior color if identified' },
+    },
+    required: ['vin', 'plate', 'year', 'make', 'model', 'mileage', 'odometer_units'],
+  },
+  diagnostic_3c: {
+    type: 'OBJECT',
+    properties: {
+      complaint: { type: 'STRING', description: "Customer's reported issue, rephrased professionally" },
+      cause: { type: 'STRING', description: 'Root technical failure diagnosed by the technician' },
+      correction: { type: 'STRING', description: 'Recommended action/repair to solve the issue' },
+      severity: { type: 'STRING', enum: ['CRITICAL', 'RECOMMENDED', 'MONITOR'], description: 'Urgency of the finding' },
+      dtc_codes: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+        description: 'Diagnostic Trouble Codes (DTCs) mentioned or visible on scan tool',
+      },
+      module_system: { type: 'STRING', description: 'Vehicle module or system associated with the fault' },
+      suggested_line_items: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            item_type: { type: 'STRING', enum: ['LABOR', 'PART', 'SUBLET'], description: "Must be 'LABOR', 'PART', or 'SUBLET'" },
+            description: { type: 'STRING', description: 'Clear title of the job or generic part name' },
+            part_number: { type: 'STRING', nullable: true, description: 'Part number only if explicitly mentioned; never invent' },
+            quantity: { type: 'NUMBER', description: 'Quantity of the part or 1.0 for labor' },
+            estimated_hours: { type: 'NUMBER', nullable: true, description: 'Labor hours if applicable' },
+          },
+          required: ['item_type', 'description', 'quantity'],
+        },
+      },
+    },
+    required: ['complaint', 'cause', 'correction', 'severity', 'suggested_line_items'],
+  },
+  dvi_estimate: {
+    type: 'OBJECT',
+    properties: {
+      summary: { type: 'STRING', description: 'Concise professional inspection summary' },
+      checklist_items: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            component: { type: 'STRING', description: 'Inspected component or system (e.g., Front Brakes, Rear Brakes, Serpentine Belt)' },
+            status: { type: 'STRING', enum: ['RED', 'YELLOW', 'GREEN'], description: 'Inspection status: RED (immediate attention), YELLOW (monitor/soon), GREEN (okay)' },
+            measurement: { type: 'STRING', description: 'Measured spec such as pad thickness in mm or tread depth' },
+            notes: { type: 'STRING', description: 'Professional inspection finding note' },
+          },
+          required: ['component', 'status', 'notes'],
+        },
+      },
+      suggested_line_items: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            item_type: { type: 'STRING', enum: ['LABOR', 'PART', 'SUBLET'] },
+            description: { type: 'STRING', description: 'Generic part name or labor operation title' },
+            part_number: { type: 'STRING', nullable: true },
+            quantity: { type: 'NUMBER' },
+            estimated_hours: { type: 'NUMBER', nullable: true },
+          },
+          required: ['item_type', 'description', 'quantity'],
+        },
+      },
+    },
+    required: ['summary', 'checklist_items', 'suggested_line_items'],
+  },
+});
+
+const AUTOFILL_SYSTEM_INSTRUCTION = `You are an automated assistant for an automotive shop management system.
+Extract technician notes, voice transcripts, and inspection or scan-tool photos into clean, professional JSON form data matching the response schema.
+Never invent fake part numbers. Standardize mechanic shorthand and jargon into clear, warranty-compliant terminology.`;
+
+export function normalizeAutofillResult(formType, raw = {}) {
+  if (formType === 'vehicle_intake') {
+    return {
+      vin: String(raw.vin || '').trim().toUpperCase(),
+      plate: String(raw.plate || '').trim().toUpperCase(),
+      plate_state: String(raw.plate_state || raw.plateState || '').trim().toUpperCase(),
+      year: String(raw.year || '').trim(),
+      make: String(raw.make || '').trim(),
+      model: String(raw.model || '').trim(),
+      trim: String(raw.trim || '').trim(),
+      engine: String(raw.engine || '').trim(),
+      mileage: String(raw.mileage || '').replace(/[^\d]/g, ''),
+      odometer_units: raw.odometer_units === 'km' ? 'km' : 'mi',
+      color: String(raw.color || '').trim(),
+    };
+  }
+  const normalizeItems = (items) => (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const rawType = String(item?.item_type || item?.type || 'LABOR').trim().toUpperCase();
+      const itemType = ['LABOR', 'PART', 'SUBLET'].includes(rawType) ? rawType : 'LABOR';
+      const description = String(item?.description || '').trim();
+      if (!description) return null;
+      const hours = Number(item?.estimated_hours);
+      return {
+        item_type: itemType,
+        description,
+        part_number: item?.part_number ? String(item.part_number).trim() : null,
+        quantity: Math.max(0.1, Number(item?.quantity) || 1),
+        estimated_hours: Number.isFinite(hours) && hours > 0 ? hours : null,
+      };
+    })
+    .filter(Boolean);
+
+  if (formType === 'dvi_estimate') {
+    const checklist = (Array.isArray(raw.checklist_items) ? raw.checklist_items : [])
+      .map((entry) => {
+        const component = String(entry?.component || '').trim();
+        if (!component) return null;
+        const status = ['RED', 'YELLOW', 'GREEN'].includes(String(entry?.status || '').toUpperCase())
+          ? String(entry.status).toUpperCase()
+          : 'YELLOW';
+        return {
+          component,
+          status,
+          measurement: String(entry?.measurement || '').trim(),
+          notes: String(entry?.notes || '').trim(),
+        };
+      })
+      .filter(Boolean);
+    return {
+      summary: String(raw.summary || '').trim(),
+      checklist_items: checklist,
+      suggested_line_items: normalizeItems(raw.suggested_line_items),
+    };
+  }
+
+  const severity = ['CRITICAL', 'RECOMMENDED', 'MONITOR'].includes(String(raw.severity || '').toUpperCase())
+    ? String(raw.severity).toUpperCase()
+    : 'RECOMMENDED';
+  return {
+    complaint: String(raw.complaint || '').trim(),
+    cause: String(raw.cause || '').trim(),
+    correction: String(raw.correction || '').trim(),
+    severity,
+    dtc_codes: (Array.isArray(raw.dtc_codes) ? raw.dtc_codes : [])
+      .map((code) => String(code || '').trim().toUpperCase())
+      .filter(Boolean),
+    module_system: String(raw.module_system || '').trim(),
+    suggested_line_items: normalizeItems(raw.suggested_line_items),
+  };
+}
+
+export async function extractStructuredShopForm(env, {
+  shopId,
+  formType = 'diagnostic_3c',
+  notes = '',
+  images = [],
+  audio = null,
+  vehicleContext = null,
+  fetcher = fetch,
+  shopProvider,
+} = {}) {
+  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
+  const normalizedType = String(formType || 'diagnostic_3c').trim().toLowerCase();
+  const schema = AUTOFILL_SCHEMAS[normalizedType];
+  if (!schema) {
+    throw new HttpError(400, 'formType must be "vehicle_intake", "diagnostic_3c", or "dvi_estimate"');
+  }
+  const cleanNotes = String(notes || '').trim();
+  const imageList = Array.isArray(images) ? images.filter((img) => img?.data) : [];
+  const hasAudio = Boolean(audio?.data);
+  if (!cleanNotes && !imageList.length && !hasAudio) {
+    throw new HttpError(400, 'Provide technician notes, a voice recording, or at least one photo to autofill');
+  }
+
+  const resolvedShop = shopProvider ?? (shopId ? await loadShopProviderConfig(env, shopId, 'gemini') : null);
+  const apiKey = String(
+    (resolvedShop?.provider === 'gemini' ? resolvedShop.apiKey : '')
+      || env.GEMINI_API_KEY
+      || '',
+  ).trim();
+  const model = String(
+    (resolvedShop?.provider === 'gemini' && resolvedShop.model ? resolvedShop.model : '')
+      || env.GEMINI_MODEL
+      || DEFAULT_GEMINI_MODEL,
+  ).trim();
+
+  if (apiKey) {
+    const parts = [];
+    const contextHeader = vehicleContext ? `Vehicle context: ${JSON.stringify(vehicleContext)}\n\n` : '';
+    const defaultPromptByType = {
+      vehicle_intake: 'Extract the VIN, license plate, year/make/model, odometer mileage, and units from the provided vehicle intake photo(s) and notes.',
+      diagnostic_3c: 'Extract the 3 Cs (Complaint, Cause, Correction), urgency severity, any OBD-II DTC trouble codes, and suggested PART/LABOR/SUBLET line items from the technician input.',
+      dvi_estimate: 'Extract the Digital Vehicle Inspection (DVI) checklist statuses (RED/YELLOW/GREEN), measurements, and recommended estimate line items from the inspection input.',
+    };
+    parts.push({
+      text: `${contextHeader}${defaultPromptByType[normalizedType]}\n\nTechnician input:\n${cleanNotes || '(See attached media)'}`,
+    });
+    for (const img of imageList.slice(0, 6)) {
+      parts.push({
+        inlineData: {
+          mimeType: String(img.mimeType || img.mime_type || 'image/jpeg'),
+          data: String(img.data).replace(/^data:[^;]+;base64,/, ''),
+        },
+      });
+    }
+    if (hasAudio) {
+      parts.push({
+        inlineData: {
+          mimeType: String(audio.mimeType || audio.mime_type || 'audio/webm'),
+          data: String(audio.data).replace(/^data:[^;]+;base64,/, ''),
+        },
+      });
+    }
+
+    const interactionPayload = {
+      model,
+      system_instruction: AUTOFILL_SYSTEM_INSTRUCTION,
+      input: parts.map((p) => p.text).filter(Boolean).join('\n'),
+      response_format: {
+        type: 'json_schema',
+        json_schema: schema,
+      },
+      generation_config: {
+        temperature: 0.1,
+      },
+    };
+
+    const response = await geminiRequest({
+      systemInstruction: { parts: [{ text: AUTOFILL_SYSTEM_INSTRUCTION }] },
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json',
+        responseSchema: schema,
+      },
+    }, fetcher, { apiKey, model, interactionPayload });
+
+    const text = extractGeminiText(response);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new HttpError(502, 'Gemini did not return valid structured JSON for this form');
+    }
+    const { inputTokens, outputTokens } = extractGeminiUsage(response);
+    return {
+      formType: normalizedType,
+      data: normalizeAutofillResult(normalizedType, parsed),
+      model,
+      provider: 'gemini',
+      family: 'gemini',
+      keySource: resolvedShop?.provider === 'gemini' ? 'shop' : 'platform',
+      inputTokens,
+      outputTokens,
+    };
+  }
+
+  throw new HttpError(503, 'Gemini structured autofill requires a configured Gemini API key');
 }
 
 

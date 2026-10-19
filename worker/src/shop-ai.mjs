@@ -13,11 +13,12 @@ export const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 export const ANTHROPIC_VERSION = '2023-06-01';
 export const ANTHROPIC_CONSOLE_KEYS_URL = 'https://console.anthropic.com/settings/keys';
 export const GEMINI_GENERATE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+export const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 export const GEMINI_CONSOLE_KEYS_URL = 'https://aistudio.google.com/app/apikey';
 
 // Default models for shops that bring their own keys.
 export const DEFAULT_SHOP_CLAUDE_MODEL = 'claude-sonnet-5';
-export const DEFAULT_SHOP_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_SHOP_GEMINI_MODEL = 'gemini-3.8-flash';
 
 const MASK = '\u2022\u2022\u2022\u2022';
 const MANAGE_ROLES = ['owner', 'admin'];
@@ -111,7 +112,7 @@ export function normalizeGeminiModel(value) {
   const model = String(value || '').trim();
   if (!model) return '';
   if (!/^gemini-[a-z0-9][a-z0-9.-]{1,100}$/.test(model)) {
-    throw new HttpError(400, 'model must be a Gemini model id such as gemini-2.5-flash');
+    throw new HttpError(400, 'model must be a Gemini model id such as gemini-3.8-flash');
   }
   return model;
 }
@@ -224,6 +225,19 @@ export async function validateGeminiKey(apiKey, { model = DEFAULT_SHOP_GEMINI_MO
         generationConfig: { maxOutputTokens: 1, temperature: 0 },
       }),
     });
+    if (response.status === 404) {
+      response = await fetcher(GEMINI_INTERACTIONS_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          model,
+          input: 'ping',
+        }),
+      });
+    }
   } catch {
     return { ok: false, kind: 'unavailable' };
   }
