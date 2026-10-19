@@ -225,8 +225,6 @@ function cardTerminal() {
     : `<form class="form-grid" id="pos-form">${orderField}${identity}${amountField}<label>Reader<select name="readerId" id="pos-reader" required>${readerOptions || `<option value="">No reader</option>`}</select></label><div class="full messaging-actions"><button class="secondary" type="button" id="pos-refresh">${icon("refresh-cw", 14)} Refresh readers</button><button class="secondary" type="button" id="pos-cancel" ${posCharge ? "" : "disabled"}>${icon("x", 14)} Cancel on reader</button><button class="primary" type="submit" id="pos-charge" ${!selected || selected.balance < 0.5 || !model.readers.length ? "disabled" : ""}>${icon("credit-card", 14)} Charge card</button></div>${chargeNote}</form>`;
   return shell(`${heading("Front counter", "Card terminal", "Take a card on the reader, or type a card for a purchase made over the phone.", false)}<section class="messaging-panel pos-terminal"><div class="messaging-status ${model.configured ? "ready" : "idle"}">${icon("credit-card", 17)}<div><strong>${posMode === "phone" ? "Phone order" : model.configured ? "Card reader ready" : "Card reader not connected"}</strong><span>${escapeHtml(posMode === "phone" ? phoneNotice : connection)}</span></div></div><div class="accounting-tabs"><button class="tab ${posMode === "reader" ? "active" : ""}" type="button" data-pos-mode="reader">Card reader</button><button class="tab ${posMode === "phone" ? "active" : ""}" type="button" data-pos-mode="phone">Phone order</button></div>${counter}<section class="pos-writeup"><h2>Technician write-up</h2><p>The recovery note uses the customer and vehicle on the selected work order.</p><pre id="pos-writeup">${escapeHtml(writeup.ready ? writeup.text : "Select a work order that has both a customer name and a vehicle. Those details are written into the note. They are not filled in from memory.")}</pre><button class="secondary" type="button" id="pos-save-writeup" ${writeup.ready ? "" : "disabled"}>${icon("save", 14)} Save on work order</button></section></section>`);
 }
-function canManageShopAi() { return ["admin", "owner", "super_admin"].includes(currentUser()?.role || "") }
-
 function canManagePhoneCredentials() { return ["admin", "owner", "office", "super_admin"].includes(currentUser()?.role || "") }
 
 function twilioCredentialsStatusLabel() {
@@ -5431,7 +5429,7 @@ render = function () {
 
 // --- Shop AI provider settings (optional bring-your-own provider key) ---
 let shopAiSettings = { loaded: false, loading: false };
-function canManageShopAi() { return ["admin", "owner"].includes(currentUser()?.role || "") }
+function canManageShopAi() { return ["admin", "owner", "super_admin"].includes(currentUser()?.role || "") }
 async function loadShopAiSettings(force = false) {
   if (shopAiSettings.loading || (shopAiSettings.loaded && !force)) return;
   shopAiSettings = { ...shopAiSettings, loading: true };
