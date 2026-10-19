@@ -1,16 +1,29 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, isAbsolute, join } from 'node:path';
 
 function parseMajorVersion(output) {
   const match = output.match(/version\s+"(\d+)(?:[._]\d+)?/i);
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
-const result = spawnSync('java', ['-version'], {
-  encoding: 'utf8'
-});
+// Gradle builds with JAVA_HOME when it is set, so check that JDK first.
+function findJava() {
+  const executable = process.platform === 'win32' ? 'java.exe' : 'java';
+  const dirs = [
+    process.env.JAVA_HOME ? join(process.env.JAVA_HOME, 'bin') : '',
+    ...String(process.env.PATH || '').split(delimiter),
+  ].filter((dir) => dir && isAbsolute(dir));
+  return dirs.map((dir) => join(dir, executable)).find((candidate) => existsSync(candidate)) || null;
+}
+
+const javaPath = findJava();
+const result = javaPath
+  ? spawnSync(javaPath, ['-version'], { encoding: 'utf8' })
+  : { error: new Error('java not found') };
 
 if (result.error) {
-  console.error('Java is required but was not found on PATH.');
+  console.error('Java is required but was not found in JAVA_HOME or on PATH.');
   console.error('Install Temurin/OpenJDK 21+ and set JAVA_HOME before running Android builds.');
   process.exit(1);
 }
