@@ -55,6 +55,7 @@ import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   LIVE_DIAGNOSTICS_PLANS,
+  PUBLIC_TRIAL_DAYS,
   claimDecision,
   hasPlanCapability,
   isFoundingPlan,
@@ -64,14 +65,24 @@ import {
 } from './plans.mjs';
 import {
   calculateVoiceCost,
+  extractStructuredShopForm,
   isAiEnabled,
   readAudioWithinLimit,
   recordAiUsage,
   runAnthropicTurn,
+  synthesizeGeminiSpeech,
   transcribeDeepgramAudio,
   usageCostsForResult,
 } from './ai.mjs';
 import { handleShopAiSettings } from './shop-ai.mjs';
+import {
+  handleGrokClientSecret,
+  handleGrokToolCall,
+  handleGrokVoiceSettings,
+  handleTwilioVoiceIncoming,
+  resolveGrokApiKey,
+  verifyGrokStreamToken,
+} from './grok-voice.mjs';
 import { AiChatSession } from './chat-session.mjs';
 import { AiVoiceSession } from './voice-session.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
@@ -108,6 +119,7 @@ const GOOGLE_NONCE_COOKIE = '__Host-shopcrank_google_nonce';
 const GOOGLE_VERIFIER_COOKIE = '__Host-shopcrank_google_verifier';
 const GOOGLE_RETURN_COOKIE = '__Host-shopcrank_google_return';
 const GOOGLE_DESKTOP_COOKIE = '__Host-shopcrank_google_desktop';
+const GOOGLE_ORIGIN_COOKIE = '__Host-shopcrank_google_origin';
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
@@ -1379,8 +1391,8 @@ async function runAssistantSessionTurn(env, context, body, message) {
 
 export async function handleDiagnosticAnalysis(request, env, context, analytics) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
-  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
-  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'Shop Crank AI chat sessions are not configured');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'ShopCrank AI is not enabled');
+  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'ShopCrank AI chat sessions are not configured');
   const body = await requestJson(request);
   const orderId = String(body.orderId || '').trim().slice(0, 80);
   const order = orderId ? await getEntity(env, context.shopId, 'orders', orderId) : null;
@@ -1432,6 +1444,28 @@ async function handleVoiceSession(request, env, context) {
   return stub.fetch(new Request(request, { headers }));
 }
 
+async function handleTwilioVoiceStream(request, env, shopId) {
+  if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+    throw new HttpError(426, 'A WebSocket upgrade is required');
+  }
+  if (!shopId) throw new HttpError(400, 'Shop ID is required');
+  const token = new URL(request.url).searchParams.get('token') || '';
+  const verified = await verifyGrokStreamToken(env, token, shopId);
+  if (!verified) throw new HttpError(401, 'Invalid or expired Twilio stream token');
+  if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI sessions are not configured');
+  const { apiKey } = await resolveGrokApiKey(env, shopId, getIntegrationSecret);
+  if (!apiKey) throw new HttpError(503, 'Grok Voice is not configured for this shop');
+  const id = env.AI_VOICE_SESSIONS.newUniqueId();
+  const stub = env.AI_VOICE_SESSIONS.get(id);
+  const headers = new Headers(request.headers);
+  headers.set('X-MechPro-Voice-Mode', 'twilio-grok');
+  headers.set('X-MechPro-Shop-Id', shopId);
+  headers.set('X-MechPro-Caller-Phone', verified.caller || '');
+  headers.set('X-MechPro-Call-Sid', verified.callSid || '');
+  headers.set('X-MechPro-Xai-Key', apiKey);
+  return stub.fetch(new Request(request, { headers }));
+}
+
 async function handleVoiceTranscription(request, env, context) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
@@ -1456,6 +1490,73 @@ async function handleVoiceTranscription(request, env, context) {
     metadata: { source: 'transcription' },
   });
   return json({ transcript: result.transcript, model: result.model });
+}
+
+async function handleVoiceTts(request, env, context) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+  await enforceAiRateLimit(env, context);
+  const body = await requestJson(request);
+  const result = await synthesizeGeminiSpeech(env, {
+    shopId: context.shopId,
+    text: body.text || body.input || '',
+    turns: Array.isArray(body.turns) ? body.turns : null,
+    voice: body.voice,
+    style: body.style,
+    speakers: Array.isArray(body.speakers) ? body.speakers : null,
+    model: body.model,
+    mimeType: body.mimeType || body.mime_type || 'audio/wav',
+    sampleRate: body.sampleRate || body.sample_rate || 24000,
+  });
+  await recordAiUsage(env, {
+    shopId: context.shopId,
+    userId: context.userId,
+    channel: 'voice',
+    provider: 'gemini',
+    model: result.model,
+    metadata: {
+      source: 'tts',
+      voice: result.voice,
+      ...(result.interactionId ? { interactionId: result.interactionId } : {}),
+    },
+  });
+  return json(result);
+}
+
+async function handleAiAutofill(request, env, context, analytics) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+  await enforceAiRateLimit(env, context);
+  const body = await requestJson(request);
+  const result = await extractStructuredShopForm(env, {
+    shopId: context.shopId,
+    formType: body.formType || body.form_type || 'diagnostic_3c',
+    notes: body.notes || body.text || body.input || '',
+    images: Array.isArray(body.images) ? body.images : [],
+    audio: body.audio || null,
+    vehicleContext: body.vehicleContext || body.vehicle || null,
+  });
+  const costs = usageCostsForResult(env, result);
+  await recordAiUsage(env, {
+    shopId: context.shopId,
+    userId: context.userId,
+    channel: 'text',
+    provider: result.provider,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    ...costs,
+    metadata: {
+      source: 'autofill',
+      formType: result.formType,
+      keySource: result.keySource,
+    },
+  });
+  captureForContext(analytics, context, 'ai_form_autofilled', {
+    form_type: result.formType,
+    model: result.model,
+  });
+  return json(result);
 }
 
 async function saveIntegrationSecret(env, shopId, name, value) {
@@ -2260,7 +2361,91 @@ async function handleAdmin(request, env, context, segments, analytics) {
   throw new HttpError(405, 'Method not allowed');
 }
 
-async function ensureSaasUser(env, email, name) {
+function normalizeSignupIntent({ planId, shopName, ownerName, email, name } = {}) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const owner = String(ownerName || name || normalizedEmail.split('@')[0] || 'Owner').trim().slice(0, 120) || 'Owner';
+  const shop = String(shopName || `${owner}'s shop`).trim().slice(0, 120) || `${owner}'s shop`;
+  // Public signup only. Founding plans attach via applyPendingFoundingClaim after invite claim.
+  const plan = isPublicPlan(planId) ? String(planId).trim() : 'shop';
+  return { ownerName: owner, shopName: shop, planId: plan };
+}
+
+/** Pack public signup fields into return_to so magic-link works before D1 columns exist. */
+function embedSignupIntent(returnTo, { planId, shopName, ownerName } = {}) {
+  const path = safeReturnPath(returnTo);
+  if (!planId && !shopName && !ownerName) return path;
+  try {
+    const parsed = new URL(path, 'https://shopcrank.invalid');
+    if (planId && isPublicPlan(planId)) parsed.searchParams.set('trialPlan', planId);
+    if (shopName) parsed.searchParams.set('trialShop', shopName);
+    if (ownerName) parsed.searchParams.set('trialOwner', ownerName);
+    return safeReturnPath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+  } catch {
+    return path;
+  }
+}
+
+function extractSignupIntent(returnTo, fallback = {}) {
+  const intent = {
+    planId: fallback.planId || null,
+    shopName: fallback.shopName || null,
+    ownerName: fallback.ownerName || null,
+  };
+  let cleanPath = safeReturnPath(returnTo);
+  try {
+    const parsed = new URL(cleanPath, 'https://shopcrank.invalid');
+    const planId = parsed.searchParams.get('trialPlan');
+    const shopName = parsed.searchParams.get('trialShop');
+    const ownerName = parsed.searchParams.get('trialOwner');
+    if (planId && isPublicPlan(planId)) intent.planId = planId;
+    if (shopName) intent.shopName = shopName;
+    if (ownerName) intent.ownerName = ownerName;
+    parsed.searchParams.delete('trialPlan');
+    parsed.searchParams.delete('trialShop');
+    parsed.searchParams.delete('trialOwner');
+    cleanPath = safeReturnPath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+  } catch {
+    // keep fallbacks
+  }
+  return { ...intent, returnTo: cleanPath };
+}
+
+async function createPublicTrialSubscription(env, { shopId, email, ownerName, shopName, planId }) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const trialEnds = new Date(now.getTime() + PUBLIC_TRIAL_DAYS * 86400000).toISOString();
+  const plan = isPublicPlan(planId) ? planId : 'shop';
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO accounts (
+        shop_id, shop_name, owner_email, owner_name,
+        subscription_status, subscription_expires_at, created_at, updated_at, created_by
+      )
+      VALUES (?, ?, ?, ?, 'trialing', ?, ?, ?, ?)
+      ON CONFLICT(shop_id) DO UPDATE SET
+        subscription_status = COALESCE(accounts.subscription_status, 'trialing'),
+        subscription_expires_at = COALESCE(accounts.subscription_expires_at, excluded.subscription_expires_at),
+        updated_at = excluded.updated_at
+    `).bind(shopId, shopName, email, ownerName, trialEnds, nowIso, nowIso, email),
+    env.DB.prepare(`
+      INSERT INTO subscriptions (shop_id, plan_id, status, current_period_end, updated_at)
+      VALUES (?, ?, 'trialing', ?, ?)
+      ON CONFLICT(shop_id) DO UPDATE SET
+        plan_id = excluded.plan_id,
+        status = excluded.status,
+        current_period_end = excluded.current_period_end,
+        updated_at = excluded.updated_at
+      WHERE subscriptions.plan_id IS NULL
+         OR trim(subscriptions.plan_id) = ''
+    `).bind(shopId, plan, trialEnds, nowIso),
+    env.DB.prepare(`
+      UPDATE shops SET billing_status = 'trialing', name = ?, updated_at = ? WHERE id = ?
+    `).bind(shopName, nowIso, shopId),
+  ]);
+  return { planId: plan, trialEnds };
+}
+
+async function ensureSaasUser(env, email, name, signup = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) throw new HttpError(400, 'A valid email is required');
   const existing = await env.DB.prepare(
@@ -2278,15 +2463,19 @@ async function ensureSaasUser(env, email, name) {
     // unverified, so applying here would let a stolen invite rewrite a live plan.
     return existing;
   }
+  const intent = normalizeSignupIntent({
+    ...signup,
+    email: normalized,
+    name,
+  });
   const userId = crypto.randomUUID();
   const now = new Date().toISOString();
   const shopId = `shop-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
-  const ownerName = String(name || normalized.split('@')[0] || 'Owner').trim();
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO shops (id, name, slug, timezone, billing_status, created_at, updated_at)
       VALUES (?, ?, ?, 'America/Chicago', 'trialing', ?, ?)
-    `).bind(shopId, `${ownerName}'s shop`, shopId.toLowerCase(), now, now),
+    `).bind(shopId, intent.shopName, shopId.toLowerCase(), now, now),
     env.DB.prepare(`
       INSERT INTO shop_memberships (shop_id, user_id, role, status, created_at, updated_at)
       VALUES (?, ?, 'owner', 'active', ?, ?)
@@ -2294,15 +2483,24 @@ async function ensureSaasUser(env, email, name) {
     env.DB.prepare(`
       INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
       VALUES (?, ?, ?, 'admin', ?, 1, ?, ?)
-    `).bind(userId, normalized, shopId, ownerName, now, now),
+    `).bind(userId, normalized, shopId, intent.ownerName, now, now),
   ]);
-  await applyPendingFoundingClaim(env, {
+  const founding = await applyPendingFoundingClaim(env, {
     email: normalized,
     shopId,
-    ownerName,
-    shopName: `${ownerName}'s shop`,
+    ownerName: intent.ownerName,
+    shopName: intent.shopName,
   });
-  return { id: userId, email: normalized, shop_id: shopId, role: 'admin', name: ownerName, enabled: 1 };
+  if (!founding) {
+    await createPublicTrialSubscription(env, {
+      shopId,
+      email: normalized,
+      ownerName: intent.ownerName,
+      shopName: intent.shopName,
+      planId: intent.planId,
+    });
+  }
+  return { id: userId, email: normalized, shop_id: shopId, role: 'admin', name: intent.ownerName, enabled: 1 };
 }
 
 function requireGoogleConfig(env) {
@@ -2346,6 +2544,38 @@ function desktopHandoffPage(token) {
 </html>`;
 }
 
+const GOOGLE_AUTH_COOKIES = Object.freeze([
+  GOOGLE_STATE_COOKIE,
+  GOOGLE_NONCE_COOKIE,
+  GOOGLE_VERIFIER_COOKIE,
+  GOOGLE_RETURN_COOKIE,
+  GOOGLE_DESKTOP_COOKIE,
+  GOOGLE_ORIGIN_COOKIE,
+]);
+
+function allowedWebOrigins(env) {
+  const configured = String(env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return new Set([CANONICAL_ORIGIN, ...configured]);
+}
+
+function safeGoogleTargetOrigin(rawOrigin, fallbackOrigin, env) {
+  const candidate = String(rawOrigin || '').trim();
+  if (!candidate) return fallbackOrigin;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return fallbackOrigin;
+    if (parsed.origin === fallbackOrigin || allowedWebOrigins(env).has(parsed.origin)) {
+      return parsed.origin;
+    }
+  } catch {
+    return fallbackOrigin;
+  }
+  return fallbackOrigin;
+}
+
 function googleAuthOrigin(request, env) {
   const configured = String(env.GOOGLE_REDIRECT_ORIGIN || '').trim();
   if (configured) return new URL(configured).origin;
@@ -2368,8 +2598,17 @@ async function handleGoogleSignIn(request, env) {
   const returnTo = safeReturnPath(requestUrl.searchParams.get('returnTo') || '/');
   const desktop = requestUrl.searchParams.get('desktop') === '1';
   const origin = googleAuthOrigin(request, env);
+  const callerOrigin = requestUrl.hostname === APEX_HOST ? CANONICAL_ORIGIN : requestUrl.origin;
+  const targetOrigin = safeGoogleTargetOrigin(
+    requestUrl.searchParams.get('origin') || callerOrigin,
+    origin,
+    env,
+  );
   if (requestUrl.origin !== origin) {
     const next = new URL(`${requestUrl.pathname}${requestUrl.search}`, origin);
+    if (targetOrigin !== origin && !next.searchParams.has('origin')) {
+      next.searchParams.set('origin', targetOrigin);
+    }
     return new Response(null, {
       status: 302,
       headers: { Location: next.toString(), 'Cache-Control': 'no-store' },
@@ -2393,6 +2632,7 @@ async function handleGoogleSignIn(request, env) {
   headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_VERIFIER_COOKIE, verifier));
   headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_RETURN_COOKIE, returnTo));
   headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_DESKTOP_COOKIE, desktop ? '1' : '0'));
+  headers.append('Set-Cookie', temporaryCookieHeader(GOOGLE_ORIGIN_COOKIE, targetOrigin));
   return new Response(null, { status: 302, headers });
 }
 
@@ -2435,8 +2675,10 @@ async function handleGoogleCallback(request, env) {
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
   }
+  const returnTo = safeReturnPath(getCookieValue(request, GOOGLE_RETURN_COOKIE), '/');
+  const targetOrigin = safeGoogleTargetOrigin(getCookieValue(request, GOOGLE_ORIGIN_COOKIE), url.origin, env);
   const isDesktop = getCookieValue(request, GOOGLE_DESKTOP_COOKIE) === '1';
-  if (isDesktop) {
+  if (isDesktop || targetOrigin !== url.origin) {
     const handoffToken = crypto.randomUUID().replaceAll('-', '');
     const handoffHash = await hashValue(handoffToken);
     const now = new Date().toISOString();
@@ -2454,20 +2696,33 @@ async function handleGoogleCallback(request, env) {
       crypto.randomUUID(),
       email,
       handoffHash,
-      safeReturnPath(getCookieValue(request, GOOGLE_RETURN_COOKIE), '/'),
+      returnTo,
       new Date(Date.now() + 2 * 60 * 1000).toISOString(),
       now,
     ).run();
+    if (isDesktop) {
+      const headers = new Headers({
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      });
+      for (const name of GOOGLE_AUTH_COOKIES) {
+        headers.append('Set-Cookie', clearCookieHeader(name));
+      }
+      return new Response(desktopHandoffPage(handoffToken), { status: 200, headers });
+    }
+    const handoffUrl = new URL('/api/auth/callback', targetOrigin);
+    handoffUrl.searchParams.set('token', handoffToken);
     const headers = new Headers({
-      'Content-Type': 'text/html; charset=utf-8',
+      Location: handoffUrl.toString(),
       'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
     });
-    for (const name of [GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE, GOOGLE_VERIFIER_COOKIE, GOOGLE_RETURN_COOKIE, GOOGLE_DESKTOP_COOKIE]) {
+    for (const name of GOOGLE_AUTH_COOKIES) {
       headers.append('Set-Cookie', clearCookieHeader(name));
     }
-    return new Response(desktopHandoffPage(handoffToken), { status: 200, headers });
+    return new Response(null, { status: 302, headers });
   }
   const sessionToken = crypto.randomUUID().replaceAll('-', '');
   const sessionId = crypto.randomUUID();
@@ -2487,11 +2742,11 @@ async function handleGoogleCallback(request, env) {
     actor_role: user.role,
   });
   const headers = new Headers({
-    Location: new URL(safeReturnPath(getCookieValue(request, GOOGLE_RETURN_COOKIE), '/'), url.origin).toString(),
+    Location: new URL(returnTo, url.origin).toString(),
     'Cache-Control': 'no-store',
   });
   headers.append('Set-Cookie', sessionCookieHeader(sessionToken));
-  for (const name of [GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE, GOOGLE_VERIFIER_COOKIE, GOOGLE_RETURN_COOKIE, GOOGLE_DESKTOP_COOKIE]) {
+  for (const name of GOOGLE_AUTH_COOKIES) {
     headers.append('Set-Cookie', clearCookieHeader(name));
   }
   return new Response(null, { status: 302, headers });
@@ -2526,6 +2781,16 @@ async function handleMagicLink(request, env) {
   const email = String(body.email || '').trim().toLowerCase();
   const returnTo = safeReturnPath(body.returnTo || body.return_to || body.redirectTo);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email address');
+  const requestedPlan = String(body.plan || body.planId || body.plan_id || '').trim();
+  // Only persist public catalog plans. Founding plans attach after /api/founding/claim.
+  const signupPlanId = isPublicPlan(requestedPlan) ? requestedPlan : null;
+  const signupShopName = String(body.shopName || body.shop_name || '').trim().slice(0, 120) || null;
+  const signupOwnerName = String(body.ownerName || body.owner_name || '').trim().slice(0, 120) || null;
+  const storedReturnTo = embedSignupIntent(returnTo, {
+    planId: signupPlanId,
+    shopName: signupShopName,
+    ownerName: signupOwnerName,
+  });
   const exposeLoginLink = env.AUTH_EXPOSE_LOGIN_LINK === '1';
   const sendDirectly = canSendLoginEmail(env);
   if (!env.AUTH_EMAIL_WEBHOOK && !exposeLoginLink && !sendDirectly) {
@@ -2557,7 +2822,7 @@ async function handleMagicLink(request, env) {
       used_at = NULL,
       created_at = excluded.created_at,
       auth_method = excluded.auth_method
-  `).bind(crypto.randomUUID(), email, tokenHash, returnTo, expiresAt, now).run();
+  `).bind(crypto.randomUUID(), email, tokenHash, storedReturnTo, expiresAt, now).run();
   const loginUrl = new URL('/api/auth/callback', new URL(request.url).origin);
   loginUrl.searchParams.set('token', token);
   try {
@@ -2603,7 +2868,12 @@ async function handleAuthCallback(request, env) {
     throw new HttpError(401, 'The sign-in link has expired');
   }
   const email = String(loginToken.email || '').trim().toLowerCase();
-  const user = await ensureSaasUser(env, email, email.split('@')[0]);
+  const signup = extractSignupIntent(loginToken.return_to);
+  const user = await ensureSaasUser(env, email, signup.ownerName || email.split('@')[0], {
+    planId: signup.planId,
+    shopName: signup.shopName,
+    ownerName: signup.ownerName,
+  });
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
   }
@@ -2632,7 +2902,7 @@ async function handleAuthCallback(request, env) {
     auth_method: loginToken.auth_method || 'magic_link',
     actor_role: user.role,
   });
-  const redirect = new URL(safeReturnPath(loginToken.return_to), url.origin);
+  const redirect = new URL(signup.returnTo, url.origin);
   return new Response(null, {
     status: 302,
     headers: {
@@ -3034,6 +3304,14 @@ async function route(request, env, analytics) {
   if (segments[0] === 'messaging' && segments[1] === 'twilio' && segments[2] === 'webhook') {
     return handleTwilioWebhook(request, env, decodeURIComponent(segments[3] || ''));
   }
+  if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'incoming') {
+    return handleTwilioVoiceIncoming(request, env, decodeURIComponent(segments[3] || ''), {
+      getSecret: getIntegrationSecret,
+    });
+  }
+  if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'stream') {
+    return handleTwilioVoiceStream(request, env, decodeURIComponent(segments[3] || ''));
+  }
   if (segments[0] === 'quickbooks' && segments[1] === 'callback') {
     return handleQuickBooksCallback(request, env, {
       getSecret: getIntegrationSecret,
@@ -3121,7 +3399,28 @@ async function route(request, env, analytics) {
   if (path === '/settings/ai') return handleShopAiSettings(request, env, context, { recordAudit: recordDiagnosticAudit });
   if (path === '/ai/assistant') return handleAssistant(request, env, context, analytics);
   if (path === '/ai/transcribe') return handleVoiceTranscription(request, env, context);
+  if (path === '/ai/tts') return handleVoiceTts(request, env, context);
+  if (path === '/ai/autofill') return handleAiAutofill(request, env, context, analytics);
   if (path === '/ai/voice/session') return handleVoiceSession(request, env, context);
+  if (path === '/ai/voice/client-secret') {
+    requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+    await enforceAiRateLimit(env, context);
+    return handleGrokClientSecret(request, env, context, { getSecret: getIntegrationSecret });
+  }
+  if (path === '/ai/voice/tool') {
+    requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+    await enforceAiRateLimit(env, context);
+    return handleGrokToolCall(request, env, context);
+  }
+  if (path === '/voice/grok/configure' || path === '/voice/grok/status') {
+    return handleGrokVoiceSettings(request, env, context, {
+      getSecret: getIntegrationSecret,
+      saveSecret: saveIntegrationSecret,
+      deleteSecret: deleteIntegrationSecret,
+      putEntity,
+      listEntities,
+    });
+  }
   if (path === '/agentphone/configure') return handleAgentPhoneConfigure(request, env, context, analytics);
   if (segments[0] === 'files') return handleFiles(request, env, context, segments, analytics);
   if (path === '/document-links') return createCustomerDocumentLink(request, env, context);

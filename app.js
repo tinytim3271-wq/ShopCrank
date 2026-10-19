@@ -584,7 +584,7 @@
   function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
     const method = String(options.method || "GET").toUpperCase();
     const isEntityMutation = path.startsWith("/entities/") && ["POST", "PUT", "DELETE"].includes(method);
-    const containsSensitiveEndpoint = path === "/agentphone/configure";
+    const containsSensitiveEndpoint = path === "/agentphone/configure" || path === "/voice/grok/configure";
     const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !containsSensitiveEndpoint;
     if (!queueable) return { path, options, queueable: false };
     let body = null;
@@ -2462,7 +2462,7 @@
     const selectedProvider = activeProvider === "anthropic" ? "anthropic" : "gemini";
     const selectedConsoleUrl = providerConsoleUrl(selectedProvider);
     const providerOptions = `<label class="full">AI provider<select name="provider" required><option value="anthropic"${selectedProvider === "anthropic" ? " selected" : ""}>Anthropic Claude</option><option value="gemini"${selectedProvider === "gemini" ? " selected" : ""}>Google Gemini</option></select></label>`;
-    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off">${providerOptions}<label class="full">API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "AIza..." : "sk-ant-..."}" required/></label><label class="full">Model (optional)<input name="model" type="text" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "gemini-2.5-flash" : "claude-sonnet-5"}"/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">ShopCrank tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
+    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off">${providerOptions}<label class="full">API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "AIza..." : "sk-ant-..."}" required/></label><label class="full">Model (optional)<input name="model" type="text" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "gemini-3.8-flash" : "claude-sonnet-5"}"/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">ShopCrank tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
     return `<section class="settings-panel shop-ai-settings" id="shop-ai-settings"><div class="statement-head"><div><div class="eyebrow">AI</div><h2>ShopCrank AI provider</h2><p>${escapeHtml4(SHOP_AI_PROMPT)}</p><p><a href="${status.consoleUrl || selectedConsoleUrl}" target="_blank" rel="noopener noreferrer">Get an API key for ${selectedProvider === "gemini" ? "Google Gemini at aistudio.google.com" : "Anthropic at console.anthropic.com"}</a></p></div>${icon2("sparkles", 20)}</div>${statusHtml}${errorHtml}${unavailableHtml}${form}</section>`;
   }
   var ANTHROPIC_CONSOLE_URL, GEMINI_CONSOLE_URL, SHOP_AI_PROMPT, MASK;
@@ -5442,9 +5442,13 @@ button{margin-top:12px;padding:8px 14px}
         battery: "",
         codes: "",
         notes: "",
+        cause: "",
+        correction: "",
+        severity: "",
         analysis: null
       },
       estimate: { lines: [], diagnosticCharge: 0, approval: "pending" },
+      aiFilledFields: {},
       assignments: []
     };
   }
@@ -5487,6 +5491,92 @@ button{margin-top:12px;padding:8px 14px}
     fill("engine", engine);
     if (decoded.vin) vehicle.vin = String(decoded.vin).toUpperCase();
     return { ...draft, vehicle };
+  }
+  function applyAiAutofill(draft, formType, data = {}) {
+    const next = structuredClone(draft || emptyIntakeDraft());
+    next.aiFilledFields = { ...next.aiFilledFields || {} };
+    const markFilled = (path, value2) => {
+      const clean2 = String(value2 ?? "").trim();
+      if (!clean2) return false;
+      next.aiFilledFields[path] = true;
+      return true;
+    };
+    if (formType === "vehicle_intake") {
+      const mapping = [
+        ["vin", data.vin ? String(data.vin).toUpperCase() : ""],
+        ["plate", data.plate ? String(data.plate).toUpperCase() : ""],
+        ["plateState", data.plate_state || data.plateState || ""],
+        ["year", data.year],
+        ["make", data.make],
+        ["model", data.model],
+        ["trim", data.trim],
+        ["engine", data.engine],
+        ["mileage", data.mileage],
+        ["color", data.color]
+      ];
+      for (const [key, value2] of mapping) {
+        if (markFilled(`vehicle.${key}`, value2)) {
+          next.vehicle[key] = String(value2).trim();
+        }
+      }
+      return next;
+    }
+    if (formType === "diagnostic_3c") {
+      if (markFilled("concern.description", data.complaint)) {
+        next.concern.description = String(data.complaint).trim();
+      }
+      if (markFilled("diagnosis.cause", data.cause)) {
+        next.diagnosis.cause = String(data.cause).trim();
+      }
+      if (markFilled("diagnosis.correction", data.correction)) {
+        next.diagnosis.correction = String(data.correction).trim();
+      }
+      if (markFilled("diagnosis.severity", data.severity)) {
+        next.diagnosis.severity = String(data.severity).trim();
+      }
+      if (Array.isArray(data.dtc_codes) && data.dtc_codes.length) {
+        const codes = data.dtc_codes.join(", ");
+        if (markFilled("diagnosis.codes", codes)) {
+          next.diagnosis.codes = codes;
+        }
+      }
+    }
+    if (formType === "dvi_estimate") {
+      if (Array.isArray(data.checklist_items) && data.checklist_items.length) {
+        const formatted = data.checklist_items.map((item) => `[${item.status || "YELLOW"}] ${item.component}: ${item.notes || ""}${item.measurement ? ` (${item.measurement})` : ""}`).join("\n");
+        if (markFilled("diagnosis.visual", formatted)) {
+          next.diagnosis.visual = formatted;
+        }
+      }
+    }
+    if (Array.isArray(data.suggested_line_items) && data.suggested_line_items.length) {
+      const mappedLines = data.suggested_line_items.map((item) => {
+        const rawType = String(item.item_type || "LABOR").toUpperCase();
+        const isPart = rawType === "PART";
+        return {
+          type: isPart ? "part" : "labor",
+          description: String(item.description || "").trim(),
+          quantity: isPart ? Math.max(1, Number(item.quantity) || 1) : Math.max(0.1, Number(item.estimated_hours || item.quantity) || 1),
+          unitPrice: 0,
+          partNumber: item.part_number || null,
+          source: "Filled by AI",
+          aiFilled: true
+        };
+      }).filter((line) => line.description);
+      if (mappedLines.length) {
+        next.estimate.lines = mappedLines;
+        next.aiFilledFields["estimate.lines"] = true;
+      }
+    }
+    return next;
+  }
+  function acceptAllAiFields(draft) {
+    const next = structuredClone(draft || emptyIntakeDraft());
+    next.aiFilledFields = {};
+    if (Array.isArray(next.estimate?.lines)) {
+      next.estimate.lines = next.estimate.lines.map((line) => ({ ...line, aiFilled: false }));
+    }
+    return next;
   }
   function searchLaborGuide(query2 = "", services = CANNED_MENU) {
     const needle = String(query2 || "").trim().toLowerCase();
@@ -5618,8 +5708,15 @@ button{margin-top:12px;padding:8px 14px}
     if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
     return { ok: problems.length === 0, problems };
   }
-  function field(name, label2, value2, { type = "text", required = false, full = false } = {}) {
-    return `<label class="${full ? "full" : ""}">${escapeHtml3(label2)}${required ? " *" : ""}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
+  function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
+    const badge2 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
+    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge2}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
+  }
+  function aiAcceptBanner(draft, prefix) {
+    const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
+    if (!filledKeys.length) return "";
+    return `<div class="ai-review-banner" role="status"><span><strong>Filled by AI</strong> \u2014 Review highlighted fields before saving.</span><button type="button" class="secondary" id="intake-ai-accept-all">Accept All</button></div>`;
   }
   function progress(step) {
     return `<ol class="intake-progress">${INTAKE_STEPS.map((item, index) => `<li class="${index === step ? "current" : ""} ${index < step ? "done" : ""}"><span>${index + 1}</span>${escapeHtml3(item.label)}</li>`).join("")}</ol>`;
@@ -5638,8 +5735,9 @@ button{margin-top:12px;padding:8px 14px}
   }
   function vehicleStep(draft) {
     const vehicle = draft.vehicle;
-    return `<div class="form-grid">${field("vin", "VIN", vehicle.vin, { full: true })}${field("plate", "License plate", vehicle.plate)}${field("plateState", "Plate state", vehicle.plateState)}${field("year", "Year", vehicle.year)}${field("make", "Make", vehicle.make)}${field("model", "Model", vehicle.model)}${field("trim", "Trim", vehicle.trim)}${field("engine", "Engine", vehicle.engine)}${field("transmission", "Transmission", vehicle.transmission)}${field("mileage", "Mileage", vehicle.mileage)}${field("color", "Color", vehicle.color)}</div>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button></div>
+    const ai = draft.aiFilledFields || {};
+    return `${aiAcceptBanner(draft, "vehicle.")}<div class="form-grid">${field("vin", "VIN", vehicle.vin, { full: true, aiFilled: Boolean(ai["vehicle.vin"]) })}${field("plate", "License plate", vehicle.plate, { aiFilled: Boolean(ai["vehicle.plate"]) })}${field("plateState", "Plate state", vehicle.plateState, { aiFilled: Boolean(ai["vehicle.plateState"]) })}${field("year", "Year", vehicle.year, { aiFilled: Boolean(ai["vehicle.year"]) })}${field("make", "Make", vehicle.make, { aiFilled: Boolean(ai["vehicle.make"]) })}${field("model", "Model", vehicle.model, { aiFilled: Boolean(ai["vehicle.model"]) })}${field("trim", "Trim", vehicle.trim, { aiFilled: Boolean(ai["vehicle.trim"]) })}${field("engine", "Engine", vehicle.engine, { aiFilled: Boolean(ai["vehicle.engine"]) })}${field("transmission", "Transmission", vehicle.transmission, { aiFilled: Boolean(ai["vehicle.transmission"]) })}${field("mileage", "Mileage", vehicle.mileage, { aiFilled: Boolean(ai["vehicle.mileage"]) })}${field("color", "Color", vehicle.color, { aiFilled: Boolean(ai["vehicle.color"]) })}</div>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button><label class="secondary">Scan VIN / Odometer photo (AI)<input id="intake-autofill-vehicle-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
 <p class="form-help" id="intake-vehicle-note">Plate lookup stays off until a DMV, Carfax, or registration provider is connected. VIN decode uses the shop vehicle decode service.</p>`;
   }
   function photoStep(draft) {
@@ -5658,16 +5756,19 @@ button{margin-top:12px;padding:8px 14px}
   }
   function concernStep(draft) {
     const concern = draft.concern;
-    return `<label class="full">Describe concern *<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
+    const ai = draft.aiFilledFields || {};
+    const badge2 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge2}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
 <div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
   }
   function diagnosisStep(draft) {
     const diagnosis = draft.diagnosis;
+    const ai = draft.aiFilledFields || {};
     const analysis = diagnosis.analysis;
     const causes = analysis?.causes?.map((cause) => `<li><strong>${escapeHtml3(cause.name || cause.cause || "Check")}</strong><p>${escapeHtml3(cause.detail || cause.explanation || "")}</p></li>`).join("") || "";
-    return `<div class="form-grid">${field("visual", "Visual inspection", diagnosis.visual, { full: true })}${field("roadTest", "Road test", diagnosis.roadTest)}${field("fluids", "Fluid levels", diagnosis.fluids)}${field("battery", "Battery test", diagnosis.battery)}${field("codes", "DTC codes", diagnosis.codes, { full: true })}</div>
+    return `${aiAcceptBanner(draft, "diagnosis.")}<div class="form-grid">${field("visual", "Visual inspection", diagnosis.visual, { full: true, aiFilled: Boolean(ai["diagnosis.visual"]) })}${field("roadTest", "Road test", diagnosis.roadTest)}${field("fluids", "Fluid levels", diagnosis.fluids)}${field("battery", "Battery test", diagnosis.battery)}${field("codes", "DTC codes", diagnosis.codes, { full: true, aiFilled: Boolean(ai["diagnosis.codes"]) })}${field("cause", "Root cause (3 C's)", diagnosis.cause, { full: true, aiFilled: Boolean(ai["diagnosis.cause"]) })}${field("correction", "Recommended correction (3 C's)", diagnosis.correction, { full: true, aiFilled: Boolean(ai["diagnosis.correction"]) })}</div>
 <label class="full">Technician notes<textarea name="notes">${escapeHtml3(diagnosis.notes)}</textarea></label>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button></div>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
 ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || "")}</span></section><ul class="intake-causes">${causes}</ul>` : ""}`;
   }
   function estimateStep(draft, profile) {
@@ -5741,7 +5842,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       });
     }
     if (step === "diagnosis") {
-      ["visual", "roadTest", "fluids", "battery", "codes", "notes"].forEach((key) => {
+      ["visual", "roadTest", "fluids", "battery", "codes", "cause", "correction", "notes"].forEach((key) => {
         next.diagnosis[key] = String(form.querySelector(`[name="${key}"]`)?.value || data[key] || "").trim();
       });
     }
@@ -5776,7 +5877,8 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     onConvert,
     decodeVin,
     lookupPlate,
-    analyze
+    analyze,
+    autofill
   } = {}) {
     let current = structuredClone(draft || emptyIntakeDraft());
     let timer = 0;
@@ -5884,6 +5986,38 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         persist("analysis");
         paint();
       });
+      host.querySelector("#intake-ai-accept-all")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        current = acceptAllAiFields(current);
+        persist("accept-ai");
+        paint();
+      });
+      host.querySelector("#intake-autofill-3c")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        if (!autofill) return;
+        const notes = [current.concern?.description, current.diagnosis?.notes, current.diagnosis?.visual, current.diagnosis?.codes].filter(Boolean).join("\n");
+        const result = await autofill({ formType: "diagnostic_3c", notes, draft: current });
+        if (result?.data) {
+          current = applyAiAutofill(current, "diagnostic_3c", result.data);
+          persist("autofill-3c");
+          paint();
+        }
+      });
+      const bindPhotoAutofill = (selector, formType) => {
+        host.querySelector(selector)?.addEventListener("change", async (event) => {
+          const file = event.target?.files?.[0];
+          if (!file || !autofill) return;
+          if (form) current = readForm(current, form);
+          const result = await autofill({ formType, file, draft: current });
+          if (result?.data) {
+            current = applyAiAutofill(current, formType, result.data);
+            persist(`autofill-${formType}`);
+            paint();
+          }
+        });
+      };
+      bindPhotoAutofill("#intake-autofill-vehicle-photo", "vehicle_intake");
+      bindPhotoAutofill("#intake-autofill-diag-photo", "diagnostic_3c");
     }
     paint();
     return {
