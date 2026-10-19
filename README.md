@@ -284,8 +284,9 @@ npm run deploy:pages
 
 ### Production hostname (`www.shopcrank.com`)
 
-Keep Pages as the hostname owner and the Worker on `/api/*` only. Binding
-`shopcrank-api` as a custom domain for the whole hostname conflicts with Pages.
+Keep Pages as the hostname owner. Bind the Worker to `/api/*` and `/downloads/*`
+only (R2 serves the large installers). Binding `shopcrank-api` as a custom
+domain for the whole hostname conflicts with Pages.
 
 Apply the Cloudflare side from a machine (or Actions job) that already has the
 production API token:
@@ -296,8 +297,8 @@ npm run provision:shopcrank-com
 
 The script is idempotent. It puts `shopcrank.com` on the same account as
 Pages/Workers, attaches Pages `shopcrank-dispatch` as `www.shopcrank.com` (and
-the apex so `shopcrank.com/api/*` can 301), binds Worker `shopcrank-api` only to
-`www.shopcrank.com/api/*` and `shopcrank.com/api/*`, detaches whole-hostname
+the apex so `shopcrank.com/api/*` can 301), binds Worker `shopcrank-api` to
+`/api/*` and `/downloads/*` on www and apex, detaches whole-hostname
 Worker domains, enables Email Routing/Sending and `noreply@shopcrank.com`,
 creates R2 `shopcrank-files` / `shopcrank-files-preview` when the account still
 has the old MechPro bucket names, and copies GitHub-available secrets from

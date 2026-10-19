@@ -6,9 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
   // Production host is www.shopcrank.com.
   // Attach the Pages project shopcrank-dispatch as the custom domain for www.shopcrank.com
-  // (and shopcrank.com if you want the apex to reach Pages). Attach this Worker only as
-  // www.shopcrank.com/api/* and shopcrank.com/api/*. Binding the Worker to the whole
-  // hostname conflicts with Pages.
+  // (and shopcrank.com if you want the apex to reach Pages). Attach this Worker as
+  // www.shopcrank.com/api/*, shopcrank.com/api/*, and the matching /downloads/*
+  // routes so R2 installers are served. Binding the Worker to the whole hostname
+  // conflicts with Pages.
   "workers_dev": false,
   "vars": {
     // Conversational AI: a shop's own Anthropic key (Shop settings > AI) answers first,

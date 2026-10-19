@@ -4,8 +4,8 @@
  *
  * Attaches the shopcrank.com zone to the Pages/Workers account, points Pages
  * shopcrank-dispatch at www.shopcrank.com, binds Worker shopcrank-api to
- * /api/* only, enables Email Sending, creates R2 shopcrank-files if missing,
- * and copies GitHub-available secrets onto shopcrank-api.
+ * /api/* and /downloads/* (R2 installers), enables Email Sending, creates R2
+ * shopcrank-files if missing, and copies GitHub-available secrets onto shopcrank-api.
  *
  * Google OAuth redirect URIs cannot be registered with a Cloudflare token.
  */
@@ -108,7 +108,13 @@ export function desiredState() {
 }
 
 export function desiredWorkerRoutes() {
-  return [`${CANONICAL_HOST}/api/*`, `${APEX_HOST}/api/*`];
+  return [
+    `${CANONICAL_HOST}/api/*`,
+    `${APEX_HOST}/api/*`,
+    // Large installers live in R2; Pages cannot host the .exe/.zip artifacts.
+    `${CANONICAL_HOST}/downloads/*`,
+    `${APEX_HOST}/downloads/*`,
+  ];
 }
 
 export function shopcrankHosts() {
@@ -133,7 +139,7 @@ export function parseRoutePattern(pattern) {
 
 export function isDesiredApiRoute(pattern) {
   const { host, path } = parseRoutePattern(pattern);
-  return shopcrankHosts().includes(host) && path === '/api/*';
+  return shopcrankHosts().includes(host) && (path === '/api/*' || path === '/downloads/*');
 }
 
 export function isWholeHostnameRoute(pattern) {
@@ -162,6 +168,9 @@ export function routesToCreate(existing = [], desired = desiredWorkerRoutes()) {
   );
   return desired.filter((pattern) => !have.has(normalizeRoutePattern(pattern)));
 }
+
+/** @deprecated alias — desired routes now include /downloads/* as well as /api/*. */
+export const isDesiredWorkerRoute = isDesiredApiRoute;
 
 export function isAlreadyConfiguredError(status, errors = []) {
   if (status === 409) return true;
