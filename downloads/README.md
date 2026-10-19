@@ -13,13 +13,13 @@
 | `ShopCrank-Setup-*.exe` / `.zip` | **Not** in git (too large). Published by `windows-desktop.yml` to R2 and GitHub Releases |
 | `ShopCrank-Offline-Setup-*.exe` | **Not** in git. Built with `npm run build:windows:offline` and published by `windows-desktop.yml` to R2 and GitHub Releases |
 
-On `www.shopcrank.com`, the Worker serves `/downloads/*.{exe,zip,apk}` from R2 (`shopcrank-files`) before proxying other paths to Pages. The install page HTML still comes from Pages. A binary missing from R2 falls back to a non-HTML file on Pages (the committed APK); otherwise the Worker returns `404` (or `503` when R2 is not bound) instead of the website shell.
+On `www.shopcrank.com`, Pages owns the hostname and the Worker is attached only to `/api/*`. Windows installers therefore download from `/api/downloads/<file>`, which the Worker serves from R2 (`shopcrank-files`) as an attachment. It returns `404` when the file is missing from R2 and `503` when R2 is not bound, never the website shell. `public/_redirects` sends old `/downloads/ShopCrank-*Setup-*` links to the `/api/downloads/` path. The install page HTML and the committed APK still come from Pages.
 
-Installer links in `index.html` and the in-app settings page use the `package.json` version; `worker/test/download.test.mjs` fails when they drift.
+Installer links in `index.html` and the in-app settings page must use `/api/downloads/` and the `package.json` version; `worker/test/download.test.mjs` fails when they drift.
 
 GitHub Release:
 
-- https://github.com/tinytim3271-wq/cloudflare/releases/tag/desktop-v1.1.0
+- https://github.com/tinytim3271-wq/ShopCrank/releases/tag/desktop-v1.1.0 (private repository; not a public download link)
 
 Manual R2 upload:
 

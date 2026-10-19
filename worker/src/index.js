@@ -1,6 +1,6 @@
 import { PostHog } from 'posthog-node/edge';
 import coverageBundle from '../data/coverage.json' with { type: 'json' };
-import { isApiRequest, pagesProxyUrl, publicDownloadObjectKey } from './routing.mjs';
+import { isApiDownloadPath, isApiRequest, pagesProxyUrl, publicDownloadObjectKey } from './routing.mjs';
 import {
   APEX_HOST,
   APP_SESSION_COOKIE,
@@ -3623,6 +3623,13 @@ export default {
         const download = await servePublicDownload(request, env);
         if (download) return download;
         return proxyPagesRequest(request, env);
+      }
+      if (isApiDownloadPath(new URL(request.url).pathname)) {
+        if (!['GET', 'HEAD'].includes(request.method)) throw new HttpError(405, 'Method not allowed');
+        if (!env.FILES) throw new HttpError(503, 'Downloads are temporarily unavailable');
+        const download = await servePublicDownload(request, env);
+        if (download) return download;
+        throw new HttpError(404, 'This download has not been published yet');
       }
       const response = await route(request, env, analytics);
       return response.status === 101 ? response : withCors(response, request, env);
