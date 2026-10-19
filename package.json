@@ -152,10 +152,11 @@
   "dependencies": {
     "@capacitor/android": "^7.0.0",
     "@capacitor/core": "^7.0.0",
-    "@google/genai": "^2.28.0",
+    "@google/genai": "^2.30.0",
     "dompurify": "^3.4.17",
     "express": "^5.2.1",
     "leaflet": "^1.9.4",
+    "obd": "^1.0.0",
     "posthog-node": "^5.52.4"
   },
   "overrides": {
@@ -165,7 +166,10 @@
   "allowScripts": {
     "electron@41.10.7": true,
     "electron-winstaller@5.4.0": true,
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "@google/genai@2.30.0": true,
+    "protobufjs@7.6.6": true,
+    "workerd@1.20261012.1": true
   },
   "engines": {
     "node": ">=22"

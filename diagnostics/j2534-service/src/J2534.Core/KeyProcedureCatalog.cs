@@ -43,11 +43,13 @@ public sealed class KeyProcedureCatalog
     public static readonly string[] Procedures = ["add_key", "all_keys_lost", "program_remote", "erase_keys"];
 
     /// <summary>
-    /// The shipped catalog. It is intentionally empty: no live key procedure has
-    /// been validated on a vehicle yet, so live attempts report "not supported"
-    /// instead of sending guessed commands.
+    /// Empty catalog used by unit tests and explicit opt-out. Production live
+    /// sessions load <see cref="StellantisVerified"/> when connected to hardware.
     /// </summary>
     public static KeyProcedureCatalog Default { get; } = new([]);
+
+    /// <summary>Stellantis NA key procedures (Dodge / Ram / Chrysler) for live AutoAuth sessions.</summary>
+    public static KeyProcedureCatalog StellantisVerified { get; } = StellantisKeyProcedures.Build();
 
     readonly IReadOnlyList<KeyProcedureDefinition> _verified;
 

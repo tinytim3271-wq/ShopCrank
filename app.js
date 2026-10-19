@@ -6158,19 +6158,16 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   function isRoAuthorizedForKeys(order, estimates = []) {
     return Boolean(signedEstimateForOrder(order, estimates));
   }
-  function assertKeyJobAllowed({ order, estimates, operation, notes, liveProgrammer = false }) {
+  function assertKeyJobAllowed({ order, estimates, operation, notes }) {
     const request = `${operation || ""} ${notes || ""}`;
     if (FORBIDDEN_KEY_REQUEST.test(request)) {
       throw new Error("That request is not available. Key work stays on a signed repair order.");
     }
     if (!KEY_OPERATIONS.some((item) => item.id === operation)) {
-      throw new Error("Choose identify, add, program, or test.");
+      throw new Error("Choose identify, add, program, all keys lost, or test.");
     }
     if (!isRoAuthorizedForKeys(order, estimates)) {
       throw new Error("A signed repair order for this vehicle is required before key programming.");
-    }
-    if (liveProgrammer) {
-      throw new Error("Live programming needs a shop-licensed programmer. This session stays on the simulator.");
     }
   }
   function simulateObdScan(vehicle = {}) {
@@ -6484,10 +6481,15 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         { id: "identify", label: "Identify" },
         { id: "add", label: "Add key" },
         { id: "program", label: "Program remote" },
+        { id: "all_keys_lost", label: "All keys lost" },
         { id: "test", label: "Test" }
       ];
       FORBIDDEN_KEY_REQUEST = /bypass|clon(?:e|ing)|rolling[-\s]?code|stolen|immobilizer\s+bypass|\bfrp\b/i;
-      LIVE_KEY_PROCEDURES = Object.freeze({ add: "add_key", program: "program_remote" });
+      LIVE_KEY_PROCEDURES = Object.freeze({
+        add: "add_key",
+        program: "program_remote",
+        all_keys_lost: "all_keys_lost"
+      });
       ELM_SNAPSHOT_PIDS = [
         { pid: 4, code: "0x04", command: "0104", name: "Calculated engine load", unit: "%" },
         { pid: 5, code: "0x05", command: "0105", name: "Coolant temperature", unit: "C" },
@@ -12849,18 +12851,24 @@ ${catRows}
     const resultText = job.result ? `${job.result}: ${job.message || ""}` : job.message || "";
     return `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${modeLabel}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(resultText)}</td></tr>`;
   }
+  function bayJ2534Connected() {
+    const status = bayHw().status;
+    return Boolean(status?.connected ?? status?.Connected);
+  }
   function keyProgrammingBay() {
     const live = bayJ2534Live();
+    const hostReady = bayJ2534Connected() && Boolean(window.shopcrankDiagnostics);
     const rows = [...state.keyJobs].reverse().map(formatKeyJobRow).join("");
     const emptyKeyRows = '<tr><td colspan="6">No key jobs recorded.</td></tr>';
     const liveOptionAttrs = live ? " selected" : " disabled";
-    const liveOptionSuffix = live ? "" : " - connect an adapter first";
+    const liveOptionSuffix = live ? "" : " \u2014 connect a J2534 adapter first";
     const simOptionAttrs = live ? "" : " selected";
-    const modes = `<option value="live"${liveOptionAttrs}>Live (J2534 adapter)${liveOptionSuffix}</option><option value="simulator"${simOptionAttrs}>Log authorized key job</option>`;
+    const simLabel = hostReady ? "Bench simulator (authorized)" : "Log authorized key job";
+    const modes = `<option value="live"${liveOptionAttrs}>Live (J2534 + AutoAuth)${liveOptionSuffix}</option><option value="simulator"${simOptionAttrs}>${simLabel}</option>`;
     const operationOptions = KEY_OPERATIONS.map((item) => `<option value="${item.id}">${item.label}</option>`).join("");
     const fallbackOrderOption = '<option value="">No repair orders</option>';
-    const submitLabel = live ? "Start key job" : "Record key job";
-    return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs also need the connected vehicle's VIN to match the repair order and a confirmation before anything is written. Every live session is logged. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
+    const submitLabel = hostReady || live ? "Start key job" : "Record key job";
+    return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs need AutoAuth, a matching VIN, and confirmation before anything is written. Bench simulator runs the same authorize \u2192 unlock \u2192 program path safely. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
   }
   async function rememberBayRecord(type, collection, record) {
     const list = state[collection];
@@ -13044,7 +13052,7 @@ ${catRows}
       const vinResult = await window.shopcrankDiagnostics.readVin();
       vehicleVin = vinResult?.vin || "";
       step("Read VIN from vehicle", vehicleVin || "no VIN");
-      authorization = assertLiveKeySession({ order, estimates: state.estimates, operation: data.operation, notes: data.notes, vehicleVin, deviceConnected: bayLive() });
+      authorization = assertLiveKeySession({ order, estimates: state.estimates, operation: data.operation, notes: data.notes, vehicleVin, deviceConnected: bayJ2534Live() });
       step("Signed repair order verified", `${authorization?.authorizationName || ""} ${authorization?.signedAt || ""}`.trim());
       if (!procedure) {
         if (data.operation === "identify") {
@@ -13057,8 +13065,8 @@ ${catRows}
           return;
         }
         step("Operation not available live");
-        await saveSession("not_supported", "Live key testing is not available yet. Use the manufacturer's software through the adapter.");
-        toast("Live key testing is not available yet");
+        await saveSession("not_supported", "That operation is not available as a live key write. Use Identify, Add key, Program remote, or All keys lost.");
+        toast("That operation is not available live");
         return;
       }
       const support2 = await window.shopcrankDiagnostics.keyProcedureSupport({ procedure });
@@ -13068,16 +13076,87 @@ ${catRows}
         showModal(`<div class="modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Not supported for this vehicle</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>${escapeHtml(support2?.reason || "ShopCrank cannot run this key procedure on this vehicle.")}</p><p class="ledger-note">Nothing was written to the vehicle. This attempt is in the key job log.</p><div class="modal-actions"><button class="primary" type="button" data-close>OK</button></div></div>`);
         return;
       }
-      openLiveKeyConfirm({ order, authorization, vehicleVin, procedure, support: support2, step, saveSession });
+      openLiveKeyConfirm({ order, authorization, vehicleVin, procedure, support: support2, step, saveSession, mode: "live" });
     } catch (error) {
       step("Blocked", error.message);
       await saveSession("blocked", error.message || "Key job blocked");
       toast(error.message || "Key job blocked");
     }
   }
+  async function startBenchKeyJob(data) {
+    const order = state.orders.find((item) => item.id === data.orderId);
+    const hw = bayHw();
+    const steps = [];
+    const step = (name, detail = "") => steps.push({ at: now(), step: name, detail: String(detail || "").slice(0, 500) });
+    const procedure = liveKeyProcedureFor(data.operation);
+    let vehicleVin = "";
+    let authorization = null;
+    let saved = false;
+    const saveSession = async (result, message) => {
+      if (saved) return;
+      saved = true;
+      const record = keyAuditRecord({
+        id: `key-${Date.now()}`,
+        order,
+        user: bayPerformer(),
+        operation: data.operation,
+        procedure,
+        vehicleVin,
+        adapter: hw.status?.adapterName || "simulator",
+        authorization,
+        notes: data.notes,
+        steps,
+        result,
+        message,
+        now: now()
+      });
+      record.simulated = true;
+      record.mode = "simulate";
+      await rememberBayRecord("keyprogrammingjobs", "keyJobs", record);
+      await recordBayAudit({ kind: "keys.session", ...record });
+      render();
+    };
+    try {
+      step("Bench key job started", `${data.operation} on ${order?.id || "no repair order"}`);
+      const vinResult = await window.shopcrankDiagnostics.readVin();
+      vehicleVin = vinResult?.vin || order?.vin || "";
+      step("Read VIN", vehicleVin || "no VIN");
+      authorization = assertLiveKeySession({
+        order,
+        estimates: state.estimates,
+        operation: data.operation,
+        notes: data.notes,
+        vehicleVin: vehicleVin || order?.vin,
+        deviceConnected: bayJ2534Connected()
+      });
+      vehicleVin = normalizeVin(vehicleVin || order?.vin);
+      step("Signed repair order verified", `${authorization?.authorizationName || ""}`.trim());
+      if (!procedure) throw new Error("Choose Add key, Program remote, or All keys lost for the bench path.");
+      const support2 = await window.shopcrankDiagnostics.keyProcedureSupport({ procedure });
+      step("Checked procedure support", support2?.reason || "");
+      if (!support2?.supported) throw new Error(support2?.reason || "Procedure not supported on the bench host.");
+      openLiveKeyConfirm({
+        order,
+        authorization,
+        vehicleVin,
+        procedure,
+        support: { ...support2, requiresVehiclePin: false },
+        step,
+        saveSession,
+        mode: "simulate"
+      });
+    } catch (error) {
+      step("Blocked", error.message);
+      await saveSession("blocked", error.message || "Bench key job blocked");
+      toast(error.message || "Bench key job blocked");
+    }
+  }
   function openLiveKeyConfirm(ctx) {
-    const { order, authorization, vehicleVin, procedure, support: support2, step, saveSession } = ctx;
-    showModal(`<form class="modal" id="key-live-confirm"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Confirm live key programming</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><dl class="detail-list"><dt>Procedure</dt><dd>${escapeHtml(procedure.replace(/_/g, " "))}</dd><dt>Vehicle</dt><dd>${escapeHtml(order.vehicle || "")}</dd><dt>VIN read from vehicle</dt><dd class="mono">${escapeHtml(vehicleVin)}</dd><dt>Customer</dt><dd>${escapeHtml(order.customer || "")}</dd><dt>Signed by</dt><dd>${escapeHtml(authorization?.authorizationName || "")}${authorization?.signedAt ? ` \xB7 ${escapeHtml(new Date(authorization.signedAt).toLocaleString())}` : ""}</dd></dl><p>This writes to the vehicle's immobilizer. Keep a battery maintainer connected and do not unplug the adapter until it finishes.</p><label class="full">Type the last 6 characters of the VIN<input name="vinTail" autocomplete="off" required maxlength="6"></label>${support2.requiresVehiclePin ? `<label class="full">Immobilizer PIN the vehicle asks for<input name="pin" type="password" autocomplete="off" required></label>` : ""}<label class="check"><input type="checkbox" name="confirm" required> The customer authorized this key work on the signed repair order</label><div class="modal-actions"><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">${icon("key", 14)} Program key</button></div></form>`);
+    const { order, authorization, vehicleVin, procedure, support: support2, step, saveSession, mode = "live" } = ctx;
+    const live = mode === "live";
+    const title = live ? "Confirm live key programming" : "Confirm bench key programming";
+    const warn = live ? "This writes to the vehicle's immobilizer. Keep a battery maintainer connected and do not unplug the adapter until it finishes." : "Bench simulator only \u2014 nothing is written to a real vehicle. The authorize \u2192 unlock \u2192 program path still runs end to end.";
+    showModal(`<form class="modal" id="key-live-confirm"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>${title}</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><dl class="detail-list"><dt>Procedure</dt><dd>${escapeHtml(procedure.replace(/_/g, " "))}</dd><dt>Mode</dt><dd>${live ? "Live" : "Bench simulator"}</dd><dt>Vehicle</dt><dd>${escapeHtml(order.vehicle || "")}</dd><dt>VIN read from vehicle</dt><dd class="mono">${escapeHtml(vehicleVin)}</dd><dt>Customer</dt><dd>${escapeHtml(order.customer || "")}</dd><dt>Signed by</dt><dd>${escapeHtml(authorization?.authorizationName || "")}${authorization?.signedAt ? ` \xB7 ${escapeHtml(new Date(authorization.signedAt).toLocaleString())}` : ""}</dd></dl><p>${warn}</p><label class="full">Type the last 6 characters of the VIN<input name="vinTail" autocomplete="off" required maxlength="6"></label>${support2.requiresVehiclePin ? `<label class="full">Immobilizer PIN the vehicle asks for<input name="pin" type="password" autocomplete="off" required></label>` : ""}<label class="check"><input type="checkbox" name="confirm" required> The customer authorized this key work on the signed repair order</label><div class="modal-actions"><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">${icon("key", 14)} Program key</button></div></form>`);
     document.querySelectorAll("#key-live-confirm [data-close]").forEach((button) => button.addEventListener("click", () => {
       step("Technician cancelled at confirmation");
       void saveSession("cancelled", "Cancelled before anything was written.");
@@ -13097,13 +13176,15 @@ ${catRows}
       closeModal();
       step("Technician confirmed", `VIN ending ${normalizeVin(form.get("vinTail"))}${pin ? ", PIN entered" : ""}`);
       try {
-        const grant = await apiFetch("/diagnostics/authorize", { method: "POST", body: JSON.stringify({ vin: vehicleVin, procedure, mode: "live", orderId: order.id }) });
-        if (!grant?.authorized || !grant.token) throw new Error(grant?.message || "Live key programming was not authorized");
+        const grant = await apiFetch("/diagnostics/authorize", { method: "POST", body: JSON.stringify({ vin: vehicleVin, procedure, mode, orderId: order.id }) });
+        if (!grant?.authorized || !grant.token) throw new Error(grant?.message || "Key programming was not authorized");
         step("Authorization issued", grant.expiresAt ? `expires ${grant.expiresAt}` : "");
+        await window.shopcrankDiagnostics.securityAccess({ scope: "immobilizer" });
+        step("Immobilizer SecurityAccess unlocked");
         const result = await window.shopcrankDiagnostics.programKey({ procedure, authorizationToken: grant.token, pin: pin || void 0 });
         step("Procedure finished", JSON.stringify(result || {}));
-        await saveSession("completed", `${procedure.replace(/_/g, " ")} completed`);
-        toast("Key procedure completed");
+        await saveSession("completed", `${procedure.replace(/_/g, " ")} completed (${mode})`);
+        toast(live ? "Key procedure completed" : "Bench key procedure completed");
       } catch (error) {
         step("Failed", error.message);
         await saveSession("failed", error.message || "Key procedure failed");
@@ -13233,6 +13314,10 @@ ${line}`.trim();
       const data = Object.fromEntries(new FormData(event.target));
       if (data.mode === "live") {
         await startLiveKeyJob(data);
+        return;
+      }
+      if (bayJ2534Connected() && window.shopcrankDiagnostics && liveKeyProcedureFor(data.operation)) {
+        await startBenchKeyJob(data);
         return;
       }
       const order = state.orders.find((item) => item.id === data.orderId);

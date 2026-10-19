@@ -69,13 +69,32 @@ function diagnosticsPublicKey() {
   return publicKey;
 }
 
-function startHostProcess() {
+async function hostCloudAuthEnv() {
+  const base = String(process.env.SHOP_CRANK_API_BASE || process.env.SHOP_CRANK_APP_URL || 'https://www.shopcrank.com')
+    .replace(/\/$/, '');
+  const apiBase = base.endsWith('/api') ? base : `${base}/api`;
+  const env = { SHOP_CRANK_API_BASE: apiBase };
+  try {
+    const { session } = require('electron');
+    const cookies = await session.defaultSession.cookies.get({ url: base });
+    if (cookies?.length) {
+      env.SHOP_CRANK_SESSION_COOKIE = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ');
+    }
+  } catch {
+    /* non-Electron or cookie access unavailable — live SecurityAccess stays fail-closed */
+  }
+  return env;
+}
+
+async function startHostProcess() {
   if (hostProcess) return hostProcess;
 
   const csharp = csharpHostPath();
   const publicKey = diagnosticsPublicKey();
+  const cloudAuth = await hostCloudAuthEnv();
   const hostEnv = {
     ...process.env,
+    ...cloudAuth,
     SHOP_CRANK_J2534_PIPE: process.platform === 'win32' ? csharpPipeName() : pipePath(),
     SHOP_CRANK_J2534_TOKEN: hostToken,
   };
@@ -168,7 +187,7 @@ function rpcCall(method, params = {}, timeoutMs = 15000) {
 }
 
 async function ensureHost() {
-  startHostProcess();
+  await startHostProcess();
   await waitForPipe();
 }
 

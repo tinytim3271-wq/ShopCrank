@@ -1130,6 +1130,9 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
   requireRole(context, ['owner', 'admin', 'technician', 'service_writer']);
   if (action === 'coverage') return handleCoverage(request, segments);
   if (action === 'autoauth') return handleAutoAuth(request, env, context);
+  if (action === 'security-access' && request.method === 'POST') {
+    return handleSecurityAccessUnlock(request, env, context);
+  }
   if (action === 'analyze') return handleDiagnosticAnalysis(request, env, context, analytics);
   if (action === 'audit' && request.method === 'POST') {
     const id = await recordDiagnosticAudit(env, context, await requestJson(request));
@@ -1589,6 +1592,65 @@ async function readAutoAuthLogin(env, shopId) {
   const raw = await getIntegrationSecret(env, shopId, AUTOAUTH_SECRET_NAME);
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
+}
+
+/**
+ * Live UDS SecurityAccess unlock: the J2534 host posts the ECU seed; the Worker
+ * uses the shop's AutoAuth login to obtain the key from the licensed unlock
+ * endpoint (AUTOAUTH_UNLOCK_URL). OEM seed→key math is never bundled here.
+ */
+async function handleSecurityAccessUnlock(request, env, context) {
+  requireRole(context, ['owner', 'admin', 'technician', 'service_writer']);
+  const body = await requestJson(request);
+  const vin = String(body.vin || '').trim().toUpperCase();
+  const level = Number(body.level);
+  const scope = body.scope === 'flash' ? 'flash' : 'immobilizer';
+  const seedBase64 = String(body.seedBase64 || '').trim();
+  if (!validVin(vin)) throw new HttpError(400, 'A valid 17-character VIN is required');
+  if (!Number.isInteger(level) || level < 1 || level > 0x7f) throw new HttpError(400, 'SecurityAccess level is required');
+  if (!seedBase64) throw new HttpError(400, 'seedBase64 is required');
+  const login = await readAutoAuthLogin(env, context.shopId);
+  if (!login) {
+    throw new HttpError(501, 'Connect the shop AutoAuth account in OEM Diagnostics before live SecurityAccess.');
+  }
+  const unlockUrl = String(env.AUTOAUTH_UNLOCK_URL || '').trim();
+  if (!unlockUrl) {
+    throw new HttpError(501, 'Live SecurityAccess unlock is not configured (AUTOAUTH_UNLOCK_URL). Contact ShopCrank support to enable AutoAuth unlock for this deployment.');
+  }
+  let unlockResponse;
+  try {
+    unlockResponse = await fetch(unlockUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        provider: login.provider,
+        accountId: login.accountId,
+        apiKey: login.apiKey,
+        vin,
+        level,
+        scope,
+        seedBase64,
+        shopId: context.shopId,
+      }),
+    });
+  } catch (error) {
+    throw new HttpError(502, `AutoAuth unlock request failed: ${error.message || 'network error'}`);
+  }
+  const unlockBody = await unlockResponse.json().catch(() => ({}));
+  if (!unlockResponse.ok || !unlockBody?.keyBase64) {
+    throw new HttpError(
+      unlockResponse.status >= 400 && unlockResponse.status < 600 ? unlockResponse.status : 502,
+      unlockBody?.message || 'AutoAuth unlock refused the SecurityAccess key request.',
+    );
+  }
+  await recordDiagnosticAudit(env, context, {
+    kind: 'diagnostics.security_access',
+    scope,
+    level,
+    vin,
+    provider: login.provider,
+  });
+  return json({ keyBase64: String(unlockBody.keyBase64), scope, level, vin });
 }
 
 async function handleAutoAuth(request, env, context) {
