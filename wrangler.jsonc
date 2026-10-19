@@ -31,7 +31,9 @@
     // and npm run deploy:worker.
     "GOOGLE_REDIRECT_ORIGIN": "https://www.yourcarguy806.com",
     "PAGES_ORIGIN": "https://shopcrank-dispatch.pages.dev",
-    "AUTH_EMAIL_FROM": "noreply@shopcrank.com"
+    "AUTH_EMAIL_FROM": "noreply@shopcrank.com",
+    "SUPPORT_EMAIL_TO": "support@yourcarguy806.com",
+    "SUPPORT_EMAIL_FROM": "support@yourcarguy806.com"
   },
   "send_email": [
     {
