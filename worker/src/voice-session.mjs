@@ -6,6 +6,7 @@ import {
   recordAiUsage,
   selectAnthropicModel,
 } from './ai.mjs';
+import { handleGrokTwilioBridge } from './grok-voice.mjs';
 import { HttpError } from './http.mjs';
 
 const DEEPGRAM_AGENT_URL = 'https://agent.deepgram.com/v1/agent/converse';
@@ -77,6 +78,20 @@ export class AiVoiceSession {
       throw new HttpError(426, 'A WebSocket upgrade is required');
     }
     const shopId = request.headers.get('X-MechPro-Shop-Id');
+    const voiceMode = request.headers.get('X-MechPro-Voice-Mode');
+    if (voiceMode === 'twilio-grok') {
+      const apiKey = String(request.headers.get('X-MechPro-Xai-Key') || this.env.XAI_API_KEY || '').trim();
+      if (!shopId || !apiKey) throw new HttpError(503, 'Grok Voice AI is not configured');
+      return handleGrokTwilioBridge({
+        request,
+        env: this.env,
+        state: this.state,
+        shopId,
+        callerPhone: String(request.headers.get('X-MechPro-Caller-Phone') || ''),
+        callSid: String(request.headers.get('X-MechPro-Call-Sid') || ''),
+        apiKey,
+      });
+    }
     const userId = request.headers.get('X-MechPro-User-Id');
     if (!shopId || !userId) throw new HttpError(401, 'Authenticated shop context is required');
     if (!String(this.env.DEEPGRAM_API_KEY || '').trim() || !String(this.env.ANTHROPIC_API_KEY || '').trim()) {

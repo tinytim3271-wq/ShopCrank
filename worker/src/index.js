@@ -63,6 +63,14 @@ import {
   usageCostsForResult,
 } from './ai.mjs';
 import { handleShopAiSettings } from './shop-ai.mjs';
+import {
+  handleGrokClientSecret,
+  handleGrokToolCall,
+  handleGrokVoiceSettings,
+  handleTwilioVoiceIncoming,
+  resolveGrokApiKey,
+  verifyGrokStreamToken,
+} from './grok-voice.mjs';
 import { AiChatSession } from './chat-session.mjs';
 import { AiVoiceSession } from './voice-session.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
@@ -1349,6 +1357,28 @@ async function handleVoiceSession(request, env, context) {
   headers.set('X-MechPro-User-Id', context.userId);
   headers.delete('Cookie');
   headers.delete('Cf-Access-Jwt-Assertion');
+  return stub.fetch(new Request(request, { headers }));
+}
+
+async function handleTwilioVoiceStream(request, env, shopId) {
+  if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+    throw new HttpError(426, 'A WebSocket upgrade is required');
+  }
+  if (!shopId) throw new HttpError(400, 'Shop ID is required');
+  const token = new URL(request.url).searchParams.get('token') || '';
+  const verified = await verifyGrokStreamToken(env, token, shopId);
+  if (!verified) throw new HttpError(401, 'Invalid or expired Twilio stream token');
+  if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI sessions are not configured');
+  const { apiKey } = await resolveGrokApiKey(env, shopId, getIntegrationSecret);
+  if (!apiKey) throw new HttpError(503, 'Grok Voice is not configured for this shop');
+  const id = env.AI_VOICE_SESSIONS.newUniqueId();
+  const stub = env.AI_VOICE_SESSIONS.get(id);
+  const headers = new Headers(request.headers);
+  headers.set('X-MechPro-Voice-Mode', 'twilio-grok');
+  headers.set('X-MechPro-Shop-Id', shopId);
+  headers.set('X-MechPro-Caller-Phone', verified.caller || '');
+  headers.set('X-MechPro-Call-Sid', verified.callSid || '');
+  headers.set('X-MechPro-Xai-Key', apiKey);
   return stub.fetch(new Request(request, { headers }));
 }
 
@@ -3018,6 +3048,14 @@ async function route(request, env, analytics) {
   if (segments[0] === 'messaging' && segments[1] === 'twilio' && segments[2] === 'webhook') {
     return handleTwilioWebhook(request, env, decodeURIComponent(segments[3] || ''));
   }
+  if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'incoming') {
+    return handleTwilioVoiceIncoming(request, env, decodeURIComponent(segments[3] || ''), {
+      getSecret: getIntegrationSecret,
+    });
+  }
+  if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'stream') {
+    return handleTwilioVoiceStream(request, env, decodeURIComponent(segments[3] || ''));
+  }
   if (segments[0] === 'quickbooks' && segments[1] === 'callback') {
     return handleQuickBooksCallback(request, env, {
       getSecret: getIntegrationSecret,
@@ -3108,6 +3146,25 @@ async function route(request, env, analytics) {
   if (path === '/ai/tts') return handleVoiceTts(request, env, context);
   if (path === '/ai/autofill') return handleAiAutofill(request, env, context, analytics);
   if (path === '/ai/voice/session') return handleVoiceSession(request, env, context);
+  if (path === '/ai/voice/client-secret') {
+    requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+    await enforceAiRateLimit(env, context);
+    return handleGrokClientSecret(request, env, context, { getSecret: getIntegrationSecret });
+  }
+  if (path === '/ai/voice/tool') {
+    requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
+    await enforceAiRateLimit(env, context);
+    return handleGrokToolCall(request, env, context);
+  }
+  if (path === '/voice/grok/configure' || path === '/voice/grok/status') {
+    return handleGrokVoiceSettings(request, env, context, {
+      getSecret: getIntegrationSecret,
+      saveSecret: saveIntegrationSecret,
+      deleteSecret: deleteIntegrationSecret,
+      putEntity,
+      listEntities,
+    });
+  }
   if (path === '/agentphone/configure') return handleAgentPhoneConfigure(request, env, context, analytics);
   if (segments[0] === 'files') return handleFiles(request, env, context, segments, analytics);
   if (path === '/document-links') return createCustomerDocumentLink(request, env, context);

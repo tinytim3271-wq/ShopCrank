@@ -12,6 +12,13 @@ import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.
 import { partstechPanelHtml } from '../modules/partstech.js';
 import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
+import {
+  GROK_VOICE_OPTIONS,
+  applyGrokCallToIntakeDraft,
+  createGrokVoiceSession,
+  grokPhasePlaceholder,
+  grokWaveformButtonIcon,
+} from '../modules/grok-voice-client.js';
 import { quickbooksPanelHtml } from '../modules/quickbooks.js';
 import { applyEstimateFromInspection } from '../modules/repair-order-flow.js';
 import { uploadFailureMessage, uploadFileToStorage } from '../modules/file-upload.js';
@@ -4740,5 +4747,385 @@ bind = function () {
 };
 const apiFetchShopAiNoticeCore = apiFetch;
 apiFetch = async function (path, options = {}) { const result = await apiFetchShopAiNoticeCore(path, options); if (String(path).startsWith("/ai/assistant") && result?.notice) { toast(result.notice); shopAiSettings = { ...shopAiSettings, loaded: false } } return result };
+
+// --- Grok Realtime Voice & Phone Call Forwarding ---
+let grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
+let activeGrokSession = null;
+let activeGrokPhase = "idle";
+let activeGrokTarget = null; // 'assistant' | 'phone' | 'intake'
+
+async function loadGrokVoiceSettings(force = false) {
+  if (grokVoiceSettings.loading || (grokVoiceSettings.loaded && !force)) return;
+  grokVoiceSettings = { ...grokVoiceSettings, loading: true };
+  try {
+    const res = await apiFetch("/voice/grok/status");
+    grokVoiceSettings = { ...res, loaded: true, loading: false };
+  } catch {
+    grokVoiceSettings = { ...grokVoiceSettings, loaded: true, loading: false };
+  }
+  if (state.route === "settings" || (state.route === "ai" && aiTab === "phone")) render();
+}
+
+function syncGrokSavedRecordsToLocalState(toolResult) {
+  const action = toolResult?.action;
+  if (!action) return;
+  if (action.intakeDraft) {
+    const mergedIntake = applyGrokCallToIntakeDraft(loadIntakeDraft(), action.intakeDraft);
+    saveIntakeDraft(mergedIntake);
+  }
+  if (action.estimate && !state.estimates.some(e => e.id === action.estimate.id)) {
+    state.estimates.unshift(action.estimate);
+  }
+  if (action.order && !state.orders.some(o => o.id === action.order.id)) {
+    state.orders.unshift(action.order);
+  }
+  if (action.draft?.customer?.name) {
+    const existingCust = state.customers.find(c => String(c.name || "").toLowerCase() === action.draft.customer.name.toLowerCase());
+    if (!existingCust) {
+      state.customers.unshift({
+        id: action.customerId || `cust-${Date.now()}`,
+        name: action.draft.customer.name,
+        phone: action.draft.customer.phone || "",
+        email: action.draft.customer.email || "",
+        billingAddress: action.draft.customer.address || "",
+      });
+    }
+  }
+  save();
+}
+
+function updateGrokVoiceUiControls() {
+  const isLive = Boolean(activeGrokSession?.isActive());
+  const phase = isLive ? activeGrokPhase : "idle";
+  const placeholder = grokPhasePlaceholder(phase);
+
+  // Composer button & placeholder
+  const composerBtn = document.querySelector("#assistant-grok-voice");
+  if (composerBtn) {
+    composerBtn.classList.toggle("is-live", isLive);
+    composerBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
+    composerBtn.title = isLive ? `End Grok Voice (${placeholder || "Live"})` : "Start Grok Voice Mode";
+    composerBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "Voice live") : "Grok Voice"}</span>`;
+  }
+  const textarea = document.querySelector("#assistant-form textarea[name=message]");
+  if (textarea) {
+    if (!textarea.dataset.defaultPlaceholder) {
+      textarea.dataset.defaultPlaceholder = textarea.getAttribute("placeholder") || "Create an estimate and work order for…";
+    }
+    textarea.setAttribute("placeholder", isLive && placeholder ? placeholder : textarea.dataset.defaultPlaceholder);
+  }
+  const srStatus = document.querySelector("#assistant-voice-sr-status");
+  if (srStatus) {
+    srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
+  }
+
+  // Phone intake tab button
+  const phoneBtn = document.querySelector("#grok-phone-live-btn");
+  if (phoneBtn) {
+    phoneBtn.classList.toggle("is-live", isLive);
+    phoneBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span>`;
+  }
+
+  // Customer Intake Wizard button
+  const intakeBtn = document.querySelector("#intake-grok-voice-btn");
+  if (intakeBtn) {
+    intakeBtn.classList.toggle("is-live", isLive);
+    intakeBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "End Grok Voice") : "Grok Voice Intake"}</span>`;
+  }
+}
+
+function startOrStopGrokVoice({ target = "assistant", greetAsReceptionist = false, onWizardIntakeUpdate = null } = {}) {
+  if (activeGrokSession?.isActive()) {
+    activeGrokSession.stop();
+    activeGrokSession = null;
+    activeGrokPhase = "idle";
+    activeGrokTarget = null;
+    updateGrokVoiceUiControls();
+    return;
+  }
+
+  activeGrokTarget = target;
+  let liveUserMsgIndex = -1;
+  let liveAssistantMsgIndex = -1;
+
+  const refreshAssistantList = () => {
+    const list = document.querySelector("#assistant-messages");
+    if (!list) return;
+    list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+    list.scrollTop = list.scrollHeight;
+    bindAssistantDraftActions();
+  };
+
+  activeGrokSession = createGrokVoiceSession({
+    apiFetch,
+    voice: grokVoiceSettings.voice || "eve",
+    greetAsReceptionist,
+    onPhaseChange: (nextPhase) => {
+      activeGrokPhase = nextPhase;
+      updateGrokVoiceUiControls();
+    },
+    onUserTranscript: (text, { final }) => {
+      if (liveUserMsgIndex < 0 || assistantConversation[liveUserMsgIndex]?.role !== "user") {
+        liveUserMsgIndex = assistantConversation.length;
+        assistantConversation.push({ role: "user", content: text });
+      } else {
+        assistantConversation[liveUserMsgIndex].content = text;
+      }
+      if (final) liveUserMsgIndex = -1;
+      refreshAssistantList();
+    },
+    onAssistantTranscript: (text, { final }) => {
+      if (liveAssistantMsgIndex < 0 || assistantConversation[liveAssistantMsgIndex]?.role !== "assistant") {
+        liveAssistantMsgIndex = assistantConversation.length;
+        assistantConversation.push({ role: "assistant", content: text, actions: [] });
+      } else {
+        assistantConversation[liveAssistantMsgIndex].content = text;
+      }
+      if (final) liveAssistantMsgIndex = -1;
+      refreshAssistantList();
+    },
+    onEstimateCalculated: (calc) => {
+      aiResult = {
+        kind: "estimate",
+        vehicle: calc.vehicle || "Customer Vehicle",
+        lines: (calc.lines || []).map(l => ({
+          service: l.description,
+          hours: l.hours || (l.type === "labor" ? l.quantity : 0),
+          labor: l.type === "labor" ? l.total : 0,
+          parts: l.type === "part" ? l.total : 0,
+          total: l.total,
+          notes: l.source || "",
+        })),
+        fees: calc.fees || [],
+        subtotal: calc.subtotal || 0,
+        tax: calc.tax || 0,
+        total: calc.total || 0,
+        summary: calc.disclaimer || "Preliminary phone estimate prepared by Grok.",
+      };
+      toast(`Grok calculated estimate: ${money(calc.total || 0)}`);
+    },
+    onIntakeSaved: (toolResult) => {
+      syncGrokSavedRecordsToLocalState(toolResult);
+      const action = toolResult.action;
+      if (action) {
+        assistantConversation.push({
+          role: "assistant",
+          content: `Saved Customer Intake (${toolResult.customer} · ${toolResult.vehicle}), Estimate ${toolResult.estimateNumber} (${money(toolResult.estimateTotal)}), and Work Order ${toolResult.orderId}.`,
+          actions: [action],
+        });
+        refreshAssistantList();
+      }
+      if (typeof onWizardIntakeUpdate === "function" && action?.intakeDraft) {
+        onWizardIntakeUpdate(action.intakeDraft);
+      }
+      toast(`Grok filled intake & created ${toolResult.orderId} (${money(toolResult.estimateTotal)})`);
+      if (state.route === "ai" && aiTab === "phone") render();
+    },
+    onError: (err) => {
+      toast(err.message || "Grok Voice could not connect");
+      activeGrokPhase = "idle";
+      updateGrokVoiceUiControls();
+    },
+  });
+
+  void activeGrokSession.start();
+}
+
+const liveAssistantBeforeGrok = liveAssistant;
+liveAssistant = function () {
+  const html = liveAssistantBeforeGrok();
+  const isLive = Boolean(activeGrokSession?.isActive());
+  const phase = isLive ? activeGrokPhase : "idle";
+  const placeholder = grokPhasePlaceholder(phase);
+  const grokBtnHtml = `<button class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" type="button" id="assistant-grok-voice" aria-pressed="${isLive ? "true" : "false"}" title="${isLive ? "End Grok Voice" : "Start Grok Voice Mode"}">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "Voice live") : "Grok Voice"}</span></button><span class="sr-only" role="status" id="assistant-voice-sr-status">${isLive && placeholder ? `Grok Voice: ${placeholder}` : ""}</span>`;
+  return html.replace(
+    '<button class="secondary" type="button" id="assistant-mic"',
+    `${grokBtnHtml}<button class="secondary" type="button" id="assistant-mic"`,
+  );
+};
+
+const bindLiveAssistantBeforeGrok = bindLiveAssistant;
+bindLiveAssistant = function () {
+  bindLiveAssistantBeforeGrok();
+  const grokBtn = document.querySelector("#assistant-grok-voice");
+  if (grokBtn) {
+    grokBtn.onclick = () => startOrStopGrokVoice({ target: "assistant", greetAsReceptionist: false });
+  }
+  const form = document.querySelector("#assistant-form");
+  if (form) {
+    const origSubmit = form.onsubmit;
+    form.onsubmit = async (event) => {
+      if (activeGrokSession?.isActive()) {
+        event.preventDefault();
+        const input = form.elements.message;
+        const text = String(input?.value || "").trim();
+        if (!text) return;
+        input.value = "";
+        assistantConversation.push({ role: "user", content: text });
+        const list = document.querySelector("#assistant-messages");
+        if (list) {
+          list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+          list.scrollTop = list.scrollHeight;
+        }
+        activeGrokSession.sendTextTurn(text);
+        return;
+      }
+      if (typeof origSubmit === "function") return origSubmit.call(form, event);
+    };
+  }
+  updateGrokVoiceUiControls();
+};
+
+function grokPhoneWebhookUrl() {
+  if (grokVoiceSettings.twilioVoiceWebhookUrl) return grokVoiceSettings.twilioVoiceWebhookUrl;
+  const shopId = sessionClaimShopId(authSession()?.claims) || "your-shop-id";
+  return `${cloudflareConfig.apiUrl}/voice/twilio/incoming/${encodeURIComponent(shopId)}`;
+}
+
+const aiPhoneFormBeforeGrok = aiPhoneForm;
+aiPhoneForm = function () {
+  if (!grokVoiceSettings.loaded && !grokVoiceSettings.loading && !isOfflineDesktop()) {
+    void loadGrokVoiceSettings();
+  }
+  const isLive = Boolean(activeGrokSession?.isActive());
+  const phase = isLive ? activeGrokPhase : "idle";
+  const placeholder = grokPhasePlaceholder(phase);
+  const webhookUrl = grokPhoneWebhookUrl();
+  const grokOrders = state.orders.filter(o => o.source === "grok_voice_call" || o.intake?.source === "grok_voice_call").slice(0, 10);
+  const callRows = grokOrders.map(order => `<tr><td class="mono"><b>${escapeHtml(order.id)}</b></td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "No phone")}</small></td><td>${escapeHtml(order.vehicle)}<small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${escapeHtml(order.complaint || "")}</td><td><b>${money(order.total || 0)}</b></td><td><div class="estimate-actions"><button type="button" class="mini-action" data-grok-open-intake="${escapeAttr(order.id)}">${icon("clipboard-Signature", 13)} Open Intake Form</button><button type="button" class="mini-action" data-order="${escapeAttr(order.id)}">${icon("file-text", 13)} Open RO</button></div></td></tr>`).join("");
+
+  const grokReceptionistCard = `<section class="ai-panel grok-phone-panel"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice (grok-voice-latest)</div><h2>Grok Phone Call Answering & Auto-Intake</h2><p>Forward your shop phone line to Twilio so Grok answers customer calls 24/7, gives ballpark estimates using your $${Number(shopProfile().laborRate || 140).toFixed(2)}/hr labor rate, and automatically fills in Customer Intake forms, Estimates, and Work Orders.</p></div><div class="head-actions"><button type="button" class="primary grok-voice-btn ${isLive ? "is-live" : ""}" id="grok-phone-live-btn">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span></button><button type="button" class="secondary" id="grok-open-intake-modal">${icon("clipboard-list", 14)} Open Intake Form</button></div></div><div class="agentphone-webhook-preview"><span>Twilio Voice Webhook URL (HTTP POST when a call comes in)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">Forward your shop phone number (e.g. dial <b>*72</b> + your Twilio number, or enable No-Answer Call Forwarding with your carrier) to your Twilio Voice number pointing to this webhook. Configure your xAI API key and voice in <b>Settings → Grok Voice & Phone Call Forwarding</b>.</small></div><div class="data-panel" style="margin-top:12px"><table><thead><tr><th>RO</th><th>Caller</th><th>Vehicle</th><th>Concern / Symptoms</th><th>Quoted Estimate</th><th>Actions</th></tr></thead><tbody>${callRows || `<tr><td colspan="6">No Grok phone intakes recorded yet. Click <b>Answer / Test Call with Grok</b> above or call your forwarded shop number to see forms fill automatically.</td></tr>`}</tbody></table></div></section>`;
+
+  return `${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
+};
+
+function grokSettingsPanelHtml() {
+  const canManage = canManageShopAi();
+  const webhookUrl = grokPhoneWebhookUrl();
+  const statusLabel = grokVoiceSettings.configured
+    ? `Grok Voice connected (${grokVoiceSettings.keySource === "shop" ? `shop key ${grokVoiceSettings.maskedKey}` : "platform key"}) · Voice: ${String(grokVoiceSettings.voice || "eve").toUpperCase()}`
+    : "Add your xAI API key (console.x.ai) to enable Grok Phone Call Answering and Live Voice Mode";
+  const voiceSelectOptions = GROK_VOICE_OPTIONS.map(opt => `<option value="${escapeAttr(opt.id)}" ${(grokVoiceSettings.voice || "eve") === opt.id ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("");
+  const removeBtn = grokVoiceSettings.configured && grokVoiceSettings.keySource === "shop"
+    ? `<button type="button" class="secondary" id="grok-voice-remove-key">${icon("trash-2", 14)} Remove xAI key</button>`
+    : "";
+
+  const formHtml = canManage
+    ? `<form class="form-grid" id="grok-voice-config-form" autocomplete="off"><label>xAI API Key (Grok)<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.configured ? "Leave blank to keep existing key, or paste xai-..." : "xai-..."}" ${grokVoiceSettings.configured ? "" : "required"}/></label><label>Grok Receptionist Voice<select name="voice">${voiceSelectOptions}</select></label><label>Shop Business Hours (spoken to callers)<input name="shopHours" value="${escapeAttr(grokVoiceSettings.shopHours || "Monday–Friday 8:00 AM – 5:30 PM")}"/></label><label>Shop / Twilio Forwarding Number<input name="forwardingPhone" placeholder="+18065550199" value="${escapeAttr(grokVoiceSettings.forwardingPhone || "")}"/></label><label class="full">Custom Opening Greeting (optional)<input name="greeting" placeholder="Thanks for calling! I'm Grok, the shop's automated service advisor. How can I help with your vehicle today?" value="${escapeAttr(grokVoiceSettings.greeting || "")}"/></label><label class="full">Receptionist Instructions & Shop Policies (optional)<textarea name="instructions" rows="2" placeholder="e.g., Standard diagnostic fee is $140 waived with repair. We service domestic and Asian vehicles; no heavy diesel.">${escapeHtml(grokVoiceSettings.instructions || "")}</textarea></label><div class="full agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL (Paste in Twilio Console → Phone Numbers → Voice → "A call comes in" HTTP POST)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">To forward your existing shop phone line: enable Unconditional (*72) or Busy/No-Answer (*71) call forwarding on your shop phone carrier to your Twilio number. When a call arrives, Grok answers immediately, quotes estimates, and saves the Customer Intake, Vehicle, Estimate, and Work Order in Shop Crank.</small></div><div class="full"><button class="primary" type="submit">${icon("phone-call", 14)} Save Grok Voice & Phone Settings</button>${removeBtn}</div></form>`
+    : `<div class="agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL</span><code>${escapeHtml(webhookUrl)}</code></div><p class="form-help">Only shop owners and admins can update Grok Voice settings.</p>`;
+
+  return `<section class="settings-panel grok-voice-settings" id="grok-voice-settings"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice & Call Forwarding</div><h2>Have Grok Answer Shop Phone Calls</h2><p>${escapeHtml(statusLabel)}</p></div>${icon("phone-incoming", 20)}</div>${formHtml}</section>`;
+}
+
+const settingsBeforeGrok = settings;
+settings = function () {
+  const page = settingsBeforeGrok();
+  if (isOfflineDesktop()) return page;
+  return page.replace("</main>", `${grokSettingsPanelHtml()}</main>`);
+};
+
+const openCustomerIntakeBeforeGrok = openCustomerIntake;
+openCustomerIntake = function (initialDraftOverride = null) {
+  if (initialDraftOverride) {
+    saveIntakeDraft(initialDraftOverride);
+  }
+  openCustomerIntakeBeforeGrok();
+  const meta = document.querySelector("#intake-host .intake-head-meta");
+  if (meta && !meta.querySelector("#intake-grok-voice-btn")) {
+    const isLive = Boolean(activeGrokSession?.isActive());
+    const phase = isLive ? activeGrokPhase : "idle";
+    const placeholder = grokPhasePlaceholder(phase);
+    meta.insertAdjacentHTML(
+      "afterbegin",
+      `<button type="button" class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" id="intake-grok-voice-btn" title="Have Grok listen to the call and fill this intake form">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "End Grok Voice") : "Grok Voice Intake"}</span></button>`,
+    );
+    document.querySelector("#intake-grok-voice-btn")?.addEventListener("click", () => {
+      startOrStopGrokVoice({
+        target: "intake",
+        greetAsReceptionist: true,
+        onWizardIntakeUpdate: (newDraft) => {
+          const merged = applyGrokCallToIntakeDraft(loadIntakeDraft(), newDraft);
+          saveIntakeDraft(merged);
+          openCustomerIntake(merged);
+        },
+      });
+    });
+  }
+};
+
+const bindBeforeGrok = bind;
+bind = function () {
+  bindBeforeGrok();
+  if (!currentUser() || isOfflineDesktop()) return;
+
+  if (state.route === "settings" && !grokVoiceSettings.loaded) {
+    void loadGrokVoiceSettings();
+  }
+
+  document.querySelector("#grok-voice-config-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const button = form.querySelector("button[type=submit]");
+    const data = Object.fromEntries(new FormData(form));
+    button.disabled = true;
+    try {
+      const result = await apiFetch("/voice/grok/configure", {
+        method: "POST",
+        body: JSON.stringify({
+          apiKey: String(data.apiKey || "").trim() || undefined,
+          voice: data.voice,
+          shopHours: data.shopHours,
+          forwardingPhone: data.forwardingPhone,
+          greeting: data.greeting,
+          instructions: data.instructions,
+        }),
+      });
+      grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+      toast("Grok Voice & Phone Call Forwarding settings saved");
+      render();
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "Could not save Grok Voice settings");
+    }
+  });
+
+  document.querySelector("#grok-voice-remove-key")?.addEventListener("click", async (event) => {
+    if (!confirm("Remove this shop's xAI API key?")) return;
+    event.currentTarget.disabled = true;
+    try {
+      const result = await apiFetch("/voice/grok/configure", { method: "DELETE" });
+      grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+      toast("xAI API key removed");
+      render();
+    } catch (error) {
+      toast(error.message || "Could not remove xAI API key");
+      render();
+    }
+  });
+
+  document.querySelector("#grok-phone-live-btn")?.addEventListener("click", () => {
+    startOrStopGrokVoice({ target: "phone", greetAsReceptionist: true });
+  });
+
+  document.querySelector("#grok-open-intake-modal")?.addEventListener("click", () => {
+    openCustomerIntake();
+  });
+
+  document.querySelectorAll("[data-grok-open-intake]").forEach((btn) => {
+    btn.onclick = () => {
+      const order = state.orders.find(o => o.id === btn.dataset.grokOpenIntake);
+      if (order?.intake) {
+        openCustomerIntake(order.intake);
+      } else if (order) {
+        const draft = applyGrokCallToIntakeDraft(emptyIntakeDraft(), {
+          customer: { firstName: order.customer, phone: order.phone },
+          vehicle: { vin: order.vin, model: order.vehicle },
+          concern: { description: order.complaint },
+        });
+        openCustomerIntake(draft);
+      }
+    };
+  });
+};
 
 void startApp();
