@@ -17,6 +17,7 @@ public static class Program
         }
 
         var session = new DiagnosticSession();
+        using var dispatchGate = new SemaphoreSlim(1, 1);
         Console.WriteLine($"J2534.Host starting on \\\\.\\pipe\\{pipeName}");
 
         while (true)
@@ -35,7 +36,7 @@ public static class Program
                 {
                     try
                     {
-                        await HandleClientAsync(pipe, session);
+                        await HandleClientAsync(pipe, session, dispatchGate);
                     }
                     catch (Exception ex)
                     {
@@ -46,7 +47,7 @@ public static class Program
         }
     }
 
-    static async Task HandleClientAsync(Stream stream, DiagnosticSession session)
+    static async Task HandleClientAsync(Stream stream, DiagnosticSession session, SemaphoreSlim dispatchGate)
     {
         using var reader = new StreamReader(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true);
         await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true) { AutoFlush = true };
@@ -56,25 +57,33 @@ public static class Program
             var line = await reader.ReadLineAsync();
             if (line is null) break;
 
-            JsonRpcResponse response;
+            await dispatchGate.WaitAsync();
             try
             {
-                var request = JsonSerializer.Deserialize<JsonRpcRequest>(line, JsonOptions.Rpc);
-                if (request is null)
+                JsonRpcResponse response;
+                try
                 {
-                    response = JsonRpcResponse.Fail(null, -32700, "Parse error");
+                    var request = JsonSerializer.Deserialize<JsonRpcRequest>(line, JsonOptions.Rpc);
+                    if (request is null)
+                    {
+                        response = JsonRpcResponse.Fail(null, -32700, "Parse error");
+                    }
+                    else
+                    {
+                        response = await RpcDispatcher.DispatchAsync(request, session);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    response = await RpcDispatcher.DispatchAsync(request, session);
+                    response = JsonRpcResponse.Fail(null, -32000, ex.Message);
                 }
-            }
-            catch (Exception ex)
-            {
-                response = JsonRpcResponse.Fail(null, -32000, ex.Message);
-            }
 
-            await writer.WriteLineAsync(JsonSerializer.Serialize(response, JsonOptions.Rpc));
+                await writer.WriteLineAsync(JsonSerializer.Serialize(response, JsonOptions.Rpc));
+            }
+            finally
+            {
+                dispatchGate.Release();
+            }
         }
     }
 }

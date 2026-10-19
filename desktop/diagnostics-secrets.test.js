@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { resolveDiagnosticsPublicKey } = require('./diagnostics-secrets');
+const { isTrustedLocalDiagnosticsRequest } = require('./diagnostics-bridge');
 
 describe('resolveDiagnosticsPublicKey', () => {
   it('prefers environment variables', () => {
@@ -62,5 +63,57 @@ describe('resolveDiagnosticsPublicKey', () => {
     const result = resolveDiagnosticsPublicKey({ env: {}, packaged: false, candidates: [] });
     assert.equal(result.publicKey, '');
     assert.equal(result.source, 'missing-dev');
+  });
+});
+
+describe('isTrustedLocalDiagnosticsRequest', () => {
+  it('allows same-origin loopback requests carrying the local client header', () => {
+    assert.equal(
+      isTrustedLocalDiagnosticsRequest({
+        socket: { remoteAddress: '127.0.0.1' },
+        headers: {
+          host: '127.0.0.1:3000',
+          origin: 'http://127.0.0.1:3000',
+          'sec-fetch-site': 'same-origin',
+          'x-shopcrank-local-client': '1',
+        },
+      }),
+      true,
+    );
+  });
+
+  it('rejects non-loopback, missing header, or cross-origin requests', () => {
+    assert.equal(
+      isTrustedLocalDiagnosticsRequest({
+        socket: { remoteAddress: '192.168.1.50' },
+        headers: {
+          host: '127.0.0.1:3000',
+          origin: 'http://127.0.0.1:3000',
+          'x-shopcrank-local-client': '1',
+        },
+      }),
+      false,
+    );
+    assert.equal(
+      isTrustedLocalDiagnosticsRequest({
+        socket: { remoteAddress: '127.0.0.1' },
+        headers: {
+          host: '127.0.0.1:3000',
+          origin: 'http://127.0.0.1:3000',
+        },
+      }),
+      false,
+    );
+    assert.equal(
+      isTrustedLocalDiagnosticsRequest({
+        socket: { remoteAddress: '127.0.0.1' },
+        headers: {
+          host: '127.0.0.1:3000',
+          origin: 'https://evil.example',
+          'x-shopcrank-local-client': '1',
+        },
+      }),
+      false,
+    );
   });
 });

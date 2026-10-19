@@ -117,43 +117,7 @@ app.post('/api/diagnostics/audit', (req, res) => {
 });
 
 // Local J2534 hardware bridge endpoints for browser-hosted shop bays
-const LOCAL_DIAGNOSTIC_RPC = {
-  listAdapters: () => diagnosticsBridge.listAdapters(),
-  autoDetectAndConnect: () => diagnosticsBridge.autoDetectAndConnect(),
-  connect: (params) => diagnosticsBridge.connect(params || {}),
-  disconnect: () => diagnosticsBridge.disconnect(),
-  getConnectionStatus: () => diagnosticsBridge.getConnectionStatus(),
-  readVin: () => diagnosticsBridge.readVin(),
-  identifyEcus: () => diagnosticsBridge.identifyEcus(),
-  readDtcs: () => diagnosticsBridge.readDtcs(),
-  clearDtcs: (params) => diagnosticsBridge.clearDtcs(params || {}),
-  securityAccess: (params) => diagnosticsBridge.securityAccess(params || {}),
-  programKey: (params) => diagnosticsBridge.programKey(params || {}),
-  codeModule: (params) => diagnosticsBridge.codeModule(params || {}),
-  bidirectionalControl: (params) => diagnosticsBridge.bidirectionalControl(params || {}),
-  flashModule: (params) => diagnosticsBridge.flashModule(params || {}),
-  startLiveLog: () => diagnosticsBridge.startLiveLog(),
-  stopLiveLog: () => diagnosticsBridge.stopLiveLog(),
-  pollLiveLog: (params) => diagnosticsBridge.pollLiveLog(params?.since ?? params ?? 0),
-  identifyVehicle: () => diagnosticsBridge.identifyVehicle(),
-  obdSnapshot: () => diagnosticsBridge.obdSnapshot(),
-  obdClearDtcs: (params) => diagnosticsBridge.obdClearDtcs(params || {}),
-  keyProcedureSupport: (params) => diagnosticsBridge.keyProcedureSupport(params || {}),
-};
-
-app.post('/api/diagnostics/j2534/:method', async (req, res) => {
-  const method = String(req.params.method || '').trim();
-  const handler = LOCAL_DIAGNOSTIC_RPC[method];
-  if (!handler) {
-    return res.status(404).json({ ok: false, error: `Unsupported diagnostic method: ${method}` });
-  }
-  try {
-    const result = await handler(req.body || {});
-    res.json({ ok: true, result });
-  } catch (error) {
-    res.status(400).json({ ok: false, error: error.message || 'Diagnostic operation failed' });
-  }
-});
+diagnosticsBridge.registerLocalDiagnosticsRoutes(app);
 
 // Vehicle decode endpoint
 app.get('/api/vehicles/decode/:vin', (req, res) => {
@@ -690,8 +654,8 @@ app.use((req, res) => {
   res.sendFile(join(__dirname, 'index.html'));
 });
 
-const PORT = 3000;
-const HOST = '0.0.0.0';
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || (process.env.SHOP_CRANK_DIAGNOSTICS_HTTP_TOKEN ? '0.0.0.0' : '127.0.0.1');
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`ShopCrank server listening on http://${HOST}:${PORT}`);

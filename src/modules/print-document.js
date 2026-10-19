@@ -4,6 +4,29 @@
  * invoice HTML never gets written and the user only sees a blank page.
  */
 
+import { escapeHtml } from '../shared/html.js';
+
+function resolveBaseHref(target) {
+  const candidate = String(target?.document?.baseURI || target?.location?.href || '').trim();
+  if (!candidate || /^(?:about|blob|data|javascript):/i.test(candidate)) return '';
+  return candidate;
+}
+
+export function withBaseHref(html, target) {
+  const markup = String(html ?? '');
+  if (/<base\b/i.test(markup)) return markup;
+  const baseHref = resolveBaseHref(target);
+  if (!baseHref) return markup;
+  const baseTag = `<base href="${escapeHtml(baseHref)}">`;
+  if (/<head\b[^>]*>/i.test(markup)) {
+    return markup.replace(/<head\b[^>]*>/i, match => `${match}${baseTag}`);
+  }
+  if (/<html\b[^>]*>/i.test(markup)) {
+    return markup.replace(/<html\b[^>]*>/i, match => `${match}<head>${baseTag}</head>`);
+  }
+  return `${baseTag}${markup}`;
+}
+
 function runPrint(win) {
   try {
     win.focus();
@@ -122,7 +145,7 @@ export function openPrintDocument(html, options = {}) {
   const blockedMessage = options.blockedMessage || 'Allow pop-ups to print';
   const autoPrint = options.autoPrint !== false;
   const schedule = options.schedule || (fn => setTimeout(fn, 0));
-  const markup = String(html ?? '');
+  const markup = withBaseHref(html, target);
   const blobAvailable = typeof target.Blob === 'function' && typeof target.URL?.createObjectURL === 'function';
   if (blobAvailable) {
     if (openBlobDocument(target, markup, schedule, autoPrint)) return true;
