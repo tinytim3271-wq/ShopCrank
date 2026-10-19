@@ -136,15 +136,16 @@ export function elmFrameBytes(line, command = '') {
   if (!value || value.replace(/\s/g, '') === String(command).toUpperCase().replace(/\s/g, '') || /^(SEARCHING|BUS INIT|STOPPED|OK\b|ELM327|AT\b)/.test(value)) {
     return [];
   }
+  const numbered = /^\s*\d+\s*:\s*/.test(value);
   value = value.replace(/^\s*\d+\s*:\s*/, '');
   let header = false;
-  if (/^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value.replace(/\s/g, ''))) {
+  if (!numbered && /^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value.replace(/\s/g, ''))) {
     const compact = value.replace(/\s/g, '');
     value = compact.slice(compact.startsWith('18') ? 8 : 3);
     header = true;
   }
   let parts = value.match(/[0-9A-F]+/g) || [];
-  if (!header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
+  if (!numbered && !header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
     parts.shift();
     header = true;
   }
@@ -154,6 +155,7 @@ export function elmFrameBytes(line, command = '') {
     parts = parts.flatMap(part => (part.length === 2 ? [part] : part.length % 2 === 0 ? (part.match(/../g) || []) : []));
   }
   let bytes = parts.map(part => parseInt(part, 16)).filter(Number.isFinite);
+  if (numbered) return bytes;
   if (header && bytes.length && bytes[0] <= 0x0f) bytes.shift();
   if (bytes[0] >= 0x10 && bytes[0] <= 0x1f) bytes = bytes.slice(2);
   else if (bytes[0] >= 0x20 && bytes[0] <= 0x2f) bytes = bytes.slice(1);
