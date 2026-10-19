@@ -9,7 +9,7 @@ const { verifyCapabilityToken } = require('../diagnostics/j2534-host-node/capabi
 
 const sessionId = crypto.randomBytes(8).toString('hex');
 const hostToken = crypto.randomBytes(24).toString('base64url');
-const PIPE_WIN = `\\\\.\\pipe\\shopcrank-j2534-${sessionId}`;
+const PIPE_WIN = String.raw`\\.\pipe\shopcrank-j2534-${sessionId}`;
 const PIPE_UNIX = path.join(os.tmpdir(), `shopcrank-j2534-${sessionId}.sock`);
 
 let hostProcess = null;
