@@ -654,6 +654,7 @@ app.use((req, res) => {
   res.sendFile(join(__dirname, 'index.html'));
 });
 
+// Unauthenticated mock API: loopback only unless explicitly exposed for diagnostics.
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || (process.env.SHOP_CRANK_DIAGNOSTICS_HTTP_TOKEN ? '0.0.0.0' : '127.0.0.1');
 

@@ -61,7 +61,8 @@ function createDependencies({ realmId = 'realm-current', mappings = [] } = {}) {
     DB,
     records,
     syncRecords,
-    async getSecret() {
+    async getSecret(_env, _shopId, name) {
+      if (name !== 'quickbooks-oauth-tokens') return '';
       return JSON.stringify({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
@@ -105,7 +106,10 @@ test('invoice sync supplies the default item to every unmapped line and scopes c
   const requests = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
-    requests.push({ url: String(url), body: JSON.parse(init.body) });
+    requests.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
+    if (String(url).includes('/preferences')) return Response.json({ Preferences: { TaxPrefs: { UsingSalesTax: false } } });
+    if (String(url).includes('/companyinfo/')) return Response.json({ CompanyInfo: { Country: 'US' } });
+    if (String(url).includes('/query')) return Response.json({ QueryResponse: {} });
     const data = String(url).includes('/customer')
       ? { Customer: { Id: 'customer-in-new-realm' } }
       : { Invoice: { Id: 'invoice-in-new-realm' } };
@@ -137,4 +141,33 @@ test('invoice sync rejects records already mapped in the connected QuickBooks re
     syncInvoice(dependencies),
     error => error.status === 409 && /already synced/u.test(error.message),
   );
+});
+
+test('QuickBooks tax settings only accept active company tax codes', async () => {
+  const dependencies = createDependencies();
+  const saved = new Map();
+  dependencies.saveSecret = async (_env, _shopId, name, value) => saved.set(name, value);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/preferences')) return Response.json({ Preferences: { TaxPrefs: { UsingSalesTax: true } } });
+    if (String(url).includes('/companyinfo/')) return Response.json({ CompanyInfo: { Country: 'US' } });
+    return Response.json({ QueryResponse: { TaxCode: [{ Id: '3', Name: 'County 8.25%', Taxable: true }, { Id: '5', Name: 'City 6%', Taxable: true }] } });
+  };
+  const put = body => handleQuickBooks(
+    new Request('https://app.example.test/api/quickbooks/tax-settings', { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
+    { ...env, DB: dependencies.DB },
+    { shopId: 'shop-1', role: 'owner', userId: 'owner-1' },
+    ['quickbooks', 'tax-settings'],
+    dependencies,
+  );
+  try {
+    await assert.rejects(put({ taxCodeId: '99' }), error => error.status === 400);
+    const response = await put({ taxCodeId: '5' });
+    const body = await response.json();
+    assert.equal(body.mode, 'manual');
+    assert.equal(body.taxCodeId, '5');
+    assert.equal(JSON.parse(saved.get('quickbooks-tax-settings')).taxCodeId, '5');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -1,3 +1,13 @@
+import {
+  QboTaxConfigError,
+  applyQboInvoiceTax,
+  qboBillableLines,
+  qboLineMoney,
+  qboLineTaxable,
+  qboTaxModeFromCompany,
+  resolveQboTaxSettings,
+} from "../../../src/modules/quickbooks.js";
+
 const AUTHORIZATION_URL = "https://appcenter.intuit.com/connect/oauth2";
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 const API_BASE_URLS = Object.freeze({
@@ -116,14 +126,20 @@ async function readJson(response) {
   }
 }
 
-function apiError(data, status) {
-  const fault = data?.Fault;
-  const detail = fault?.Error?.[0]?.Detail || fault?.Error?.[0]?.Message;
+export function apiError(data, status) {
+  const error = data?.Fault?.Error?.[0] || {};
+  const detail = error.Detail || error.Message;
   const safeDetail = typeof detail === "string" ? detail.slice(0, 500) : "";
-  return new QuickBooksError(
-    safeDetail ? `QuickBooks request failed: ${safeDetail}` : `QuickBooks request failed (${status})`,
-    { code: "QUICKBOOKS_API_ERROR", status },
-  );
+  const faultCode = typeof error.code === "string" ? error.code.slice(0, 10) : "";
+  const taxRelated = /tax|gst|hst|vat/i.test(safeDetail);
+  let message = safeDetail ? `QuickBooks request failed: ${safeDetail}` : `QuickBooks request failed (${status})`;
+  if (faultCode) message = `QuickBooks error ${faultCode}: ${safeDetail || `request failed (${status})`}`;
+  if (faultCode === "6000" && taxRelated) {
+    message += " Check the QuickBooks tax settings in Shop Crank (Integrations → QuickBooks) and that sales tax is set up in QuickBooks.";
+  }
+  const result = new QuickBooksError(message, { code: "QUICKBOOKS_API_ERROR", status });
+  result.faultCode = faultCode || null;
+  return result;
 }
 
 function tokenMetadata(tokens) {
@@ -221,7 +237,34 @@ export function normalizeQuickBooksCustomer(customer) {
   return payload;
 }
 
-export function normalizeQuickBooksInvoice(invoice) {
+function salesLine(line, index, label = `invoice.lines[${index}]`) {
+  if (!line || typeof line !== "object") {
+    throw new QuickBooksError(`${label} must be an object`, { code: "INVALID_INPUT" });
+  }
+  const money = qboLineMoney(line);
+  const quantity = boundedNumber(money.qty, `${label}.quantity`);
+  const unitPrice = boundedNumber(money.unitPrice, `${label}.unitPrice`);
+  const amount = boundedNumber(money.amount, `${label}.amount`);
+  return compact({
+    Amount: amount,
+    DetailType: "SalesItemLineDetail",
+    Description: optionalString(line.description, `${label}.description`, 4000),
+    SalesItemLineDetail: compact({
+      ItemRef: line.quickBooksItemId
+        ? { value: requiredString(line.quickBooksItemId, `${label}.quickBooksItemId`, 255) }
+        : undefined,
+      Qty: quantity,
+      UnitPrice: unitPrice,
+    }),
+  });
+}
+
+/**
+ * `options.tax` is the company tax context ({ mode, taxCodeId, exemptTaxCodeId }).
+ * When the invoice carries a `subtotal`, QBO lines are reconciled to it so fees
+ * and discounts applied in Shop Crank are not lost.
+ */
+export function normalizeQuickBooksInvoice(invoice, { tax = null, defaultItemId = "" } = {}) {
   if (!invoice || typeof invoice !== "object" || Array.isArray(invoice)) {
     throw new QuickBooksError("invoice must be an object", { code: "INVALID_INPUT" });
   }
@@ -230,49 +273,48 @@ export function normalizeQuickBooksInvoice(invoice) {
     "invoice.quickBooksCustomerId",
     255,
   );
-  if (!Array.isArray(invoice.lines) || invoice.lines.length === 0 || invoice.lines.length > 1000) {
-    throw new QuickBooksError("invoice.lines must contain 1 to 1000 lines", {
+  const billable = Array.isArray(invoice.lines) ? qboBillableLines(invoice.lines) : [];
+  if (billable.length === 0 || billable.length > 1000) {
+    throw new QuickBooksError("invoice.lines must contain 1 to 1000 billable lines", {
       code: "INVALID_INPUT",
     });
   }
-  return compact({
+  const fees = (Array.isArray(invoice.fees) ? invoice.fees : [])
+    .filter((fee) => Number(fee?.amount) > 0)
+    .map((fee) => ({ description: fee.description || "Fee", quantity: 1, unitPrice: fee.amount, amount: fee.amount, quickBooksItemId: fee.quickBooksItemId || defaultItemId || undefined }));
+  const sourceLines = [...billable, ...fees];
+  const lines = sourceLines.map((line, index) => salesLine(line, index));
+  const totalTax = Number(invoice.tax) || 0;
+  const taxable = sourceLines.map((line) => qboLineTaxable(line, totalTax));
+
+  const lineSum = Math.round(lines.reduce((sum, line) => sum + line.Amount, 0) * 100) / 100;
+  const subtotal = invoice.subtotal === undefined || invoice.subtotal === null || invoice.subtotal === ""
+    ? null
+    : boundedNumber(invoice.subtotal, "invoice.subtotal");
+  if (subtotal !== null && Math.abs(subtotal - lineSum) >= 0.01) {
+    const difference = Math.round((subtotal - lineSum) * 100) / 100;
+    if (difference < 0) {
+      lines.push({ Amount: -difference, DetailType: "DiscountLineDetail", Description: invoice.discountReason || "Discount", DiscountLineDetail: { PercentBased: false } });
+    } else {
+      lines.push(salesLine({ description: "Shop fees and supplies", quantity: 1, unitPrice: difference, amount: difference, quickBooksItemId: defaultItemId || undefined }, lines.length, "invoice.reconciliation"));
+      taxable.push(totalTax > 0);
+    }
+  }
+
+  const payload = compact({
     CustomerRef: { value: customerId },
     DocNumber: optionalString(invoice.number || invoice.docNumber, "invoice.number", 21),
     TxnDate: isoDate(invoice.date || invoice.txnDate, "invoice.date"),
     DueDate: isoDate(invoice.dueDate, "invoice.dueDate"),
     PrivateNote: optionalString(invoice.note, "invoice.note", 4000),
-    Line: invoice.lines.map((line, index) => {
-      if (!line || typeof line !== "object") {
-        throw new QuickBooksError(`invoice.lines[${index}] must be an object`, {
-          code: "INVALID_INPUT",
-        });
-      }
-      const quantity = boundedNumber(line.quantity ?? line.qty ?? 1, `invoice.lines[${index}].quantity`);
-      const unitPrice = boundedNumber(line.unitPrice, `invoice.lines[${index}].unitPrice`);
-      const amount = boundedNumber(
-        line.amount ?? quantity * unitPrice,
-        `invoice.lines[${index}].amount`,
-      );
-      return compact({
-        Amount: amount,
-        DetailType: "SalesItemLineDetail",
-        Description: optionalString(line.description, `invoice.lines[${index}].description`, 4000),
-        SalesItemLineDetail: compact({
-          ItemRef: line.quickBooksItemId
-            ? {
-                value: requiredString(
-                  line.quickBooksItemId,
-                  `invoice.lines[${index}].quickBooksItemId`,
-                  255,
-                ),
-              }
-            : undefined,
-          Qty: quantity,
-          UnitPrice: unitPrice,
-        }),
-      });
-    }),
+    Line: lines,
   });
+  try {
+    return applyQboInvoiceTax(payload, { taxable, totalTax, tax });
+  } catch (error) {
+    if (error instanceof QboTaxConfigError) throw new QuickBooksError(error.message, { code: error.code, status: 409 });
+    throw error;
+  }
 }
 
 export function normalizeQuickBooksPayment(payment) {
@@ -468,25 +510,26 @@ export function createQuickBooksIntegration({
     return existing;
   }
 
-  async function qboCreate(entityName, payload) {
+  async function qboRequest(method, resourcePath, payload, params = {}) {
     const config = resolveConfig(env);
     assertFunction(fetchImpl, "fetch");
     let tokens = await usableTokens();
     const request = async () => {
       const realmId = requiredString(tokens.realmId, "stored QuickBooks realmId", 255);
       const url = new URL(
-        `/v3/company/${encodeURIComponent(realmId)}/${entityName}`,
+        `/v3/company/${encodeURIComponent(realmId)}/${resourcePath.replaceAll("{realmId}", encodeURIComponent(realmId))}`,
         config.apiBaseUrl,
       );
+      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
       url.searchParams.set("minorversion", "75");
       return fetchImpl(url, {
-        method: "POST",
+        method,
         headers: {
           Accept: "application/json",
           Authorization: `Bearer ${requiredString(tokens.accessToken, "stored access token", 8192)}`,
-          "Content-Type": "application/json",
+          ...(payload === undefined ? {} : { "Content-Type": "application/json" }),
         },
-        body: JSON.stringify(payload),
+        body: payload === undefined ? undefined : JSON.stringify(payload),
       });
     };
     let response = await request();
@@ -498,6 +541,49 @@ export function createQuickBooksIntegration({
     const data = await readJson(response);
     if (!response.ok) throw apiError(data, response.status);
     return { data, realmId: tokens.realmId };
+  }
+
+  const qboCreate = (entityName, payload) => qboRequest("POST", entityName, payload);
+
+  async function getTaxContext(saved = {}) {
+    // Sequential: an expired token must be refreshed once, not by parallel calls.
+    const { data: preferences } = await qboRequest("GET", "preferences");
+    const { data: companyInfo } = await qboRequest("GET", "companyinfo/{realmId}");
+    const { data: codes } = await qboRequest("GET", "query", undefined, {
+      query: "select * from TaxCode where Active = true maxresults 200",
+    });
+    const mode = qboTaxModeFromCompany({ preferences, companyInfo });
+    const taxCodes = codes?.QueryResponse?.TaxCode || [];
+    return {
+      ...resolveQboTaxSettings(mode, taxCodes, saved),
+      country: companyInfo?.CompanyInfo?.Country || null,
+      taxCodes: taxCodes.map((code) => ({
+        id: String(code.Id),
+        name: String(code.Name || code.Id),
+        taxable: code.Taxable !== false,
+      })),
+    };
+  }
+
+  async function syncInvoiceWithTax(invoice, { taxSettings = {}, defaultItemId = "" } = {}) {
+    const tax = await getTaxContext(taxSettings);
+    const result = await sync(
+      "Invoice",
+      invoice?.id,
+      normalizeQuickBooksInvoice(invoice, { tax, defaultItemId }),
+      "Invoice",
+    );
+    const expectedTax = Math.round((Number(invoice?.tax) || 0) * 100) / 100;
+    const remoteTax = Number(result.entity?.TxnTaxDetail?.TotalTax);
+    return {
+      ...result,
+      tax: {
+        mode: tax.mode,
+        expected: expectedTax,
+        quickBooks: Number.isFinite(remoteTax) ? remoteTax : null,
+        mismatch: Number.isFinite(remoteTax) && Math.abs(remoteTax - expectedTax) >= 0.01,
+      },
+    };
   }
 
   async function sync(type, localId, payload, responseKey) {
@@ -524,6 +610,8 @@ export function createQuickBooksIntegration({
       sync("Customer", customer?.id, normalizeQuickBooksCustomer(customer), "Customer"),
     syncInvoice: (invoice) =>
       sync("Invoice", invoice?.id, normalizeQuickBooksInvoice(invoice), "Invoice"),
+    getTaxContext,
+    syncInvoiceWithTax,
     syncPayment: (payment) =>
       sync("Payment", payment?.id, normalizeQuickBooksPayment(payment), "Payment"),
   });
@@ -628,10 +716,22 @@ async function qboRequest(env, record, path, { method = 'GET', body, fetcher = f
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = payload?.Fault?.Error?.[0]?.Message || payload.message || `QuickBooks request failed (${response.status})`;
-    throw new HttpError(502, message);
+    if (payload?.Fault) throw new HttpError(502, apiError(payload, response.status).message);
+    throw new HttpError(502, payload.message || `QuickBooks request failed (${response.status})`);
   }
   return payload;
+}
+
+async function detectTaxContext(env, record, fetcher, saved = {}) {
+  const preferences = await qboRequest(env, record, '/preferences?minorversion=75', { fetcher });
+  const companyInfo = await qboRequest(env, record, `/companyinfo/${encodeURIComponent(record.realmId)}?minorversion=75`, { fetcher });
+  const query = encodeURIComponent('select * from TaxCode where Active = true maxresults 200');
+  const codes = await qboRequest(env, record, `/query?query=${query}&minorversion=75`, { fetcher });
+  return resolveQboTaxSettings(
+    qboTaxModeFromCompany({ preferences, companyInfo }),
+    codes?.QueryResponse?.TaxCode || [],
+    saved,
+  );
 }
 
 async function findSync(env, shopId, idempotencyKey) {
@@ -764,7 +864,13 @@ export function createQuickbooksHandlers({
       let payload;
       if (entityType === 'customer') payload = mapCustomerToQbo(body.customer || body.data || {});
       else if (entityType === 'invoice') {
-        payload = mapInvoiceToQbo(body.invoice || body.data || {}, body.customerRef || body.qboCustomerId);
+        const tax = await detectTaxContext(env, record, fetcher, record.taxSettings || {});
+        try {
+          payload = mapInvoiceToQbo(body.invoice || body.data || {}, body.customerRef || body.qboCustomerId, { tax });
+        } catch (error) {
+          if (error instanceof QboTaxConfigError) throw new HttpError(409, error.message);
+          throw error;
+        }
       } else {
         payload = mapPaymentToQbo(
           body.payment || body.data || {},

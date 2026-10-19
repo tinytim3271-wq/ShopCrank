@@ -283,6 +283,40 @@ export function workOrderWithEditedEstimate(order = {}, estimate = {}, editedAt 
   };
 }
 
+const CLOSED_ORDER_STATUSES = new Set(['invoiced', 'paid', 'closed', 'cancelled', 'canceled', 'archived']);
+
+export function ordersAcceptingEstimateLines(orders = []) {
+  return orders.filter(order => order?.id && !CLOSED_ORDER_STATUSES.has(String(order.status || '').toLowerCase()));
+}
+
+/**
+ * Adds quoted/looked-up lines (parts, labor) to a repair order's estimate.
+ * Line ids are made unique within the order so repeated adds never collide,
+ * and totals are recalculated through workOrderWithEditedEstimate.
+ */
+export function appendEstimateLinesToOrder(order = {}, newLines = [], { editedAt = new Date().toISOString(), taxRate } = {}) {
+  if (!order?.id) throw new TypeError('Select a repair order first');
+  if (CLOSED_ORDER_STATUSES.has(String(order.status || '').toLowerCase())) {
+    throw new TypeError(`${order.id} is ${order.status}; reopen it before adding lines`);
+  }
+  const estimate = order.estimate || {};
+  const existing = Array.isArray(estimate.lines) ? estimate.lines : [];
+  const usedIds = new Set(existing.map(line => String(line.id)));
+  const additions = (Array.isArray(newLines) ? newLines : [newLines]).filter(Boolean).map((line, index) => {
+    const base = String(line.id || `line-${existing.length + index + 1}`);
+    let id = base;
+    for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${base}-${suffix}`;
+    usedIds.add(id);
+    return { ...line, id, approvalStatus: 'pending', addedAt: editedAt };
+  });
+  if (!additions.length) return order;
+  return workOrderWithEditedEstimate(order, {
+    ...estimate,
+    taxRate: estimate.taxRate ?? taxRate ?? 0,
+    lines: [...existing, ...additions],
+  }, editedAt);
+}
+
 export function invoiceWithEditedWorkOrder(invoice = {}, order = {}, editedAt = new Date().toISOString()) {
   const source = order.estimate || {};
   const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || []);

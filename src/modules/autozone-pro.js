@@ -14,21 +14,21 @@ export function autozoneProLoginUrl(keyword = '') {
 export function orderingPanelHtml(account = {}, { canSave = false, escapeHtml, icon }) {
   const connected = Boolean(account.connected && account.username);
   const status = connected
-    ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>AutoZone Pro login saved</strong><span>${escapeHtml(account.username)}</span></div></div>`
-    : `<div class="messaging-status idle">${icon('lock', 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. ShopCrank encrypts them and does not put them on the work order.</span></div></div>`;
+    ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>AutoZone Pro account on file</strong><span>${escapeHtml(account.username)}</span></div></div>`
+    : `<div class="messaging-status idle">${icon('lock', 17)}<div><strong>No AutoZone Pro account on file</strong><span>An owner or admin can record the shop account. ShopCrank encrypts it and never shows or copies the password to anyone.</span></div></div>`;
   const form = canSave
     ? `<form id="autozone-login-form" class="form-grid">
         <label>Username<input name="username" autocomplete="off" value="${escapeHtml(account.username || '')}" required /></label>
         <label>Password<input name="password" type="password" autocomplete="new-password" required /></label>
-        <button class="primary" type="submit">${icon('save', 14)} Save AutoZone Pro login</button>
-        ${connected ? `<button class="secondary danger" type="button" id="autozone-disconnect">${icon('log-out', 14)} Remove saved login</button>` : ''}
+        <button class="primary" type="submit">${icon('save', 14)} Save AutoZone Pro account</button>
+        ${connected ? `<button class="secondary danger" type="button" id="autozone-disconnect">${icon('log-out', 14)} Remove saved account</button>` : ''}
       </form>`
-    : '<p class="ops-note">Ask an owner or admin to save the shop AutoZone Pro login.</p>';
+    : '<p class="ops-note">Ask an owner or admin for your own AutoZone Pro user.</p>';
   const unavailable = account.unavailable
-    ? '<p class="login-error">Sign in to the shop account to store or copy the AutoZone Pro login.</p>'
+    ? '<p class="login-error">Sign in to the shop account to see the AutoZone Pro account status.</p>'
     : '';
   return `<section class="settings-panel autozone-ordering">
-      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from ShopCrank. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon('shopping-cart', 20)}</div>
+      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open AutoZone Pro from ShopCrank and sign in with your own AutoZone Pro user. Saved passwords are never displayed or copied to the browser. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon('shopping-cart', 20)}</div>
       ${status}
       ${unavailable}
       ${form}

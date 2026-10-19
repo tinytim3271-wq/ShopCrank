@@ -23,14 +23,31 @@ export const ELM_SNAPSHOT_PIDS = [
   { pid: 0x42, code: '0x42', command: '0142', name: 'Control module voltage', unit: 'V' },
 ];
 
-export function signedEstimateForOrder(order, estimates = []) {
+/**
+ * Live/simulator key work is gated by the order's Worker-validated
+ * estimateApproval (signature with signedAt). The separate estimates register
+ * is not trusted — those fields are client-writable without server checks.
+ */
+export function signedEstimateForOrder(order, _estimates = []) {
   if (!order?.id) return null;
-  return estimates.find((estimate) => (
-    estimate.workOrderId === order.id
-    && estimate.status === "approved"
-    && estimate.signedAt
-    && String(estimate.authorizationName || "").trim()
-  )) || null;
+  const approval = order.estimateApproval;
+  if (
+    approval
+    && approval.status === "approved"
+    && approval.signedAt
+    && String(approval.authorizationName || "").trim()
+  ) {
+    return {
+      id: order.id,
+      workOrderId: order.id,
+      status: "approved",
+      signedAt: approval.signedAt,
+      authorizationName: approval.authorizationName,
+      signatureKey: approval.signatureKey || null,
+      type: approval.type || "signature",
+    };
+  }
+  return null;
 }
 
 export function isRoAuthorizedForKeys(order, estimates = []) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  apiError,
   createQuickBooksIntegration,
   normalizeQuickBooksCustomer,
   normalizeQuickBooksInvoice,
@@ -331,4 +332,112 @@ test("unconfigured integration fails safely without leaking configuration values
       /INTUIT_CLIENT_ID is required/u.test(error.message) &&
       !error.message.includes("secret"),
   );
+});
+
+const shopInvoice = {
+  quickBooksCustomerId: "c-1",
+  number: "INV-2050",
+  subtotal: 350 + 68.99 + 10.5,
+  tax: 35.43,
+  lines: [
+    { id: "l1", type: "labor", description: "Front brake labor", quantity: 1, hours: 2.5, laborRate: 140, unitPrice: 0, total: 350 },
+    { id: "p1", type: "part", description: "Wagner pads", quantity: 1, unitPrice: 68.99, total: 68.99 },
+    { id: "p2", type: "part", description: "Declined rotors", quantity: 2, unitPrice: 90, total: 180, approvalStatus: "declined" },
+  ],
+  fees: [{ description: "Shop supplies", amount: 10.5 }],
+};
+
+test("invoice lines satisfy QBO Qty x UnitPrice = Amount and skip declined work", () => {
+  const payload = normalizeQuickBooksInvoice(shopInvoice);
+  assert.deepEqual(payload.Line.map((line) => [line.Description, line.SalesItemLineDetail.Qty, line.SalesItemLineDetail.UnitPrice, line.Amount]), [
+    ["Front brake labor", 2.5, 140, 350],
+    ["Wagner pads", 1, 68.99, 68.99],
+    ["Shop supplies", 1, 10.5, 10.5],
+  ]);
+  for (const line of payload.Line) {
+    assert.equal(Math.round(line.SalesItemLineDetail.Qty * line.SalesItemLineDetail.UnitPrice * 100) / 100, line.Amount);
+  }
+  assert.equal("TxnTaxDetail" in payload, false);
+});
+
+test("invoice reconciles discounts to the Shop Crank subtotal", () => {
+  const payload = normalizeQuickBooksInvoice({ ...shopInvoice, subtotal: 400, discountReason: "Loyalty" });
+  const discount = payload.Line.at(-1);
+  assert.equal(discount.DetailType, "DiscountLineDetail");
+  assert.equal(discount.Amount, 29.49);
+});
+
+test("US manual sales tax sends TaxCodeRef per line and TxnTaxDetail (error 6000 fix)", () => {
+  const payload = normalizeQuickBooksInvoice(
+    { ...shopInvoice, lines: [...shopInvoice.lines, { type: "part", description: "Warranty part", quantity: 1, unitPrice: 0, total: 0, taxable: false }] },
+    { tax: { mode: "manual", taxCodeId: "3" } },
+  );
+  assert.deepEqual(payload.Line.map((line) => line.SalesItemLineDetail.TaxCodeRef.value), ["TAX", "TAX", "NON", "TAX"]);
+  assert.deepEqual(payload.TxnTaxDetail, { TxnTaxCodeRef: { value: "3" }, TotalTax: 35.43 });
+});
+
+test("US automated sales tax marks lines and lets QBO compute tax", () => {
+  const payload = normalizeQuickBooksInvoice(shopInvoice, { tax: { mode: "ast" } });
+  assert.ok(payload.Line.every((line) => line.SalesItemLineDetail.TaxCodeRef.value === "TAX"));
+  assert.equal("TxnTaxDetail" in payload, false);
+});
+
+test("non-US companies get real tax code ids on every line", () => {
+  const payload = normalizeQuickBooksInvoice(
+    { ...shopInvoice, lines: [shopInvoice.lines[0], { ...shopInvoice.lines[1], taxable: false }], fees: [], subtotal: undefined },
+    { tax: { mode: "global", taxCodeId: "8", exemptTaxCodeId: "4" } },
+  );
+  assert.deepEqual(payload.Line.map((line) => line.SalesItemLineDetail.TaxCodeRef.value), ["8", "4"]);
+  assert.equal(payload.GlobalTaxCalculation, "TaxExcluded");
+});
+
+test("missing tax configuration fails before calling QuickBooks with a clear message", () => {
+  assert.throws(
+    () => normalizeQuickBooksInvoice(shopInvoice, { tax: { mode: "manual" } }),
+    (error) => error.code === "QUICKBOOKS_TAX_CONFIG" && error.status === 409 && /sales tax rate/.test(error.message),
+  );
+  assert.throws(
+    () => normalizeQuickBooksInvoice(shopInvoice, { tax: { mode: "none" } }),
+    (error) => error.code === "QUICKBOOKS_TAX_CONFIG" && /does not track sales tax/.test(error.message),
+  );
+  assert.doesNotThrow(() => normalizeQuickBooksInvoice({ ...shopInvoice, tax: 0 }, { tax: { mode: "none" } }));
+});
+
+test("syncInvoiceWithTax detects the company tax setup and auto-selects the only rate", async () => {
+  const storage = stores({ accessToken: "access", refreshToken: "refresh", expiresAt: 9_999_999_999, realmId: "realm-1" });
+  const requests = [];
+  const client = createQuickBooksIntegration({
+    env: ENV,
+    ...storage,
+    now: () => 100_000,
+    fetch: async (url, init) => {
+      const href = String(url);
+      requests.push({ href, method: init.method, body: init.body ? JSON.parse(init.body) : null });
+      if (href.includes("/preferences")) return jsonResponse({ Preferences: { TaxPrefs: { UsingSalesTax: true, PartnerTaxEnabled: false } } });
+      if (href.includes("/companyinfo/")) return jsonResponse({ CompanyInfo: { Country: "US" } });
+      if (href.includes("/query")) {
+        return jsonResponse({ QueryResponse: { TaxCode: [
+          { Id: "TAX", Name: "TAX", Taxable: true },
+          { Id: "NON", Name: "NON", Taxable: false },
+          { Id: "3", Name: "Travis County 8.25%", Taxable: true },
+        ] } });
+      }
+      return jsonResponse({ Invoice: { Id: "i-9", TxnTaxDetail: { TotalTax: 35.43 } } });
+    },
+  });
+  const result = await client.syncInvoiceWithTax({ ...shopInvoice, id: "INV-2050" });
+  const invoiceRequest = requests.find((request) => request.method === "POST");
+  assert.match(invoiceRequest.href, /\/v3\/company\/realm-1\/invoice\?/u);
+  assert.deepEqual(invoiceRequest.body.TxnTaxDetail, { TxnTaxCodeRef: { value: "3" }, TotalTax: 35.43 });
+  assert.deepEqual(result.tax, { mode: "manual", expected: 35.43, quickBooks: 35.43, mismatch: false });
+  assert.match(requests[1].href, /\/companyinfo\/realm-1\?/u);
+  assert.equal(new URL(requests[2].href).searchParams.get("query"), "select * from TaxCode where Active = true maxresults 200");
+});
+
+test("QBO fault 6000 surfaces the code, detail, and where to fix tax settings", () => {
+  const error = apiError({ Fault: { Error: [{ code: "6000", Message: "A business validation error has occurred", Detail: "Business Validation Error: Make sure all your transactions have a sales tax rate before you save." }] } }, 400);
+  assert.match(error.message, /QuickBooks error 6000/);
+  assert.match(error.message, /sales tax rate/);
+  assert.match(error.message, /tax settings in Shop Crank/);
+  assert.equal(error.faultCode, "6000");
 });

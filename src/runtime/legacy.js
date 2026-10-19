@@ -9,7 +9,8 @@ import { CANNED_MENU, cannedServiceGroups, estimateLineFromService, missingCanne
 import { buildRepairGuide, repairDiagram, safeVideoUrl, stepText } from '../modules/repair-guide.js';
 import { inspectionMenuHtml } from '../modules/shop-inspections.js';
 import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.js';
-import { partstechPanelHtml } from '../modules/partstech.js';
+import { partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
+import { diagnosticDraftToOrderLines, estimateDraftAction } from '../modules/diagnostic-ai.js';
 import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
 import { quickbooksPanelHtml } from '../modules/quickbooks.js';
@@ -71,6 +72,7 @@ import {
 } from '../modules/work-order-editor.js';
 import {
   afterMidnightFeeLine,
+  appendEstimateLinesToOrder,
   approvedEstimate,
   billableEstimateLines,
   calculateEstimate,
@@ -80,6 +82,7 @@ import {
   laborLinePrintRows,
   normalizeEstimateLine,
   normalizeTechnicianIds,
+  ordersAcceptingEstimateLines,
   workOrderWithEditedEstimate,
 } from '../modules/estimate-workflow.js';
 import {
@@ -88,7 +91,7 @@ import {
   estimateFromAssistantDraft,
   workOrderDraftFromEstimate,
 } from '../modules/estimate-templates.js';
-import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, parseElmClearDtcs, runElmObdSnapshot, signedEstimateForOrder, simulateKeyJob } from '../modules/shop-os/bay.js';
+import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, parseElmClearDtcs, runElmObdSnapshot, signedEstimateForOrder, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
 import {
   APPROVAL_CUSTOM_LABEL_MAX,
   APPROVAL_NOTE_MAX,
@@ -230,7 +233,7 @@ function integrations() {
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button></div></form></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
 }
 function support() {
   if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -249,7 +252,9 @@ function bindIntegrations() {
   document.querySelector("#parts-search-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); if (data.operation === "order" && !confirm(`Place this ${data.provider} order? The supplier may charge the connected account.`)) return; try { partsLookupResult = await apiFetch(`/parts/${encodeURIComponent(data.provider)}/${encodeURIComponent(data.operation)}`, { method: "POST", body: JSON.stringify({ query: data.query, quoteId: data.query, vin: data.vin }) }); render() } catch (error) { toast(error.message) } });
   document.querySelector("#parts-punchout")?.addEventListener("click", async () => { const provider = document.querySelector("#parts-search-form [name=provider]").value; try { const result = await apiFetch(`/parts/${encodeURIComponent(provider)}/punchout`); window.open(result.url, "_blank", "noopener,noreferrer") } catch (error) { toast(error.message) } });
   document.querySelector("#quickbooks-connect")?.addEventListener("click", async () => { try { const result = await apiFetch("/quickbooks/connect", { method: "POST", body: "{}" }); window.location.assign(result.authorizationUrl) } catch (error) { toast(error.message) } });
-  document.querySelector("#quickbooks-sync-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); try { const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) }); toast(`Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`) } catch (error) { toast(error.message) } });
+  document.querySelector("#quickbooks-sync-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); try { const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) }); toast(result.tax?.mismatch ? `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId}. QuickBooks calculated tax ${money(result.tax.quickBooks)} vs ShopCrank ${money(result.tax.expected)} — review the invoice in QuickBooks.` : `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`) } catch (error) { toast(error.message) } });
+  const renderQuickbooksTax = settings => { const panel = document.querySelector("#quickbooks-tax-settings"); if (!panel) return; const modeLabel = { ast: "Automated Sales Tax (QuickBooks calculates tax)", manual: "Manual sales tax rate", global: "Tax codes per line (non-US company)", none: "Sales tax is off in QuickBooks" }[settings.mode] || settings.mode; const options = (selected, taxable) => `<option value="">Choose…</option>${(settings.taxCodes || []).filter(code => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map(code => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`; const pickers = settings.mode === "manual" || settings.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options(settings.taxCodeId, true)}</select></label>${settings.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options(settings.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : ""; panel.innerHTML = `<form class="form-grid" id="quickbooks-tax-form"><p class="full ops-note"><b>${escapeHtml(modeLabel)}</b>${settings.needsChoice ? " · choose a rate before syncing taxed invoices" : ""}</p>${pickers}</form>`; panel.querySelector("#quickbooks-tax-form")?.addEventListener("submit", async event => { event.preventDefault(); try { const saved = await apiFetch("/quickbooks/tax-settings", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(event.target))) }); renderQuickbooksTax(saved); toast("QuickBooks tax settings saved") } catch (error) { toast(error.message) } }) };
+  document.querySelector("#quickbooks-tax-load")?.addEventListener("click", async () => { try { renderQuickbooksTax(await apiFetch("/quickbooks/tax-settings")) } catch (error) { toast(error.message) } });
   document.querySelector("#support-ticket-form")?.addEventListener("submit", async event => { event.preventDefault(); const button = event.target.querySelector("button[type=submit]"), data = Object.fromEntries(new FormData(event.target)); button.disabled = true; try { const result = await apiFetch("/support", { method: "POST", body: JSON.stringify(data) }); if (result?.queued) throw new Error("Support tickets require a live connection."); toast(`Support ticket ${result.id} submitted`); event.target.reset() } catch (error) { toast(error.message) } finally { button.disabled = false } });
 }
 let assistantConversation = [], assistantPaused = false, assistantSessionId = "", assistantActiveProvider = "gemini";
@@ -521,8 +526,66 @@ let autozoneAccount = { connected: false, loaded: false };
 let partstechAccount = { connected: false, loaded: false };
 let laborGuideAccount = { connected: false, provider: "manual", loaded: false };
 let quickbooksAccount = { connected: false, loaded: false };
+let orderingTargetOrderId = "";
 let revrecStatus = { enabled: false, loaded: false };
+function orderingTargetHtml() {
+  const orders = ordersAcceptingEstimateLines(state.orders);
+  if (!orders.some(order => order.id === orderingTargetOrderId)) orderingTargetOrderId = orders[0]?.id || "";
+  const options = orders.map(order => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} · ${escapeHtml(order.customer || "")} · ${escapeHtml(order.vehicle || "")}</option>`).join("");
+  return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
+}
+async function addLinesToTargetOrder(lines, label, orderId = orderingTargetOrderId) {
+  const order = state.orders.find(item => item.id === orderId);
+  if (!order) { toast("Choose an open repair order first"); return false }
+  try {
+    const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    toast(`Added ${label} to ${order.id}`);
+    return true;
+  } catch (error) {
+    toast(error.message || `Could not add ${label} to ${order.id}`);
+    return false;
+  }
+}
+async function orderTargetPartstechParts() {
+  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+  if (!order) { toast("Choose an open repair order first"); return }
+  const lines = (order.estimate?.lines || []).filter(line => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
+  if (!lines.length) { toast(`${order.id} has no un-ordered PartsTech part lines`); return }
+  const checkout = window.open("about:blank", "_blank");
+  if (checkout) checkout.opener = null;
+  try {
+    const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+    const placedAt = now();
+    const revised = { ...order, partsOrders: [...(order.partsOrders || []), { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map(line => lines.some(item => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    if (checkout) checkout.location.href = result.redirectUrl; else window.location.assign(result.redirectUrl);
+    toast(`PartsTech checkout opened for ${order.id}. Submit the cart there to place the order.`);
+  } catch (error) {
+    checkout?.close();
+    toast(error.message || "Could not start the PartsTech order");
+  }
+}
+async function refreshTargetPartstechOrder() {
+  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+  const session = [...(order?.partsOrders || [])].reverse().find(item => item.provider === "partstech");
+  if (!session) { toast("No PartsTech order session on this RO yet"); return }
+  try {
+    const result = await apiFetch("/integrations/partstech/order/status", { method: "POST", body: JSON.stringify({ sessionId: session.sessionId }) });
+    const status = result.order?.status || "submitted", orderId = result.order?.orderId || "";
+    const revised = { ...order, partsOrders: order.partsOrders.map(item => item.sessionId === session.sessionId ? { ...item, status, orderId, checkedAt: now() } : item), estimate: { ...order.estimate, lines: order.estimate.lines.map(line => line.partstechOrder?.sessionId === session.sessionId ? { ...line, partstechOrder: { ...line.partstechOrder, status, orderId } } : line) } };
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    toast(`PartsTech order ${orderId || session.sessionId}: ${status}`);
+  } catch (error) { toast(error.message || "Could not check the PartsTech order") }
+}
 function operationsOrdering() { const canSave = ["owner", "admin"].includes(currentUser()?.role); return [
+  orderingTargetHtml(),
   orderingPanelHtml(autozoneAccount, { canSave, escapeHtml, icon }),
   partstechPanelHtml(partstechAccount, { canSave, escapeHtml, icon }),
   laborGuidePanelHtml(laborGuideAccount, { canSave, escapeHtml, icon }),
@@ -575,7 +638,7 @@ async function loadRevrecStatus(force = false) {
   }
   if (state.route === "shopops" && shopOpsTab === "ordering") render();
 }
-async function openAutozoneOrder(keyword) { const url = autozoneProLoginUrl(keyword); const opened = window.open(url, "_blank", "noopener,noreferrer"); if (!opened) { toast("Allow pop-ups to open AutoZone Pro."); return } if (!autozoneAccount.connected) { toast("AutoZone Pro opened. Save the shop login on Ordering to copy the password next time."); return } try { const detail = await apiFetch("/ordering/autozone?reveal=1"); if (detail?.password && navigator.clipboard?.writeText) { await navigator.clipboard.writeText(detail.password); toast(`AutoZone Pro opened for ${detail.username}. Password copied — paste it on their sign-in page.`); return } toast(`AutoZone Pro opened. Sign in as ${detail?.username || "the saved user"}.`) } catch (error) { toast(error.message || "AutoZone Pro opened. The saved password could not be copied.") } }
+async function openAutozoneOrder(keyword) { const url = autozoneProLoginUrl(keyword); const opened = window.open(url, "_blank", "noopener,noreferrer"); if (!opened) { toast("Allow pop-ups to open AutoZone Pro."); return } toast(autozoneAccount.connected ? `AutoZone Pro opened. Sign in with your own AutoZone Pro user (shop account ${autozoneAccount.username}).` : "AutoZone Pro opened. Sign in with your AutoZone Pro user.") }
 async function saveAutozoneLogin(form) { const data = Object.fromEntries(new FormData(form)); const account = await apiFetch("/ordering/autozone", { method: "POST", body: JSON.stringify({ username: data.username, password: data.password }) }); autozoneAccount = { connected: true, username: account.username, connectedAt: account.connectedAt, loaded: true }; toast("AutoZone Pro login saved"); render() }
 function shopOperations() { const tabs = [["vehicles", "Vehicles"], ["inspections", "Inspections"], ["inventory", "Inventory"], ["ordering", "Ordering"], ["services", "Canned services"], ["reminders", "Reminders"], ["diagnostics", "OBD-II"]], view = { vehicles: operationsVehicles, inspections: operationsInspections, inventory: operationsInventory, ordering: operationsOrdering, services: operationsServices, reminders: operationsReminders, diagnostics: operationsDiagnostics }[shopOpsTab]; return shell(`${heading("Connected workflow", "Shop operations", "Linked vehicles, inspections, stock, service templates, reminders, vendors, and basic OBD-II tools.", false)}<div class="accounting-tabs ops-tabs">${tabs.map(tab => `<button class="tab ${shopOpsTab === tab[0] ? "active" : ""}" data-ops-tab="${tab[0]}">${tab[1]}</button>`).join("")}</div>${view()}`) }
 function openVehicleForm(existing = null) { showModal(`<form class="modal" id="vehicle-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add linked"} vehicle</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<select name="customer" required>${customerOptions(existing?.customer)}</select></label><label>VIN<input name="vin" maxlength="17" pattern="[A-HJ-NPR-Z0-9]{17}" value="${escapeHtml(existing?.vin || "")}"/></label><div class="full vin-actions"><button class="secondary" type="button" id="decode-vin">${icon("scan-line", 14)} Decode VIN with NHTSA</button><span id="vin-status"></span></div><label>Year<input name="year" required value="${escapeHtml(existing?.year || "")}"/></label><label>Make<input name="make" required value="${escapeHtml(existing?.make || "")}"/></label><label>Model<input name="model" required value="${escapeHtml(existing?.model || "")}"/></label><label>Trim<input name="trim" value="${escapeHtml(existing?.trim || "")}"/></label><label>Plate<input name="plate" value="${escapeHtml(existing?.plate || "")}"/></label><label>Mileage<input name="mileage" type="number" min="0" value="${existing?.mileage || ""}"/></label><label>Next service date<input name="nextServiceDate" type="date" value="${existing?.nextServiceDate || ""}"/></label><label class="full">Notes<textarea name="notes">${escapeHtml(existing?.notes || "")}</textarea></label><label class="full">Vehicle photos<input name="photos" type="file" accept="image/*" multiple/></label>${(existing?.photoKeys || []).length ? `<div class="full vehicle-photo-thumbs">${existing.photoKeys.map(key => `<img src="${cloudflareConfig.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save vehicle</button></div></form>`); const form = document.querySelector("#vehicle-form"); document.querySelector("#decode-vin").onclick = async () => { const vin = form.elements.vin.value.trim().toUpperCase(), s = document.querySelector("#vin-status"); s.textContent = "Looking up vehicle..."; try { const data = await apiFetch(`/vehicles/decode/${encodeURIComponent(vin)}`);["year", "make", "model", "trim"].forEach(key => form.elements[key].value = data[key] || ""); s.textContent = `${data.cached ? "Cached" : "NHTSA"} vehicle data loaded` } catch { s.textContent = "VIN could not be decoded" } }; form.onsubmit = async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(form)), files = form.elements.photos.files, photoKeys = [...(existing?.photoKeys || [])]; const button = form.querySelector("button[type=submit]"); button.disabled = true; try { for (const file of files) { const key = await uploadFileToR2(file, "vehicle-photo", file.type); photoKeys.push(key) } await saveShopEntity("vehicles", { id: existing?.id || `vehicle-${Date.now()}`, ...data, vin: data.vin.trim().toUpperCase(), photoKeys, createdAt: existing?.createdAt || now(), updatedAt: existing ? now() : undefined }); closeModal(); toast("Vehicle saved"); render() } catch (error) { toast("Could not save vehicle"); button.disabled = false } } }
@@ -680,6 +743,9 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
       render();
     } catch (error) { toast(error.message || "Could not disconnect PartsTech"); }
   });
+  document.querySelector("#ordering-target-order")?.addEventListener("change", event => { orderingTargetOrderId = event.target.value; });
+  document.querySelector("#partstech-order-ro")?.addEventListener("click", () => { void orderTargetPartstechParts(); });
+  document.querySelector("#partstech-order-status")?.addEventListener("click", () => { void refreshTargetPartstechOrder(); });
   document.querySelector("#partstech-search-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
@@ -687,15 +753,14 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
     if (panel) panel.innerHTML = "<p>Quoting…</p>";
     try {
       const result = await apiFetch("/integrations/partstech/quote", { method: "POST", body: JSON.stringify(data) });
-      const rows = (result.items || []).map(item => `<tr><td>${escapeHtml(item.description)}</td><td>${escapeHtml(item.partNumber)}</td><td>${money(item.unitPrice)}</td><td><button type="button" class="mini-action" data-add-pt-line="${escapeAttr(item.id)}">Add</button></td></tr>`).join("");
+      const rows = (result.items || []).map(item => partstechQuoteRowHtml(item, { escapeHtml, escapeAttr, money, canAdd: Boolean(orderingTargetOrderId) })).join("");
       if (panel) panel.innerHTML = `<table><thead><tr><th>Part</th><th>#</th><th>Price</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No quotes returned</td></tr>"}</tbody></table>`;
       window.__SHOP_CRANK_PARTSTECH_LINES__ = Object.fromEntries((result.items || []).map(item => [item.id, item]));
       document.querySelectorAll("[data-add-pt-line]").forEach(button => {
         button.onclick = () => {
           const line = window.__SHOP_CRANK_PARTSTECH_LINES__?.[button.dataset.addPtLine];
           if (!line) return;
-          state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-          toast(`Added ${line.description} to pending estimate lines`);
+          void addLinesToTargetOrder(partstechLineToEstimateLines(line), line.description);
         };
       });
     } catch (error) {
@@ -748,8 +813,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
         button.onclick = () => {
           const line = window.__SHOP_CRANK_LABOR_LINES__?.[button.dataset.addLaborLine];
           if (!line) return;
-          state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-          toast(`Added ${line.description}`);
+          void addLinesToTargetOrder([line], line.description);
         };
       });
     } catch (error) {
@@ -765,8 +829,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
       hours: data.hours,
       laborRate: data.laborRate,
     });
-    state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-    toast(`Added manual labor: ${line.description}`);
+    void addLinesToTargetOrder([line], `manual labor: ${line.description}`);
   });
   document.querySelector("#qbo-connect")?.addEventListener("click", async () => {
     try {
@@ -4656,14 +4719,55 @@ function formatLatestObdSession(latest) {
   const readingsHtml = readingParts ? `<p class="ledger-note">${readingParts}</p>` : "";
   const scannedTime = escapeHtml(new Date(latest.scannedAt || Date.now()).toLocaleString());
   const performerHtml = latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)} · ${scannedTime}</p>` : "";
-  return `<section class="data-panel"><h3>Latest vehicle scan record</h3><p>${escapeHtml(latest.label || "Live OBD-II scan")}</p><p class="mono">${escapeHtml(latest.vin || "VIN not reported")} · ${escapeHtml(latest.vehicle || "")} (${escapeHtml(latest.orderId || "")})</p>${dtcsHtml}${readingsHtml}${performerHtml}</section>`;
+  return `<section class="data-panel"><h3>Latest vehicle scan record</h3><p>${escapeHtml(latest.label || "Live OBD-II scan")}</p><p class="mono">${escapeHtml(latest.vin || "VIN not reported")} · ${escapeHtml(latest.vehicle || "")} (${escapeHtml(latest.orderId || "")})</p>${dtcsHtml}${readingsHtml}${performerHtml}${scanAiPanel(latest)}</section>`;
 }
 
+let scanAiBusy = "";
+function scanAiPanel(scan) {
+  const analysis = scan.aiAnalysis;
+  const analyzeButton = `<button class="secondary" type="button" data-ai-scan-analyze="${escapeAttr(scan.id)}" ${scanAiBusy ? "disabled" : ""}>${icon("sparkles", 14)} ${scanAiBusy === scan.id ? "Analyzing codes…" : analysis ? "Re-analyze with AI" : "Analyze codes with AI"}</button>`;
+  if (!analysis) return `<div class="messaging-actions">${analyzeButton}</div>`;
+  const apply = analysis.draft
+    ? `<button class="primary" type="button" data-ai-scan-apply="${escapeAttr(scan.id)}" ${analysis.appliedAt ? "disabled" : ""}>${icon("clipboard-plus", 14)} ${analysis.appliedAt ? `Added to ${escapeHtml(scan.orderId)}` : `Add AI estimate to ${escapeHtml(scan.orderId)}`}</button>`
+    : "";
+  return `<div class="ai-panel"><div class="eyebrow">AI likely cause · advisory, verify with tests</div><p style="white-space:pre-wrap">${escapeHtml(analysis.message || "")}</p><p class="ai-disclaimer">Codes: ${escapeHtml((analysis.codes || []).join(", ") || "none")} · ${escapeHtml(analysis.model || "")}. Parts are added unpriced and labor hours are AI suggestions to verify against the labor guide.</p><div class="messaging-actions">${apply}${analyzeButton}</div></div>`;
+}
+async function analyzeScanWithAi(scanId) {
+  const scan = state.diagnosticSessions.find(item => item.id === scanId);
+  if (!scan) return;
+  scanAiBusy = scanId;
+  render();
+  try {
+    const result = await apiFetch("/diagnostics/analyze", { method: "POST", body: JSON.stringify({ orderId: scan.orderId, scanId: scan.id, dtcs: scan.dtcs || [], vin: scan.vin, vehicle: scan.vehicle, readings: scan.readings || [], milOn: scan.milOn ?? null }) });
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { message: result.message || "", model: result.model || "", at: now(), codes: (result.dtcs || []).map(item => item.code), draft: estimateDraftAction(result) } });
+    if (result.invalidCodes?.length) toast(`Ignored unreadable codes: ${result.invalidCodes.join(", ")}`);
+  } catch (error) {
+    toast(error.message || "AI analysis failed");
+  }
+  scanAiBusy = "";
+  render();
+}
+async function applyScanAiEstimate(scanId) {
+  const scan = state.diagnosticSessions.find(item => item.id === scanId);
+  if (!scan?.aiAnalysis?.draft) return;
+  const lines = diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes: scan.aiAnalysis.codes || [] });
+  if (!lines.length) { toast("The AI draft had no labor or parts to add"); return }
+  if (await addLinesToTargetOrder(lines, "the AI diagnostic estimate", scan.orderId)) {
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: now() } });
+    render();
+  }
+}
 function obdBay() {
-  const liveSessions = state.diagnosticSessions.filter(session => session?.mode !== "simulator" && !session?.simulator);
-  const latest = [...liveSessions].reverse()[0];
-  const subtitle = "Live SAE J1979 OBD-II diagnostics over J2534 Pass-Thru or ELM327: read VIN, stored/pending/permanent trouble codes, live engine PIDs, and clear codes.";
-  return shell(`${heading("Diagnostics", "OBD bay", subtitle, false)}${bayHardwarePanel()}${obdLiveSection()}${formatLatestObdSession(latest)}`);
+  const live = bayLive();
+  const sessions = live
+    ? state.diagnosticSessions.filter(session => session?.mode !== "simulator" && !session?.simulator)
+    : state.diagnosticSessions;
+  const latest = [...sessions].reverse()[0];
+  const subtitle = live
+    ? "Live SAE J1979 OBD-II diagnostics over J2534 Pass-Thru or ELM327: read VIN, stored/pending/permanent trouble codes, live engine PIDs, and clear codes."
+    : "Bench simulator until a J2534 adapter is connected in the ShopCrank Windows app.";
+  const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
+  return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${formatLatestObdSession(latest)}`);
 }
 
 function formatKeyJobRow(job) {
@@ -4978,6 +5082,17 @@ function bindShopOs() {
     void runLiveObdScan(new FormData(event.target).get("orderId"));
   });
   document.querySelector("#obd-live-clear")?.addEventListener("click", openObdClearConfirm);
+  document.querySelectorAll("[data-ai-scan-analyze]").forEach(button => { button.onclick = () => { void analyzeScanWithAi(button.dataset.aiScanAnalyze); }; });
+  document.querySelectorAll("[data-ai-scan-apply]").forEach(button => { button.onclick = () => { void applyScanAiEstimate(button.dataset.aiScanApply); }; });
+  document.querySelector("#obd-scan-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const order = state.orders.find(item => item.id === new FormData(event.target).get("orderId"));
+    if (!order) { toast("Select a repair order"); return; }
+    const scan = simulateObdScan(order);
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { id: `scan-${Date.now()}`, orderId: order.id, customer: order.customer, performedBy: bayPerformer(), ...scan });
+    toast("Simulated scan saved");
+    render();
+  });
   document.querySelector("#obd-copy-to-ro")?.addEventListener("click", async () => {
     const hw = bayHw();
     const snap = hw.snapshot;
