@@ -13,7 +13,7 @@ import {
   visibleSidebar,
 } from './home.js';
 
-test('home runtime publishes Shop Crank window helpers the SPA bootstrap reads', () => {
+test('home runtime publishes ShopCrank window helpers the SPA bootstrap reads', () => {
   assert.equal(globalThis.__SHOP_CRANK_HOME__.buildHomeModel, buildHomeModel);
   assert.equal(globalThis.__SHOP_CRANK_HOME__.visibleSidebar, visibleSidebar);
   assert.equal(globalThis.__MECHPRO_HOME__, globalThis.__SHOP_CRANK_HOME__);

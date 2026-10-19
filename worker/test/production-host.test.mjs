@@ -37,7 +37,7 @@ test('wrangler production host is www.shopcrank.com', () => {
   assert.equal(config.r2_buckets[0].bucket_name, 'shopcrank-files');
 });
 
-test('healthz identifies the Shop Crank Worker', async () => {
+test('healthz identifies the ShopCrank Worker', async () => {
   const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, service: HEALTHZ_SERVICE });
@@ -53,7 +53,7 @@ test('apex shopcrank.com redirects to www for API and Pages paths', async () => 
   assert.equal(site.headers.get('location'), `${CANONICAL_ORIGIN}/login`);
 });
 
-test('session cookie and desktop start URL use the canonical Shop Crank host', () => {
+test('session cookie and desktop start URL use the canonical ShopCrank host', () => {
   assert.equal(APP_SESSION_COOKIE, 'shopcrank_session');
   const startUrl = readFileSync(join(root, 'desktop/start-url.js'), 'utf8');
   assert.match(startUrl, new RegExp(`DEFAULT_DESKTOP_APP_URL = '${CANONICAL_ORIGIN}/'`));

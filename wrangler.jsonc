@@ -72,6 +72,12 @@
       "new_sqlite_classes": ["AiChatSession"]
     }
   ],
+  "triggers": {
+    "crons": [
+      // Daily UTC export of Stripe Revenue Recognition general-import CSVs to S3.
+      "0 6 * * *"
+    ]
+  },
   "observability": {
     "enabled": true,
     "logs": {

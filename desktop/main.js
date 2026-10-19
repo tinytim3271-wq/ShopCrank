@@ -6,11 +6,12 @@ const { resolveAuthDeepLink } = require('./auth-deep-link');
 const edition = require('./edition.json');
 const vault = require('./local-vault');
 const { configurePortableData } = require('./portable-data');
+const { isPrintPopupUrl } = require('./print-window');
 
 try {
   configurePortableData(app, edition);
 } catch {
-  dialog.showErrorBox('Shop Crank Demo needs a writable drive', 'Extract the entire demo ZIP to a writable folder on your flash drive. Shop Crank cannot create its data folder beside the executable.');
+  dialog.showErrorBox('ShopCrank Demo needs a writable drive', 'Extract the entire demo ZIP to a writable folder on your flash drive. ShopCrank cannot create its data folder beside the executable.');
   app.exit(1);
 }
 
@@ -55,6 +56,7 @@ function registerOfflineIpc() {
 function registerDiagnosticsIpc() {
   const handlers = {
     'diagnostics:listAdapters': () => diagnostics.listAdapters(),
+    'diagnostics:autoDetectAndConnect': () => diagnostics.autoDetectAndConnect(),
     'diagnostics:connect': (_e, params) => diagnostics.connect(params),
     'diagnostics:disconnect': () => diagnostics.disconnect(),
     'diagnostics:getConnectionStatus': () => diagnostics.getConnectionStatus(),
@@ -116,6 +118,22 @@ function createWindow() {
     );
   }
   window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isPrintPopupUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 900,
+          height: 1100,
+          autoHideMenuBar: true,
+          backgroundColor: '#ffffff',
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          },
+        },
+      };
+    }
     if (edition.demo !== true && isTrustedUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -144,10 +162,10 @@ function createWindow() {
           authenticated: Boolean(document.querySelector('.app-shell')),
           loginText: document.querySelector('.login-panel')?.innerText || ''
         })`);
-        const portableData = !edition.portable || app.getPath('userData') === path.join(path.dirname(process.execPath), 'Shop Crank Demo Data');
+        const portableData = !edition.portable || app.getPath('userData') === path.join(path.dirname(process.execPath), 'ShopCrank Demo Data');
         const passed = portableData && result.desktop
           && result.diagnostics
-          && result.title.includes('Shop Crank')
+          && result.title.includes('ShopCrank')
           && (result.authenticated
             || /work email|continue securely|sign[\s-]?in/i.test(result.loginText));
         console.log(JSON.stringify({ smokeTest: passed ? 'passed' : 'failed', portableData, ...result }));
@@ -208,7 +226,7 @@ function registerWindowsProtocol() {
   if (process.platform !== 'win32' || edition.offline === true) return;
   const { spawnSync } = require('node:child_process');
   const command = `"${process.execPath}" "%1"`;
-  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank', '/ve', '/d', 'URL:Shop Crank authentication', '/f'], { windowsHide: true });
+  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank', '/ve', '/d', 'URL:ShopCrank authentication', '/f'], { windowsHide: true });
   spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank', '/v', 'URL Protocol', '/d', '', '/f'], { windowsHide: true });
   spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank\\shell\\open\\command', '/ve', '/d', command, '/f'], { windowsHide: true });
 }

@@ -36,9 +36,16 @@ function hostScriptPath() {
 }
 
 function csharpHostPath() {
-  const { app } = require('electron');
-  const packaged = path.join(process.resourcesPath, 'j2534-host', 'J2534.Host.exe');
-  if (app?.isPackaged && fs.existsSync(packaged)) return packaged;
+  let app = null;
+  try {
+    ({ app } = require('electron'));
+  } catch {
+    app = null;
+  }
+  const packaged = typeof process.resourcesPath === 'string' && process.resourcesPath
+    ? path.join(process.resourcesPath, 'j2534-host', 'J2534.Host.exe')
+    : '';
+  if (app?.isPackaged && packaged && fs.existsSync(packaged)) return packaged;
   return path.join(__dirname, '..', 'diagnostics', 'j2534-service', 'publish', 'win-x64', 'J2534.Host.exe');
 }
 
@@ -86,7 +93,7 @@ function startHostProcess() {
     const script = hostScriptPath();
     if (!fs.existsSync(script)) {
       throw new Error(
-        `J2534 host script not found at ${script}. Reinstall Shop Crank Desktop or run from a full checkout.`,
+        `J2534 host script not found at ${script}. Reinstall ShopCrank Desktop or run from a full checkout.`,
       );
     }
     hostProcess = spawn(process.execPath, [script], {
@@ -141,7 +148,7 @@ function rpcCall(method, params = {}, timeoutMs = 15000) {
       buffer += chunk.toString('utf8');
       const newline = buffer.indexOf('\n');
       if (newline < 0) return;
-      const line = buffer.slice(0, newline).trim();
+      const line = buffer.slice(0, newline).replace(/^\uFEFF/, '').trim();
       socket.end();
       clearTimeout(timer);
       try {
@@ -176,21 +183,29 @@ async function listAdapters() {
  */
 async function autoDetectAndConnect() {
   await ensureHost();
-  const adapters = await listAdapters();
-  if (!Array.isArray(adapters) || adapters.length === 0) {
+  const listed = await listAdapters();
+  const adapters = (Array.isArray(listed) ? listed : listed?.adapters || [])
+    .filter((adapter) => adapter && adapter.id !== 'simulator' && adapter.usable !== false);
+  if (adapters.length === 0) {
     throw new Error('No J2534 adapters detected');
   }
   const selected = adapters[0];
   const adapterId = selected.id ?? selected.adapterId ?? Object.values(selected)[0];
-  return connect({ adapterId });
+  return connect({ adapterId, protocol: 'ISO15765' });
 }
 
 async function connect(params) {
   await ensureHost();
   const result = await rpcCall('connect', params || {});
   if (powerSaveBlockerId === null) {
-    const { powerSaveBlocker } = require('electron');
-    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    try {
+      const { powerSaveBlocker } = require('electron');
+      if (powerSaveBlocker?.start) {
+        powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      }
+    } catch {
+      /* Not running inside Electron */
+    }
   }
   return result;
 }
@@ -199,8 +214,12 @@ async function disconnect() {
   if (!hostProcess) return { connected: false };
   const result = await rpcCall('disconnect');
   if (powerSaveBlockerId !== null) {
-    const { powerSaveBlocker } = require('electron');
-    powerSaveBlocker.stop(powerSaveBlockerId);
+    try {
+      const { powerSaveBlocker } = require('electron');
+      powerSaveBlocker?.stop?.(powerSaveBlockerId);
+    } catch {
+      /* Not running inside Electron */
+    }
     powerSaveBlockerId = null;
   }
   return result;
@@ -349,10 +368,102 @@ async function obdClearDtcs(params = {}) {
   return rpcCall('obdClearDtcs', { confirmed: true }, 20000);
 }
 
-/** Read-only: does Shop Crank have a verified live key procedure for the connected vehicle? */
+/** Read-only: does ShopCrank have a verified live key procedure for the connected vehicle? */
 async function keyProcedureSupport(params = {}) {
   await ensureHost();
   return rpcCall('keyProcedureSupport', { procedure: String(params.procedure || '') }, 20000);
+}
+
+function isLoopbackAddress(address) {
+  const value = String(address || '').trim().toLowerCase();
+  return value === '127.0.0.1' || value === '::1' || value === '::ffff:127.0.0.1';
+}
+
+function isLoopbackHost(hostname) {
+  const value = String(hostname || '').trim().toLowerCase();
+  return value === 'localhost' || value === '127.0.0.1' || value === '::1' || value === '[::1]';
+}
+
+function hasValidHttpDiagnosticsToken(req) {
+  const configured = String(process.env.SHOP_CRANK_DIAGNOSTICS_HTTP_TOKEN || '').trim();
+  if (!configured) return false;
+  const authHeader = String(req?.headers?.authorization || '');
+  const bearer = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+  const presented = String(req?.headers?.['x-shopcrank-diagnostics-token'] || bearer || '').trim();
+  const expectedBuf = Buffer.from(configured, 'utf8');
+  const presentedBuf = Buffer.from(presented, 'utf8');
+  return expectedBuf.length === presentedBuf.length && crypto.timingSafeEqual(expectedBuf, presentedBuf);
+}
+
+function isTrustedLocalDiagnosticsRequest(req) {
+  const tokenAuthenticated = hasValidHttpDiagnosticsToken(req);
+  const remoteAddress = req?.socket?.remoteAddress || req?.ip || '';
+  if (!tokenAuthenticated && !isLoopbackAddress(remoteAddress)) {
+    return false;
+  }
+  const localHeader = String(req?.headers?.['x-shopcrank-local-client'] || '').trim();
+  if (!tokenAuthenticated && localHeader !== '1') {
+    return false;
+  }
+  const fetchSite = String(req?.headers?.['sec-fetch-site'] || '').trim().toLowerCase();
+  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+    return false;
+  }
+  const host = String(req?.headers?.host || '').trim().toLowerCase();
+  const originHeader = String(req?.headers?.origin || req?.headers?.referer || '').trim();
+  if (originHeader) {
+    try {
+      const parsed = new URL(originHeader);
+      if (host && parsed.host.toLowerCase() !== host) return false;
+      if (!tokenAuthenticated && !isLoopbackHost(parsed.hostname)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+const LOCAL_DIAGNOSTIC_RPC = Object.freeze({
+  listAdapters: () => listAdapters(),
+  autoDetectAndConnect: () => autoDetectAndConnect(),
+  connect: (params) => connect(params || {}),
+  disconnect: () => disconnect(),
+  getConnectionStatus: () => getConnectionStatus(),
+  readVin: () => readVin(),
+  identifyEcus: () => identifyEcus(),
+  readDtcs: () => readDtcs(),
+  clearDtcs: (params) => clearDtcs(params || {}),
+  securityAccess: (params) => securityAccess(params || {}),
+  programKey: (params) => programKey(params || {}),
+  codeModule: (params) => codeModule(params || {}),
+  bidirectionalControl: (params) => bidirectionalControl(params || {}),
+  flashModule: (params) => flashModule(params || {}),
+  startLiveLog: () => startLiveLog(),
+  stopLiveLog: () => stopLiveLog(),
+  pollLiveLog: (params) => pollLiveLog(params?.since ?? params ?? 0),
+  identifyVehicle: () => identifyVehicle(),
+  obdSnapshot: () => obdSnapshot(),
+  obdClearDtcs: (params) => obdClearDtcs(params || {}),
+  keyProcedureSupport: (params) => keyProcedureSupport(params || {}),
+});
+
+function registerLocalDiagnosticsRoutes(app) {
+  app.post('/api/diagnostics/j2534/:method', async (req, res) => {
+    if (!isTrustedLocalDiagnosticsRequest(req)) {
+      return res.status(403).json({ ok: false, error: 'Forbidden: local diagnostics client authentication required' });
+    }
+    const method = String(req.params.method || '').trim();
+    const handler = Object.hasOwn(LOCAL_DIAGNOSTIC_RPC, method) ? LOCAL_DIAGNOSTIC_RPC[method] : null;
+    if (!handler) {
+      return res.status(404).json({ ok: false, error: `Unsupported diagnostic method: ${method}` });
+    }
+    try {
+      const result = await handler(req.body || {});
+      res.json({ ok: true, result });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message || 'Diagnostic operation failed' });
+    }
+  });
 }
 
 function stopHost() {
@@ -392,5 +503,7 @@ module.exports = {
   obdSnapshot,
   obdClearDtcs,
   keyProcedureSupport,
+  isTrustedLocalDiagnosticsRequest,
+  registerLocalDiagnosticsRoutes,
   stopHost,
 };

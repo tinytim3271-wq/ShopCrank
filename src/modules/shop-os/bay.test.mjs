@@ -3,11 +3,17 @@ import test from "node:test";
 import {
   assertLiveKeySession,
   assertKeyJobAllowed,
+  decodeElmPidReading,
   keyConfirmationMatches,
   keyAuditRecord,
   liveKeyProcedureFor,
   isRoAuthorizedForKeys,
   normalizeVin,
+  parseElmClearDtcs,
+  parseElmModeDtcs,
+  parseElmMonitorStatus,
+  parseElmVin,
+  runElmObdSnapshot,
   simulateKeyJob,
   simulateObdScan,
 } from "./bay.js";
@@ -118,3 +124,57 @@ test("VIN confirmation and live key audit records normalize sensitive identifier
   assert.equal(record.authorizationName, "Customer");
   assert.equal(record.steps[0].detail, " VIN confirmed ");
 });
+
+test("live ELM327 OBD-II parser decodes VIN, monitor status, PIDs, and mode 03/07/0A codes", async () => {
+  const vinHex = [..."1C6SRFHT0LN123456"].map((ch) => ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")).join(" ");
+  assert.equal(parseElmVin(`49 02 01 ${vinHex}`), "1C6SRFHT0LN123456");
+
+  const monitor = parseElmMonitorStatus("41 01 82 07 65 00");
+  assert.deepEqual(monitor, { milOn: true, dtcCount: 2 });
+
+  const coolant = decodeElmPidReading(0x05, "41 05 82");
+  assert.equal(coolant.value, 90);
+  assert.equal(coolant.unit, "C");
+
+  const rpm = decodeElmPidReading(0x0C, "41 0C 0C 30");
+  assert.equal(rpm.value, 780);
+  assert.equal(rpm.unit, "rpm");
+
+  const compactRpm = decodeElmPidReading(0x0C, "410C0C30");
+  assert.equal(compactRpm?.value, 780);
+  assert.equal(compactRpm?.unit, "rpm");
+
+  assert.deepEqual(parseElmModeDtcs("43 02 04 20 03 00", 0x03), ["P0420", "P0300"]);
+  assert.deepEqual(parseElmModeDtcs("43010420", 0x03), ["P0420"]);
+  assert.deepEqual(parseElmModeDtcs("00C\r0:430501000200\r1:10001100120000", 0x03), ["P0100", "P0200", "P1000", "P1100", "P1200"]);
+  assert.deepEqual(parseElmModeDtcs("47 01 01 71", 0x07), ["P0171"]);
+  assert.deepEqual(parseElmModeDtcs("47010171", 0x07), ["P0171"]);
+
+  assert.deepEqual(parseElmClearDtcs("44"), { ok: true });
+  assert.deepEqual(parseElmClearDtcs("7E8 01 44"), { ok: true });
+  assert.throws(() => parseElmClearDtcs("NO DATA"), /NO DATA/i);
+  assert.throws(() => parseElmClearDtcs("UNABLE TO CONNECT"), /UNABLE TO CONNECT/i);
+  assert.throws(() => parseElmClearDtcs("7F 04 22"), /rejected Mode 04/i);
+  assert.throws(() => parseElmClearDtcs(""), /did not confirm Mode 04/i);
+
+  const responses = {
+    "0902": `49 02 01 ${vinHex}`,
+    "0101": "41 01 81 07 65 00",
+    "0105": "41 05 82",
+    "010C": "41 0C 0C 30",
+    "0142": "41 42 37 14",
+    "03": "43 01 04 20",
+    "07": "NO DATA",
+    "0A": "NO DATA",
+    "ATRV": "14.1V",
+  };
+  const snapshot = await runElmObdSnapshot(async (cmd) => responses[cmd] || "NO DATA");
+  assert.equal(snapshot.simulator, false);
+  assert.equal(snapshot.responded, true);
+  assert.equal(snapshot.vin, "1C6SRFHT0LN123456");
+  assert.equal(snapshot.milOn, true);
+  assert.deepEqual(snapshot.storedDtcs, ["P0420"]);
+  assert.equal(snapshot.voltage, 14.1);
+  assert.ok(snapshot.readings.some((r) => r.name === "Engine speed" && r.value === 780));
+});
+

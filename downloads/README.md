@@ -1,4 +1,4 @@
-# Shop Crank app downloads
+# ShopCrank app downloads
 
 ## Public install page
 
