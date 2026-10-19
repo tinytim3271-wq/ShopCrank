@@ -327,7 +327,7 @@ export async function runElmObdSnapshot(sendCommand) {
   let voltage = null;
   try {
     const rawVolt = await sendCommand('ATRV');
-    const match = String(rawVolt || '').match(/(\d+(?:\.\d+)?)\s*V/i);
+    const match = /(\d+(?:\.\d+)?)\s*V/i.exec(String(rawVolt || ''));
     if (match) voltage = Number(match[1]);
   } catch { /* ignore ATRV failure */ }
 
