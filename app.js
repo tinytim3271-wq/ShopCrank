@@ -2475,100 +2475,6 @@
     }
   });
 
-  // src/modules/quickbooks.js
-  function quickbooksConnectionStatus(record) {
-    if (!record || typeof record !== "object") {
-      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
-    }
-    const connected = Boolean(record.realmId && (record.refreshToken || record.accessToken));
-    if (!connected) {
-      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
-    }
-    return {
-      connected: true,
-      status: "connected",
-      label: "QuickBooks Online connected",
-      realmId: record.realmId,
-      connectedAt: record.connectedAt || null,
-      tokenExpiresAt: record.tokenExpiresAt || null
-    };
-  }
-  function quickbooksPanelStatus(account = {}) {
-    if (account?.connected === true) return { ...account, connected: true, status: "connected", label: account.label || "QuickBooks Online connected" };
-    return quickbooksConnectionStatus(account);
-  }
-  function quickbooksPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
-    const status = quickbooksPanelStatus(account);
-    const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Company ${escapeHtml4(status.realmId || "")}</span></div></div>` : `<div class="messaging-status idle">${icon2("landmark", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Connect QuickBooks Online with OAuth 2.0. Sync stays fail-closed until authorized.</span></div></div>`;
-    const actions = canSave ? `<div class="messaging-actions">
-        ${status.connected ? `<button class="secondary" type="button" id="qbo-sync-now">${icon2("refresh-cw", 14)} Sync customers / invoices / payments</button>
-             <button class="secondary danger" type="button" id="qbo-disconnect">${icon2("log-out", 14)} Disconnect QuickBooks</button>` : `<button class="primary" type="button" id="qbo-connect">${icon2("link", 14)} Connect QuickBooks Online</button>`}
-      </div>` : '<p class="ops-note">Ask an owner or admin to connect QuickBooks Online.</p>';
-    return `<section class="settings-panel quickbooks-panel">
-    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>QuickBooks Online</h2><p>OAuth connect/disconnect and idempotent sync of customers, invoices, and payments.</p></div>${icon2("book", 20)}</div>
-    ${banner}
-    ${actions}
-    <div id="qbo-sync-status" class="ops-note"></div>
-  </section>`;
-  }
-  var init_quickbooks = __esm({
-    "src/modules/quickbooks.js"() {
-    }
-  });
-
-  // src/modules/revenue-recognition.js
-  function revrecStatusLabel(status = {}) {
-    if (status.unavailable) return "Revenue Recognition sync unavailable";
-    if (!status.stripeConfigured) return "Connect shop Stripe payments first";
-    if (!status.s3Configured) return "Platform S3 export is not configured yet";
-    if (status.enabled) return "Daily sync enabled";
-    return "Sync disabled";
-  }
-  function revrecReady(status = {}) {
-    return Boolean(status.stripeConfigured && status.s3Configured);
-  }
-  function revenueRecognitionPanelHtml(status = {}, {
-    canSave = false,
-    escapeHtml: escapeHtml4 = (v) => String(v ?? ""),
-    icon: icon2 = () => ""
-  } = {}) {
-    const enabled = Boolean(status.enabled);
-    const ready = revrecReady(status);
-    const label2 = revrecStatusLabel(status);
-    const tone = enabled && ready && !status.lastError ? "ready" : "idle";
-    const lastExport = status.lastExportedAt ? new Date(status.lastExportedAt).toLocaleString() : "Never";
-    const lastError = status.lastError ? `<p class="login-error">${escapeHtml4(status.lastError)}</p>` : "";
-    const folder = status.folderHint || (status.shopId ? `revrec/${status.shopId}/general/` : "revrec/{shopId}/general/");
-    const banner = `<div class="messaging-status ${tone}">${icon2(enabled && ready ? "circle-check" : "landmark", 17)}<div><strong>${escapeHtml4(label2)}</strong><span>Last export: ${escapeHtml4(lastExport)}${status.lastObjectKey ? ` \xB7 ${escapeHtml4(status.lastObjectKey)}` : ""}</span></div></div>`;
-    const checklist = `<ol class="ops-note revrec-checklist">
-    <li>Enable Stripe Revenue Recognition on this shop's Stripe account.</li>
-    <li>In Stripe Dashboard \u2192 Data Management, add an Amazon S3 connector.</li>
-    <li>Point the connector at folder <code>${escapeHtml4(folder)}</code> and map it to Revenue Recognition general import.</li>
-    <li>Turn on sync below. ShopCrank writes a CSV there daily at 06:00 UTC.</li>
-  </ol>`;
-    const actions = canSave ? `<form class="form-grid" id="revrec-config-form">
-        <label class="toggle-field full"><input type="checkbox" name="enabled" ${enabled ? "checked" : ""}/><span>Sync cash / check / bank payments and service periods to Stripe Revenue Recognition</span></label>
-        <label>Currency<input name="currency" maxlength="3" value="${escapeHtml4(status.currency || "usd")}"/></label>
-        <div class="full messaging-actions">
-          <button class="primary" type="submit">${icon2("save", 14)} Save sync settings</button>
-          <button class="secondary" type="button" id="revrec-export-now" ${ready ? "" : "disabled"}>${icon2("upload", 14)} Export now</button>
-          <button class="secondary" type="button" id="revrec-download-csv">${icon2("download", 14)} Download CSV</button>
-        </div>
-      </form>` : '<p class="ops-note">Ask an owner or admin to enable Revenue Recognition sync.</p>';
-    return `<section class="settings-panel revrec-panel">
-    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>Stripe Revenue Recognition</h2><p>Import non-Stripe payments and recognition service periods into this shop's Stripe RevRec reports.</p></div>${icon2("book-open", 20)}</div>
-    ${banner}
-    ${lastError}
-    ${checklist}
-    ${actions}
-    <div id="revrec-sync-status" class="ops-note"></div>
-  </section>`;
-  }
-  var init_revenue_recognition = __esm({
-    "src/modules/revenue-recognition.js"() {
-    }
-  });
-
   // src/modules/estimate-workflow.js
   function afterMidnightFeeLine(id = "fee-after-midnight") {
     return { ...AFTER_MIDNIGHT_FEE_PRESET, id };
@@ -2814,6 +2720,1740 @@
         amount: 200
       });
       CLOSED_ORDER_STATUSES = /* @__PURE__ */ new Set(["invoiced", "paid", "closed", "cancelled", "canceled", "archived"]);
+    }
+  });
+
+  // src/modules/estimate-templates.js
+  function calculateShopEstimate(lines = [], {
+    taxRate = 0,
+    laborRate = 0,
+    discountPercent = 0,
+    discountReason = "",
+    shopSupplies
+  } = {}) {
+    const normalizedLines = lines.map((line, index) => normalizeEstimateLine(
+      line.type === "labor" && line.laborRate == null ? { ...line, laborRate } : line,
+      index
+    ));
+    const labor = normalizedLines.filter((line) => line.type === "labor" && line.approvalStatus !== "declined").reduce((sum, line) => sum + line.total, 0);
+    const automaticSupplies = Math.min(
+      SHOP_SUPPLIES_RULES.shopSuppliesCap,
+      labor * SHOP_SUPPLIES_RULES.shopSuppliesRate / 100
+    );
+    const supplies = labor > 0 ? money(Math.min(SHOP_SUPPLIES_RULES.shopSuppliesCap, Math.max(0, shopSupplies ?? automaticSupplies))) : 0;
+    const base = calculateEstimate(
+      normalizedLines,
+      0,
+      supplies ? [{ description: "Shop supplies", amount: supplies }] : []
+    );
+    const safeDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    const discountAmount = money(base.subtotal * safeDiscountPercent / 100);
+    const subtotal = money(base.subtotal - discountAmount);
+    const safeTaxRate = Math.max(0, Number(taxRate) || 0);
+    const tax = money(subtotal * safeTaxRate / 100);
+    return {
+      ...base,
+      grossSubtotal: base.subtotal,
+      discountPercent: safeDiscountPercent,
+      discountReason: String(discountReason || ""),
+      discountAmount,
+      subtotal,
+      taxRate: safeTaxRate,
+      tax,
+      total: money(subtotal + tax)
+    };
+  }
+  function workOrderDraftFromEstimate(estimate = REFERENCE_ESTIMATE) {
+    const customer = typeof estimate.customer === "object" ? estimate.customer : { name: estimate.customer };
+    const vehicle = typeof estimate.vehicle === "object" ? estimate.vehicle : { description: estimate.vehicle };
+    const insurance = estimate.insurance || {};
+    const laborSource = (estimate.lines || []).filter((line) => line.type === "labor").map((line) => line.notes || line.laborSource).filter(Boolean).join(" ");
+    const complaintParts = [
+      `Claimant: ${customer.name || "Not provided"}.`,
+      estimate.complaint,
+      insurance.company || insurance.policy ? `Insurance: ${insurance.company || "Carrier not provided"}; policy ${insurance.policy || "not provided"}; claim number ${insurance.claimNumber || "not yet assigned"}.` : "",
+      laborSource ? `Labor source: ${laborSource}` : ""
+    ].filter(Boolean);
+    return {
+      sourceEstimateNumber: estimate.number || "",
+      customer: customer.name || "",
+      phone: customer.phone || estimate.phone || "",
+      email: customer.email || estimate.email || "",
+      address: customer.address || "",
+      vehicle: vehicle.description || "",
+      vin: vehicle.vin || estimate.vin || "",
+      complaint: complaintParts.join("\n"),
+      requestedServices: (estimate.requestedServices || (estimate.lines || []).map((line) => line.description)).join("\n"),
+      estimate: calculateShopEstimate(estimate.lines || [], {
+        taxRate: estimate.taxRate,
+        laborRate: estimate.laborRate,
+        discountPercent: estimate.discountPercent,
+        discountReason: estimate.discountReason,
+        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount
+      }),
+      exclusions: estimate.exclusions || [],
+      insurance,
+      shopNotes: (estimate.shopNotes || []).map(String),
+      plate: vehicle.plate || ""
+    };
+  }
+  function estimateFromAssistantDraft(action = {}, { laborRate = 0, taxRate = 0, shopSupplies } = {}) {
+    const draft = action.draft || action;
+    const resolvedLaborRate = Math.max(0, Number(laborRate) || 0);
+    const partLines = (draft.parts || []).map((part, index) => ({
+      id: `assistant-part-${index + 1}`,
+      type: "part",
+      description: String(part.description || "Part"),
+      notes: String(part.notes || ""),
+      quantity: Math.max(0, Number(part.quantity) || 0),
+      unitPrice: Math.max(0, Number(part.unitPrice) || 0),
+      partNumber: String(part.partNumber || ""),
+      priceStatus: part.priceStatus === "pending" ? "pending" : "priced"
+    }));
+    const laborLines = (draft.labor || []).map((labor, index) => ({
+      id: `assistant-labor-${index + 1}`,
+      type: "labor",
+      description: String(labor.description || "Labor"),
+      notes: String(labor.notes || labor.source || ""),
+      hours: Math.max(0, Number(labor.hours) || 0),
+      laborRate: resolvedLaborRate,
+      laborSource: String(labor.source || "Customer conversation; verify before authorization")
+    }));
+    const feeLines = draft.afterMidnightFee ? [afterMidnightFeeLine("assistant-fee-after-midnight")] : [];
+    const totals = calculateShopEstimate([...partLines, ...laborLines, ...feeLines], {
+      laborRate: resolvedLaborRate,
+      taxRate,
+      discountPercent: draft.discountPercent,
+      discountReason: draft.discountReason,
+      shopSupplies
+    });
+    return {
+      id: `assistant-estimate-${Date.now()}`,
+      number: "",
+      status: "draft",
+      customer: {
+        name: String(draft.customer?.name || ""),
+        phone: String(draft.customer?.phone || ""),
+        email: String(draft.customer?.email || ""),
+        address: String(draft.customer?.address || "")
+      },
+      vehicle: {
+        description: String(draft.vehicle?.description || ""),
+        vin: String(draft.vehicle?.vin || ""),
+        plate: String(draft.vehicle?.plate || "")
+      },
+      complaint: String(draft.complaint || ""),
+      requestedServices: (draft.requestedServices || []).map(String),
+      exclusions: (draft.exclusions || []).map(String),
+      shopNotes: (draft.shopNotes || []).map(String),
+      lines: totals.lines,
+      ...totals
+    };
+  }
+  var money, REFERENCE_ESTIMATE_RULES, referenceLines, referenceTotals, REFERENCE_ESTIMATE;
+  var init_estimate_templates = __esm({
+    "src/modules/estimate-templates.js"() {
+      init_estimate_workflow();
+      money = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      REFERENCE_ESTIMATE_RULES = Object.freeze({ laborRate: 140, taxRate: 8.25 });
+      referenceLines = [
+        {
+          id: "part-headlamp",
+          type: "part",
+          description: "Passenger xenon headlamp",
+          notes: "Right side, xenon without adaptive. DEPO 3401157RMUSHM2.",
+          quantity: 1,
+          unitPrice: 493.79,
+          partNumber: "3401157RMUSHM2",
+          brand: "DEPO"
+        },
+        {
+          id: "part-fog-lamp",
+          type: "part",
+          description: "Passenger fog lamp",
+          notes: "Right side, without AMG styling package. TYC 19042100.",
+          quantity: 1,
+          unitPrice: 17.02,
+          partNumber: "19042100",
+          brand: "TYC"
+        },
+        {
+          id: "part-xenon-module",
+          type: "part",
+          description: "Xenon headlamp control module",
+          notes: "Listed as 222-900-33-00; confirm the module number before ordering.",
+          quantity: 1,
+          unitPrice: 116.4,
+          partNumber: "222-900-33-00"
+        },
+        {
+          id: "part-bumper",
+          type: "part",
+          description: "Front bumper cover",
+          notes: "Without AMG, without Parktronic, CAPA, primed. TECHPRO MB1000458.",
+          quantity: 1,
+          unitPrice: 362.79,
+          partNumber: "MB1000458",
+          brand: "TECHPRO"
+        },
+        {
+          id: "part-fender",
+          type: "part",
+          description: "Passenger front fender",
+          notes: "Front right, CAPA. TECHPRO MB1241149. Beyond repair.",
+          quantity: 1,
+          unitPrice: 374.79,
+          partNumber: "MB1241149",
+          brand: "TECHPRO"
+        },
+        {
+          id: "part-fender-covers",
+          type: "part",
+          description: "Upper and lower passenger fender covers",
+          notes: "Damaged; parts have not been matched to a listing and remain unpriced.",
+          quantity: 1,
+          unitPrice: 0,
+          priceStatus: "pending"
+        },
+        {
+          id: "labor-collision-repair",
+          type: "labor",
+          description: "Collision component replacement labor",
+          notes: "5.3 hours from Open Labor Project estimates for this vehicle: fender 3.7, headlamp 0.9, and one fender liner 0.7. These are not ALLDATA or Mitchell times, are not copied from a labor guide, and are not expert-verified.",
+          hours: 5.3,
+          laborRate: REFERENCE_ESTIMATE_RULES.laborRate,
+          laborSource: "Open Labor Project estimate"
+        }
+      ];
+      referenceTotals = calculateShopEstimate(referenceLines, {
+        taxRate: REFERENCE_ESTIMATE_RULES.taxRate,
+        discountPercent: 10,
+        discountReason: "Tech-student discount",
+        shopSupplies: 20
+      });
+      REFERENCE_ESTIMATE = Object.freeze({
+        id: "reference-estimate-est-2026-1004-01",
+        number: "EST-2026-1004-01",
+        date: "2026-10-04",
+        validThrough: "2026-10-18",
+        status: "draft",
+        template: true,
+        customer: {
+          name: "Jordan Example",
+          phone: "555-0100",
+          email: "customer@example.test",
+          address: "123 Example Street, Sample City, TX 00000",
+          role: "Claimant"
+        },
+        vehicle: {
+          description: "2016 Mercedes-Benz GLA250",
+          vin: "1M8GDM9AXKP042788",
+          plate: "DEMO-01"
+        },
+        insurance: {
+          company: "Example Insurance",
+          policy: "TEST-POLICY-001",
+          claimNumber: ""
+        },
+        complaint: "Deer collision. Claimant was not injured. No structural damage was found.",
+        inspectionNotes: "Passenger-side lighting, bumper, fender, and upper/lower fender covers are damaged.",
+        requestedServices: [
+          "Replace passenger xenon headlamp",
+          "Replace passenger fog lamp",
+          "Replace xenon headlamp control module",
+          "Replace front bumper cover",
+          "Replace passenger front fender",
+          "Replace upper and lower passenger fender covers (parts remain unpriced)"
+        ],
+        exclusions: [
+          "Paint is not included.",
+          "Upper and lower fender covers remain unpriced.",
+          "Hidden damage and any additional work require a revised estimate and customer authorization."
+        ],
+        shopNotes: [
+          "Obtain written authorization before sending the estimate or customer records.",
+          "Verify any billing or photo-delivery address with the customer before use."
+        ],
+        lines: referenceTotals.lines,
+        fees: referenceTotals.fees,
+        ...referenceTotals
+      });
+    }
+  });
+
+  // src/modules/technician-assignment.js
+  function classificationFor(user = {}) {
+    const explicit = String(user.classification || "").trim();
+    if (EMPLOYEE_CLASSIFICATIONS.some((item) => item.id === explicit)) return explicit;
+    if (user.role === "technician") return "technician";
+    if (user.role === "service_writer") return "service_writer";
+    if (user.role === "office") return "office";
+    return "custom";
+  }
+  function technicianName(user = {}) {
+    return String(user.techName || user.name || "").trim();
+  }
+  function isAssignableTechnician(user = {}) {
+    return user.active !== false && classificationFor(user) === "technician" && Boolean(technicianName(user));
+  }
+  function assignableTechnicians(users = []) {
+    return users.filter(isAssignableTechnician);
+  }
+  function clampShare(value2) {
+    const number = Number(value2);
+    if (!Number.isFinite(number) || number < 0) return 0;
+    return Math.min(100, Math.round(number * 100) / 100);
+  }
+  function normalizeAssignments(order = {}, users = []) {
+    const source = Array.isArray(order.assignments) ? order.assignments : [];
+    const cleaned = source.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean);
+    if (cleaned.length) return ensurePrimary(cleaned);
+    const legacy = String(order.tech || "").trim();
+    if (!legacy || legacy === "Unassigned") return [];
+    const match = users.find((user) => technicianName(user) === legacy);
+    return [{
+      id: `legacy-${order.id || "tech"}`,
+      employeeId: match?.id || null,
+      name: legacy,
+      role: "primary",
+      sharePercent: 100,
+      hoursWorked: hoursOf(order.laborHours),
+      writeIn: !match,
+      assignedAt: null
+    }];
+  }
+  function cleanAssignment(item = {}, index = 0, users = []) {
+    const employee = users.find((user) => item.employeeId && user.id === item.employeeId);
+    const name = String(employee ? technicianName(employee) : item.name || "").trim();
+    if (!name) return null;
+    return {
+      id: String(item.id || `asg-${index + 1}`),
+      employeeId: employee?.id || null,
+      name,
+      role: ROLES.includes(item.role) ? item.role : "secondary",
+      sharePercent: clampShare(item.sharePercent),
+      hoursWorked: hoursOf(item.hoursWorked),
+      writeIn: !employee,
+      assignedAt: item.assignedAt || null
+    };
+  }
+  function ensurePrimary(assignments) {
+    const withPrimary = assignments.some((item) => item.role === "primary") ? assignments : assignments.map((item, index) => index === 0 ? { ...item, role: "primary" } : item);
+    let seen = false;
+    const unique = withPrimary.map((item) => {
+      if (item.role !== "primary") return item;
+      if (seen) return { ...item, role: "secondary" };
+      seen = true;
+      return item;
+    });
+    return unique.sort((left, right) => Number(right.role === "primary") - Number(left.role === "primary"));
+  }
+  function applyAssignments(order = {}, assignments = [], users = []) {
+    const normalized = ensurePrimary(assignments.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean));
+    const primary = normalized.find((item) => item.role === "primary");
+    return {
+      ...order,
+      assignments: normalized,
+      tech: primary?.name || "Unassigned"
+    };
+  }
+  function orderIncludesTechnician(order = {}, user = {}, users = []) {
+    const name = technicianName(user);
+    if (!name && !user.id) return false;
+    return normalizeAssignments(order, users).some((item) => user.id && item.employeeId === user.id || name && item.name === name);
+  }
+  function clockedHours(clocks = [], workOrderId, userId) {
+    return hoursOf(clocks.filter((entry) => entry.workOrderId === workOrderId && entry.userId === userId && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
+  }
+  function shareFraction(assignments, assignment) {
+    const total = assignments.reduce((sum, item) => sum + (Number(item.sharePercent) || 0), 0);
+    if (!total) return assignments.length ? 1 / assignments.length : 0;
+    return (Number(assignment.sharePercent) || 0) / total;
+  }
+  function payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment) {
+    if (!employee) return 0;
+    if (employee.employmentType === "Salary" && plan === "hourly") return 0;
+    if (plan === "flat_rate" || plan === "team_split") return money2(laborRevenue * fraction);
+    if (plan === "commission") {
+      const percent = Number(employee.commissionPercent || assignment.sharePercent || 0);
+      return money2(laborRevenue * percent / 100);
+    }
+    return money2(usableHours * Number(employee.payRate || 0));
+  }
+  function payrollLinesForOrder({
+    order = {},
+    users = [],
+    clocks = [],
+    periodKey,
+    nowIso = null
+  } = {}) {
+    if (!["completed", "invoiced"].includes(order.status)) return [];
+    const assignments = normalizeAssignments(order, users);
+    if (!assignments.length) return [];
+    const laborRevenue = Number(order.labor || 0);
+    return assignments.flatMap((assignment) => {
+      const employee = users.find((user) => user.id === assignment.employeeId && user.active !== false) || null;
+      const tracked = employee ? clockedHours(clocks, order.id, employee.id) : 0;
+      const usableHours = hoursOf(tracked || assignment.hoursWorked || (assignment.role === "primary" ? order.laborHours : 0));
+      if (!usableHours) return [];
+      const plan = PAY_PLANS.some((item) => item.id === employee?.payPlan) ? employee.payPlan : "hourly";
+      const fraction = shareFraction(assignments, assignment);
+      const amount = payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment);
+      return [{
+        id: `${periodKey}#${order.id}#${assignment.id}`,
+        workOrderId: order.id,
+        employeeId: employee?.id || null,
+        technicianName: assignment.name,
+        role: assignment.role,
+        writeIn: !employee,
+        periodKey,
+        roNumber: order.id,
+        customer: order.customer || "",
+        vehicle: order.vehicle || "",
+        hours: usableHours,
+        rate: plan === "hourly" ? Number(employee?.payRate || 0) : 0,
+        amount,
+        grossPay: amount,
+        payPlan: employee ? plan : "unrated",
+        completedAt: nowIso
+      }];
+    });
+  }
+  function attributeClockHours(order, userId, clocks = [], users = []) {
+    const assignments = normalizeAssignments(order, users).map((item) => item.employeeId === userId ? { ...item, hoursWorked: clockedHours(clocks, order.id, userId) } : item);
+    const laborHours = hoursOf(clocks.filter((entry) => entry.workOrderId === order.id && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
+    return applyAssignments({ ...order, laborHours: laborHours || order.laborHours }, assignments, users);
+  }
+  function technicianPerformance(orders2 = [], users = [], clocks = []) {
+    const comebackTracked = orders2.some((order) => Object.prototype.hasOwnProperty.call(order, "comeback"));
+    return assignableTechnicians(users).map((user) => {
+      const mine = orders2.filter((order) => orderIncludesTechnician(order, user, users));
+      const completed = mine.filter((order) => ["completed", "invoiced"].includes(order.status));
+      const hours = hoursOf(completed.reduce((sum, order) => {
+        const tracked = clockedHours(clocks, order.id, user.id);
+        if (tracked) return sum + tracked;
+        const assignment = normalizeAssignments(order, users).find((item) => item.employeeId === user.id);
+        return sum + Number(assignment?.hoursWorked || (assignment?.role === "primary" ? order.laborHours : 0) || 0);
+      }, 0));
+      const revenue = money2(completed.reduce((sum, order) => sum + Number(order.labor || 0), 0));
+      const billedHours = hoursOf(completed.reduce((sum, order) => sum + Number(order.laborHours || 0), 0));
+      const efficiency = hours > 0 && billedHours > 0 ? Math.round(billedHours / hours * 1e3) / 10 : null;
+      const averageRepair = completed.length && hours ? hoursOf(hours / completed.length) : null;
+      const comebacks = comebackTracked ? completed.filter((order) => order.comeback === true).length : null;
+      return {
+        id: user.id,
+        name: technicianName(user),
+        open: mine.length - completed.length,
+        completed: completed.length,
+        hours,
+        revenue,
+        efficiency,
+        averageRepair,
+        comebacks,
+        averageTicket: completed.length ? money2(revenue / completed.length) : null
+      };
+    });
+  }
+  function escapeHtml2(value2) {
+    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[char]);
+  }
+  function technicianTrackerHtml(rows = []) {
+    const body = rows.map((row) => `<tr><td>${escapeHtml2(row.name)}</td><td>${row.open}</td><td>${row.completed}</td><td>${row.hours.toFixed(2)}</td><td>${currency(row.revenue)}</td><td>${row.efficiency == null ? "\u2014" : `${row.efficiency}%`}</td><td>${row.comebacks == null ? "\u2014" : row.comebacks}</td><td>${row.averageRepair == null ? "\u2014" : row.averageRepair.toFixed(2)}</td></tr>`).join("");
+    return `<section class="tech-tracker"><div class="home-panel-head"><div><h2>Technician performance</h2><p>Open jobs, completed jobs, clocked hours, and labor sold. Comebacks appear only after a job is marked as a comeback.</p></div></div><div class="data-panel"><table><thead><tr><th>Technician</th><th>Open</th><th>Completed</th><th>Hours</th><th>Labor sold</th><th>Efficiency</th><th>Comebacks</th><th>Avg hours</th></tr></thead><tbody>${body || '<tr><td colspan="8">No technicians are classified for assignment yet.</td></tr>'}</tbody></table></div></section>`;
+  }
+  function assignmentSummary(order = {}, users = []) {
+    const assignments = normalizeAssignments(order, users);
+    if (!assignments.length) return order.tech && order.tech !== "Unassigned" ? order.tech : "Unassigned";
+    const primary = assignments.find((item) => item.role === "primary") || assignments[0];
+    const extra = assignments.length - 1;
+    return extra > 0 ? `${primary.name} +${extra}` : primary.name;
+  }
+  var ROLES, EMPLOYEE_CLASSIFICATIONS, PAY_PLANS, money2, hoursOf, currency;
+  var init_technician_assignment = __esm({
+    "src/modules/technician-assignment.js"() {
+      ROLES = ["primary", "secondary", "apprentice"];
+      EMPLOYEE_CLASSIFICATIONS = [
+        { id: "technician", label: "Technician" },
+        { id: "service_writer", label: "Service Writer" },
+        { id: "parts_manager", label: "Parts Manager" },
+        { id: "shop_foreman", label: "Shop Foreman" },
+        { id: "office", label: "Office Staff" },
+        { id: "custom", label: "Custom" }
+      ];
+      PAY_PLANS = [
+        { id: "hourly", label: "Hourly" },
+        { id: "flat_rate", label: "Flat rate" },
+        { id: "commission", label: "Commission" },
+        { id: "team_split", label: "Team split" }
+      ];
+      money2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      hoursOf = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      currency = (value2) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value2) || 0);
+    }
+  });
+
+  // src/modules/intake-wizard.js
+  function escapeHtml3(value2) {
+    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[char]);
+  }
+  function escapeAttr3(value2) {
+    return escapeHtml3(value2);
+  }
+  function emptyIntakeDraft(now2 = /* @__PURE__ */ new Date()) {
+    return {
+      id: `intake-${now2.getTime()}`,
+      step: 0,
+      savedAt: null,
+      status: "draft",
+      customer: {
+        firstName: "",
+        lastName: "",
+        phone: "",
+        email: "",
+        company: "",
+        secondaryPhone: "",
+        address: "",
+        city: "",
+        state: "",
+        zip: "",
+        contact: { phone: true, text: false, email: true }
+      },
+      vehicle: {
+        vin: "",
+        plate: "",
+        plateState: "",
+        year: "",
+        make: "",
+        model: "",
+        trim: "",
+        engine: "",
+        transmission: "",
+        mileage: "",
+        color: ""
+      },
+      photos: [],
+      damage: [],
+      concern: {
+        description: "",
+        began: "",
+        frequency: "",
+        lights: "",
+        recentRepairs: "",
+        accident: "",
+        towed: "",
+        overheating: ""
+      },
+      diagnosis: {
+        visual: "",
+        roadTest: "",
+        fluids: "",
+        battery: "",
+        codes: "",
+        notes: "",
+        cause: "",
+        correction: "",
+        severity: "",
+        analysis: null
+      },
+      estimate: { lines: [], diagnosticCharge: 0, approval: "pending" },
+      aiFilledFields: {},
+      assignments: []
+    };
+  }
+  function customerDisplayName(draft = {}) {
+    const customer = draft.customer || {};
+    const person = [customer.firstName, customer.lastName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+    const company = String(customer.company || "").trim();
+    if (person && company) return `${person} (${company})`;
+    return person || company;
+  }
+  function vehicleLabel(draft = {}) {
+    const vehicle = draft.vehicle || {};
+    return [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  }
+  function missingCustomerFields(draft = {}) {
+    const customer = draft.customer || {};
+    return ["firstName", "lastName", "phone", "email"].filter((field2) => !String(customer[field2] || "").trim());
+  }
+  function missingVehicleFields(draft = {}) {
+    const vehicle = draft.vehicle || {};
+    const identity = vehicleLabel(draft);
+    const missing = [];
+    if (!identity && !String(vehicle.vin || "").trim()) missing.push("vehicle");
+    return missing;
+  }
+  function missingRequiredPhotos(draft = {}) {
+    const taken = new Set((draft.photos || []).map((photo) => photo.slot));
+    return REQUIRED_PHOTO_SLOTS.filter((slot) => !taken.has(slot.id)).map((slot) => slot.label);
+  }
+  function applyVinDecode(draft, decoded = {}) {
+    const vehicle = { ...draft.vehicle };
+    const fill = (field2, value2) => {
+      if (!String(vehicle[field2] || "").trim() && String(value2 || "").trim()) vehicle[field2] = String(value2).trim();
+    };
+    fill("year", decoded.year);
+    fill("make", decoded.make);
+    fill("model", decoded.model);
+    fill("trim", decoded.trim);
+    const engine = [decoded.engineDisplacementLiters ? `${decoded.engineDisplacementLiters}L` : "", decoded.engineCylinders ? `${decoded.engineCylinders} cyl` : ""].filter(Boolean).join(" ");
+    fill("engine", engine);
+    if (decoded.vin) vehicle.vin = String(decoded.vin).toUpperCase();
+    return { ...draft, vehicle };
+  }
+  function applyAiAutofill(draft, formType, data = {}) {
+    const next = structuredClone(draft || emptyIntakeDraft());
+    next.aiFilledFields = { ...next.aiFilledFields || {} };
+    const markFilled = (path, value2) => {
+      const clean2 = String(value2 ?? "").trim();
+      if (!clean2) return false;
+      next.aiFilledFields[path] = true;
+      return true;
+    };
+    if (formType === "vehicle_intake") {
+      const mapping = [
+        ["vin", data.vin ? String(data.vin).toUpperCase() : ""],
+        ["plate", data.plate ? String(data.plate).toUpperCase() : ""],
+        ["plateState", data.plate_state || data.plateState || ""],
+        ["year", data.year],
+        ["make", data.make],
+        ["model", data.model],
+        ["trim", data.trim],
+        ["engine", data.engine],
+        ["mileage", data.mileage],
+        ["color", data.color]
+      ];
+      for (const [key, value2] of mapping) {
+        if (markFilled(`vehicle.${key}`, value2)) {
+          next.vehicle[key] = String(value2).trim();
+        }
+      }
+      return next;
+    }
+    if (formType === "diagnostic_3c") {
+      if (markFilled("concern.description", data.complaint)) {
+        next.concern.description = String(data.complaint).trim();
+      }
+      if (markFilled("diagnosis.cause", data.cause)) {
+        next.diagnosis.cause = String(data.cause).trim();
+      }
+      if (markFilled("diagnosis.correction", data.correction)) {
+        next.diagnosis.correction = String(data.correction).trim();
+      }
+      if (markFilled("diagnosis.severity", data.severity)) {
+        next.diagnosis.severity = String(data.severity).trim();
+      }
+      if (Array.isArray(data.dtc_codes) && data.dtc_codes.length) {
+        const codes = data.dtc_codes.join(", ");
+        if (markFilled("diagnosis.codes", codes)) {
+          next.diagnosis.codes = codes;
+        }
+      }
+    }
+    if (formType === "dvi_estimate") {
+      if (Array.isArray(data.checklist_items) && data.checklist_items.length) {
+        const formatted = data.checklist_items.map((item) => `[${item.status || "YELLOW"}] ${item.component}: ${item.notes || ""}${item.measurement ? ` (${item.measurement})` : ""}`).join("\n");
+        if (markFilled("diagnosis.visual", formatted)) {
+          next.diagnosis.visual = formatted;
+        }
+      }
+    }
+    if (Array.isArray(data.suggested_line_items) && data.suggested_line_items.length) {
+      const mappedLines = data.suggested_line_items.map((item) => {
+        const rawType = String(item.item_type || "LABOR").toUpperCase();
+        const isPart = rawType === "PART";
+        return {
+          type: isPart ? "part" : "labor",
+          description: String(item.description || "").trim(),
+          quantity: isPart ? Math.max(1, Number(item.quantity) || 1) : Math.max(0.1, Number(item.estimated_hours || item.quantity) || 1),
+          unitPrice: 0,
+          partNumber: item.part_number || null,
+          source: "Filled by AI",
+          aiFilled: true
+        };
+      }).filter((line) => line.description);
+      if (mappedLines.length) {
+        next.estimate.lines = mappedLines;
+        next.aiFilledFields["estimate.lines"] = true;
+      }
+    }
+    return next;
+  }
+  function acceptAllAiFields(draft) {
+    const next = structuredClone(draft || emptyIntakeDraft());
+    next.aiFilledFields = {};
+    if (Array.isArray(next.estimate?.lines)) {
+      next.estimate.lines = next.estimate.lines.map((line) => ({ ...line, aiFilled: false }));
+    }
+    return next;
+  }
+  function searchLaborGuide(query2 = "", services = CANNED_MENU) {
+    const needle = String(query2 || "").trim().toLowerCase();
+    if (needle.length < 2) return [];
+    const shopHits = SHOP_CRANK_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
+    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
+    return [...shopHits, ...canned].slice(0, 8);
+  }
+  function seedEstimateLines(draft = {}) {
+    if (Array.isArray(draft.estimate?.lines) && draft.estimate.lines.length) return draft.estimate.lines;
+    const hits = searchLaborGuide(draft.concern?.description || "");
+    const lines = hits.slice(0, 2).map((hit) => ({
+      type: "labor",
+      description: hit.name,
+      quantity: hit.hours || 1,
+      unitPrice: 0,
+      notes: hit.notes,
+      source: hit.source
+    }));
+    const charge = Number(draft.estimate?.diagnosticCharge || 0);
+    if (charge > 0) {
+      lines.unshift({ type: "labor", description: "Diagnostic charge", quantity: 1, unitPrice: charge, notes: "Initial diagnosis", source: "Shop" });
+    }
+    if (!lines.length) {
+      lines.push({
+        type: "labor",
+        description: String(draft.concern?.description || "Diagnose customer concern").slice(0, 120),
+        quantity: 1,
+        unitPrice: 0,
+        notes: "Hours stay at 1 until the technician confirms the job.",
+        source: "Shop"
+      });
+    }
+    return lines;
+  }
+  function priceIntakeEstimate(draft = {}, { laborRate = 165, taxRate = 0 } = {}) {
+    const lines = seedEstimateLines(draft).map((line) => ({
+      type: line.type === "part" ? "part" : "labor",
+      description: line.description,
+      quantity: Math.max(0, Number(line.quantity) || 0),
+      unitPrice: line.type === "part" ? Number(line.unitPrice) || 0 : void 0,
+      laborRate: line.type === "part" ? void 0 : Number(line.unitPrice) > 0 ? Number(line.unitPrice) : laborRate,
+      notes: line.notes || ""
+    }));
+    const priced = calculateShopEstimate(lines, { laborRate, taxRate });
+    return { ...priced, disclaimer: INTAKE_DISCLAIMER, lines };
+  }
+  function localDiagnosticChecklist(draft = {}) {
+    const text = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
+    const causes = [];
+    if (/misfire|stall|p030/.test(text)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
+    if (/p0171|lean|vacuum/.test(text)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
+    if (/p0420|catalyst/.test(text)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
+    if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
+    return {
+      source: "shop-checklist",
+      notice: "ShopCrank AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
+      causes
+    };
+  }
+  function phoneDigits(value2) {
+    const digits = String(value2 || "").replace(/\D/g, "");
+    return digits.length > 10 ? digits.slice(-10) : digits;
+  }
+  function findIntakeCustomer(customers2 = [], draft = {}) {
+    const phone = phoneDigits(draft.customer?.phone);
+    const email = String(draft.customer?.email || "").trim().toLowerCase();
+    return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
+  }
+  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
+    const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
+    const approval = draft.estimate?.approval || "pending";
+    const status = approval === "approved" ? "approved" : "estimate";
+    const assigned = applyAssignments({ id }, draft.assignments || [], users);
+    return {
+      id,
+      customer: customerDisplayName(draft),
+      phone: String(draft.customer?.phone || "").trim(),
+      vehicle: vehicleLabel(draft) || "Vehicle pending",
+      vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
+      complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
+      status,
+      priority: "normal",
+      tech: assigned.tech,
+      assignments: assigned.assignments,
+      bay: "Unassigned",
+      mobile: false,
+      promise: "",
+      notes: [draft.diagnosis?.notes, draft.concern?.recentRepairs ? `Recent repairs: ${draft.concern.recentRepairs}` : ""].filter(Boolean).join("\n"),
+      labor: priced.labor,
+      laborHours: priced.lines.filter((line) => line.type === "labor").reduce((sum, line) => sum + Number(line.quantity || 0), 0),
+      parts: priced.parts,
+      tax: priced.tax,
+      total: priced.total,
+      estimate: {
+        lines: priced.lines,
+        disclaimer: INTAKE_DISCLAIMER,
+        approvalStatus: approval
+      },
+      intake: {
+        id: draft.id,
+        status: "checked_in",
+        customer: draft.customer,
+        vehicle: draft.vehicle,
+        photos: draft.photos || [],
+        damage: draft.damage || [],
+        concern: draft.concern,
+        diagnosis: draft.diagnosis,
+        disclaimer: INTAKE_DISCLAIMER,
+        approval
+      }
+    };
+  }
+  function serializableIntake(draft = {}) {
+    return {
+      ...draft,
+      photos: (draft.photos || []).map((photo) => {
+        const copy = { ...photo };
+        delete copy.file;
+        return copy;
+      })
+    };
+  }
+  function canConvertIntake(draft = {}) {
+    const problems = [];
+    if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
+    if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
+    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
+    if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
+    return { ok: problems.length === 0, problems };
+  }
+  function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
+    const badge3 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
+    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge3}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
+  }
+  function aiAcceptBanner(draft, prefix) {
+    const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
+    if (!filledKeys.length) return "";
+    return `<div class="ai-review-banner" role="status"><span><strong>Filled by AI</strong> \u2014 Review highlighted fields before saving.</span><button type="button" class="secondary" id="intake-ai-accept-all">Accept All</button></div>`;
+  }
+  function progress(step) {
+    return `<ol class="intake-progress">${INTAKE_STEPS.map((item, index) => `<li class="${index === step ? "current" : ""} ${index < step ? "done" : ""}"><span>${index + 1}</span>${escapeHtml3(item.label)}</li>`).join("")}</ol>`;
+  }
+  function savedStamp(draft) {
+    if (!draft.savedAt) return '<span class="intake-save">Not saved yet</span>';
+    const time = new Date(draft.savedAt);
+    const label2 = Number.isNaN(time.getTime()) ? "" : time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `<span class="intake-save">Draft saved${label2 ? ` ${escapeHtml3(label2)}` : ""}</span>`;
+  }
+  function customerStep(draft) {
+    const customer = draft.customer;
+    const contact = customer.contact || {};
+    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { required: true, type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
+<fieldset class="intake-choices"><legend>Communication preferences</legend>${["phone", "text", "email"].map((key) => `<label><input type="checkbox" name="contact-${key}" ${contact[key] ? "checked" : ""}/> ${key[0].toUpperCase()}${key.slice(1)}</label>`).join("")}</fieldset>`;
+  }
+  function vehicleStep(draft) {
+    const vehicle = draft.vehicle;
+    const ai = draft.aiFilledFields || {};
+    return `${aiAcceptBanner(draft, "vehicle.")}<div class="form-grid">${field("vin", "VIN", vehicle.vin, { full: true, aiFilled: Boolean(ai["vehicle.vin"]) })}${field("plate", "License plate", vehicle.plate, { aiFilled: Boolean(ai["vehicle.plate"]) })}${field("plateState", "Plate state", vehicle.plateState, { aiFilled: Boolean(ai["vehicle.plateState"]) })}${field("year", "Year", vehicle.year, { aiFilled: Boolean(ai["vehicle.year"]) })}${field("make", "Make", vehicle.make, { aiFilled: Boolean(ai["vehicle.make"]) })}${field("model", "Model", vehicle.model, { aiFilled: Boolean(ai["vehicle.model"]) })}${field("trim", "Trim", vehicle.trim, { aiFilled: Boolean(ai["vehicle.trim"]) })}${field("engine", "Engine", vehicle.engine, { aiFilled: Boolean(ai["vehicle.engine"]) })}${field("transmission", "Transmission", vehicle.transmission, { aiFilled: Boolean(ai["vehicle.transmission"]) })}${field("mileage", "Mileage", vehicle.mileage, { aiFilled: Boolean(ai["vehicle.mileage"]) })}${field("color", "Color", vehicle.color, { aiFilled: Boolean(ai["vehicle.color"]) })}</div>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button><label class="secondary">Scan VIN / Odometer photo (AI)<input id="intake-autofill-vehicle-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
+<p class="form-help" id="intake-vehicle-note">Plate lookup stays off until a DMV, Carfax, or registration provider is connected. VIN decode uses the shop vehicle decode service.</p>`;
+  }
+  function photoStep(draft) {
+    const slots = [...REQUIRED_PHOTO_SLOTS, ...EXTRA_PHOTO_SLOTS.filter((slot) => slot.id !== "extra")];
+    const cards = slots.map((slot) => {
+      const photos = (draft.photos || []).filter((photo) => photo.slot === slot.id);
+      const required = REQUIRED_PHOTO_SLOTS.some((item) => item.id === slot.id);
+      return `<article class="intake-photo ${photos.length ? "taken" : ""}"><strong>${escapeHtml3(slot.label)}${required ? " *" : ""}</strong><span>${photos.length ? photos.map((photo) => escapeHtml3(photo.name)).join(", ") : "Not added"}</span><label class="mini-action">Add photo<input class="intake-file" data-slot="${escapeAttr3(slot.id)}" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></article>`;
+    }).join("");
+    const extras = (draft.photos || []).filter((photo) => photo.slot === "extra").map((photo) => `<li>${escapeHtml3(photo.name)}</li>`).join("");
+    return `<div class="intake-photos">${cards}</div><div class="intake-actions-inline"><label class="secondary">+ Add photo<input class="intake-file" data-slot="extra" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>${extras ? `<ul class="intake-extra-photos">${extras}</ul>` : ""}
+<h3>Damage map</h3><div class="intake-damage">${DAMAGE_AREAS.map((area) => {
+      const marked = (draft.damage || []).find((item) => item.area === area);
+      return `<label><input type="checkbox" name="damage" value="${escapeAttr3(area)}" ${marked ? "checked" : ""}/> ${escapeHtml3(area)}</label><input name="damage-note-${escapeAttr3(area)}" placeholder="Dent, scratch, broken trim, cracked glass, previous damage" value="${escapeAttr3(marked?.note || "")}"/>`;
+    }).join("")}</div>`;
+  }
+  function concernStep(draft) {
+    const concern = draft.concern;
+    const ai = draft.aiFilledFields || {};
+    const badge3 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge3}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
+<div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
+  }
+  function diagnosisStep(draft) {
+    const diagnosis = draft.diagnosis;
+    const ai = draft.aiFilledFields || {};
+    const analysis = diagnosis.analysis;
+    const causes = analysis?.causes?.map((cause) => `<li><strong>${escapeHtml3(cause.name || cause.cause || "Check")}</strong><p>${escapeHtml3(cause.detail || cause.explanation || "")}</p></li>`).join("") || "";
+    return `${aiAcceptBanner(draft, "diagnosis.")}<div class="form-grid">${field("visual", "Visual inspection", diagnosis.visual, { full: true, aiFilled: Boolean(ai["diagnosis.visual"]) })}${field("roadTest", "Road test", diagnosis.roadTest)}${field("fluids", "Fluid levels", diagnosis.fluids)}${field("battery", "Battery test", diagnosis.battery)}${field("codes", "DTC codes", diagnosis.codes, { full: true, aiFilled: Boolean(ai["diagnosis.codes"]) })}${field("cause", "Root cause (3 C's)", diagnosis.cause, { full: true, aiFilled: Boolean(ai["diagnosis.cause"]) })}${field("correction", "Recommended correction (3 C's)", diagnosis.correction, { full: true, aiFilled: Boolean(ai["diagnosis.correction"]) })}</div>
+<label class="full">Technician notes<textarea name="notes">${escapeHtml3(diagnosis.notes)}</textarea></label>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
+${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || "")}</span></section><ul class="intake-causes">${causes}</ul>` : ""}`;
+  }
+  function estimateStep(draft, profile) {
+    const priced = priceIntakeEstimate(draft, profile);
+    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
+    return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
+<p class="form-help">Lookup uses the ShopCrank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
+<div id="labor-results"></div>
+<table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
+<label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
+<div class="estimate-sign-summary"><span>Labor ${escapeHtml3(String(priced.labor))} \xB7 Parts ${escapeHtml3(String(priced.parts))} \xB7 Supplies ${escapeHtml3(String(priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0))} \xB7 Tax ${escapeHtml3(String(priced.tax))}</span><strong>${escapeHtml3(String(priced.total))}</strong></div>
+<pre class="intake-disclaimer">${escapeHtml3(INTAKE_DISCLAIMER)}</pre>
+<label>Customer approval<select name="approval">${["pending", "viewed", "approved", "denied"].map((status) => `<option value="${status}" ${draft.estimate.approval === status ? "selected" : ""}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}</select></label>
+<p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
+  }
+  function reviewStep(draft, users) {
+    const check2 = canConvertIntake(draft);
+    const techs = assignableTechnicians(users);
+    const options = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
+      const selected = (draft.assignments || []).find((item) => item.role === role);
+      return `<option value="${escapeAttr3(user.id)}" ${selected?.employeeId === user.id ? "selected" : ""}>${escapeHtml3(technicianName(user))}</option>`;
+    }).join("")}`;
+    return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
+<div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
+${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+<p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
+  }
+  function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
+    const step = Math.min(INTAKE_STEPS.length - 1, Math.max(0, Number(draft.step) || 0));
+    const body = [
+      customerStep,
+      vehicleStep,
+      photoStep,
+      concernStep,
+      diagnosisStep,
+      (current) => estimateStep(current, { laborRate, taxRate }),
+      (current) => reviewStep(current, users)
+    ][step](draft);
+    return `<div class="modal-head"><div><span class="eyebrow">Customer intake</span><h2>${escapeHtml3(INTAKE_STEPS[step].label)}</h2></div><div class="intake-head-meta">${savedStamp(draft)}<button type="button" class="close" id="intake-cancel" aria-label="Cancel intake">\xD7</button></div></div>
+<div class="modal-body intake-body">${progress(step)}<form id="intake-form">${body}</form></div>
+<div class="modal-actions"><button type="button" class="secondary" id="intake-back" ${step === 0 ? "disabled" : ""}>Back</button><button type="button" class="secondary" id="intake-save">Save draft</button>${step < INTAKE_STEPS.length - 1 ? '<button type="button" class="primary" id="intake-next">Continue</button>' : '<button type="button" class="primary" id="intake-convert">Convert to work order</button>'}</div>`;
+  }
+  function readForm(draft, form) {
+    const next = structuredClone(draft);
+    const data = Object.fromEntries(new FormData(form).entries());
+    const step = INTAKE_STEPS[next.step]?.id;
+    if (step === "customer") {
+      ["firstName", "lastName", "phone", "email", "company", "secondaryPhone", "address", "city", "state", "zip"].forEach((key) => {
+        if (key in data) next.customer[key] = String(data[key] || "").trim();
+      });
+      next.customer.contact = {
+        phone: Boolean(form.querySelector('[name="contact-phone"]')?.checked),
+        text: Boolean(form.querySelector('[name="contact-text"]')?.checked),
+        email: Boolean(form.querySelector('[name="contact-email"]')?.checked)
+      };
+    }
+    if (step === "vehicle") {
+      ["vin", "plate", "plateState", "year", "make", "model", "trim", "engine", "transmission", "mileage", "color"].forEach((key) => {
+        if (key in data) next.vehicle[key] = String(data[key] || "").trim();
+      });
+      next.vehicle.vin = next.vehicle.vin.toUpperCase();
+    }
+    if (step === "photos") {
+      const marked = new Set([...form.querySelectorAll('[name="damage"]')].filter((input) => input.checked).map((input) => input.value));
+      next.damage = DAMAGE_AREAS.filter((area) => marked.has(area)).map((area) => ({ area, note: String(data[`damage-note-${area}`] || "").trim() }));
+    }
+    if (step === "concerns") {
+      ["description", "began", "frequency", "lights", "recentRepairs", "accident", "towed", "overheating"].forEach((key) => {
+        const source = key === "description" ? form.querySelector('[name="description"]')?.value : data[key];
+        next.concern[key] = String(source || "").trim();
+      });
+    }
+    if (step === "diagnosis") {
+      ["visual", "roadTest", "fluids", "battery", "codes", "cause", "correction", "notes"].forEach((key) => {
+        next.diagnosis[key] = String(form.querySelector(`[name="${key}"]`)?.value || data[key] || "").trim();
+      });
+    }
+    if (step === "estimate") {
+      const descriptions = [...form.querySelectorAll('[name="line-description"]')];
+      const hourInputs = [...form.querySelectorAll('[name="line-hours"]')];
+      next.estimate.lines = descriptions.map((input, index) => ({
+        type: "labor",
+        description: input.value.trim(),
+        quantity: Math.max(0, Number(hourInputs[index]?.value) || 0),
+        source: "Shop"
+      })).filter((line) => line.description);
+      next.estimate.diagnosticCharge = Math.max(0, Number(data.diagnosticCharge) || 0);
+      next.estimate.approval = data.approval || "pending";
+    }
+    if (step === "review") {
+      next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
+        const employeeId = data[`assign-${role}`];
+        if (!employeeId) return [];
+        return [{ employeeId, role, sharePercent: role === "primary" ? 100 : 0, assignedAt: (/* @__PURE__ */ new Date()).toISOString() }];
+      });
+    }
+    return next;
+  }
+  function mountIntakeWizard(host, {
+    draft,
+    users = [],
+    laborRate = 165,
+    taxRate = 0,
+    onSave,
+    onCancel,
+    onConvert,
+    decodeVin,
+    lookupPlate,
+    analyze,
+    autofill
+  } = {}) {
+    let current = structuredClone(draft || emptyIntakeDraft());
+    let timer = 0;
+    const paint = () => {
+      host.innerHTML = intakeWizardHtml(current, { users, laborRate, taxRate });
+      bind2();
+    };
+    const persist = (reason) => {
+      current.savedAt = (/* @__PURE__ */ new Date()).toISOString();
+      onSave?.(serializableIntake(current), reason);
+      const stamp = host.querySelector(".intake-save");
+      if (stamp) stamp.outerHTML = savedStamp(current);
+    };
+    const schedule2 = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => persist("autosave"), 400);
+    };
+    function bind2() {
+      const form = host.querySelector("#intake-form");
+      form?.addEventListener("input", () => {
+        current = readForm(current, form);
+        schedule2();
+      });
+      host.querySelector("#intake-save")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        persist("manual");
+      });
+      host.querySelector("#intake-cancel")?.addEventListener("click", () => onCancel?.(current));
+      host.querySelector("#intake-back")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        current.step = Math.max(0, current.step - 1);
+        persist("step");
+        paint();
+      });
+      host.querySelector("#intake-next")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        current.step = Math.min(INTAKE_STEPS.length - 1, current.step + 1);
+        if (INTAKE_STEPS[current.step]?.id === "estimate" && !current.estimate.lines.length) current.estimate.lines = seedEstimateLines(current);
+        persist("step");
+        paint();
+      });
+      host.querySelector("#intake-convert")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        const check2 = canConvertIntake(current);
+        if (!check2.ok) {
+          persist("blocked");
+          paint();
+          return;
+        }
+        await onConvert?.(current);
+      });
+      host.querySelector("#intake-decode")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        const note = host.querySelector("#intake-vehicle-note");
+        try {
+          const decoded = await decodeVin?.(current.vehicle.vin);
+          if (!decoded) throw new Error("Enter a 17-character VIN first.");
+          current = applyVinDecode(current, decoded);
+          persist("vin");
+          paint();
+        } catch (error) {
+          if (note) note.textContent = error.message || "VIN decode failed.";
+        }
+      });
+      host.querySelector("#intake-plate")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        const note = host.querySelector("#intake-vehicle-note");
+        const result = await lookupPlate?.(current.vehicle) || { available: false, message: "Plate lookup is not connected." };
+        if (note) note.textContent = result.message || "Plate lookup is not connected.";
+      });
+      host.querySelectorAll(".intake-file").forEach((input) => {
+        input.addEventListener("change", () => {
+          const file = input.files?.[0];
+          if (!file) return;
+          current.photos.push({
+            id: `photo-${Date.now()}-${current.photos.length}`,
+            slot: input.dataset.slot,
+            name: file.name,
+            contentType: file.type,
+            takenAt: (/* @__PURE__ */ new Date()).toISOString(),
+            file
+          });
+          persist("photo");
+          paint();
+        });
+      });
+      host.querySelector("#lookup-labor")?.addEventListener("click", () => {
+        const query2 = host.querySelector("#labor-query")?.value || "";
+        const hits = searchLaborGuide(query2);
+        const box = host.querySelector("#labor-results");
+        if (!box) return;
+        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No ShopCrank guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
+        box.querySelectorAll("[data-add-labor]").forEach((button) => {
+          button.addEventListener("click", () => {
+            if (form) current = readForm(current, form);
+            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "ShopCrank guide" });
+            persist("labor");
+            paint();
+          });
+        });
+      });
+      host.querySelector("#intake-analyze")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        current.diagnosis.analysis = await analyze?.(current) || localDiagnosticChecklist(current);
+        persist("analysis");
+        paint();
+      });
+      host.querySelector("#intake-ai-accept-all")?.addEventListener("click", () => {
+        if (form) current = readForm(current, form);
+        current = acceptAllAiFields(current);
+        persist("accept-ai");
+        paint();
+      });
+      host.querySelector("#intake-autofill-3c")?.addEventListener("click", async () => {
+        if (form) current = readForm(current, form);
+        if (!autofill) return;
+        const notes = [current.concern?.description, current.diagnosis?.notes, current.diagnosis?.visual, current.diagnosis?.codes].filter(Boolean).join("\n");
+        const result = await autofill({ formType: "diagnostic_3c", notes, draft: current });
+        if (result?.data) {
+          current = applyAiAutofill(current, "diagnostic_3c", result.data);
+          persist("autofill-3c");
+          paint();
+        }
+      });
+      const bindPhotoAutofill = (selector, formType) => {
+        host.querySelector(selector)?.addEventListener("change", async (event) => {
+          const file = event.target?.files?.[0];
+          if (!file || !autofill) return;
+          if (form) current = readForm(current, form);
+          const result = await autofill({ formType, file, draft: current });
+          if (result?.data) {
+            current = applyAiAutofill(current, formType, result.data);
+            persist(`autofill-${formType}`);
+            paint();
+          }
+        });
+      };
+      bindPhotoAutofill("#intake-autofill-vehicle-photo", "vehicle_intake");
+      bindPhotoAutofill("#intake-autofill-diag-photo", "diagnostic_3c");
+    }
+    paint();
+    return {
+      current: () => current
+    };
+  }
+  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR;
+  var init_intake_wizard = __esm({
+    "src/modules/intake-wizard.js"() {
+      init_estimate_templates();
+      init_canned_services();
+      init_technician_assignment();
+      INTAKE_STORAGE_KEY = "ShopCrank-intake-draft-v1";
+      INTAKE_DISCLAIMER = "PRELIMINARY ESTIMATE DISCLAIMER\n\nThis estimate is based on the information available at the time of inspection. Additional issues may be identified during diagnosis, testing, disassembly, or repair. Parts pricing, labor times, and availability may change. Authorization will be obtained before performing additional work. Final invoice amounts may differ from this estimate.";
+      INTAKE_STEPS = [
+        { id: "customer", label: "Customer" },
+        { id: "vehicle", label: "Vehicle" },
+        { id: "photos", label: "Photos" },
+        { id: "concerns", label: "Concerns" },
+        { id: "diagnosis", label: "Diagnosis" },
+        { id: "estimate", label: "Estimate" },
+        { id: "review", label: "Review" }
+      ];
+      REQUIRED_PHOTO_SLOTS = [
+        { id: "front", label: "Front" },
+        { id: "rear", label: "Rear" },
+        { id: "driver", label: "Driver side" },
+        { id: "passenger", label: "Passenger side" }
+      ];
+      EXTRA_PHOTO_SLOTS = [
+        { id: "odometer", label: "Odometer" },
+        { id: "vin_sticker", label: "VIN sticker" },
+        { id: "engine", label: "Engine bay" },
+        { id: "tires", label: "Tire condition" },
+        { id: "damage", label: "Damage" },
+        { id: "concern", label: "Customer concern area" },
+        { id: "extra", label: "Additional photo" }
+      ];
+      DAMAGE_AREAS = ["Front bumper", "Rear bumper", "Driver door", "Passenger door", "Hood", "Fenders", "Roof"];
+      SHOP_CRANK_LABOR = [
+        { name: "Brake pads", hours: 1.5, notes: "One axle. Rotors and seized hardware are quoted separately." },
+        { name: "Water pump", hours: 2.5, notes: "Starting point. Confirm the labor time for this VIN before selling the job." },
+        { name: "Alternator", hours: 1.2, notes: "Replacement only. Programming or a stretch belt may add time." },
+        { name: "Starter", hours: 1.2, notes: "Starting point. Confirm access for this vehicle." }
+      ];
+    }
+  });
+
+  // src/modules/grok-voice-client.js
+  function grokWaveformButtonIcon(active = false, phase = "idle") {
+    if (!active) {
+      return `<svg class="grok-waveform-svg" width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="48" y1="96" x2="48" y2="160"/><line x1="88" y1="56" x2="88" y2="200"/><line x1="128" y1="32" x2="128" y2="224"/><line x1="168" y1="64" x2="168" y2="192"/><line x1="208" y1="96" x2="208" y2="160"/></svg>`;
+    }
+    return `<span class="grok-waveform-bars" data-phase="${phase}" aria-hidden="true"><span></span><span></span><span></span><span></span></span>`;
+  }
+  function grokPhasePlaceholder(phase = "idle") {
+    switch (phase) {
+      case "connecting":
+        return "Connecting\u2026";
+      case "listening":
+        return "Listening\u2026";
+      case "thinking":
+        return "Thinking\u2026";
+      case "speaking":
+        return "Speaking\u2026";
+      default:
+        return "";
+    }
+  }
+  function float32ToPcm16Base64(float32Samples, inputSampleRate = GROK_TARGET_SAMPLE_RATE, targetRate = GROK_TARGET_SAMPLE_RATE) {
+    if (!float32Samples?.length) return "";
+    let samples = float32Samples;
+    if (inputSampleRate !== targetRate && inputSampleRate > 0) {
+      const ratio = inputSampleRate / targetRate;
+      const outLength = Math.max(1, Math.round(float32Samples.length / ratio));
+      const resampled = new Float32Array(outLength);
+      for (let i = 0; i < outLength; i += 1) {
+        const srcIdx = i * ratio;
+        const i0 = Math.floor(srcIdx);
+        const i1 = Math.min(float32Samples.length - 1, i0 + 1);
+        const frac = srcIdx - i0;
+        resampled[i] = float32Samples[i0] * (1 - frac) + float32Samples[i1] * frac;
+      }
+      samples = resampled;
+    }
+    const buffer = new ArrayBuffer(samples.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < samples.length; i += 1) {
+      const clamped = Math.max(-1, Math.min(1, samples[i]));
+      const int16 = clamped < 0 ? clamped * 32768 : clamped * 32767;
+      view.setInt16(i * 2, Math.round(int16), true);
+    }
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 32768;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return globalThis.btoa(binary);
+  }
+  function pcm16Base64ToFloat32(base64) {
+    if (!base64) return new Float32Array(0);
+    const binary = globalThis.atob(String(base64));
+    const sampleCount = Math.floor(binary.length / 2);
+    const bytes = new Uint8Array(sampleCount * 2);
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const view = new DataView(bytes.buffer);
+    const float32 = new Float32Array(sampleCount);
+    for (let i = 0; i < sampleCount; i += 1) {
+      float32[i] = view.getInt16(i * 2, true) / 32768;
+    }
+    return float32;
+  }
+  function applyGrokCallToIntakeDraft(existingDraft = null, grokIntake = {}) {
+    const base = structuredClone(existingDraft || emptyIntakeDraft());
+    const source = grokIntake?.intakeDraft || grokIntake || {};
+    base.aiFilledFields = { ...base.aiFilledFields || {}, ...source.aiFilledFields || {} };
+    const setIfPresent = (target, key, value2, aiPath) => {
+      const clean2 = String(value2 ?? "").trim();
+      if (!clean2) return;
+      target[key] = clean2;
+      if (aiPath) base.aiFilledFields[aiPath] = true;
+    };
+    const cust = source.customer || {};
+    setIfPresent(base.customer, "firstName", cust.firstName, "customer.firstName");
+    setIfPresent(base.customer, "lastName", cust.lastName, "customer.lastName");
+    setIfPresent(base.customer, "phone", cust.phone, "customer.phone");
+    setIfPresent(base.customer, "email", cust.email, "customer.email");
+    setIfPresent(base.customer, "address", cust.address, "customer.address");
+    setIfPresent(base.customer, "city", cust.city, "customer.city");
+    setIfPresent(base.customer, "state", cust.state, "customer.state");
+    setIfPresent(base.customer, "zip", cust.zip, "customer.zip");
+    const veh = source.vehicle || {};
+    setIfPresent(base.vehicle, "vin", veh.vin ? String(veh.vin).toUpperCase() : "", "vehicle.vin");
+    setIfPresent(base.vehicle, "plate", veh.plate ? String(veh.plate).toUpperCase() : "", "vehicle.plate");
+    setIfPresent(base.vehicle, "plateState", veh.plateState, "vehicle.plateState");
+    setIfPresent(base.vehicle, "year", veh.year, "vehicle.year");
+    setIfPresent(base.vehicle, "make", veh.make, "vehicle.make");
+    setIfPresent(base.vehicle, "model", veh.model, "vehicle.model");
+    setIfPresent(base.vehicle, "trim", veh.trim, "vehicle.trim");
+    setIfPresent(base.vehicle, "engine", veh.engine, "vehicle.engine");
+    setIfPresent(base.vehicle, "mileage", veh.mileage, "vehicle.mileage");
+    setIfPresent(base.vehicle, "color", veh.color, "vehicle.color");
+    const concern = source.concern || {};
+    setIfPresent(base.concern, "description", concern.description, "concern.description");
+    setIfPresent(base.concern, "began", concern.began, "concern.began");
+    setIfPresent(base.concern, "frequency", concern.frequency, "concern.frequency");
+    setIfPresent(base.concern, "lights", concern.lights, "concern.lights");
+    setIfPresent(base.concern, "recentRepairs", concern.recentRepairs, "concern.recentRepairs");
+    setIfPresent(base.concern, "towed", concern.towed, "concern.towed");
+    setIfPresent(base.concern, "overheating", concern.overheating, "concern.overheating");
+    if (Array.isArray(source.estimate?.lines) && source.estimate.lines.length) {
+      base.estimate.lines = source.estimate.lines.map((line) => ({
+        type: line.type === "part" ? "part" : "labor",
+        description: String(line.description || line.service || "").trim(),
+        quantity: Number(line.quantity || line.hours || 1),
+        unitPrice: Number(line.unitPrice || 0),
+        source: line.source || "Grok Voice Estimate",
+        aiFilled: true
+      }));
+      base.aiFilledFields["estimate.lines"] = true;
+    }
+    base.savedAt = (/* @__PURE__ */ new Date()).toISOString();
+    return base;
+  }
+  function createGrokVoiceSession({
+    apiFetch: apiFetch2,
+    voice = "",
+    callerPhone = "",
+    greetAsReceptionist = false,
+    onPhaseChange = () => {
+    },
+    onUserTranscript = () => {
+    },
+    onAssistantTranscript = () => {
+    },
+    onIntakeSaved = () => {
+    },
+    onEstimateCalculated = () => {
+    },
+    onError = () => {
+    }
+  } = {}) {
+    let ws = null;
+    let audioCtx = null;
+    let mediaStream = null;
+    let sourceNode = null;
+    let processorNode = null;
+    let active = false;
+    let phase = "idle";
+    let nextPlayTime = 0;
+    const activeSources = /* @__PURE__ */ new Set();
+    const preOpenQueue = [];
+    const userItemMap = /* @__PURE__ */ new Map();
+    let currentAssistantText = "";
+    const setPhase = (next) => {
+      if (phase === next) return;
+      phase = next;
+      onPhaseChange(phase);
+    };
+    const stopPlayback = () => {
+      for (const src of activeSources) {
+        try {
+          src.stop();
+          src.disconnect();
+        } catch {
+        }
+      }
+      activeSources.clear();
+      if (audioCtx) {
+        nextPlayTime = audioCtx.currentTime;
+      }
+    };
+    const schedulePcmDelta = (base64Delta) => {
+      if (!audioCtx || !active) return;
+      const samples = pcm16Base64ToFloat32(base64Delta);
+      if (!samples.length) return;
+      const buffer = audioCtx.createBuffer(1, samples.length, GROK_TARGET_SAMPLE_RATE);
+      buffer.getChannelData(0).set(samples);
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      const now2 = audioCtx.currentTime;
+      if (nextPlayTime < now2 + 0.02) {
+        nextPlayTime = now2 + PLAYBACK_LEAD_SECONDS;
+      }
+      source.start(nextPlayTime);
+      nextPlayTime += buffer.duration;
+      activeSources.add(source);
+      source.onended = () => {
+        activeSources.delete(source);
+        if (activeSources.size === 0 && active && phase === "speaking") {
+          setPhase("listening");
+        }
+      };
+    };
+    const stop = () => {
+      active = false;
+      stopPlayback();
+      try {
+        processorNode?.disconnect();
+        sourceNode?.disconnect();
+      } catch {
+      }
+      processorNode = null;
+      sourceNode = null;
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStream = null;
+      }
+      if (ws) {
+        try {
+          ws.close(1e3, "Client ended Grok Voice session");
+        } catch {
+        }
+        ws = null;
+      }
+      if (audioCtx) {
+        try {
+          void audioCtx.close();
+        } catch {
+        }
+        audioCtx = null;
+      }
+      setPhase("idle");
+    };
+    const sendTextTurn = (text) => {
+      const clean2 = String(text || "").trim();
+      if (!clean2 || !ws || ws.readyState !== globalThis.WebSocket.OPEN) return false;
+      stopPlayback();
+      ws.send(JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: clean2 }]
+        }
+      }));
+      ws.send(JSON.stringify({ type: "response.create" }));
+      setPhase("thinking");
+      return true;
+    };
+    const start = async () => {
+      if (active) {
+        stop();
+        return;
+      }
+      active = true;
+      setPhase("connecting");
+      try {
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContextCtor({ sampleRate: GROK_TARGET_SAMPLE_RATE });
+        if (audioCtx.state === "suspended") {
+          await audioCtx.resume();
+        }
+        const [stream, secretPayload] = await Promise.all([
+          navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              sampleRate: GROK_TARGET_SAMPLE_RATE,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
+          }),
+          apiFetch2("/ai/voice/client-secret", {
+            method: "POST",
+            body: JSON.stringify({ voice: voice || void 0, callerPhone: callerPhone || void 0 })
+          })
+        ]);
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        mediaStream = stream;
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        const bufferSize = 2048;
+        processorNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+        let sampleAccumulator = [];
+        let accumulatedCount = 0;
+        const samplesPerChunk = Math.round(audioCtx.sampleRate * CAPTURE_CHUNK_MS / 1e3);
+        processorNode.onaudioprocess = (audioEvent) => {
+          if (!active) return;
+          const inputData = audioEvent.inputBuffer.getChannelData(0);
+          sampleAccumulator.push(new Float32Array(inputData));
+          accumulatedCount += inputData.length;
+          if (accumulatedCount < samplesPerChunk) return;
+          const merged = new Float32Array(accumulatedCount);
+          let offset = 0;
+          for (const chunk of sampleAccumulator) {
+            merged.set(chunk, offset);
+            offset += chunk.length;
+          }
+          sampleAccumulator = [];
+          accumulatedCount = 0;
+          const base64Audio = float32ToPcm16Base64(merged, audioCtx.sampleRate, GROK_TARGET_SAMPLE_RATE);
+          if (!base64Audio) return;
+          if (ws && ws.readyState === globalThis.WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "input_audio_buffer.append",
+              audio: base64Audio
+            }));
+          } else if (preOpenQueue.length < MAX_PREOPEN_CHUNKS) {
+            preOpenQueue.push(base64Audio);
+          }
+        };
+        sourceNode.connect(processorNode);
+        processorNode.connect(audioCtx.destination);
+        const wsUrl = secretPayload.url || "wss://api.x.ai/v1/realtime?model=grok-voice-latest";
+        ws = new globalThis.WebSocket(wsUrl, ["realtime", `xai-client-secret.${secretPayload.token}`]);
+        ws.addEventListener("open", () => {
+          if (!active || !ws) return;
+          if (secretPayload.sessionUpdate) {
+            ws.send(JSON.stringify(secretPayload.sessionUpdate));
+          }
+          while (preOpenQueue.length > 0) {
+            const chunk = preOpenQueue.shift();
+            ws.send(JSON.stringify({
+              type: "input_audio_buffer.append",
+              audio: chunk
+            }));
+          }
+          setPhase("listening");
+          if (greetAsReceptionist) {
+            ws.send(JSON.stringify({
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "user",
+                content: [{
+                  type: "input_text",
+                  text: "[A customer just called the shop phone line. Answer the phone warmly as Grok, the shop service advisor, and ask how you can help with their vehicle today.]"
+                }]
+              }
+            }));
+            ws.send(JSON.stringify({ type: "response.create" }));
+          }
+        });
+        ws.addEventListener("message", async (ev) => {
+          if (!active) return;
+          let event;
+          try {
+            event = JSON.parse(String(ev.data));
+          } catch {
+            return;
+          }
+          if (event.type === "input_audio_buffer.speech_started") {
+            stopPlayback();
+            setPhase("listening");
+            return;
+          }
+          if (event.type === "input_audio_buffer.speech_stopped") {
+            setPhase("thinking");
+            return;
+          }
+          if (event.type === "input_audio_buffer.committed" && event.item_id) {
+            userItemMap.set(event.item_id, "");
+            return;
+          }
+          if (event.type === "conversation.item.input_audio_transcription.updated" || event.type === "conversation.item.input_audio_transcription.completed") {
+            const transcript = String(event.transcript || "").trim();
+            if (transcript) {
+              const isFinal = event.type.endsWith(".completed");
+              userItemMap.set(event.item_id || "latest", transcript);
+              onUserTranscript(transcript, { itemId: event.item_id || "latest", final: isFinal });
+            }
+            return;
+          }
+          if (event.type === "response.created") {
+            currentAssistantText = "";
+            return;
+          }
+          if (event.type === "response.output_audio.delta" || event.type === "response.audio.delta") {
+            if (event.delta) {
+              setPhase("speaking");
+              schedulePcmDelta(event.delta);
+            }
+            return;
+          }
+          if (event.type === "response.output_audio_transcript.delta" || event.type === "response.audio_transcript.delta") {
+            currentAssistantText += String(event.delta || "");
+            onAssistantTranscript(currentAssistantText, { final: false });
+            return;
+          }
+          if (event.type === "response.output_audio_transcript.done" || event.type === "response.audio_transcript.done") {
+            const finalTranscript = String(event.transcript || currentAssistantText).trim();
+            if (finalTranscript) {
+              onAssistantTranscript(finalTranscript, { final: true });
+            }
+            currentAssistantText = "";
+            return;
+          }
+          if (event.type === "response.function_call_arguments.done") {
+            const toolName = String(event.name || "");
+            const callId = String(event.call_id || "");
+            let args = {};
+            try {
+              args = JSON.parse(event.arguments || "{}");
+            } catch {
+              args = {};
+            }
+            try {
+              const response = await apiFetch2("/ai/voice/tool", {
+                method: "POST",
+                body: JSON.stringify({ name: toolName, arguments: args, callerPhone })
+              });
+              const toolResult = response?.result || {};
+              if (toolName === "calculate_service_estimate") {
+                onEstimateCalculated(toolResult);
+              }
+              if (toolName === "save_call_intake_and_estimate" && toolResult?.action) {
+                onIntakeSaved(toolResult);
+              }
+              if (ws && ws.readyState === globalThis.WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  type: "conversation.item.create",
+                  item: {
+                    type: "function_call_output",
+                    call_id: callId,
+                    output: JSON.stringify(toolResult)
+                  }
+                }));
+                ws.send(JSON.stringify({ type: "response.create" }));
+              }
+            } catch (toolErr) {
+              if (ws && ws.readyState === globalThis.WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  type: "conversation.item.create",
+                  item: {
+                    type: "function_call_output",
+                    call_id: callId,
+                    output: JSON.stringify({ error: toolErr?.message || "Tool execution failed" })
+                  }
+                }));
+                ws.send(JSON.stringify({ type: "response.create" }));
+              }
+            }
+            return;
+          }
+          if (event.type === "response.done") {
+            if (activeSources.size === 0 && active) {
+              setPhase("listening");
+            }
+          }
+        });
+        ws.addEventListener("close", () => {
+          if (active) stop();
+        });
+        ws.addEventListener("error", () => {
+          onError(new Error("Grok Realtime WebSocket connection interrupted"));
+          if (active) stop();
+        });
+      } catch (err) {
+        onError(err instanceof Error ? err : new Error(String(err)));
+        stop();
+      }
+    };
+    return {
+      start,
+      stop,
+      sendTextTurn,
+      isActive: () => active,
+      getPhase: () => phase
+    };
+  }
+  var GROK_TARGET_SAMPLE_RATE, PLAYBACK_LEAD_SECONDS, CAPTURE_CHUNK_MS, MAX_PREOPEN_CHUNKS, GROK_VOICE_OPTIONS;
+  var init_grok_voice_client = __esm({
+    "src/modules/grok-voice-client.js"() {
+      init_intake_wizard();
+      GROK_TARGET_SAMPLE_RATE = 24e3;
+      PLAYBACK_LEAD_SECONDS = 0.15;
+      CAPTURE_CHUNK_MS = 100;
+      MAX_PREOPEN_CHUNKS = 30;
+      GROK_VOICE_OPTIONS = Object.freeze([
+        { id: "eve", label: "Eve (Warm & Capable \u2014 Default)" },
+        { id: "ara", label: "Ara (Upbeat & Friendly)" },
+        { id: "rex", label: "Rex (Calm & Professional)" },
+        { id: "sal", label: "Sal (Smooth & Balanced)" },
+        { id: "leo", label: "Leo (Authoritative & Clear)" }
+      ]);
+    }
+  });
+
+  // src/modules/quickbooks.js
+  function quickbooksConnectionStatus(record) {
+    if (!record || typeof record !== "object") {
+      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
+    }
+    const connected = Boolean(record.realmId && (record.refreshToken || record.accessToken));
+    if (!connected) {
+      return { connected: false, status: "not_connected", label: "QuickBooks Online not connected" };
+    }
+    return {
+      connected: true,
+      status: "connected",
+      label: "QuickBooks Online connected",
+      realmId: record.realmId,
+      connectedAt: record.connectedAt || null,
+      tokenExpiresAt: record.tokenExpiresAt || null
+    };
+  }
+  function quickbooksPanelStatus(account = {}) {
+    if (account?.connected === true) return { ...account, connected: true, status: "connected", label: account.label || "QuickBooks Online connected" };
+    return quickbooksConnectionStatus(account);
+  }
+  function quickbooksPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
+    const status = quickbooksPanelStatus(account);
+    const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Company ${escapeHtml4(status.realmId || "")}</span></div></div>` : `<div class="messaging-status idle">${icon2("landmark", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Connect QuickBooks Online with OAuth 2.0. Sync stays fail-closed until authorized.</span></div></div>`;
+    const actions = canSave ? `<div class="messaging-actions">
+        ${status.connected ? `<button class="secondary" type="button" id="qbo-sync-now">${icon2("refresh-cw", 14)} Sync customers / invoices / payments</button>
+             <button class="secondary danger" type="button" id="qbo-disconnect">${icon2("log-out", 14)} Disconnect QuickBooks</button>` : `<button class="primary" type="button" id="qbo-connect">${icon2("link", 14)} Connect QuickBooks Online</button>`}
+      </div>` : '<p class="ops-note">Ask an owner or admin to connect QuickBooks Online.</p>';
+    return `<section class="settings-panel quickbooks-panel">
+    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>QuickBooks Online</h2><p>OAuth connect/disconnect and idempotent sync of customers, invoices, and payments.</p></div>${icon2("book", 20)}</div>
+    ${banner}
+    ${actions}
+    <div id="qbo-sync-status" class="ops-note"></div>
+  </section>`;
+  }
+  var init_quickbooks = __esm({
+    "src/modules/quickbooks.js"() {
+    }
+  });
+
+  // src/modules/revenue-recognition.js
+  function revrecStatusLabel(status = {}) {
+    if (status.unavailable) return "Revenue Recognition sync unavailable";
+    if (!status.stripeConfigured) return "Connect shop Stripe payments first";
+    if (!status.s3Configured) return "Platform S3 export is not configured yet";
+    if (status.enabled) return "Daily sync enabled";
+    return "Sync disabled";
+  }
+  function revrecReady(status = {}) {
+    return Boolean(status.stripeConfigured && status.s3Configured);
+  }
+  function revenueRecognitionPanelHtml(status = {}, {
+    canSave = false,
+    escapeHtml: escapeHtml4 = (v) => String(v ?? ""),
+    icon: icon2 = () => ""
+  } = {}) {
+    const enabled = Boolean(status.enabled);
+    const ready = revrecReady(status);
+    const label2 = revrecStatusLabel(status);
+    const tone = enabled && ready && !status.lastError ? "ready" : "idle";
+    const lastExport = status.lastExportedAt ? new Date(status.lastExportedAt).toLocaleString() : "Never";
+    const lastError = status.lastError ? `<p class="login-error">${escapeHtml4(status.lastError)}</p>` : "";
+    const folder = status.folderHint || (status.shopId ? `revrec/${status.shopId}/general/` : "revrec/{shopId}/general/");
+    const banner = `<div class="messaging-status ${tone}">${icon2(enabled && ready ? "circle-check" : "landmark", 17)}<div><strong>${escapeHtml4(label2)}</strong><span>Last export: ${escapeHtml4(lastExport)}${status.lastObjectKey ? ` \xB7 ${escapeHtml4(status.lastObjectKey)}` : ""}</span></div></div>`;
+    const checklist = `<ol class="ops-note revrec-checklist">
+    <li>Enable Stripe Revenue Recognition on this shop's Stripe account.</li>
+    <li>In Stripe Dashboard \u2192 Data Management, add an Amazon S3 connector.</li>
+    <li>Point the connector at folder <code>${escapeHtml4(folder)}</code> and map it to Revenue Recognition general import.</li>
+    <li>Turn on sync below. ShopCrank writes a CSV there daily at 06:00 UTC.</li>
+  </ol>`;
+    const actions = canSave ? `<form class="form-grid" id="revrec-config-form">
+        <label class="toggle-field full"><input type="checkbox" name="enabled" ${enabled ? "checked" : ""}/><span>Sync cash / check / bank payments and service periods to Stripe Revenue Recognition</span></label>
+        <label>Currency<input name="currency" maxlength="3" value="${escapeHtml4(status.currency || "usd")}"/></label>
+        <div class="full messaging-actions">
+          <button class="primary" type="submit">${icon2("save", 14)} Save sync settings</button>
+          <button class="secondary" type="button" id="revrec-export-now" ${ready ? "" : "disabled"}>${icon2("upload", 14)} Export now</button>
+          <button class="secondary" type="button" id="revrec-download-csv">${icon2("download", 14)} Download CSV</button>
+        </div>
+      </form>` : '<p class="ops-note">Ask an owner or admin to enable Revenue Recognition sync.</p>';
+    return `<section class="settings-panel revrec-panel">
+    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>Stripe Revenue Recognition</h2><p>Import non-Stripe payments and recognition service periods into this shop's Stripe RevRec reports.</p></div>${icon2("book-open", 20)}</div>
+    ${banner}
+    ${lastError}
+    ${checklist}
+    ${actions}
+    <div id="revrec-sync-status" class="ops-note"></div>
+  </section>`;
+  }
+  var init_revenue_recognition = __esm({
+    "src/modules/revenue-recognition.js"() {
     }
   });
 
@@ -3271,11 +4911,11 @@
     const source = String(name || "").toLocaleLowerCase();
     return normalizeCustomerSearch(query2).toLocaleLowerCase().split(" ").every((token) => source.includes(token));
   }
-  function vehicleLabel(vehicle) {
+  function vehicleLabel2(vehicle) {
     return [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(" ") || vehicle.vehicle || vehicle.description || "Vehicle on file";
   }
   function enrichCustomer(customer, vehicles) {
-    const linkedVehicles = vehicles.filter((vehicle) => customer.id && vehicle.customerId === customer.id || String(vehicle.customer || "").toLocaleLowerCase() === String(customer.name || "").toLocaleLowerCase()).map((vehicle) => ({ ...vehicle, label: vehicleLabel(vehicle) }));
+    const linkedVehicles = vehicles.filter((vehicle) => customer.id && vehicle.customerId === customer.id || String(vehicle.customer || "").toLocaleLowerCase() === String(customer.name || "").toLocaleLowerCase()).map((vehicle) => ({ ...vehicle, label: vehicleLabel2(vehicle) }));
     return {
       ...customer,
       id: String(customer.id || customer.name || ""),
@@ -3783,7 +5423,7 @@
   });
 
   // src/modules/filing/forms.js
-  function money(n) {
+  function money3(n) {
     return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
   }
   function esc(s) {
@@ -3821,15 +5461,15 @@ button{margin-top:12px;padding:8px 14px}
   <div class="box full"><label>f Employee\u2019s address and ZIP code</label><b>${esc(data.employee.address || "")}</b></div>
 </div>
 <div class="row3" style="margin-top:8px">
-  <div class="box"><label>1 Wages, tips, other compensation</label><b>${money(data.wages)}</b></div>
-  <div class="box"><label>2 Federal income tax withheld</label><b>${money(data.federal)}</b></div>
-  <div class="box"><label>3 Social security wages</label><b>${money(data.socialSecurityWages)}</b></div>
-  <div class="box"><label>4 Social security tax withheld</label><b>${money(data.socialSecurity)}</b></div>
-  <div class="box"><label>5 Medicare wages and tips</label><b>${money(data.medicareWages)}</b></div>
-  <div class="box"><label>6 Medicare tax withheld</label><b>${money(data.medicare)}</b></div>
+  <div class="box"><label>1 Wages, tips, other compensation</label><b>${money3(data.wages)}</b></div>
+  <div class="box"><label>2 Federal income tax withheld</label><b>${money3(data.federal)}</b></div>
+  <div class="box"><label>3 Social security wages</label><b>${money3(data.socialSecurityWages)}</b></div>
+  <div class="box"><label>4 Social security tax withheld</label><b>${money3(data.socialSecurity)}</b></div>
+  <div class="box"><label>5 Medicare wages and tips</label><b>${money3(data.medicareWages)}</b></div>
+  <div class="box"><label>6 Medicare tax withheld</label><b>${money3(data.medicare)}</b></div>
   <div class="box"><label>15 State</label><b>${esc(data.state || "")}</b></div>
-  <div class="box"><label>16 State wages, tips, etc.</label><b>${money(data.stateWages || 0)}</b></div>
-  <div class="box"><label>17 State income tax</label><b>${money(data.stateTax || 0)}</b></div>
+  <div class="box"><label>16 State wages, tips, etc.</label><b>${money3(data.stateWages || 0)}</b></div>
+  <div class="box"><label>17 State income tax</label><b>${money3(data.stateTax || 0)}</b></div>
 </div>
 <div class="notice">File Copy A electronically with SSA (ssa.gov/employer). Give Copies B, C, and 2 to the employee by January 31. ShopCrank generates this statement from shop payroll records; confirm SSN and EIN before e-filing.</div>`;
     return printHtml(`W-2 ${y} ${data.employee.name}`, body);
@@ -3845,8 +5485,8 @@ button{margin-top:12px;padding:8px 14px}
   <div class="box"><label>RECIPIENT\u2019S name</label><b>${esc(data.recipient.name)}</b></div>
   <div class="box"><label>RECIPIENT\u2019S TIN</label><b>***-**-${esc(data.recipient.tinLast4 || "XXXX")}</b></div>
   <div class="box full"><label>Street address (including apt. no.) / City, state, and ZIP code</label><b>${esc(data.recipient.address || "")}</b></div>
-  <div class="box"><label>1 Nonemployee compensation</label><b>${money(data.nonemployeeCompensation)}</b></div>
-  <div class="box"><label>4 Federal income tax withheld</label><b>${money(data.federalTaxWithheld || 0)}</b></div>
+  <div class="box"><label>1 Nonemployee compensation</label><b>${money3(data.nonemployeeCompensation)}</b></div>
+  <div class="box"><label>4 Federal income tax withheld</label><b>${money3(data.federalTaxWithheld || 0)}</b></div>
 </div>
 <div class="notice">File with the IRS when nonemployee compensation is $600 or more. Recipients use this for Schedule C / income reporting. ShopCrank does not transmit to IRS FIRE until transmitter credentials are configured; download the e-file package and submit via IRS IRIS/FIRE or your CPA.</div>`;
     return printHtml(`1099-NEC ${y} ${data.recipient.name}`, body);
@@ -5129,1169 +6769,6 @@ button{margin-top:12px;padding:8px 14px}
         lastKey: "",
         keybound: false
       };
-    }
-  });
-
-  // src/modules/technician-assignment.js
-  function classificationFor(user = {}) {
-    const explicit = String(user.classification || "").trim();
-    if (EMPLOYEE_CLASSIFICATIONS.some((item) => item.id === explicit)) return explicit;
-    if (user.role === "technician") return "technician";
-    if (user.role === "service_writer") return "service_writer";
-    if (user.role === "office") return "office";
-    return "custom";
-  }
-  function technicianName(user = {}) {
-    return String(user.techName || user.name || "").trim();
-  }
-  function isAssignableTechnician(user = {}) {
-    return user.active !== false && classificationFor(user) === "technician" && Boolean(technicianName(user));
-  }
-  function assignableTechnicians(users = []) {
-    return users.filter(isAssignableTechnician);
-  }
-  function clampShare(value2) {
-    const number = Number(value2);
-    if (!Number.isFinite(number) || number < 0) return 0;
-    return Math.min(100, Math.round(number * 100) / 100);
-  }
-  function normalizeAssignments(order = {}, users = []) {
-    const source = Array.isArray(order.assignments) ? order.assignments : [];
-    const cleaned = source.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean);
-    if (cleaned.length) return ensurePrimary(cleaned);
-    const legacy = String(order.tech || "").trim();
-    if (!legacy || legacy === "Unassigned") return [];
-    const match = users.find((user) => technicianName(user) === legacy);
-    return [{
-      id: `legacy-${order.id || "tech"}`,
-      employeeId: match?.id || null,
-      name: legacy,
-      role: "primary",
-      sharePercent: 100,
-      hoursWorked: hoursOf(order.laborHours),
-      writeIn: !match,
-      assignedAt: null
-    }];
-  }
-  function cleanAssignment(item = {}, index = 0, users = []) {
-    const employee = users.find((user) => item.employeeId && user.id === item.employeeId);
-    const name = String(employee ? technicianName(employee) : item.name || "").trim();
-    if (!name) return null;
-    return {
-      id: String(item.id || `asg-${index + 1}`),
-      employeeId: employee?.id || null,
-      name,
-      role: ROLES.includes(item.role) ? item.role : "secondary",
-      sharePercent: clampShare(item.sharePercent),
-      hoursWorked: hoursOf(item.hoursWorked),
-      writeIn: !employee,
-      assignedAt: item.assignedAt || null
-    };
-  }
-  function ensurePrimary(assignments) {
-    const withPrimary = assignments.some((item) => item.role === "primary") ? assignments : assignments.map((item, index) => index === 0 ? { ...item, role: "primary" } : item);
-    let seen = false;
-    const unique = withPrimary.map((item) => {
-      if (item.role !== "primary") return item;
-      if (seen) return { ...item, role: "secondary" };
-      seen = true;
-      return item;
-    });
-    return unique.sort((left, right) => Number(right.role === "primary") - Number(left.role === "primary"));
-  }
-  function applyAssignments(order = {}, assignments = [], users = []) {
-    const normalized = ensurePrimary(assignments.map((item, index) => cleanAssignment(item, index, users)).filter(Boolean));
-    const primary = normalized.find((item) => item.role === "primary");
-    return {
-      ...order,
-      assignments: normalized,
-      tech: primary?.name || "Unassigned"
-    };
-  }
-  function orderIncludesTechnician(order = {}, user = {}, users = []) {
-    const name = technicianName(user);
-    if (!name && !user.id) return false;
-    return normalizeAssignments(order, users).some((item) => user.id && item.employeeId === user.id || name && item.name === name);
-  }
-  function clockedHours(clocks = [], workOrderId, userId) {
-    return hoursOf(clocks.filter((entry) => entry.workOrderId === workOrderId && entry.userId === userId && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
-  }
-  function shareFraction(assignments, assignment) {
-    const total = assignments.reduce((sum, item) => sum + (Number(item.sharePercent) || 0), 0);
-    if (!total) return assignments.length ? 1 / assignments.length : 0;
-    return (Number(assignment.sharePercent) || 0) / total;
-  }
-  function payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment) {
-    if (!employee) return 0;
-    if (employee.employmentType === "Salary" && plan === "hourly") return 0;
-    if (plan === "flat_rate" || plan === "team_split") return money2(laborRevenue * fraction);
-    if (plan === "commission") {
-      const percent = Number(employee.commissionPercent || assignment.sharePercent || 0);
-      return money2(laborRevenue * percent / 100);
-    }
-    return money2(usableHours * Number(employee.payRate || 0));
-  }
-  function payrollLinesForOrder({
-    order = {},
-    users = [],
-    clocks = [],
-    periodKey,
-    nowIso = null
-  } = {}) {
-    if (!["completed", "invoiced"].includes(order.status)) return [];
-    const assignments = normalizeAssignments(order, users);
-    if (!assignments.length) return [];
-    const laborRevenue = Number(order.labor || 0);
-    return assignments.flatMap((assignment) => {
-      const employee = users.find((user) => user.id === assignment.employeeId && user.active !== false) || null;
-      const tracked = employee ? clockedHours(clocks, order.id, employee.id) : 0;
-      const usableHours = hoursOf(tracked || assignment.hoursWorked || (assignment.role === "primary" ? order.laborHours : 0));
-      if (!usableHours) return [];
-      const plan = PAY_PLANS.some((item) => item.id === employee?.payPlan) ? employee.payPlan : "hourly";
-      const fraction = shareFraction(assignments, assignment);
-      const amount = payAmount(employee, plan, usableHours, laborRevenue, fraction, assignment);
-      return [{
-        id: `${periodKey}#${order.id}#${assignment.id}`,
-        workOrderId: order.id,
-        employeeId: employee?.id || null,
-        technicianName: assignment.name,
-        role: assignment.role,
-        writeIn: !employee,
-        periodKey,
-        roNumber: order.id,
-        customer: order.customer || "",
-        vehicle: order.vehicle || "",
-        hours: usableHours,
-        rate: plan === "hourly" ? Number(employee?.payRate || 0) : 0,
-        amount,
-        grossPay: amount,
-        payPlan: employee ? plan : "unrated",
-        completedAt: nowIso
-      }];
-    });
-  }
-  function attributeClockHours(order, userId, clocks = [], users = []) {
-    const assignments = normalizeAssignments(order, users).map((item) => item.employeeId === userId ? { ...item, hoursWorked: clockedHours(clocks, order.id, userId) } : item);
-    const laborHours = hoursOf(clocks.filter((entry) => entry.workOrderId === order.id && entry.clockOut).reduce((sum, entry) => sum + Number(entry.hours || 0), 0));
-    return applyAssignments({ ...order, laborHours: laborHours || order.laborHours }, assignments, users);
-  }
-  function technicianPerformance(orders2 = [], users = [], clocks = []) {
-    const comebackTracked = orders2.some((order) => Object.prototype.hasOwnProperty.call(order, "comeback"));
-    return assignableTechnicians(users).map((user) => {
-      const mine = orders2.filter((order) => orderIncludesTechnician(order, user, users));
-      const completed = mine.filter((order) => ["completed", "invoiced"].includes(order.status));
-      const hours = hoursOf(completed.reduce((sum, order) => {
-        const tracked = clockedHours(clocks, order.id, user.id);
-        if (tracked) return sum + tracked;
-        const assignment = normalizeAssignments(order, users).find((item) => item.employeeId === user.id);
-        return sum + Number(assignment?.hoursWorked || (assignment?.role === "primary" ? order.laborHours : 0) || 0);
-      }, 0));
-      const revenue = money2(completed.reduce((sum, order) => sum + Number(order.labor || 0), 0));
-      const billedHours = hoursOf(completed.reduce((sum, order) => sum + Number(order.laborHours || 0), 0));
-      const efficiency = hours > 0 && billedHours > 0 ? Math.round(billedHours / hours * 1e3) / 10 : null;
-      const averageRepair = completed.length && hours ? hoursOf(hours / completed.length) : null;
-      const comebacks = comebackTracked ? completed.filter((order) => order.comeback === true).length : null;
-      return {
-        id: user.id,
-        name: technicianName(user),
-        open: mine.length - completed.length,
-        completed: completed.length,
-        hours,
-        revenue,
-        efficiency,
-        averageRepair,
-        comebacks,
-        averageTicket: completed.length ? money2(revenue / completed.length) : null
-      };
-    });
-  }
-  function escapeHtml2(value2) {
-    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    })[char]);
-  }
-  function technicianTrackerHtml(rows = []) {
-    const body = rows.map((row) => `<tr><td>${escapeHtml2(row.name)}</td><td>${row.open}</td><td>${row.completed}</td><td>${row.hours.toFixed(2)}</td><td>${currency(row.revenue)}</td><td>${row.efficiency == null ? "\u2014" : `${row.efficiency}%`}</td><td>${row.comebacks == null ? "\u2014" : row.comebacks}</td><td>${row.averageRepair == null ? "\u2014" : row.averageRepair.toFixed(2)}</td></tr>`).join("");
-    return `<section class="tech-tracker"><div class="home-panel-head"><div><h2>Technician performance</h2><p>Open jobs, completed jobs, clocked hours, and labor sold. Comebacks appear only after a job is marked as a comeback.</p></div></div><div class="data-panel"><table><thead><tr><th>Technician</th><th>Open</th><th>Completed</th><th>Hours</th><th>Labor sold</th><th>Efficiency</th><th>Comebacks</th><th>Avg hours</th></tr></thead><tbody>${body || '<tr><td colspan="8">No technicians are classified for assignment yet.</td></tr>'}</tbody></table></div></section>`;
-  }
-  function assignmentSummary(order = {}, users = []) {
-    const assignments = normalizeAssignments(order, users);
-    if (!assignments.length) return order.tech && order.tech !== "Unassigned" ? order.tech : "Unassigned";
-    const primary = assignments.find((item) => item.role === "primary") || assignments[0];
-    const extra = assignments.length - 1;
-    return extra > 0 ? `${primary.name} +${extra}` : primary.name;
-  }
-  var ROLES, EMPLOYEE_CLASSIFICATIONS, PAY_PLANS, money2, hoursOf, currency;
-  var init_technician_assignment = __esm({
-    "src/modules/technician-assignment.js"() {
-      ROLES = ["primary", "secondary", "apprentice"];
-      EMPLOYEE_CLASSIFICATIONS = [
-        { id: "technician", label: "Technician" },
-        { id: "service_writer", label: "Service Writer" },
-        { id: "parts_manager", label: "Parts Manager" },
-        { id: "shop_foreman", label: "Shop Foreman" },
-        { id: "office", label: "Office Staff" },
-        { id: "custom", label: "Custom" }
-      ];
-      PAY_PLANS = [
-        { id: "hourly", label: "Hourly" },
-        { id: "flat_rate", label: "Flat rate" },
-        { id: "commission", label: "Commission" },
-        { id: "team_split", label: "Team split" }
-      ];
-      money2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
-      hoursOf = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
-      currency = (value2) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value2) || 0);
-    }
-  });
-
-  // src/modules/estimate-templates.js
-  function calculateShopEstimate(lines = [], {
-    taxRate = 0,
-    laborRate = 0,
-    discountPercent = 0,
-    discountReason = "",
-    shopSupplies
-  } = {}) {
-    const normalizedLines = lines.map((line, index) => normalizeEstimateLine(
-      line.type === "labor" && line.laborRate == null ? { ...line, laborRate } : line,
-      index
-    ));
-    const labor = normalizedLines.filter((line) => line.type === "labor" && line.approvalStatus !== "declined").reduce((sum, line) => sum + line.total, 0);
-    const automaticSupplies = Math.min(
-      SHOP_SUPPLIES_RULES.shopSuppliesCap,
-      labor * SHOP_SUPPLIES_RULES.shopSuppliesRate / 100
-    );
-    const supplies = labor > 0 ? money3(Math.min(SHOP_SUPPLIES_RULES.shopSuppliesCap, Math.max(0, shopSupplies ?? automaticSupplies))) : 0;
-    const base = calculateEstimate(
-      normalizedLines,
-      0,
-      supplies ? [{ description: "Shop supplies", amount: supplies }] : []
-    );
-    const safeDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
-    const discountAmount = money3(base.subtotal * safeDiscountPercent / 100);
-    const subtotal = money3(base.subtotal - discountAmount);
-    const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-    const tax = money3(subtotal * safeTaxRate / 100);
-    return {
-      ...base,
-      grossSubtotal: base.subtotal,
-      discountPercent: safeDiscountPercent,
-      discountReason: String(discountReason || ""),
-      discountAmount,
-      subtotal,
-      taxRate: safeTaxRate,
-      tax,
-      total: money3(subtotal + tax)
-    };
-  }
-  function workOrderDraftFromEstimate(estimate = REFERENCE_ESTIMATE) {
-    const customer = typeof estimate.customer === "object" ? estimate.customer : { name: estimate.customer };
-    const vehicle = typeof estimate.vehicle === "object" ? estimate.vehicle : { description: estimate.vehicle };
-    const insurance = estimate.insurance || {};
-    const laborSource = (estimate.lines || []).filter((line) => line.type === "labor").map((line) => line.notes || line.laborSource).filter(Boolean).join(" ");
-    const complaintParts = [
-      `Claimant: ${customer.name || "Not provided"}.`,
-      estimate.complaint,
-      insurance.company || insurance.policy ? `Insurance: ${insurance.company || "Carrier not provided"}; policy ${insurance.policy || "not provided"}; claim number ${insurance.claimNumber || "not yet assigned"}.` : "",
-      laborSource ? `Labor source: ${laborSource}` : ""
-    ].filter(Boolean);
-    return {
-      sourceEstimateNumber: estimate.number || "",
-      customer: customer.name || "",
-      phone: customer.phone || estimate.phone || "",
-      email: customer.email || estimate.email || "",
-      address: customer.address || "",
-      vehicle: vehicle.description || "",
-      vin: vehicle.vin || estimate.vin || "",
-      complaint: complaintParts.join("\n"),
-      requestedServices: (estimate.requestedServices || (estimate.lines || []).map((line) => line.description)).join("\n"),
-      estimate: calculateShopEstimate(estimate.lines || [], {
-        taxRate: estimate.taxRate,
-        laborRate: estimate.laborRate,
-        discountPercent: estimate.discountPercent,
-        discountReason: estimate.discountReason,
-        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount
-      }),
-      exclusions: estimate.exclusions || [],
-      insurance,
-      shopNotes: (estimate.shopNotes || []).map(String),
-      plate: vehicle.plate || ""
-    };
-  }
-  function estimateFromAssistantDraft(action = {}, { laborRate = 0, taxRate = 0, shopSupplies } = {}) {
-    const draft = action.draft || action;
-    const resolvedLaborRate = Math.max(0, Number(laborRate) || 0);
-    const partLines = (draft.parts || []).map((part, index) => ({
-      id: `assistant-part-${index + 1}`,
-      type: "part",
-      description: String(part.description || "Part"),
-      notes: String(part.notes || ""),
-      quantity: Math.max(0, Number(part.quantity) || 0),
-      unitPrice: Math.max(0, Number(part.unitPrice) || 0),
-      partNumber: String(part.partNumber || ""),
-      priceStatus: part.priceStatus === "pending" ? "pending" : "priced"
-    }));
-    const laborLines = (draft.labor || []).map((labor, index) => ({
-      id: `assistant-labor-${index + 1}`,
-      type: "labor",
-      description: String(labor.description || "Labor"),
-      notes: String(labor.notes || labor.source || ""),
-      hours: Math.max(0, Number(labor.hours) || 0),
-      laborRate: resolvedLaborRate,
-      laborSource: String(labor.source || "Customer conversation; verify before authorization")
-    }));
-    const feeLines = draft.afterMidnightFee ? [afterMidnightFeeLine("assistant-fee-after-midnight")] : [];
-    const totals = calculateShopEstimate([...partLines, ...laborLines, ...feeLines], {
-      laborRate: resolvedLaborRate,
-      taxRate,
-      discountPercent: draft.discountPercent,
-      discountReason: draft.discountReason,
-      shopSupplies
-    });
-    return {
-      id: `assistant-estimate-${Date.now()}`,
-      number: "",
-      status: "draft",
-      customer: {
-        name: String(draft.customer?.name || ""),
-        phone: String(draft.customer?.phone || ""),
-        email: String(draft.customer?.email || ""),
-        address: String(draft.customer?.address || "")
-      },
-      vehicle: {
-        description: String(draft.vehicle?.description || ""),
-        vin: String(draft.vehicle?.vin || ""),
-        plate: String(draft.vehicle?.plate || "")
-      },
-      complaint: String(draft.complaint || ""),
-      requestedServices: (draft.requestedServices || []).map(String),
-      exclusions: (draft.exclusions || []).map(String),
-      shopNotes: (draft.shopNotes || []).map(String),
-      lines: totals.lines,
-      ...totals
-    };
-  }
-  var money3, REFERENCE_ESTIMATE_RULES, referenceLines, referenceTotals, REFERENCE_ESTIMATE;
-  var init_estimate_templates = __esm({
-    "src/modules/estimate-templates.js"() {
-      init_estimate_workflow();
-      money3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
-      REFERENCE_ESTIMATE_RULES = Object.freeze({ laborRate: 140, taxRate: 8.25 });
-      referenceLines = [
-        {
-          id: "part-headlamp",
-          type: "part",
-          description: "Passenger xenon headlamp",
-          notes: "Right side, xenon without adaptive. DEPO 3401157RMUSHM2.",
-          quantity: 1,
-          unitPrice: 493.79,
-          partNumber: "3401157RMUSHM2",
-          brand: "DEPO"
-        },
-        {
-          id: "part-fog-lamp",
-          type: "part",
-          description: "Passenger fog lamp",
-          notes: "Right side, without AMG styling package. TYC 19042100.",
-          quantity: 1,
-          unitPrice: 17.02,
-          partNumber: "19042100",
-          brand: "TYC"
-        },
-        {
-          id: "part-xenon-module",
-          type: "part",
-          description: "Xenon headlamp control module",
-          notes: "Listed as 222-900-33-00; confirm the module number before ordering.",
-          quantity: 1,
-          unitPrice: 116.4,
-          partNumber: "222-900-33-00"
-        },
-        {
-          id: "part-bumper",
-          type: "part",
-          description: "Front bumper cover",
-          notes: "Without AMG, without Parktronic, CAPA, primed. TECHPRO MB1000458.",
-          quantity: 1,
-          unitPrice: 362.79,
-          partNumber: "MB1000458",
-          brand: "TECHPRO"
-        },
-        {
-          id: "part-fender",
-          type: "part",
-          description: "Passenger front fender",
-          notes: "Front right, CAPA. TECHPRO MB1241149. Beyond repair.",
-          quantity: 1,
-          unitPrice: 374.79,
-          partNumber: "MB1241149",
-          brand: "TECHPRO"
-        },
-        {
-          id: "part-fender-covers",
-          type: "part",
-          description: "Upper and lower passenger fender covers",
-          notes: "Damaged; parts have not been matched to a listing and remain unpriced.",
-          quantity: 1,
-          unitPrice: 0,
-          priceStatus: "pending"
-        },
-        {
-          id: "labor-collision-repair",
-          type: "labor",
-          description: "Collision component replacement labor",
-          notes: "5.3 hours from Open Labor Project estimates for this vehicle: fender 3.7, headlamp 0.9, and one fender liner 0.7. These are not ALLDATA or Mitchell times, are not copied from a labor guide, and are not expert-verified.",
-          hours: 5.3,
-          laborRate: REFERENCE_ESTIMATE_RULES.laborRate,
-          laborSource: "Open Labor Project estimate"
-        }
-      ];
-      referenceTotals = calculateShopEstimate(referenceLines, {
-        taxRate: REFERENCE_ESTIMATE_RULES.taxRate,
-        discountPercent: 10,
-        discountReason: "Tech-student discount",
-        shopSupplies: 20
-      });
-      REFERENCE_ESTIMATE = Object.freeze({
-        id: "reference-estimate-est-2026-1004-01",
-        number: "EST-2026-1004-01",
-        date: "2026-10-04",
-        validThrough: "2026-10-18",
-        status: "draft",
-        template: true,
-        customer: {
-          name: "Jordan Example",
-          phone: "555-0100",
-          email: "customer@example.test",
-          address: "123 Example Street, Sample City, TX 00000",
-          role: "Claimant"
-        },
-        vehicle: {
-          description: "2016 Mercedes-Benz GLA250",
-          vin: "1M8GDM9AXKP042788",
-          plate: "DEMO-01"
-        },
-        insurance: {
-          company: "Example Insurance",
-          policy: "TEST-POLICY-001",
-          claimNumber: ""
-        },
-        complaint: "Deer collision. Claimant was not injured. No structural damage was found.",
-        inspectionNotes: "Passenger-side lighting, bumper, fender, and upper/lower fender covers are damaged.",
-        requestedServices: [
-          "Replace passenger xenon headlamp",
-          "Replace passenger fog lamp",
-          "Replace xenon headlamp control module",
-          "Replace front bumper cover",
-          "Replace passenger front fender",
-          "Replace upper and lower passenger fender covers (parts remain unpriced)"
-        ],
-        exclusions: [
-          "Paint is not included.",
-          "Upper and lower fender covers remain unpriced.",
-          "Hidden damage and any additional work require a revised estimate and customer authorization."
-        ],
-        shopNotes: [
-          "Obtain written authorization before sending the estimate or customer records.",
-          "Verify any billing or photo-delivery address with the customer before use."
-        ],
-        lines: referenceTotals.lines,
-        fees: referenceTotals.fees,
-        ...referenceTotals
-      });
-    }
-  });
-
-  // src/modules/intake-wizard.js
-  function escapeHtml3(value2) {
-    return String(value2 ?? "").replace(/[&<>"']/g, (char) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    })[char]);
-  }
-  function escapeAttr3(value2) {
-    return escapeHtml3(value2);
-  }
-  function emptyIntakeDraft(now2 = /* @__PURE__ */ new Date()) {
-    return {
-      id: `intake-${now2.getTime()}`,
-      step: 0,
-      savedAt: null,
-      status: "draft",
-      customer: {
-        firstName: "",
-        lastName: "",
-        phone: "",
-        email: "",
-        company: "",
-        secondaryPhone: "",
-        address: "",
-        city: "",
-        state: "",
-        zip: "",
-        contact: { phone: true, text: false, email: true }
-      },
-      vehicle: {
-        vin: "",
-        plate: "",
-        plateState: "",
-        year: "",
-        make: "",
-        model: "",
-        trim: "",
-        engine: "",
-        transmission: "",
-        mileage: "",
-        color: ""
-      },
-      photos: [],
-      damage: [],
-      concern: {
-        description: "",
-        began: "",
-        frequency: "",
-        lights: "",
-        recentRepairs: "",
-        accident: "",
-        towed: "",
-        overheating: ""
-      },
-      diagnosis: {
-        visual: "",
-        roadTest: "",
-        fluids: "",
-        battery: "",
-        codes: "",
-        notes: "",
-        cause: "",
-        correction: "",
-        severity: "",
-        analysis: null
-      },
-      estimate: { lines: [], diagnosticCharge: 0, approval: "pending" },
-      aiFilledFields: {},
-      assignments: []
-    };
-  }
-  function customerDisplayName(draft = {}) {
-    const customer = draft.customer || {};
-    const person = [customer.firstName, customer.lastName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
-    const company = String(customer.company || "").trim();
-    if (person && company) return `${person} (${company})`;
-    return person || company;
-  }
-  function vehicleLabel2(draft = {}) {
-    const vehicle = draft.vehicle || {};
-    return [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
-  }
-  function missingCustomerFields(draft = {}) {
-    const customer = draft.customer || {};
-    return ["firstName", "lastName", "phone", "email"].filter((field2) => !String(customer[field2] || "").trim());
-  }
-  function missingVehicleFields(draft = {}) {
-    const vehicle = draft.vehicle || {};
-    const identity = vehicleLabel2(draft);
-    const missing = [];
-    if (!identity && !String(vehicle.vin || "").trim()) missing.push("vehicle");
-    return missing;
-  }
-  function missingRequiredPhotos(draft = {}) {
-    const taken = new Set((draft.photos || []).map((photo) => photo.slot));
-    return REQUIRED_PHOTO_SLOTS.filter((slot) => !taken.has(slot.id)).map((slot) => slot.label);
-  }
-  function applyVinDecode(draft, decoded = {}) {
-    const vehicle = { ...draft.vehicle };
-    const fill = (field2, value2) => {
-      if (!String(vehicle[field2] || "").trim() && String(value2 || "").trim()) vehicle[field2] = String(value2).trim();
-    };
-    fill("year", decoded.year);
-    fill("make", decoded.make);
-    fill("model", decoded.model);
-    fill("trim", decoded.trim);
-    const engine = [decoded.engineDisplacementLiters ? `${decoded.engineDisplacementLiters}L` : "", decoded.engineCylinders ? `${decoded.engineCylinders} cyl` : ""].filter(Boolean).join(" ");
-    fill("engine", engine);
-    if (decoded.vin) vehicle.vin = String(decoded.vin).toUpperCase();
-    return { ...draft, vehicle };
-  }
-  function applyAiAutofill(draft, formType, data = {}) {
-    const next = structuredClone(draft || emptyIntakeDraft());
-    next.aiFilledFields = { ...next.aiFilledFields || {} };
-    const markFilled = (path, value2) => {
-      const clean2 = String(value2 ?? "").trim();
-      if (!clean2) return false;
-      next.aiFilledFields[path] = true;
-      return true;
-    };
-    if (formType === "vehicle_intake") {
-      const mapping = [
-        ["vin", data.vin ? String(data.vin).toUpperCase() : ""],
-        ["plate", data.plate ? String(data.plate).toUpperCase() : ""],
-        ["plateState", data.plate_state || data.plateState || ""],
-        ["year", data.year],
-        ["make", data.make],
-        ["model", data.model],
-        ["trim", data.trim],
-        ["engine", data.engine],
-        ["mileage", data.mileage],
-        ["color", data.color]
-      ];
-      for (const [key, value2] of mapping) {
-        if (markFilled(`vehicle.${key}`, value2)) {
-          next.vehicle[key] = String(value2).trim();
-        }
-      }
-      return next;
-    }
-    if (formType === "diagnostic_3c") {
-      if (markFilled("concern.description", data.complaint)) {
-        next.concern.description = String(data.complaint).trim();
-      }
-      if (markFilled("diagnosis.cause", data.cause)) {
-        next.diagnosis.cause = String(data.cause).trim();
-      }
-      if (markFilled("diagnosis.correction", data.correction)) {
-        next.diagnosis.correction = String(data.correction).trim();
-      }
-      if (markFilled("diagnosis.severity", data.severity)) {
-        next.diagnosis.severity = String(data.severity).trim();
-      }
-      if (Array.isArray(data.dtc_codes) && data.dtc_codes.length) {
-        const codes = data.dtc_codes.join(", ");
-        if (markFilled("diagnosis.codes", codes)) {
-          next.diagnosis.codes = codes;
-        }
-      }
-    }
-    if (formType === "dvi_estimate") {
-      if (Array.isArray(data.checklist_items) && data.checklist_items.length) {
-        const formatted = data.checklist_items.map((item) => `[${item.status || "YELLOW"}] ${item.component}: ${item.notes || ""}${item.measurement ? ` (${item.measurement})` : ""}`).join("\n");
-        if (markFilled("diagnosis.visual", formatted)) {
-          next.diagnosis.visual = formatted;
-        }
-      }
-    }
-    if (Array.isArray(data.suggested_line_items) && data.suggested_line_items.length) {
-      const mappedLines = data.suggested_line_items.map((item) => {
-        const rawType = String(item.item_type || "LABOR").toUpperCase();
-        const isPart = rawType === "PART";
-        return {
-          type: isPart ? "part" : "labor",
-          description: String(item.description || "").trim(),
-          quantity: isPart ? Math.max(1, Number(item.quantity) || 1) : Math.max(0.1, Number(item.estimated_hours || item.quantity) || 1),
-          unitPrice: 0,
-          partNumber: item.part_number || null,
-          source: "Filled by AI",
-          aiFilled: true
-        };
-      }).filter((line) => line.description);
-      if (mappedLines.length) {
-        next.estimate.lines = mappedLines;
-        next.aiFilledFields["estimate.lines"] = true;
-      }
-    }
-    return next;
-  }
-  function acceptAllAiFields(draft) {
-    const next = structuredClone(draft || emptyIntakeDraft());
-    next.aiFilledFields = {};
-    if (Array.isArray(next.estimate?.lines)) {
-      next.estimate.lines = next.estimate.lines.map((line) => ({ ...line, aiFilled: false }));
-    }
-    return next;
-  }
-  function searchLaborGuide(query2 = "", services = CANNED_MENU) {
-    const needle = String(query2 || "").trim().toLowerCase();
-    if (needle.length < 2) return [];
-    const shopHits = SHOP_CRANK_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
-    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
-    return [...shopHits, ...canned].slice(0, 8);
-  }
-  function seedEstimateLines(draft = {}) {
-    if (Array.isArray(draft.estimate?.lines) && draft.estimate.lines.length) return draft.estimate.lines;
-    const hits = searchLaborGuide(draft.concern?.description || "");
-    const lines = hits.slice(0, 2).map((hit) => ({
-      type: "labor",
-      description: hit.name,
-      quantity: hit.hours || 1,
-      unitPrice: 0,
-      notes: hit.notes,
-      source: hit.source
-    }));
-    const charge = Number(draft.estimate?.diagnosticCharge || 0);
-    if (charge > 0) {
-      lines.unshift({ type: "labor", description: "Diagnostic charge", quantity: 1, unitPrice: charge, notes: "Initial diagnosis", source: "Shop" });
-    }
-    if (!lines.length) {
-      lines.push({
-        type: "labor",
-        description: String(draft.concern?.description || "Diagnose customer concern").slice(0, 120),
-        quantity: 1,
-        unitPrice: 0,
-        notes: "Hours stay at 1 until the technician confirms the job.",
-        source: "Shop"
-      });
-    }
-    return lines;
-  }
-  function priceIntakeEstimate(draft = {}, { laborRate = 165, taxRate = 0 } = {}) {
-    const lines = seedEstimateLines(draft).map((line) => ({
-      type: line.type === "part" ? "part" : "labor",
-      description: line.description,
-      quantity: Math.max(0, Number(line.quantity) || 0),
-      unitPrice: line.type === "part" ? Number(line.unitPrice) || 0 : void 0,
-      laborRate: line.type === "part" ? void 0 : Number(line.unitPrice) > 0 ? Number(line.unitPrice) : laborRate,
-      notes: line.notes || ""
-    }));
-    const priced = calculateShopEstimate(lines, { laborRate, taxRate });
-    return { ...priced, disclaimer: INTAKE_DISCLAIMER, lines };
-  }
-  function localDiagnosticChecklist(draft = {}) {
-    const text = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
-    const causes = [];
-    if (/misfire|stall|p030/.test(text)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
-    if (/p0171|lean|vacuum/.test(text)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
-    if (/p0420|catalyst/.test(text)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
-    if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
-    return {
-      source: "shop-checklist",
-      notice: "ShopCrank AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
-      causes
-    };
-  }
-  function phoneDigits(value2) {
-    const digits = String(value2 || "").replace(/\D/g, "");
-    return digits.length > 10 ? digits.slice(-10) : digits;
-  }
-  function findIntakeCustomer(customers2 = [], draft = {}) {
-    const phone = phoneDigits(draft.customer?.phone);
-    const email = String(draft.customer?.email || "").trim().toLowerCase();
-    return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
-  }
-  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
-    const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
-    const approval = draft.estimate?.approval || "pending";
-    const status = approval === "approved" ? "approved" : "estimate";
-    const assigned = applyAssignments({ id }, draft.assignments || [], users);
-    return {
-      id,
-      customer: customerDisplayName(draft),
-      phone: String(draft.customer?.phone || "").trim(),
-      vehicle: vehicleLabel2(draft) || "Vehicle pending",
-      vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
-      complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
-      status,
-      priority: "normal",
-      tech: assigned.tech,
-      assignments: assigned.assignments,
-      bay: "Unassigned",
-      mobile: false,
-      promise: "",
-      notes: [draft.diagnosis?.notes, draft.concern?.recentRepairs ? `Recent repairs: ${draft.concern.recentRepairs}` : ""].filter(Boolean).join("\n"),
-      labor: priced.labor,
-      laborHours: priced.lines.filter((line) => line.type === "labor").reduce((sum, line) => sum + Number(line.quantity || 0), 0),
-      parts: priced.parts,
-      tax: priced.tax,
-      total: priced.total,
-      estimate: {
-        lines: priced.lines,
-        disclaimer: INTAKE_DISCLAIMER,
-        approvalStatus: approval
-      },
-      intake: {
-        id: draft.id,
-        status: "checked_in",
-        customer: draft.customer,
-        vehicle: draft.vehicle,
-        photos: draft.photos || [],
-        damage: draft.damage || [],
-        concern: draft.concern,
-        diagnosis: draft.diagnosis,
-        disclaimer: INTAKE_DISCLAIMER,
-        approval
-      }
-    };
-  }
-  function serializableIntake(draft = {}) {
-    return {
-      ...draft,
-      photos: (draft.photos || []).map((photo) => {
-        const copy = { ...photo };
-        delete copy.file;
-        return copy;
-      })
-    };
-  }
-  function canConvertIntake(draft = {}) {
-    const problems = [];
-    if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
-    if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
-    if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
-    return { ok: problems.length === 0, problems };
-  }
-  function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
-    const badge3 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
-    const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
-    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge3}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
-  }
-  function aiAcceptBanner(draft, prefix) {
-    const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
-    if (!filledKeys.length) return "";
-    return `<div class="ai-review-banner" role="status"><span><strong>Filled by AI</strong> \u2014 Review highlighted fields before saving.</span><button type="button" class="secondary" id="intake-ai-accept-all">Accept All</button></div>`;
-  }
-  function progress(step) {
-    return `<ol class="intake-progress">${INTAKE_STEPS.map((item, index) => `<li class="${index === step ? "current" : ""} ${index < step ? "done" : ""}"><span>${index + 1}</span>${escapeHtml3(item.label)}</li>`).join("")}</ol>`;
-  }
-  function savedStamp(draft) {
-    if (!draft.savedAt) return '<span class="intake-save">Not saved yet</span>';
-    const time = new Date(draft.savedAt);
-    const label2 = Number.isNaN(time.getTime()) ? "" : time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    return `<span class="intake-save">Draft saved${label2 ? ` ${escapeHtml3(label2)}` : ""}</span>`;
-  }
-  function customerStep(draft) {
-    const customer = draft.customer;
-    const contact = customer.contact || {};
-    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { required: true, type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
-<fieldset class="intake-choices"><legend>Communication preferences</legend>${["phone", "text", "email"].map((key) => `<label><input type="checkbox" name="contact-${key}" ${contact[key] ? "checked" : ""}/> ${key[0].toUpperCase()}${key.slice(1)}</label>`).join("")}</fieldset>`;
-  }
-  function vehicleStep(draft) {
-    const vehicle = draft.vehicle;
-    const ai = draft.aiFilledFields || {};
-    return `${aiAcceptBanner(draft, "vehicle.")}<div class="form-grid">${field("vin", "VIN", vehicle.vin, { full: true, aiFilled: Boolean(ai["vehicle.vin"]) })}${field("plate", "License plate", vehicle.plate, { aiFilled: Boolean(ai["vehicle.plate"]) })}${field("plateState", "Plate state", vehicle.plateState, { aiFilled: Boolean(ai["vehicle.plateState"]) })}${field("year", "Year", vehicle.year, { aiFilled: Boolean(ai["vehicle.year"]) })}${field("make", "Make", vehicle.make, { aiFilled: Boolean(ai["vehicle.make"]) })}${field("model", "Model", vehicle.model, { aiFilled: Boolean(ai["vehicle.model"]) })}${field("trim", "Trim", vehicle.trim, { aiFilled: Boolean(ai["vehicle.trim"]) })}${field("engine", "Engine", vehicle.engine, { aiFilled: Boolean(ai["vehicle.engine"]) })}${field("transmission", "Transmission", vehicle.transmission, { aiFilled: Boolean(ai["vehicle.transmission"]) })}${field("mileage", "Mileage", vehicle.mileage, { aiFilled: Boolean(ai["vehicle.mileage"]) })}${field("color", "Color", vehicle.color, { aiFilled: Boolean(ai["vehicle.color"]) })}</div>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button><label class="secondary">Scan VIN / Odometer photo (AI)<input id="intake-autofill-vehicle-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
-<p class="form-help" id="intake-vehicle-note">Plate lookup stays off until a DMV, Carfax, or registration provider is connected. VIN decode uses the shop vehicle decode service.</p>`;
-  }
-  function photoStep(draft) {
-    const slots = [...REQUIRED_PHOTO_SLOTS, ...EXTRA_PHOTO_SLOTS.filter((slot) => slot.id !== "extra")];
-    const cards = slots.map((slot) => {
-      const photos = (draft.photos || []).filter((photo) => photo.slot === slot.id);
-      const required = REQUIRED_PHOTO_SLOTS.some((item) => item.id === slot.id);
-      return `<article class="intake-photo ${photos.length ? "taken" : ""}"><strong>${escapeHtml3(slot.label)}${required ? " *" : ""}</strong><span>${photos.length ? photos.map((photo) => escapeHtml3(photo.name)).join(", ") : "Not added"}</span><label class="mini-action">Add photo<input class="intake-file" data-slot="${escapeAttr3(slot.id)}" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></article>`;
-    }).join("");
-    const extras = (draft.photos || []).filter((photo) => photo.slot === "extra").map((photo) => `<li>${escapeHtml3(photo.name)}</li>`).join("");
-    return `<div class="intake-photos">${cards}</div><div class="intake-actions-inline"><label class="secondary">+ Add photo<input class="intake-file" data-slot="extra" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>${extras ? `<ul class="intake-extra-photos">${extras}</ul>` : ""}
-<h3>Damage map</h3><div class="intake-damage">${DAMAGE_AREAS.map((area) => {
-      const marked = (draft.damage || []).find((item) => item.area === area);
-      return `<label><input type="checkbox" name="damage" value="${escapeAttr3(area)}" ${marked ? "checked" : ""}/> ${escapeHtml3(area)}</label><input name="damage-note-${escapeAttr3(area)}" placeholder="Dent, scratch, broken trim, cracked glass, previous damage" value="${escapeAttr3(marked?.note || "")}"/>`;
-    }).join("")}</div>`;
-  }
-  function concernStep(draft) {
-    const concern = draft.concern;
-    const ai = draft.aiFilledFields || {};
-    const badge3 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
-    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge3}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
-<div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
-  }
-  function diagnosisStep(draft) {
-    const diagnosis = draft.diagnosis;
-    const ai = draft.aiFilledFields || {};
-    const analysis = diagnosis.analysis;
-    const causes = analysis?.causes?.map((cause) => `<li><strong>${escapeHtml3(cause.name || cause.cause || "Check")}</strong><p>${escapeHtml3(cause.detail || cause.explanation || "")}</p></li>`).join("") || "";
-    return `${aiAcceptBanner(draft, "diagnosis.")}<div class="form-grid">${field("visual", "Visual inspection", diagnosis.visual, { full: true, aiFilled: Boolean(ai["diagnosis.visual"]) })}${field("roadTest", "Road test", diagnosis.roadTest)}${field("fluids", "Fluid levels", diagnosis.fluids)}${field("battery", "Battery test", diagnosis.battery)}${field("codes", "DTC codes", diagnosis.codes, { full: true, aiFilled: Boolean(ai["diagnosis.codes"]) })}${field("cause", "Root cause (3 C's)", diagnosis.cause, { full: true, aiFilled: Boolean(ai["diagnosis.cause"]) })}${field("correction", "Recommended correction (3 C's)", diagnosis.correction, { full: true, aiFilled: Boolean(ai["diagnosis.correction"]) })}</div>
-<label class="full">Technician notes<textarea name="notes">${escapeHtml3(diagnosis.notes)}</textarea></label>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
-${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || "")}</span></section><ul class="intake-causes">${causes}</ul>` : ""}`;
-  }
-  function estimateStep(draft, profile) {
-    const priced = priceIntakeEstimate(draft, profile);
-    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
-    return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
-<p class="form-help">Lookup uses the ShopCrank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
-<div id="labor-results"></div>
-<table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
-<label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
-<div class="estimate-sign-summary"><span>Labor ${escapeHtml3(String(priced.labor))} \xB7 Parts ${escapeHtml3(String(priced.parts))} \xB7 Supplies ${escapeHtml3(String(priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0))} \xB7 Tax ${escapeHtml3(String(priced.tax))}</span><strong>${escapeHtml3(String(priced.total))}</strong></div>
-<pre class="intake-disclaimer">${escapeHtml3(INTAKE_DISCLAIMER)}</pre>
-<label>Customer approval<select name="approval">${["pending", "viewed", "approved", "denied"].map((status) => `<option value="${status}" ${draft.estimate.approval === status ? "selected" : ""}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}</select></label>
-<p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
-  }
-  function reviewStep(draft, users) {
-    const check2 = canConvertIntake(draft);
-    const techs = assignableTechnicians(users);
-    const options = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
-      const selected = (draft.assignments || []).find((item) => item.role === role);
-      return `<option value="${escapeAttr3(user.id)}" ${selected?.employeeId === user.id ? "selected" : ""}>${escapeHtml3(technicianName(user))}</option>`;
-    }).join("")}`;
-    return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel2(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
-<div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
-${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
-<p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
-  }
-  function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
-    const step = Math.min(INTAKE_STEPS.length - 1, Math.max(0, Number(draft.step) || 0));
-    const body = [
-      customerStep,
-      vehicleStep,
-      photoStep,
-      concernStep,
-      diagnosisStep,
-      (current) => estimateStep(current, { laborRate, taxRate }),
-      (current) => reviewStep(current, users)
-    ][step](draft);
-    return `<div class="modal-head"><div><span class="eyebrow">Customer intake</span><h2>${escapeHtml3(INTAKE_STEPS[step].label)}</h2></div><div class="intake-head-meta">${savedStamp(draft)}<button type="button" class="close" id="intake-cancel" aria-label="Cancel intake">\xD7</button></div></div>
-<div class="modal-body intake-body">${progress(step)}<form id="intake-form">${body}</form></div>
-<div class="modal-actions"><button type="button" class="secondary" id="intake-back" ${step === 0 ? "disabled" : ""}>Back</button><button type="button" class="secondary" id="intake-save">Save draft</button>${step < INTAKE_STEPS.length - 1 ? '<button type="button" class="primary" id="intake-next">Continue</button>' : '<button type="button" class="primary" id="intake-convert">Convert to work order</button>'}</div>`;
-  }
-  function readForm(draft, form) {
-    const next = structuredClone(draft);
-    const data = Object.fromEntries(new FormData(form).entries());
-    const step = INTAKE_STEPS[next.step]?.id;
-    if (step === "customer") {
-      ["firstName", "lastName", "phone", "email", "company", "secondaryPhone", "address", "city", "state", "zip"].forEach((key) => {
-        if (key in data) next.customer[key] = String(data[key] || "").trim();
-      });
-      next.customer.contact = {
-        phone: Boolean(form.querySelector('[name="contact-phone"]')?.checked),
-        text: Boolean(form.querySelector('[name="contact-text"]')?.checked),
-        email: Boolean(form.querySelector('[name="contact-email"]')?.checked)
-      };
-    }
-    if (step === "vehicle") {
-      ["vin", "plate", "plateState", "year", "make", "model", "trim", "engine", "transmission", "mileage", "color"].forEach((key) => {
-        if (key in data) next.vehicle[key] = String(data[key] || "").trim();
-      });
-      next.vehicle.vin = next.vehicle.vin.toUpperCase();
-    }
-    if (step === "photos") {
-      const marked = new Set([...form.querySelectorAll('[name="damage"]')].filter((input) => input.checked).map((input) => input.value));
-      next.damage = DAMAGE_AREAS.filter((area) => marked.has(area)).map((area) => ({ area, note: String(data[`damage-note-${area}`] || "").trim() }));
-    }
-    if (step === "concerns") {
-      ["description", "began", "frequency", "lights", "recentRepairs", "accident", "towed", "overheating"].forEach((key) => {
-        const source = key === "description" ? form.querySelector('[name="description"]')?.value : data[key];
-        next.concern[key] = String(source || "").trim();
-      });
-    }
-    if (step === "diagnosis") {
-      ["visual", "roadTest", "fluids", "battery", "codes", "cause", "correction", "notes"].forEach((key) => {
-        next.diagnosis[key] = String(form.querySelector(`[name="${key}"]`)?.value || data[key] || "").trim();
-      });
-    }
-    if (step === "estimate") {
-      const descriptions = [...form.querySelectorAll('[name="line-description"]')];
-      const hourInputs = [...form.querySelectorAll('[name="line-hours"]')];
-      next.estimate.lines = descriptions.map((input, index) => ({
-        type: "labor",
-        description: input.value.trim(),
-        quantity: Math.max(0, Number(hourInputs[index]?.value) || 0),
-        source: "Shop"
-      })).filter((line) => line.description);
-      next.estimate.diagnosticCharge = Math.max(0, Number(data.diagnosticCharge) || 0);
-      next.estimate.approval = data.approval || "pending";
-    }
-    if (step === "review") {
-      next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
-        const employeeId = data[`assign-${role}`];
-        if (!employeeId) return [];
-        return [{ employeeId, role, sharePercent: role === "primary" ? 100 : 0, assignedAt: (/* @__PURE__ */ new Date()).toISOString() }];
-      });
-    }
-    return next;
-  }
-  function mountIntakeWizard(host, {
-    draft,
-    users = [],
-    laborRate = 165,
-    taxRate = 0,
-    onSave,
-    onCancel,
-    onConvert,
-    decodeVin,
-    lookupPlate,
-    analyze,
-    autofill
-  } = {}) {
-    let current = structuredClone(draft || emptyIntakeDraft());
-    let timer = 0;
-    const paint = () => {
-      host.innerHTML = intakeWizardHtml(current, { users, laborRate, taxRate });
-      bind2();
-    };
-    const persist = (reason) => {
-      current.savedAt = (/* @__PURE__ */ new Date()).toISOString();
-      onSave?.(serializableIntake(current), reason);
-      const stamp = host.querySelector(".intake-save");
-      if (stamp) stamp.outerHTML = savedStamp(current);
-    };
-    const schedule2 = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => persist("autosave"), 400);
-    };
-    function bind2() {
-      const form = host.querySelector("#intake-form");
-      form?.addEventListener("input", () => {
-        current = readForm(current, form);
-        schedule2();
-      });
-      host.querySelector("#intake-save")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        persist("manual");
-      });
-      host.querySelector("#intake-cancel")?.addEventListener("click", () => onCancel?.(current));
-      host.querySelector("#intake-back")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        current.step = Math.max(0, current.step - 1);
-        persist("step");
-        paint();
-      });
-      host.querySelector("#intake-next")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        current.step = Math.min(INTAKE_STEPS.length - 1, current.step + 1);
-        if (INTAKE_STEPS[current.step]?.id === "estimate" && !current.estimate.lines.length) current.estimate.lines = seedEstimateLines(current);
-        persist("step");
-        paint();
-      });
-      host.querySelector("#intake-convert")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        const check2 = canConvertIntake(current);
-        if (!check2.ok) {
-          persist("blocked");
-          paint();
-          return;
-        }
-        await onConvert?.(current);
-      });
-      host.querySelector("#intake-decode")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        const note = host.querySelector("#intake-vehicle-note");
-        try {
-          const decoded = await decodeVin?.(current.vehicle.vin);
-          if (!decoded) throw new Error("Enter a 17-character VIN first.");
-          current = applyVinDecode(current, decoded);
-          persist("vin");
-          paint();
-        } catch (error) {
-          if (note) note.textContent = error.message || "VIN decode failed.";
-        }
-      });
-      host.querySelector("#intake-plate")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        const note = host.querySelector("#intake-vehicle-note");
-        const result = await lookupPlate?.(current.vehicle) || { available: false, message: "Plate lookup is not connected." };
-        if (note) note.textContent = result.message || "Plate lookup is not connected.";
-      });
-      host.querySelectorAll(".intake-file").forEach((input) => {
-        input.addEventListener("change", () => {
-          const file = input.files?.[0];
-          if (!file) return;
-          current.photos.push({
-            id: `photo-${Date.now()}-${current.photos.length}`,
-            slot: input.dataset.slot,
-            name: file.name,
-            contentType: file.type,
-            takenAt: (/* @__PURE__ */ new Date()).toISOString(),
-            file
-          });
-          persist("photo");
-          paint();
-        });
-      });
-      host.querySelector("#lookup-labor")?.addEventListener("click", () => {
-        const query2 = host.querySelector("#labor-query")?.value || "";
-        const hits = searchLaborGuide(query2);
-        const box = host.querySelector("#labor-results");
-        if (!box) return;
-        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No ShopCrank guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
-        box.querySelectorAll("[data-add-labor]").forEach((button) => {
-          button.addEventListener("click", () => {
-            if (form) current = readForm(current, form);
-            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "ShopCrank guide" });
-            persist("labor");
-            paint();
-          });
-        });
-      });
-      host.querySelector("#intake-analyze")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        current.diagnosis.analysis = await analyze?.(current) || localDiagnosticChecklist(current);
-        persist("analysis");
-        paint();
-      });
-      host.querySelector("#intake-ai-accept-all")?.addEventListener("click", () => {
-        if (form) current = readForm(current, form);
-        current = acceptAllAiFields(current);
-        persist("accept-ai");
-        paint();
-      });
-      host.querySelector("#intake-autofill-3c")?.addEventListener("click", async () => {
-        if (form) current = readForm(current, form);
-        if (!autofill) return;
-        const notes = [current.concern?.description, current.diagnosis?.notes, current.diagnosis?.visual, current.diagnosis?.codes].filter(Boolean).join("\n");
-        const result = await autofill({ formType: "diagnostic_3c", notes, draft: current });
-        if (result?.data) {
-          current = applyAiAutofill(current, "diagnostic_3c", result.data);
-          persist("autofill-3c");
-          paint();
-        }
-      });
-      const bindPhotoAutofill = (selector, formType) => {
-        host.querySelector(selector)?.addEventListener("change", async (event) => {
-          const file = event.target?.files?.[0];
-          if (!file || !autofill) return;
-          if (form) current = readForm(current, form);
-          const result = await autofill({ formType, file, draft: current });
-          if (result?.data) {
-            current = applyAiAutofill(current, formType, result.data);
-            persist(`autofill-${formType}`);
-            paint();
-          }
-        });
-      };
-      bindPhotoAutofill("#intake-autofill-vehicle-photo", "vehicle_intake");
-      bindPhotoAutofill("#intake-autofill-diag-photo", "diagnostic_3c");
-    }
-    paint();
-    return {
-      current: () => current
-    };
-  }
-  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR;
-  var init_intake_wizard = __esm({
-    "src/modules/intake-wizard.js"() {
-      init_estimate_templates();
-      init_canned_services();
-      init_technician_assignment();
-      INTAKE_STORAGE_KEY = "ShopCrank-intake-draft-v1";
-      INTAKE_DISCLAIMER = "PRELIMINARY ESTIMATE DISCLAIMER\n\nThis estimate is based on the information available at the time of inspection. Additional issues may be identified during diagnosis, testing, disassembly, or repair. Parts pricing, labor times, and availability may change. Authorization will be obtained before performing additional work. Final invoice amounts may differ from this estimate.";
-      INTAKE_STEPS = [
-        { id: "customer", label: "Customer" },
-        { id: "vehicle", label: "Vehicle" },
-        { id: "photos", label: "Photos" },
-        { id: "concerns", label: "Concerns" },
-        { id: "diagnosis", label: "Diagnosis" },
-        { id: "estimate", label: "Estimate" },
-        { id: "review", label: "Review" }
-      ];
-      REQUIRED_PHOTO_SLOTS = [
-        { id: "front", label: "Front" },
-        { id: "rear", label: "Rear" },
-        { id: "driver", label: "Driver side" },
-        { id: "passenger", label: "Passenger side" }
-      ];
-      EXTRA_PHOTO_SLOTS = [
-        { id: "odometer", label: "Odometer" },
-        { id: "vin_sticker", label: "VIN sticker" },
-        { id: "engine", label: "Engine bay" },
-        { id: "tires", label: "Tire condition" },
-        { id: "damage", label: "Damage" },
-        { id: "concern", label: "Customer concern area" },
-        { id: "extra", label: "Additional photo" }
-      ];
-      DAMAGE_AREAS = ["Front bumper", "Rear bumper", "Driver door", "Passenger door", "Hood", "Fenders", "Roof"];
-      SHOP_CRANK_LABOR = [
-        { name: "Brake pads", hours: 1.5, notes: "One axle. Rotors and seized hardware are quoted separately." },
-        { name: "Water pump", hours: 2.5, notes: "Starting point. Confirm the labor time for this VIN before selling the job." },
-        { name: "Alternator", hours: 1.2, notes: "Replacement only. Programming or a stretch belt may add time." },
-        { name: "Starter", hours: 1.2, notes: "Starting point. Confirm access for this vehicle." }
-      ];
     }
   });
 
@@ -11240,6 +11717,32 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         }
         return localDiagnosticChecklist(current);
       },
+      autofill: async ({ formType, notes = "", file = null, draft: current }) => {
+        try {
+          const images = [];
+          if (file) {
+            const dataUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ""));
+              reader.onerror = () => reject(new Error("Could not read image"));
+              reader.readAsDataURL(file);
+            });
+            images.push({ mimeType: file.type || "image/jpeg", data: dataUrl });
+          }
+          return await apiFetch("/api/ai/autofill", {
+            method: "POST",
+            body: JSON.stringify({
+              formType,
+              notes,
+              images,
+              vehicleContext: current?.vehicle || null
+            })
+          });
+        } catch (error) {
+          toast(error.message || "AI autofill is unavailable right now.");
+          return null;
+        }
+      },
       onConvert: async (current) => {
         const name = [current.customer.firstName, current.customer.lastName].filter(Boolean).join(" ");
         const display = current.customer.company ? `${name} (${current.customer.company})` : name;
@@ -13833,7 +14336,184 @@ ${line}`.trim();
       };
     });
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore;
+  async function loadGrokVoiceSettings(force = false) {
+    if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
+    grokVoiceSettings = { ...grokVoiceSettings, loading: true };
+    try {
+      const res = await apiFetch("/voice/grok/status");
+      grokVoiceSettings = { ...res, loaded: true, loading: false };
+    } catch {
+      grokVoiceSettings = { ...grokVoiceSettings, loaded: true, loading: false };
+    }
+    if (state.route === "settings" || state.route === "ai" && aiTab === "phone") render();
+  }
+  function syncGrokSavedRecordsToLocalState(toolResult) {
+    const action = toolResult?.action;
+    if (!action) return;
+    if (action.intakeDraft) {
+      const mergedIntake = applyGrokCallToIntakeDraft(loadIntakeDraft(), action.intakeDraft);
+      saveIntakeDraft(mergedIntake);
+    }
+    if (action.estimate && !state.estimates.some((e) => e.id === action.estimate.id)) {
+      state.estimates.unshift(action.estimate);
+    }
+    if (action.order && !state.orders.some((o) => o.id === action.order.id)) {
+      state.orders.unshift(action.order);
+    }
+    if (action.draft?.customer?.name) {
+      const existingCust = state.customers.find((c) => String(c.name || "").toLowerCase() === action.draft.customer.name.toLowerCase());
+      if (!existingCust) {
+        state.customers.unshift({
+          id: action.customerId || `cust-${Date.now()}`,
+          name: action.draft.customer.name,
+          phone: action.draft.customer.phone || "",
+          email: action.draft.customer.email || "",
+          billingAddress: action.draft.customer.address || ""
+        });
+      }
+    }
+    save();
+  }
+  function updateGrokVoiceUiControls() {
+    const isLive = Boolean(activeGrokSession?.isActive());
+    const phase = isLive ? activeGrokPhase : "idle";
+    const placeholder = grokPhasePlaceholder(phase);
+    const composerBtn = document.querySelector("#assistant-grok-voice");
+    if (composerBtn) {
+      composerBtn.classList.toggle("is-live", isLive);
+      composerBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
+      composerBtn.title = isLive ? `End Grok Voice (${placeholder || "Live"})` : "Start Grok Voice Mode";
+      composerBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "Voice live" : "Grok Voice"}</span>`;
+    }
+    const textarea = document.querySelector("#assistant-form textarea[name=message]");
+    if (textarea) {
+      if (!textarea.dataset.defaultPlaceholder) {
+        textarea.dataset.defaultPlaceholder = textarea.getAttribute("placeholder") || "Create an estimate and work order for\u2026";
+      }
+      textarea.setAttribute("placeholder", isLive && placeholder ? placeholder : textarea.dataset.defaultPlaceholder);
+    }
+    const srStatus = document.querySelector("#assistant-voice-sr-status");
+    if (srStatus) {
+      srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
+    }
+    const phoneBtn = document.querySelector("#grok-phone-live-btn");
+    if (phoneBtn) {
+      phoneBtn.classList.toggle("is-live", isLive);
+      phoneBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span>`;
+    }
+    const intakeBtn = document.querySelector("#intake-grok-voice-btn");
+    if (intakeBtn) {
+      intakeBtn.classList.toggle("is-live", isLive);
+      intakeBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "End Grok Voice" : "Grok Voice Intake"}</span>`;
+    }
+  }
+  function startOrStopGrokVoice({ target = "assistant", greetAsReceptionist = false, onWizardIntakeUpdate = null } = {}) {
+    if (activeGrokSession?.isActive()) {
+      activeGrokSession.stop();
+      activeGrokSession = null;
+      activeGrokPhase = "idle";
+      activeGrokTarget = null;
+      updateGrokVoiceUiControls();
+      return;
+    }
+    activeGrokTarget = target;
+    let liveUserMsgIndex = -1;
+    let liveAssistantMsgIndex = -1;
+    const refreshAssistantList = () => {
+      const list = document.querySelector("#assistant-messages");
+      if (!list) return;
+      list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+      list.scrollTop = list.scrollHeight;
+      bindAssistantDraftActions();
+    };
+    activeGrokSession = createGrokVoiceSession({
+      apiFetch,
+      voice: grokVoiceSettings.voice || "eve",
+      greetAsReceptionist,
+      onPhaseChange: (nextPhase) => {
+        activeGrokPhase = nextPhase;
+        updateGrokVoiceUiControls();
+      },
+      onUserTranscript: (text, { final }) => {
+        if (liveUserMsgIndex < 0 || assistantConversation[liveUserMsgIndex]?.role !== "user") {
+          liveUserMsgIndex = assistantConversation.length;
+          assistantConversation.push({ role: "user", content: text });
+        } else {
+          assistantConversation[liveUserMsgIndex].content = text;
+        }
+        if (final) liveUserMsgIndex = -1;
+        refreshAssistantList();
+      },
+      onAssistantTranscript: (text, { final }) => {
+        if (liveAssistantMsgIndex < 0 || assistantConversation[liveAssistantMsgIndex]?.role !== "assistant") {
+          liveAssistantMsgIndex = assistantConversation.length;
+          assistantConversation.push({ role: "assistant", content: text, actions: [] });
+        } else {
+          assistantConversation[liveAssistantMsgIndex].content = text;
+        }
+        if (final) liveAssistantMsgIndex = -1;
+        refreshAssistantList();
+      },
+      onEstimateCalculated: (calc) => {
+        aiResult = {
+          kind: "estimate",
+          vehicle: calc.vehicle || "Customer Vehicle",
+          lines: (calc.lines || []).map((l) => ({
+            service: l.description,
+            hours: l.hours || (l.type === "labor" ? l.quantity : 0),
+            labor: l.type === "labor" ? l.total : 0,
+            parts: l.type === "part" ? l.total : 0,
+            total: l.total,
+            notes: l.source || ""
+          })),
+          fees: calc.fees || [],
+          subtotal: calc.subtotal || 0,
+          tax: calc.tax || 0,
+          total: calc.total || 0,
+          summary: calc.disclaimer || "Preliminary phone estimate prepared by Grok."
+        };
+        toast(`Grok calculated estimate: ${money4(calc.total || 0)}`);
+      },
+      onIntakeSaved: (toolResult) => {
+        syncGrokSavedRecordsToLocalState(toolResult);
+        const action = toolResult.action;
+        if (action) {
+          assistantConversation.push({
+            role: "assistant",
+            content: `Saved Customer Intake (${toolResult.customer} \xB7 ${toolResult.vehicle}), Estimate ${toolResult.estimateNumber} (${money4(toolResult.estimateTotal)}), and Work Order ${toolResult.orderId}.`,
+            actions: [action]
+          });
+          refreshAssistantList();
+        }
+        if (typeof onWizardIntakeUpdate === "function" && action?.intakeDraft) {
+          onWizardIntakeUpdate(action.intakeDraft);
+        }
+        toast(`Grok filled intake & created ${toolResult.orderId} (${money4(toolResult.estimateTotal)})`);
+        if (state.route === "ai" && aiTab === "phone") render();
+      },
+      onError: (err) => {
+        toast(err.message || "Grok Voice could not connect");
+        activeGrokPhase = "idle";
+        updateGrokVoiceUiControls();
+      }
+    });
+    void activeGrokSession.start();
+  }
+  function grokPhoneWebhookUrl() {
+    if (grokVoiceSettings.twilioVoiceWebhookUrl) return grokVoiceSettings.twilioVoiceWebhookUrl;
+    const shopId = sessionClaimShopId(authSession()?.claims) || "your-shop-id";
+    return `${cloudflareConfig2.apiUrl}/voice/twilio/incoming/${encodeURIComponent(shopId)}`;
+  }
+  function grokSettingsPanelHtml() {
+    const canManage = canManageShopAi();
+    const webhookUrl = grokPhoneWebhookUrl();
+    const statusLabel3 = grokVoiceSettings.configured ? `Grok Voice connected (${grokVoiceSettings.keySource === "shop" ? `shop key ${grokVoiceSettings.maskedKey}` : "platform key"}) \xB7 Voice: ${String(grokVoiceSettings.voice || "eve").toUpperCase()}` : "Add your xAI API key (console.x.ai) to enable Grok Phone Call Answering and Live Voice Mode";
+    const voiceSelectOptions = GROK_VOICE_OPTIONS.map((opt) => `<option value="${escapeAttr(opt.id)}" ${(grokVoiceSettings.voice || "eve") === opt.id ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("");
+    const removeBtn = grokVoiceSettings.configured && grokVoiceSettings.keySource === "shop" ? `<button type="button" class="secondary" id="grok-voice-remove-key">${icon("trash-2", 14)} Remove xAI key</button>` : "";
+    const formHtml = canManage ? `<form class="form-grid" id="grok-voice-config-form" autocomplete="off"><label>xAI API Key (Grok)<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.configured ? "Leave blank to keep existing key, or paste xai-..." : "xai-..."}" ${grokVoiceSettings.configured ? "" : "required"}/></label><label>Grok Receptionist Voice<select name="voice">${voiceSelectOptions}</select></label><label>Shop Business Hours (spoken to callers)<input name="shopHours" value="${escapeAttr(grokVoiceSettings.shopHours || "Monday\u2013Friday 8:00 AM \u2013 5:30 PM")}"/></label><label>Shop / Twilio Forwarding Number<input name="forwardingPhone" placeholder="+18065550199" value="${escapeAttr(grokVoiceSettings.forwardingPhone || "")}"/></label><label class="full">Custom Opening Greeting (optional)<input name="greeting" placeholder="Thanks for calling! I'm Grok, the shop's automated service advisor. How can I help with your vehicle today?" value="${escapeAttr(grokVoiceSettings.greeting || "")}"/></label><label class="full">Receptionist Instructions & Shop Policies (optional)<textarea name="instructions" rows="2" placeholder="e.g., Standard diagnostic fee is $140 waived with repair. We service domestic and Asian vehicles; no heavy diesel.">${escapeHtml(grokVoiceSettings.instructions || "")}</textarea></label><div class="full agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL (Paste in Twilio Console \u2192 Phone Numbers \u2192 Voice \u2192 "A call comes in" HTTP POST)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">To forward your existing shop phone line: enable Unconditional (*72) or Busy/No-Answer (*71) call forwarding on your shop phone carrier to your Twilio number. When a call arrives, Grok answers immediately, quotes estimates, and saves the Customer Intake, Vehicle, Estimate, and Work Order in ShopCrank.</small></div><div class="full"><button class="primary" type="submit">${icon("phone-call", 14)} Save Grok Voice & Phone Settings</button>${removeBtn}</div></form>` : `<div class="agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL</span><code>${escapeHtml(webhookUrl)}</code></div><p class="form-help">Only shop owners and admins can update Grok Voice settings.</p>`;
+    return `<section class="settings-panel grok-voice-settings" id="grok-voice-settings"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice & Call Forwarding</div><h2>Have Grok Answer Shop Phone Calls</h2><p>${escapeHtml(statusLabel3)}</p></div>${icon("phone-incoming", 20)}</div>${formHtml}</section>`;
+  }
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -13850,6 +14530,7 @@ ${line}`.trim();
       init_diagnostic_ai();
       init_labor_guide();
       init_shop_ai_settings();
+      init_grok_voice_client();
       init_quickbooks();
       init_revenue_recognition();
       init_repair_order_flow();
@@ -16067,6 +16748,169 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           return;
         }
         renderKeyLicenseCore();
+      };
+      grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
+      activeGrokSession = null;
+      activeGrokPhase = "idle";
+      activeGrokTarget = null;
+      liveAssistantBeforeGrok = liveAssistant;
+      liveAssistant = function() {
+        const html = liveAssistantBeforeGrok();
+        const isLive = Boolean(activeGrokSession?.isActive());
+        const phase = isLive ? activeGrokPhase : "idle";
+        const placeholder = grokPhasePlaceholder(phase);
+        const grokBtnHtml = `<button class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" type="button" id="assistant-grok-voice" aria-pressed="${isLive ? "true" : "false"}" title="${isLive ? "End Grok Voice" : "Start Grok Voice Mode"}">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "Voice live" : "Grok Voice"}</span></button><span class="sr-only" role="status" id="assistant-voice-sr-status">${isLive && placeholder ? `Grok Voice: ${placeholder}` : ""}</span>`;
+        return html.replace(
+          '<button class="secondary" type="button" id="assistant-mic"',
+          `${grokBtnHtml}<button class="secondary" type="button" id="assistant-mic"`
+        );
+      };
+      bindLiveAssistantBeforeGrok = bindLiveAssistant;
+      bindLiveAssistant = function() {
+        bindLiveAssistantBeforeGrok();
+        const grokBtn = document.querySelector("#assistant-grok-voice");
+        if (grokBtn) {
+          grokBtn.onclick = () => startOrStopGrokVoice({ target: "assistant", greetAsReceptionist: false });
+        }
+        const form = document.querySelector("#assistant-form");
+        if (form) {
+          const origSubmit = form.onsubmit;
+          form.onsubmit = async (event) => {
+            if (activeGrokSession?.isActive()) {
+              event.preventDefault();
+              const input = form.elements.message;
+              const text = String(input?.value || "").trim();
+              if (!text) return;
+              input.value = "";
+              assistantConversation.push({ role: "user", content: text });
+              const list = document.querySelector("#assistant-messages");
+              if (list) {
+                list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+                list.scrollTop = list.scrollHeight;
+              }
+              activeGrokSession.sendTextTurn(text);
+              return;
+            }
+            if (typeof origSubmit === "function") return origSubmit.call(form, event);
+          };
+        }
+        updateGrokVoiceUiControls();
+      };
+      aiPhoneFormBeforeGrok = aiPhoneForm;
+      aiPhoneForm = function() {
+        if (!grokVoiceSettings.loaded && !grokVoiceSettings.loading && !isOfflineDesktop()) {
+          void loadGrokVoiceSettings();
+        }
+        const isLive = Boolean(activeGrokSession?.isActive());
+        const phase = isLive ? activeGrokPhase : "idle";
+        const placeholder = grokPhasePlaceholder(phase);
+        const webhookUrl = grokPhoneWebhookUrl();
+        const grokOrders = state.orders.filter((o) => o.source === "grok_voice_call" || o.intake?.source === "grok_voice_call").slice(0, 10);
+        const callRows = grokOrders.map((order) => `<tr><td class="mono"><b>${escapeHtml(order.id)}</b></td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "No phone")}</small></td><td>${escapeHtml(order.vehicle)}<small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${escapeHtml(order.complaint || "")}</td><td><b>${money4(order.total || 0)}</b></td><td><div class="estimate-actions"><button type="button" class="mini-action" data-grok-open-intake="${escapeAttr(order.id)}">${icon("clipboard-Signature", 13)} Open Intake Form</button><button type="button" class="mini-action" data-order="${escapeAttr(order.id)}">${icon("file-text", 13)} Open RO</button></div></td></tr>`).join("");
+        const grokReceptionistCard = `<section class="ai-panel grok-phone-panel"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice (grok-voice-latest)</div><h2>Grok Phone Call Answering & Auto-Intake</h2><p>Forward your shop phone line to Twilio so Grok answers customer calls 24/7, gives ballpark estimates using your $${Number(shopProfile().laborRate || 140).toFixed(2)}/hr labor rate, and automatically fills in Customer Intake forms, Estimates, and Work Orders.</p></div><div class="head-actions"><button type="button" class="primary grok-voice-btn ${isLive ? "is-live" : ""}" id="grok-phone-live-btn">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span></button><button type="button" class="secondary" id="grok-open-intake-modal">${icon("clipboard-list", 14)} Open Intake Form</button></div></div><div class="agentphone-webhook-preview"><span>Twilio Voice Webhook URL (HTTP POST when a call comes in)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">Forward your shop phone number (e.g. dial <b>*72</b> + your Twilio number, or enable No-Answer Call Forwarding with your carrier) to your Twilio Voice number pointing to this webhook. Configure your xAI API key and voice in <b>Settings \u2192 Grok Voice & Phone Call Forwarding</b>.</small></div><div class="data-panel" style="margin-top:12px"><table><thead><tr><th>RO</th><th>Caller</th><th>Vehicle</th><th>Concern / Symptoms</th><th>Quoted Estimate</th><th>Actions</th></tr></thead><tbody>${callRows || `<tr><td colspan="6">No Grok phone intakes recorded yet. Click <b>Answer / Test Call with Grok</b> above or call your forwarded shop number to see forms fill automatically.</td></tr>`}</tbody></table></div></section>`;
+        return `${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
+      };
+      settingsBeforeGrok = settings;
+      settings = function() {
+        const page = settingsBeforeGrok();
+        if (isOfflineDesktop()) return page;
+        return page.replace("</main>", `${grokSettingsPanelHtml()}</main>`);
+      };
+      openCustomerIntakeBeforeGrok = openCustomerIntake;
+      openCustomerIntake = function(initialDraftOverride = null) {
+        if (initialDraftOverride) {
+          saveIntakeDraft(initialDraftOverride);
+        }
+        openCustomerIntakeBeforeGrok();
+        const meta = document.querySelector("#intake-host .intake-head-meta");
+        if (meta && !meta.querySelector("#intake-grok-voice-btn")) {
+          const isLive = Boolean(activeGrokSession?.isActive());
+          const phase = isLive ? activeGrokPhase : "idle";
+          const placeholder = grokPhasePlaceholder(phase);
+          meta.insertAdjacentHTML(
+            "afterbegin",
+            `<button type="button" class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" id="intake-grok-voice-btn" title="Have Grok listen to the call and fill this intake form">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? placeholder || "End Grok Voice" : "Grok Voice Intake"}</span></button>`
+          );
+          document.querySelector("#intake-grok-voice-btn")?.addEventListener("click", () => {
+            startOrStopGrokVoice({
+              target: "intake",
+              greetAsReceptionist: true,
+              onWizardIntakeUpdate: (newDraft) => {
+                const merged = applyGrokCallToIntakeDraft(loadIntakeDraft(), newDraft);
+                saveIntakeDraft(merged);
+                openCustomerIntake(merged);
+              }
+            });
+          });
+        }
+      };
+      bindBeforeGrok = bind;
+      bind = function() {
+        bindBeforeGrok();
+        if (!currentUser() || isOfflineDesktop()) return;
+        if (state.route === "settings" && !grokVoiceSettings.loaded) {
+          void loadGrokVoiceSettings();
+        }
+        document.querySelector("#grok-voice-config-form")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = event.target;
+          const button = form.querySelector("button[type=submit]");
+          const data = Object.fromEntries(new FormData(form));
+          button.disabled = true;
+          try {
+            const result = await apiFetch("/voice/grok/configure", {
+              method: "POST",
+              body: JSON.stringify({
+                apiKey: String(data.apiKey || "").trim() || void 0,
+                voice: data.voice,
+                shopHours: data.shopHours,
+                forwardingPhone: data.forwardingPhone,
+                greeting: data.greeting,
+                instructions: data.instructions
+              })
+            });
+            grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+            toast("Grok Voice & Phone Call Forwarding settings saved");
+            render();
+          } catch (error) {
+            button.disabled = false;
+            toast(error.message || "Could not save Grok Voice settings");
+          }
+        });
+        document.querySelector("#grok-voice-remove-key")?.addEventListener("click", async (event) => {
+          if (!confirm("Remove this shop's xAI API key?")) return;
+          event.currentTarget.disabled = true;
+          try {
+            const result = await apiFetch("/voice/grok/configure", { method: "DELETE" });
+            grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+            toast("xAI API key removed");
+            render();
+          } catch (error) {
+            toast(error.message || "Could not remove xAI API key");
+            render();
+          }
+        });
+        document.querySelector("#grok-phone-live-btn")?.addEventListener("click", () => {
+          startOrStopGrokVoice({ target: "phone", greetAsReceptionist: true });
+        });
+        document.querySelector("#grok-open-intake-modal")?.addEventListener("click", () => {
+          openCustomerIntake();
+        });
+        document.querySelectorAll("[data-grok-open-intake]").forEach((btn) => {
+          btn.onclick = () => {
+            const order = state.orders.find((o) => o.id === btn.dataset.grokOpenIntake);
+            if (order?.intake) {
+              openCustomerIntake(order.intake);
+            } else if (order) {
+              const draft = applyGrokCallToIntakeDraft(emptyIntakeDraft(), {
+                customer: { firstName: order.customer, phone: order.phone },
+                vehicle: { vin: order.vin, model: order.vehicle },
+                concern: { description: order.complaint }
+              });
+              openCustomerIntake(draft);
+            }
+          };
+        });
       };
       void startApp();
     }
