@@ -14,6 +14,11 @@ DIAGNOSTICS_SIGNING_PRIVATE_KEY=replace-with-base64-pkcs8-p256-private-key
 LICENSE_TOKEN_SECRET=replace-with-a-random-value-of-at-least-32-characters
 # The license admin console is limited to the platform owner emails in ACCESS_ADMIN_EMAILS.
 
+# Licensed AutoAuth seed→key unlock endpoint for live SecurityAccess.
+# POST JSON { provider, accountId, apiKey, vin, level, scope, seedBase64, shopId }
+# must return { keyBase64 }. Required for live immobilizer / programming unlocks.
+# AUTOAUTH_UNLOCK_URL=https://unlock.example.com/v1/security-access
+
 # Conversational AI. With no ANTHROPIC_API_KEY or GEMINI_API_KEY the text
 # assistant uses the Workers AI binding from wrangler.jsonc (wrangler dev runs
 # it against your Cloudflare account). Set AI_ENABLED=0 to turn the assistant off locally.
@@ -24,9 +29,11 @@ AI_ENABLED=1
 # ANTHROPIC_API_KEY=replace-with-your-anthropic-api-key
 # SHOP_ANTHROPIC_MODEL=claude-sonnet-5
 # GEMINI_API_KEY=replace-with-your-gemini-api-key
-# SHOP_GEMINI_MODEL=gemini-2.5-flash
+# SHOP_GEMINI_MODEL=gemini-3.8-flash
+# GEMINI_TTS_MODEL=gemini-3.8-flash-tts
 # AI_TEXT_PROVIDER=anthropic
 # DEEPGRAM_API_KEY=replace-with-your-deepgram-api-key
+# XAI_API_KEY=replace-with-your-xai-api-key
 
 # Configure current contracted provider rates before enabling pass-through billing.
 # ANTHROPIC_SONNET_INPUT_USD_PER_MTOK=

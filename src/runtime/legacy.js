@@ -9,9 +9,17 @@ import { CANNED_MENU, cannedServiceGroups, estimateLineFromService, missingCanne
 import { buildRepairGuide, repairDiagram, safeVideoUrl, stepText } from '../modules/repair-guide.js';
 import { inspectionMenuHtml } from '../modules/shop-inspections.js';
 import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.js';
-import { partstechPanelHtml } from '../modules/partstech.js';
+import { partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
+import { diagnosticDraftToOrderLines, estimateDraftAction } from '../modules/diagnostic-ai.js';
 import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
+import {
+  GROK_VOICE_OPTIONS,
+  applyGrokCallToIntakeDraft,
+  createGrokVoiceSession,
+  grokPhasePlaceholder,
+  grokWaveformButtonIcon,
+} from '../modules/grok-voice-client.js';
 import { quickbooksPanelHtml } from '../modules/quickbooks.js';
 import { revenueRecognitionPanelHtml } from '../modules/revenue-recognition.js';
 import { applyEstimateFromInspection } from '../modules/repair-order-flow.js';
@@ -39,6 +47,7 @@ import { applySettledShopEntityResults, readableShopEntityTypes } from './shop-e
 import { paymentSummary } from '../modules/payments.js';
 import { cardTerminalModel, recoveryWriteup } from '../modules/card-terminal.js';
 import { syncHelp } from '../modules/help-menu.js';
+import { openPrintDocument } from '../modules/print-document.js';
 import {
   applyAssignments,
   assignmentSummary,
@@ -71,6 +80,7 @@ import {
 } from '../modules/work-order-editor.js';
 import {
   afterMidnightFeeLine,
+  appendEstimateLinesToOrder,
   approvedEstimate,
   billableEstimateLines,
   calculateEstimate,
@@ -80,6 +90,7 @@ import {
   laborLinePrintRows,
   normalizeEstimateLine,
   normalizeTechnicianIds,
+  ordersAcceptingEstimateLines,
   workOrderWithEditedEstimate,
 } from '../modules/estimate-workflow.js';
 import {
@@ -88,7 +99,7 @@ import {
   estimateFromAssistantDraft,
   workOrderDraftFromEstimate,
 } from '../modules/estimate-templates.js';
-import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, signedEstimateForOrder, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
+import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, parseElmClearDtcs, runElmObdSnapshot, signedEstimateForOrder, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
 import {
   APPROVAL_CUSTOM_LABEL_MAX,
   APPROVAL_NOTE_MAX,
@@ -230,7 +241,7 @@ function integrations() {
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button></div></form></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
 }
 function support() {
   if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -249,7 +260,9 @@ function bindIntegrations() {
   document.querySelector("#parts-search-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); if (data.operation === "order" && !confirm(`Place this ${data.provider} order? The supplier may charge the connected account.`)) return; try { partsLookupResult = await apiFetch(`/parts/${encodeURIComponent(data.provider)}/${encodeURIComponent(data.operation)}`, { method: "POST", body: JSON.stringify({ query: data.query, quoteId: data.query, vin: data.vin }) }); render() } catch (error) { toast(error.message) } });
   document.querySelector("#parts-punchout")?.addEventListener("click", async () => { const provider = document.querySelector("#parts-search-form [name=provider]").value; try { const result = await apiFetch(`/parts/${encodeURIComponent(provider)}/punchout`); window.open(result.url, "_blank", "noopener,noreferrer") } catch (error) { toast(error.message) } });
   document.querySelector("#quickbooks-connect")?.addEventListener("click", async () => { try { const result = await apiFetch("/quickbooks/connect", { method: "POST", body: "{}" }); window.location.assign(result.authorizationUrl) } catch (error) { toast(error.message) } });
-  document.querySelector("#quickbooks-sync-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); try { const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) }); toast(`Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`) } catch (error) { toast(error.message) } });
+  document.querySelector("#quickbooks-sync-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); try { const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) }); toast(result.tax?.mismatch ? `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId}. QuickBooks calculated tax ${money(result.tax.quickBooks)} vs ShopCrank ${money(result.tax.expected)} — review the invoice in QuickBooks.` : `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`) } catch (error) { toast(error.message) } });
+  const renderQuickbooksTax = settings => { const panel = document.querySelector("#quickbooks-tax-settings"); if (!panel) return; const modeLabel = { ast: "Automated Sales Tax (QuickBooks calculates tax)", manual: "Manual sales tax rate", global: "Tax codes per line (non-US company)", none: "Sales tax is off in QuickBooks" }[settings.mode] || settings.mode; const options = (selected, taxable) => `<option value="">Choose…</option>${(settings.taxCodes || []).filter(code => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map(code => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`; const pickers = settings.mode === "manual" || settings.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options(settings.taxCodeId, true)}</select></label>${settings.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options(settings.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : ""; panel.innerHTML = `<form class="form-grid" id="quickbooks-tax-form"><p class="full ops-note"><b>${escapeHtml(modeLabel)}</b>${settings.needsChoice ? " · choose a rate before syncing taxed invoices" : ""}</p>${pickers}</form>`; panel.querySelector("#quickbooks-tax-form")?.addEventListener("submit", async event => { event.preventDefault(); try { const saved = await apiFetch("/quickbooks/tax-settings", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(event.target))) }); renderQuickbooksTax(saved); toast("QuickBooks tax settings saved") } catch (error) { toast(error.message) } }) };
+  document.querySelector("#quickbooks-tax-load")?.addEventListener("click", async () => { try { renderQuickbooksTax(await apiFetch("/quickbooks/tax-settings")) } catch (error) { toast(error.message) } });
   document.querySelector("#support-ticket-form")?.addEventListener("submit", async event => { event.preventDefault(); const button = event.target.querySelector("button[type=submit]"), data = Object.fromEntries(new FormData(event.target)); button.disabled = true; try { const result = await apiFetch("/support", { method: "POST", body: JSON.stringify(data) }); if (result?.queued) throw new Error("Support tickets require a live connection."); toast(`Support ticket ${result.id} submitted`); event.target.reset() } catch (error) { toast(error.message) } finally { button.disabled = false } });
 }
 let assistantConversation = [], assistantPaused = false, assistantSessionId = "", assistantActiveProvider = "gemini";
@@ -521,8 +534,66 @@ let autozoneAccount = { connected: false, loaded: false };
 let partstechAccount = { connected: false, loaded: false };
 let laborGuideAccount = { connected: false, provider: "manual", loaded: false };
 let quickbooksAccount = { connected: false, loaded: false };
+let orderingTargetOrderId = "";
 let revrecStatus = { enabled: false, loaded: false };
+function orderingTargetHtml() {
+  const orders = ordersAcceptingEstimateLines(state.orders);
+  if (!orders.some(order => order.id === orderingTargetOrderId)) orderingTargetOrderId = orders[0]?.id || "";
+  const options = orders.map(order => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} · ${escapeHtml(order.customer || "")} · ${escapeHtml(order.vehicle || "")}</option>`).join("");
+  return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
+}
+async function addLinesToTargetOrder(lines, label, orderId = orderingTargetOrderId) {
+  const order = state.orders.find(item => item.id === orderId);
+  if (!order) { toast("Choose an open repair order first"); return false }
+  try {
+    const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    toast(`Added ${label} to ${order.id}`);
+    return true;
+  } catch (error) {
+    toast(error.message || `Could not add ${label} to ${order.id}`);
+    return false;
+  }
+}
+async function orderTargetPartstechParts() {
+  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+  if (!order) { toast("Choose an open repair order first"); return }
+  const lines = (order.estimate?.lines || []).filter(line => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
+  if (!lines.length) { toast(`${order.id} has no un-ordered PartsTech part lines`); return }
+  const checkout = window.open("about:blank", "_blank");
+  if (checkout) checkout.opener = null;
+  try {
+    const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+    const placedAt = now();
+    const revised = { ...order, partsOrders: [...(order.partsOrders || []), { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map(line => lines.some(item => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    if (checkout) checkout.location.href = result.redirectUrl; else window.location.assign(result.redirectUrl);
+    toast(`PartsTech checkout opened for ${order.id}. Submit the cart there to place the order.`);
+  } catch (error) {
+    checkout?.close();
+    toast(error.message || "Could not start the PartsTech order");
+  }
+}
+async function refreshTargetPartstechOrder() {
+  const order = state.orders.find(item => item.id === orderingTargetOrderId);
+  const session = [...(order?.partsOrders || [])].reverse().find(item => item.provider === "partstech");
+  if (!session) { toast("No PartsTech order session on this RO yet"); return }
+  try {
+    const result = await apiFetch("/integrations/partstech/order/status", { method: "POST", body: JSON.stringify({ sessionId: session.sessionId }) });
+    const status = result.order?.status || "submitted", orderId = result.order?.orderId || "";
+    const revised = { ...order, partsOrders: order.partsOrders.map(item => item.sessionId === session.sessionId ? { ...item, status, orderId, checkedAt: now() } : item), estimate: { ...order.estimate, lines: order.estimate.lines.map(line => line.partstechOrder?.sessionId === session.sessionId ? { ...line, partstechOrder: { ...line.partstechOrder, status, orderId } } : line) } };
+    const saved = await updateOrderInApi(revised, { throwOnError: true });
+    Object.assign(order, saved?.queued ? revised : saved);
+    save();
+    toast(`PartsTech order ${orderId || session.sessionId}: ${status}`);
+  } catch (error) { toast(error.message || "Could not check the PartsTech order") }
+}
 function operationsOrdering() { const canSave = ["owner", "admin"].includes(currentUser()?.role); return [
+  orderingTargetHtml(),
   orderingPanelHtml(autozoneAccount, { canSave, escapeHtml, icon }),
   partstechPanelHtml(partstechAccount, { canSave, escapeHtml, icon }),
   laborGuidePanelHtml(laborGuideAccount, { canSave, escapeHtml, icon }),
@@ -575,7 +646,7 @@ async function loadRevrecStatus(force = false) {
   }
   if (state.route === "shopops" && shopOpsTab === "ordering") render();
 }
-async function openAutozoneOrder(keyword) { const url = autozoneProLoginUrl(keyword); const opened = window.open(url, "_blank", "noopener,noreferrer"); if (!opened) { toast("Allow pop-ups to open AutoZone Pro."); return } if (!autozoneAccount.connected) { toast("AutoZone Pro opened. Save the shop login on Ordering to copy the password next time."); return } try { const detail = await apiFetch("/ordering/autozone?reveal=1"); if (detail?.password && navigator.clipboard?.writeText) { await navigator.clipboard.writeText(detail.password); toast(`AutoZone Pro opened for ${detail.username}. Password copied — paste it on their sign-in page.`); return } toast(`AutoZone Pro opened. Sign in as ${detail?.username || "the saved user"}.`) } catch (error) { toast(error.message || "AutoZone Pro opened. The saved password could not be copied.") } }
+async function openAutozoneOrder(keyword) { const url = autozoneProLoginUrl(keyword); const opened = window.open(url, "_blank", "noopener,noreferrer"); if (!opened) { toast("Allow pop-ups to open AutoZone Pro."); return } toast(autozoneAccount.connected ? `AutoZone Pro opened. Sign in with your own AutoZone Pro user (shop account ${autozoneAccount.username}).` : "AutoZone Pro opened. Sign in with your AutoZone Pro user.") }
 async function saveAutozoneLogin(form) { const data = Object.fromEntries(new FormData(form)); const account = await apiFetch("/ordering/autozone", { method: "POST", body: JSON.stringify({ username: data.username, password: data.password }) }); autozoneAccount = { connected: true, username: account.username, connectedAt: account.connectedAt, loaded: true }; toast("AutoZone Pro login saved"); render() }
 function shopOperations() { const tabs = [["vehicles", "Vehicles"], ["inspections", "Inspections"], ["inventory", "Inventory"], ["ordering", "Ordering"], ["services", "Canned services"], ["reminders", "Reminders"], ["diagnostics", "OBD-II"]], view = { vehicles: operationsVehicles, inspections: operationsInspections, inventory: operationsInventory, ordering: operationsOrdering, services: operationsServices, reminders: operationsReminders, diagnostics: operationsDiagnostics }[shopOpsTab]; return shell(`${heading("Connected workflow", "Shop operations", "Linked vehicles, inspections, stock, service templates, reminders, vendors, and basic OBD-II tools.", false)}<div class="accounting-tabs ops-tabs">${tabs.map(tab => `<button class="tab ${shopOpsTab === tab[0] ? "active" : ""}" data-ops-tab="${tab[0]}">${tab[1]}</button>`).join("")}</div>${view()}`) }
 function openVehicleForm(existing = null) { showModal(`<form class="modal" id="vehicle-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add linked"} vehicle</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<select name="customer" required>${customerOptions(existing?.customer)}</select></label><label>VIN<input name="vin" maxlength="17" pattern="[A-HJ-NPR-Z0-9]{17}" value="${escapeHtml(existing?.vin || "")}"/></label><div class="full vin-actions"><button class="secondary" type="button" id="decode-vin">${icon("scan-line", 14)} Decode VIN with NHTSA</button><span id="vin-status"></span></div><label>Year<input name="year" required value="${escapeHtml(existing?.year || "")}"/></label><label>Make<input name="make" required value="${escapeHtml(existing?.make || "")}"/></label><label>Model<input name="model" required value="${escapeHtml(existing?.model || "")}"/></label><label>Trim<input name="trim" value="${escapeHtml(existing?.trim || "")}"/></label><label>Plate<input name="plate" value="${escapeHtml(existing?.plate || "")}"/></label><label>Mileage<input name="mileage" type="number" min="0" value="${existing?.mileage || ""}"/></label><label>Next service date<input name="nextServiceDate" type="date" value="${existing?.nextServiceDate || ""}"/></label><label class="full">Notes<textarea name="notes">${escapeHtml(existing?.notes || "")}</textarea></label><label class="full">Vehicle photos<input name="photos" type="file" accept="image/*" multiple/></label>${(existing?.photoKeys || []).length ? `<div class="full vehicle-photo-thumbs">${existing.photoKeys.map(key => `<img src="${cloudflareConfig.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save vehicle</button></div></form>`); const form = document.querySelector("#vehicle-form"); document.querySelector("#decode-vin").onclick = async () => { const vin = form.elements.vin.value.trim().toUpperCase(), s = document.querySelector("#vin-status"); s.textContent = "Looking up vehicle..."; try { const data = await apiFetch(`/vehicles/decode/${encodeURIComponent(vin)}`);["year", "make", "model", "trim"].forEach(key => form.elements[key].value = data[key] || ""); s.textContent = `${data.cached ? "Cached" : "NHTSA"} vehicle data loaded` } catch { s.textContent = "VIN could not be decoded" } }; form.onsubmit = async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(form)), files = form.elements.photos.files, photoKeys = [...(existing?.photoKeys || [])]; const button = form.querySelector("button[type=submit]"); button.disabled = true; try { for (const file of files) { const key = await uploadFileToR2(file, "vehicle-photo", file.type); photoKeys.push(key) } await saveShopEntity("vehicles", { id: existing?.id || `vehicle-${Date.now()}`, ...data, vin: data.vin.trim().toUpperCase(), photoKeys, createdAt: existing?.createdAt || now(), updatedAt: existing ? now() : undefined }); closeModal(); toast("Vehicle saved"); render() } catch (error) { toast("Could not save vehicle"); button.disabled = false } } }
@@ -680,6 +751,9 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
       render();
     } catch (error) { toast(error.message || "Could not disconnect PartsTech"); }
   });
+  document.querySelector("#ordering-target-order")?.addEventListener("change", event => { orderingTargetOrderId = event.target.value; });
+  document.querySelector("#partstech-order-ro")?.addEventListener("click", () => { void orderTargetPartstechParts(); });
+  document.querySelector("#partstech-order-status")?.addEventListener("click", () => { void refreshTargetPartstechOrder(); });
   document.querySelector("#partstech-search-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
@@ -687,15 +761,14 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
     if (panel) panel.innerHTML = "<p>Quoting…</p>";
     try {
       const result = await apiFetch("/integrations/partstech/quote", { method: "POST", body: JSON.stringify(data) });
-      const rows = (result.items || []).map(item => `<tr><td>${escapeHtml(item.description)}</td><td>${escapeHtml(item.partNumber)}</td><td>${money(item.unitPrice)}</td><td><button type="button" class="mini-action" data-add-pt-line="${escapeAttr(item.id)}">Add</button></td></tr>`).join("");
+      const rows = (result.items || []).map(item => partstechQuoteRowHtml(item, { escapeHtml, escapeAttr, money, canAdd: Boolean(orderingTargetOrderId) })).join("");
       if (panel) panel.innerHTML = `<table><thead><tr><th>Part</th><th>#</th><th>Price</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No quotes returned</td></tr>"}</tbody></table>`;
       window.__SHOP_CRANK_PARTSTECH_LINES__ = Object.fromEntries((result.items || []).map(item => [item.id, item]));
       document.querySelectorAll("[data-add-pt-line]").forEach(button => {
         button.onclick = () => {
           const line = window.__SHOP_CRANK_PARTSTECH_LINES__?.[button.dataset.addPtLine];
           if (!line) return;
-          state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-          toast(`Added ${line.description} to pending estimate lines`);
+          void addLinesToTargetOrder(partstechLineToEstimateLines(line), line.description);
         };
       });
     } catch (error) {
@@ -748,8 +821,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
         button.onclick = () => {
           const line = window.__SHOP_CRANK_LABOR_LINES__?.[button.dataset.addLaborLine];
           if (!line) return;
-          state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-          toast(`Added ${line.description}`);
+          void addLinesToTargetOrder([line], line.description);
         };
       });
     } catch (error) {
@@ -765,8 +837,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
       hours: data.hours,
       laborRate: data.laborRate,
     });
-    state.pendingEstimateLines = [...(state.pendingEstimateLines || []), line];
-    toast(`Added manual labor: ${line.description}`);
+    void addLinesToTargetOrder([line], `manual labor: ${line.description}`);
   });
   document.querySelector("#qbo-connect")?.addEventListener("click", async () => {
     try {
@@ -1289,6 +1360,12 @@ openEstimateDiscount = function (id) { const estimate = state.estimates.find(ite
 
 function printInvoice(number) { const invoice = state.invoices.find(item => item.number === number); if (!invoice) return; const profile = shopProfile(), brand = printableBrand(profile), breakdown = invoiceTaxBreakdown(invoice), paid = invoicePaid(invoice), balance = invoiceBalance(invoice), customer = state.customers.find(item => item.name === invoice.customer), order = state.orders.find(item => item.id === invoice.ro), payments = paymentRecords().filter(payment => payment.invoiceNumber === invoice.number), paymentRows = payments.map(payment => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${escapeHtml(payment.reference || "")}</td><td>${money(Number(payment.amount || 0))}</td></tr>`).join(""), win = window.open("", "_blank", "noopener"); if (!win) { toast("Allow pop-ups to print the invoice"); return } win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span{color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice summary</h2><table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody><tr><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money(breakdown.subtotal)}</td></tr><tr><td>Sales tax (${Number(breakdown.taxRate || 0)}%)</td><td>${money(breakdown.tax)}</td></tr></tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money(breakdown.subtotal)}</b></p><p><span>Tax</span><b>${money(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money(invoice.amount)}</b></p><p><span>Payments</span><b>-${money(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`); win.document.close() }
 
+function printableLineType(type) {
+  if (type === "fee") return "Fee";
+  if (type === "part") return "Part";
+  return "Labor";
+}
+
 printInvoice = function (number) {
   const invoice = state.invoices.find(item => item.number === number);
   if (!invoice) return;
@@ -1299,18 +1376,16 @@ printInvoice = function (number) {
   const balance = invoiceBalance(invoice);
   const customer = state.customers.find(item => item.name === invoice.customer);
   const order = state.orders.find(item => item.id === invoice.ro);
-  const itemRows = invoicePrintLineItems(invoice).map(item => `<tr><td>${escapeHtml(item.type === "fee" ? "Fee" : item.type === "part" ? "Part" : "Labor")}</td><td><b>${escapeHtml(item.description)}</b><small>${escapeHtml(item.detail)}</small></td><td>${money(item.amount)}</td></tr>`).join("");
+  const itemRows = invoicePrintLineItems(invoice).map(item => `<tr><td>${escapeHtml(printableLineType(item.type))}</td><td><b>${escapeHtml(item.description)}</b><small>${escapeHtml(item.detail)}</small></td><td>${money(item.amount)}</td></tr>`).join("");
   const fallbackRow = `<tr><td>Summary</td><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money(breakdown.subtotal)}</td></tr>`;
   const paymentRows = paymentRecords().filter(payment => payment.invoiceNumber === invoice.number)
     .map(payment => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${escapeHtml(payment.reference || "")}</td><td>${money(Number(payment.amount || 0))}</td></tr>`)
     .join("");
-  const win = window.open("", "_blank", "noopener");
-  if (!win) {
-    toast("Allow pop-ups to print the invoice");
-    return;
-  }
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money(invoice.amount)}</b></p><p><span>Payments</span><b>-${money(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
-  win.document.close();
+  const billingAddressHtml = customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : "";
+  const paymentSectionHtml = paymentRows
+    ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>`
+    : "";
+  openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${billingAddressHtml}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentSectionHtml}<div class="totals"><p><span>Subtotal</span><b>${money(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money(invoice.amount)}</b></p><p><span>Payments</span><b>-${money(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print invoice</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the invoice", autoPrint: true });
 };
 
 invoices = function () { const q = query.toLowerCase(), rows = state.invoices.filter(invoice => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map(invoice => { const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice); return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge(invoice.status)}</td><td><b>${money(invoice.amount)}</b><small>Subtotal ${money(bd.subtotal)} · Tax ${money(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money(paid)} · Balance ${money(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${escapeHtml(invoice.number)}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>` }).join(""); return shell(`${heading("Accounts receivable", "Invoices", "Track open balances, invoice tax, payments, and branded print copies.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows}</tbody></table></div>`) };
@@ -1320,9 +1395,46 @@ bindEstimateActions = function () { bindPrintableInvoiceCore(); document.querySe
 const bindInvoiceDeleteActionsCore = bindEstimateActions;
 bindEstimateActions = function () { bindInvoiceDeleteActionsCore(); document.querySelectorAll("[data-print-invoice]").forEach(button => { if (button.parentElement.querySelector("[data-delete-invoice]")) return; const invoice = state.invoices.find(item => item.number === button.dataset.printInvoice); if (!invoice) return; button.insertAdjacentHTML("afterend", `<button class="mini-action danger" data-delete-invoice="${escapeHtml(invoiceRecordKey(invoice))}">${icon("trash-2", 13)} Delete</button>`); button.parentElement.querySelector("[data-delete-invoice]").onclick = () => deleteInvoiceRecord(button.parentElement.querySelector("[data-delete-invoice]").dataset.deleteInvoice) }) };
 
-printCustomerStatement = function (name) { const invoices = state.invoices.filter(invoice => invoice.customer === name), payments = paymentRecords().filter(payment => payment.customer === name), balance = customerBalance(name), profile = shopProfile(), brand = printableBrand(profile), invoiceRows = invoices.map(invoice => `<tr><td>${escapeHtml(invoice.number)}</td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.status || "")}</td><td>${money(invoice.amount)}</td><td>${money(invoiceBalance(invoice))}</td></tr>`).join(""), paymentRows = payments.map(payment => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${money(Number(payment.amount || 0))}</td><td>${escapeHtml(payment.invoiceNumber || "")}</td></tr>`).join(""), win = window.open("", "_blank", "noopener"); if (!win) { toast("Allow pop-ups to print the statement"); return } win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(name)} statement</title><style>${brand.style}body{font:12px/1.6 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.total{margin-top:18px;padding:12px;border-top:4px solid var(--brand);font-size:16px;text-align:right}</style></head><body>${brand.header}<h2>Customer Statement: ${escapeHtml(name)}</h2><p>Generated ${escapeHtml(new Date().toLocaleDateString())}</p><h3>Invoices</h3><table><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invoiceRows || `<tr><td colspan="5">No invoices.</td></tr>`}</tbody></table><h3>Payments</h3><table><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${paymentRows || `<tr><td colspan="4">No payments.</td></tr>`}</tbody></table><p class="total">Account Balance: ${money(balance)}</p><button type="button" onclick="window.print()">Print statement</button></body></html>`); win.document.close() };
+printCustomerStatement = function (name) {
+  const invoices = state.invoices.filter(invoice => invoice.customer === name);
+  const payments = paymentRecords().filter(payment => payment.customer === name);
+  const balance = customerBalance(name);
+  const profile = shopProfile();
+  const brand = printableBrand(profile);
+  const invoiceRows = invoices.map(invoice => `<tr><td>${escapeHtml(invoice.number)}</td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.status || "")}</td><td>${money(invoice.amount)}</td><td>${money(invoiceBalance(invoice))}</td></tr>`).join("");
+  const paymentRows = payments.map(payment => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${money(Number(payment.amount || 0))}</td><td>${escapeHtml(payment.invoiceNumber || "")}</td></tr>`).join("");
+  const emptyInvoicesRow = '<tr><td colspan="5">No invoices.</td></tr>';
+  const emptyPaymentsRow = '<tr><td colspan="4">No payments.</td></tr>';
+  openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(name)} statement</title><style>${brand.style}body{font:12px/1.6 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.total{margin-top:18px;padding:12px;border-top:4px solid var(--brand);font-size:16px;text-align:right}</style></head><body>${brand.header}<h2>Customer Statement: ${escapeHtml(name)}</h2><p>Generated ${escapeHtml(new Date().toLocaleDateString())}</p><h3>Invoices</h3><table><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invoiceRows || emptyInvoicesRow}</tbody></table><h3>Payments</h3><table><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${paymentRows || emptyPaymentsRow}</tbody></table><p class="total">Account Balance: ${money(balance)}</p><button type="button">Print statement</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the statement", autoPrint: true });
+};
 
-printInspectionReport = function (inspection) { if (inspection?.catalogId) { printCatalogInspection(catalogInspectionApp(), inspection); return } const profile = shopProfile(), brand = printableBrand(profile), counts = (inspection.items || []).reduce((total, item) => (total[item.status] = (total[item.status] || 0) + 1, total), {}), itemRows = (inspection.items || []).map(item => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.status === "not_checked" ? "Not checked" : item.status || "")}</td><td>${escapeHtml(item.note || "")}</td></tr>`).join(""), damage = (inspection.damageZones || []).map(escapeHtml).join(", "), approvalRows = (inspection.approvalHistory || []).map(entry => `<tr><td>${escapeHtml(entry.status)}</td><td>${escapeHtml(entry.actorName || "")}</td><td>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</td><td>${escapeHtml(entry.note || "")}</td></tr>`).join(""), photos = (inspection.photoKeys || []).map(key => `<img src="${escapeHtml(`${cloudflareConfig.apiUrl}/files/${encodeURIComponent(key)}`)}" alt="Inspection photo"/>`).join(""), win = window.open("", "_blank", "noopener"); if (!win) { toast("Allow pop-ups to print the inspection"); return } win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} · <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} · <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damage ? `<p><b>Damage zones:</b> ${damage}</p>` : ""}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${inspection.recommendations ? `<h3>Recommendations</h3><p>${escapeHtml(inspection.recommendations)}</p>` : ""}${photos ? `<h3>Photos</h3><div class="photos">${photos}</div>` : ""}${approvalRows ? `<h3>Approval history</h3><table><thead><tr><th>Decision</th><th>By</th><th>Date</th><th>Note</th></tr></thead><tbody>${approvalRows}</tbody></table>` : ""}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print inspection</button></body></html>`); win.document.close() };
+printInspectionReport = function (inspection) {
+  if (inspection?.catalogId) {
+    printCatalogInspection(catalogInspectionApp(), inspection);
+    return;
+  }
+  const profile = shopProfile();
+  const brand = printableBrand(profile);
+  const counts = (inspection.items || []).reduce((total, item) => {
+    total[item.status] = (total[item.status] || 0) + 1;
+    return total;
+  }, {});
+  const itemRows = (inspection.items || []).map(item => {
+    const statusText = item.status === "not_checked" ? "Not checked" : (item.status || "");
+    return `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(statusText)}</td><td>${escapeHtml(item.note || "")}</td></tr>`;
+  }).join("");
+  const damage = (inspection.damageZones || []).map(escapeHtml).join(", ");
+  const approvalRows = (inspection.approvalHistory || []).map(entry => `<tr><td>${escapeHtml(entry.status)}</td><td>${escapeHtml(entry.actorName || "")}</td><td>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</td><td>${escapeHtml(entry.note || "")}</td></tr>`).join("");
+  const photos = (inspection.photoKeys || []).map(key => {
+    const photoUrl = `${cloudflareConfig.apiUrl}/files/${encodeURIComponent(key)}`;
+    return `<img src="${escapeHtml(photoUrl)}" alt="Inspection photo"/>`;
+  }).join("");
+  const damageHtml = damage ? `<p><b>Damage zones:</b> ${damage}</p>` : "";
+  const recommendationsHtml = inspection.recommendations ? `<h3>Recommendations</h3><p>${escapeHtml(inspection.recommendations)}</p>` : "";
+  const photosHtml = photos ? `<h3>Photos</h3><div class="photos">${photos}</div>` : "";
+  const approvalHtml = approvalRows ? `<h3>Approval history</h3><table><thead><tr><th>Decision</th><th>By</th><th>Date</th><th>Note</th></tr></thead><tbody>${approvalRows}</tbody></table>` : "";
+  openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} · <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} · <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damageHtml}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${recommendationsHtml}${photosHtml}${approvalHtml}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print inspection</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the inspection", autoPrint: true });
+};
 function invoiceNumberForOrder(order) { return `INV-${String(order.id || Date.now()).replace(/^RO-/i, "").replace(/[^A-Za-z0-9-]/g, "")}` }
 async function ensureInvoiceForOrder(order) { if (!["completed", "invoiced"].includes(order.status)) return null; const existing = state.invoices.find(invoice => invoice.ro === order.id); if (existing) return existing; Object.assign(order, Mileage.applyMileageToOrder(order, { rate: shopMileageRate(), taxRate: state.taxSettings.rate })); const number = invoiceNumberForOrder(order), estimate = order.estimate || {}, amount = Math.max(0, Number(order.total ?? estimate.total) || 0), tax = Math.max(0, Number(order.tax ?? estimate.tax) || 0), subtotal = Math.max(0, Number(estimate.subtotal) || Math.max(0, amount - tax)), issued = new Date(), due = new Date(issued); due.setDate(due.getDate() + 14); const invoice = { id: number, number, ro: order.id, customer: order.customer, vehicle: order.vehicle, amount, subtotal, tax, taxRate: Number(estimate.taxRate ?? state.taxSettings.rate) || 0, status: "sent", date: issued.toISOString().slice(0, 10), due: due.toISOString().slice(0, 10), lines: estimate.lines || [], createdAt: now() }; const saved = await apiFetch("/entities/invoices", { method: "POST", body: JSON.stringify(invoice) }), record = saved?.queued ? invoice : saved; state.invoices.push(record); order.invoiceNumber = number; save(); return record }
 const updateOrderWithInvoiceCore = updateOrderInApi;
@@ -1468,6 +1580,32 @@ function openCustomerIntake() {
         if (response?.reply || response?.message) return { source: "assistant", notice: "ShopCrank assistant response. Confirm every test on the vehicle before selling parts.", causes: [{ name: "Assistant notes", detail: response.reply || response.message }] };
       } catch { /* the assistant stays off unless the shop enables it */ }
       return localDiagnosticChecklist(current);
+    },
+    autofill: async ({ formType, notes = "", file = null, draft: current }) => {
+      try {
+        const images = [];
+        if (file) {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ""));
+            reader.onerror = () => reject(new Error("Could not read image"));
+            reader.readAsDataURL(file);
+          });
+          images.push({ mimeType: file.type || "image/jpeg", data: dataUrl });
+        }
+        return await apiFetch("/api/ai/autofill", {
+          method: "POST",
+          body: JSON.stringify({
+            formType,
+            notes,
+            images,
+            vehicleContext: current?.vehicle || null,
+          }),
+        });
+      } catch (error) {
+        toast(error.message || "AI autofill is unavailable right now.");
+        return null;
+      }
     },
     onConvert: async current => {
       const name = [current.customer.firstName, current.customer.lastName].filter(Boolean).join(" ");
@@ -2494,14 +2632,20 @@ function printJobCard(order) {
   const billableLines = billableEstimateLines(estimate.lines);
   const technicianRows = laborLinePrintRows(billableLines, state.users.map(user => ({ id: user.id, name: user.techName || user.name })));
   const laborRows = technicianRows.map(({ line, technicianName: name }) => `<tr><td><b>${escapeHtml(line.description)}</b><small>${escapeHtml(line.notes || "")}</small></td><td>${escapeHtml(name)}</td><td>${Number(line.hours).toFixed(2)}</td><td>${money(line.laborRate)}</td><td>${money(line.total)}</td></tr>`).join("");
-  const partRows = billableLines.filter(line => ["part", "fee"].includes(line.type)).map(line => `<tr><td><b>${line.type === "fee" ? "Fee · " : ""}${escapeHtml(line.description)}</b><small>${escapeHtml(line.notes || "")}</small></td><td>${line.type === "fee" ? "Flat fee" : Number(line.quantity)}</td><td>${line.priceStatus === "pending" ? "Pending" : money(line.unitPrice)}</td><td>${line.priceStatus === "pending" ? "Pending" : money(line.total)}</td></tr>`).join("");
+  const partRows = billableLines.filter(line => ["part", "fee"].includes(line.type)).map(line => {
+    const prefix = line.type === "fee" ? "Fee · " : "";
+    const qtyText = line.type === "fee" ? "Flat fee" : Number(line.quantity);
+    const unitPriceText = line.priceStatus === "pending" ? "Pending" : money(line.unitPrice);
+    const totalText = line.priceStatus === "pending" ? "Pending" : money(line.total);
+    return `<tr><td><b>${prefix}${escapeHtml(line.description)}</b><small>${escapeHtml(line.notes || "")}</small></td><td>${qtyText}</td><td>${unitPriceText}</td><td>${totalText}</td></tr>`;
+  }).join("");
   const supplies = estimate.fees.find(fee => /shop supplies/i.test(fee.description))?.amount || 0;
   const approvalMarkup = estimateApprovalMarkup(order.estimateApproval);
-  const win = window.open("", "_blank");
-  if (!win) return toast("Allow pop-ups to print the job card");
-  win.opener = null;
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(order.id)} job card</title><style>${brand.style}body{font:12px/1.45 system-ui,sans-serif;max-width:920px;margin:auto;padding:24px;color:#17231e}h2{margin:20px 0 7px;color:var(--brand);font-size:16px;text-transform:uppercase}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}.meta div,.concern{padding:10px;border:1px solid #d9dedb}.meta span{display:block;color:#64726b;font-size:9px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d9dedb;text-align:left;vertical-align:top}th{background:#eef3f0;font-size:9px;text-transform:uppercase}td small{display:block;margin-top:3px;color:#59665f}.totals{width:360px;margin:18px 0 0 auto}.totals div{display:flex;justify-content:space-between;padding:4px}.totals .total{margin-top:5px;border-top:2px solid #17231e;font-size:16px;font-weight:800}.notes{margin-top:18px;padding:10px;border:1px solid #e1d3a9;background:#fff8e7}.estimate-approval-record{display:flex;justify-content:space-between;gap:20px;margin-top:20px;padding:14px;border:1px solid #b9d0c2;background:#edf5ef}.estimate-approval-record span,.estimate-approval-record strong{display:block}.estimate-approval-record span{font-size:9px;text-transform:uppercase}.estimate-approval-record img{max-width:260px;max-height:90px;object-fit:contain}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:50px}.signatures div{border-top:1px solid #17231e;padding-top:5px;font-size:9px}@media print{body{padding:0}}</style></head><body>${brand.header}<h1>Work order ${escapeHtml(order.id)}</h1><div class="meta"><div><span>Customer</span><b>${escapeHtml(order.customer)}</b><br>${escapeHtml(order.phone || "")}</div><div><span>Vehicle</span><b>${escapeHtml(order.vehicle)}</b><br>VIN ${escapeHtml(order.vin || "Not provided")}</div></div><div class="concern"><b>Customer complaint</b><p>${escapeHtml(order.complaint || "")}</p></div><h2>Labor assignments</h2><table><thead><tr><th>Labor line</th><th>Technician</th><th>Hours</th><th>Rate</th><th>Line total</th></tr></thead><tbody>${laborRows || `<tr><td colspan="5">No labor lines.</td></tr>`}</tbody></table><h2>Parts</h2><table><thead><tr><th>Part</th><th>Quantity</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${partRows || `<tr><td colspan="4">No parts.</td></tr>`}</tbody></table><div class="totals"><div><span>Parts</span><b>${money(estimate.parts)}</b></div><div><span>Labor</span><b>${money(estimate.labor)}</b></div><div><span>Shop supplies</span><b>${money(supplies)}</b></div><div><span>Discount</span><b>-${money(estimate.discountAmount || 0)}</b></div><div><span>Tax</span><b>${money(estimate.tax)}</b></div><div class="total"><span>Total</span><b>${money(estimate.total)}</b></div></div>${estimate.exclusions?.length ? `<div class="notes"><b>Not included / pending</b><ul>${estimate.exclusions.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}${approvalMarkup}<div class="signatures"><div>Service writer / date</div><div>Technician / date</div></div><script>window.addEventListener('load',()=>window.print())</script></body></html>`);
-  win.document.close();
+  const emptyLaborRow = '<tr><td colspan="5">No labor lines.</td></tr>';
+  const emptyPartsRow = '<tr><td colspan="4">No parts.</td></tr>';
+  const exclusionsList = (estimate.exclusions || []).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+  const exclusionsMarkup = exclusionsList ? `<div class="notes"><b>Not included / pending</b><ul>${exclusionsList}</ul></div>` : "";
+  openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(order.id)} job card</title><style>${brand.style}body{font:12px/1.45 system-ui,sans-serif;max-width:920px;margin:auto;padding:24px;color:#17231e}h2{margin:20px 0 7px;color:var(--brand);font-size:16px;text-transform:uppercase}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}.meta div,.concern{padding:10px;border:1px solid #d9dedb}.meta span{display:block;color:#64726b;font-size:9px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d9dedb;text-align:left;vertical-align:top}th{background:#eef3f0;font-size:9px;text-transform:uppercase}td small{display:block;margin-top:3px;color:#59665f}.totals{width:360px;margin:18px 0 0 auto}.totals div{display:flex;justify-content:space-between;padding:4px}.totals .total{margin-top:5px;border-top:2px solid #17231e;font-size:16px;font-weight:800}.notes{margin-top:18px;padding:10px;border:1px solid #e1d3a9;background:#fff8e7}.estimate-approval-record{display:flex;justify-content:space-between;gap:20px;margin-top:20px;padding:14px;border:1px solid #b9d0c2;background:#edf5ef}.estimate-approval-record span,.estimate-approval-record strong{display:block}.estimate-approval-record span{font-size:9px;text-transform:uppercase}.estimate-approval-record img{max-width:260px;max-height:90px;object-fit:contain}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:50px}.signatures div{border-top:1px solid #17231e;padding-top:5px;font-size:9px}@media print{body{padding:0}}</style></head><body>${brand.header}<h1>Work order ${escapeHtml(order.id)}</h1><div class="meta"><div><span>Customer</span><b>${escapeHtml(order.customer)}</b><br>${escapeHtml(order.phone || "")}</div><div><span>Vehicle</span><b>${escapeHtml(order.vehicle)}</b><br>VIN ${escapeHtml(order.vin || "Not provided")}</div></div><div class="concern"><b>Customer complaint</b><p>${escapeHtml(order.complaint || "")}</p></div><h2>Labor assignments</h2><table><thead><tr><th>Labor line</th><th>Technician</th><th>Hours</th><th>Rate</th><th>Line total</th></tr></thead><tbody>${laborRows || emptyLaborRow}</tbody></table><h2>Parts</h2><table><thead><tr><th>Part</th><th>Quantity</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${partRows || emptyPartsRow}</tbody></table><div class="totals"><div><span>Parts</span><b>${money(estimate.parts)}</b></div><div><span>Labor</span><b>${money(estimate.labor)}</b></div><div><span>Shop supplies</span><b>${money(supplies)}</b></div><div><span>Discount</span><b>-${money(estimate.discountAmount || 0)}</b></div><div><span>Tax</span><b>${money(estimate.tax)}</b></div><div class="total"><span>Total</span><b>${money(estimate.total)}</b></div></div>${exclusionsMarkup}${approvalMarkup}<div class="signatures"><div>Service writer / date</div><div>Technician / date</div></div></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the job card", autoPrint: true });
 }
 
 function jobWorkflowSteps(order, invoice) {
@@ -4349,34 +4493,133 @@ function orderChoices() {
   return state.orders.map(order => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} · ${escapeHtml(order.vehicle)} · ${escapeHtml(order.customer)}</option>`).join("");
 }
 
+function ensureBrowserDiagnosticsClient() {
+  if (typeof window === "undefined" || window.shopcrankDiagnostics) return;
+  const invokeHttp = async (method, payload = {}) => {
+    const response = await fetch(`${cloudflareConfig.apiUrl}/diagnostics/j2534/${encodeURIComponent(method)}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-ShopCrank-Local-Client": "1",
+      },
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) {
+      throw new Error(data?.error || data?.message || `Diagnostics host request failed (${response.status})`);
+    }
+    return data.result ?? data;
+  };
+  window.shopcrankDiagnostics = Object.freeze({
+    listAdapters: () => invokeHttp("listAdapters"),
+    autoDetectAndConnect: () => invokeHttp("autoDetectAndConnect"),
+    connect: (params) => invokeHttp("connect", params),
+    disconnect: () => invokeHttp("disconnect"),
+    getConnectionStatus: () => invokeHttp("getConnectionStatus"),
+    readVin: () => invokeHttp("readVin"),
+    identifyEcus: () => invokeHttp("identifyEcus"),
+    readDtcs: () => invokeHttp("readDtcs"),
+    clearDtcs: (params) => invokeHttp("clearDtcs", params),
+    securityAccess: (params) => invokeHttp("securityAccess", params),
+    programKey: (params) => invokeHttp("programKey", params),
+    codeModule: (params) => invokeHttp("codeModule", params),
+    bidirectionalControl: (params) => invokeHttp("bidirectionalControl", params),
+    flashModule: (params) => invokeHttp("flashModule", params),
+    startLiveLog: () => invokeHttp("startLiveLog"),
+    stopLiveLog: () => invokeHttp("stopLiveLog"),
+    pollLiveLog: (since) => invokeHttp("pollLiveLog", { since }),
+    identifyVehicle: () => invokeHttp("identifyVehicle"),
+    obdSnapshot: () => invokeHttp("obdSnapshot"),
+    obdClearDtcs: (params) => invokeHttp("obdClearDtcs", params),
+    keyProcedureSupport: (params) => invokeHttp("keyProcedureSupport", params),
+  });
+}
+
+function normalizeBayAdapter(adapter) {
+  if (!adapter) return null;
+  const id = String(adapter.id ?? adapter.Id ?? "");
+  if (!id || id === "simulator") return null;
+  return {
+    id,
+    name: adapter.name ?? adapter.Name ?? "J2534 adapter",
+    vendor: adapter.vendor ?? adapter.Vendor ?? "",
+    dllPath: adapter.dllPath ?? adapter.DllPath ?? "",
+    bitness: adapter.bitness ?? adapter.Bitness ?? "",
+    usable: adapter.usable ?? adapter.Usable ?? true,
+    usabilityNote: adapter.usabilityNote ?? adapter.UsabilityNote ?? "",
+  };
+}
+
 function bayHw() {
-  if (!globalThis.__shopcrankBayHardware) globalThis.__shopcrankBayHardware = { adapters: null, status: null, snapshot: null, snapshotOrderId: "", busy: "", error: "", checked: false, refreshing: false };
+  ensureBrowserDiagnosticsClient();
+  if (!globalThis.__shopcrankBayHardware) {
+    globalThis.__shopcrankBayHardware = {
+      adapters: null,
+      status: null,
+      snapshot: null,
+      snapshotOrderId: "",
+      busy: "",
+      error: "",
+      checked: false,
+      refreshing: false,
+    };
+  }
   const hw = globalThis.__shopcrankBayHardware;
-  hw.available = Boolean(window.shopcrankDesktop && window.shopcrankDiagnostics);
+  hw.j2534Available = Boolean(window.shopcrankDiagnostics);
+  hw.serialAvailable = typeof navigator !== "undefined" && Boolean(navigator.serial);
+  hw.available = hw.j2534Available || hw.serialAvailable;
   return hw;
 }
 
-function bayLive() {
+function bayJ2534Live() {
   const status = bayHw().status;
-  return Boolean(status?.connected && !status?.simulator);
+  return Boolean((status?.connected ?? status?.Connected) && !(status?.simulator ?? status?.Simulator));
+}
+
+function bayElmLive() {
+  return Boolean(elmPort?.readable && elmPort?.writable);
+}
+
+function bayLive() {
+  return bayJ2534Live() || bayElmLive();
 }
 
 function bayNavLabel(item) {
-  return (item.route === "obd" || item.route === "keys") && !bayLive() ? `${item.label} (Simulator)` : item.label;
+  return item.label;
 }
 
 async function refreshBayHardware(withAdapters = false) {
   const hw = bayHw();
-  if (!hw.available) return;
+  if (!hw.j2534Available) {
+    hw.checked = true;
+    return;
+  }
   try {
     if (withAdapters || !hw.adapters) {
       const listed = await window.shopcrankDiagnostics.listAdapters();
-      hw.adapters = (listed?.adapters || []).filter(adapter => adapter.id !== "simulator");
+      const rawAdapters = listed?.adapters || listed?.Adapters || [];
+      hw.adapters = rawAdapters.map(normalizeBayAdapter).filter(Boolean);
     }
-    hw.status = await window.shopcrankDiagnostics.getConnectionStatus();
+    const status = await window.shopcrankDiagnostics.getConnectionStatus();
+    hw.status = status
+      ? {
+          connected: Boolean(status.connected ?? status.Connected),
+          simulator: Boolean(status.simulator ?? status.Simulator),
+          adapterId: status.adapterId ?? status.AdapterId ?? null,
+          adapterName: status.adapterName ?? status.AdapterName ?? null,
+          protocol: status.protocol ?? status.Protocol ?? "ISO15765",
+          voltage: status.voltage ?? status.Voltage ?? null,
+        }
+      : { connected: false };
     hw.error = "";
   } catch (error) {
-    hw.error = error.message || "The diagnostics host is not available.";
+    if (!hw.adapters) hw.adapters = [];
+    hw.status = { connected: false };
+    if (window.shopcrankDesktop) {
+      hw.error = error.message || "The J2534 diagnostics host is not available.";
+    }
   }
   hw.checked = true;
 }
@@ -4390,51 +4633,207 @@ async function recordBayAudit(event) {
   try { await apiFetch("/diagnostics/audit", { method: "POST", body: JSON.stringify(event) }); } catch (error) { console.error("Could not record diagnostics audit", error); }
 }
 
+function formatBayAdapterOption(adapter) {
+  const disabledAttr = adapter.usable === false ? " disabled" : "";
+  const bitnessSuffix = adapter.bitness ? ` · ${escapeHtml(adapter.bitness)}-bit` : "";
+  const usabilitySuffix = adapter.usable === false ? " (wrong driver bitness)" : "";
+  return `<option value="${escapeAttr(adapter.id)}"${disabledAttr}>${escapeHtml(adapter.name)} · ${escapeHtml(adapter.vendor || "")}${bitnessSuffix}${usabilitySuffix}</option>`;
+}
+
+function baySerialConnectButton(hw) {
+  if (!hw.serialAvailable) return "";
+  const disabledAttr = hw.busy ? " disabled" : "";
+  const buttonLabel = hw.busy === "elm" ? "Connecting ELM327..." : "Connect USB / Bluetooth ELM327";
+  return `<button class="secondary" type="button" id="bay-elm-connect"${disabledAttr}>${icon("usb", 14)} ${buttonLabel}</button>`;
+}
+
 function bayHardwarePanel() {
   const hw = bayHw();
-  if (!hw.available) return `<div class="messaging-status idle">${icon("monitor", 17)}<div><strong>Simulator</strong><span>Live OBD-II and key work run in the ShopCrank Windows app with a J2534 adapter such as the TOPDON RLink X7. In the browser this bay uses the bench simulator.</span></div></div>`;
   const status = hw.status || {};
-  if (bayLive()) return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Live: ${escapeHtml(status.adapterName || "J2534 adapter")}</strong><span>${escapeHtml(status.protocol || "ISO15765")} · ${escapeHtml(String(status.voltage ?? "?"))} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${hw.busy ? " disabled" : ""}>Disconnect</button></div>`;
+  const disabledAttr = hw.busy ? " disabled" : "";
+  if (bayJ2534Live()) {
+    const adapterTitle = escapeHtml(status.adapterName || "J2534 adapter");
+    const protocolText = escapeHtml(status.protocol || "ISO15765");
+    const voltageText = escapeHtml(String(status.voltage ?? "?"));
+    return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Connected: ${adapterTitle}</strong><span>${protocolText} · ${voltageText} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${disabledAttr}>Disconnect</button></div>`;
+  }
+  if (bayElmLive()) {
+    return `<div class="messaging-status ready">${icon("usb", 17)}<div><strong>Connected: ELM327 OBD-II adapter</strong><span>SAE J1979 OBD-II over USB / Bluetooth-COM serial</span></div><button class="ghost" type="button" id="bay-elm-disconnect"${disabledAttr}>Disconnect</button></div>`;
+  }
   const adapters = hw.adapters || [];
-  const choices = adapters.map(adapter => `<option value="${escapeAttr(adapter.id)}"${adapter.usable === false ? " disabled" : ""}>${escapeHtml(adapter.name)} · ${escapeHtml(adapter.vendor || "")}${adapter.bitness ? ` · ${escapeHtml(adapter.bitness)}-bit` : ""}${adapter.usable === false ? " (wrong driver bitness)" : ""}</option>`).join("");
-  const empty = `<p>No J2534 driver found. Install RLink Platform and the TOPDON J2534 driver, plug the RLink X7 into USB and the vehicle, then refresh.</p>`;
+  const choices = adapters.map(formatBayAdapterOption).join("");
+  const empty = `<p>No J2534 Pass-Thru driver detected yet. Plug in your J2534 VCI (such as TOPDON RLink / ArtiDiag) and click Refresh, or connect a USB/Bluetooth ELM327 OBD-II adapter.</p>`;
+  const adapterSelectHtml = adapters.length
+    ? `<div class="form-grid"><label class="full">J2534 Pass-Thru adapter<select id="bay-adapter">${choices}</select></label></div>`
+    : empty;
+  const errorHtml = hw.error ? `<p class="form-error">${escapeHtml(hw.error)}</p>` : "";
   const canConnect = adapters.some(adapter => adapter.usable !== false) && !hw.busy;
-  return `<section class="data-panel bay-hardware"><h3>J2534 adapter</h3>${hw.error ? `<p class="form-error">${escapeHtml(hw.error)}</p>` : ""}${adapters.length ? `<div class="form-grid"><label class="full">Adapter<select id="bay-adapter">${choices}</select></label></div>` : empty}<div class="job-actions"><button class="primary" type="button" id="bay-connect"${canConnect ? "" : " disabled"}>${icon("plug", 14)} ${hw.busy === "connect" ? "Connecting..." : "Connect"}</button><button class="ghost" type="button" id="bay-refresh"${hw.busy ? " disabled" : ""}>${icon("refresh-cw", 14)} Refresh</button></div><p class="ledger-note">Until an adapter is connected, this bay runs the bench simulator.</p></section>`;
+  const connectDisabledAttr = canConnect ? "" : " disabled";
+  const connectLabel = hw.busy === "connect" ? "Connecting..." : "Connect J2534";
+  return `<section class="data-panel bay-hardware"><h3>Vehicle diagnostic adapter</h3>${errorHtml}${adapterSelectHtml}<div class="job-actions"><button class="primary" type="button" id="bay-connect"${connectDisabledAttr}>${icon("plug", 14)} ${connectLabel}</button>${baySerialConnectButton(hw)}<button class="ghost" type="button" id="bay-refresh"${disabledAttr}>${icon("refresh-cw", 14)} Refresh adapters</button></div><p class="ledger-note">Connect a J2534 Pass-Thru VCI or ELM327 OBD-II interface with the vehicle ignition ON to read VIN, trouble codes, and live engine PIDs.</p></section>`;
+}
+
+function formatObdMilState(milOn) {
+  if (milOn === true) return "ON";
+  if (milOn === false) return "off";
+  return "unknown";
+}
+
+function formatObdReadingRow(reading) {
+  const name = escapeHtml(reading.name || reading.Name || "");
+  const rawValue = reading.value ?? reading.Value;
+  const displayValue = rawValue === null || rawValue === undefined ? "-" : String(rawValue);
+  const unit = escapeHtml(reading.unit || reading.Unit || "");
+  return `<tr><td>${name}</td><td class="mono">${escapeHtml(displayValue)} ${unit}</td></tr>`;
+}
+
+function formatObdDtcList(labelText, list) {
+  const formatted = list?.length
+    ? list.map(code => `<span class="mono">${escapeHtml(code)}</span>`).join(", ")
+    : "none";
+  return `<p><b>${labelText}:</b> ${formatted}</p>`;
+}
+
+function obdSnapshotResultPanel(snap, order, busy) {
+  if (!snap) return "";
+  const readings = (snap.readings || []).map(formatObdReadingRow).join("");
+  const readingsTableHtml = readings
+    ? `<table><thead><tr><th>Live PID reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>`
+    : "";
+  const errorItems = (snap.errors || []).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+  const errorsHtml = errorItems ? `<ul class="ledger-note">${errorItems}</ul>` : "";
+  const voltageSuffix = snap.voltage ? ` · ${escapeHtml(String(snap.voltage))} V` : "";
+  const hasReportedCount = snap.reportedDtcCount !== undefined && snap.reportedDtcCount !== null;
+  const reportedCountSuffix = hasReportedCount ? ` · ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : "";
+  const copyDisabledAttr = busy ? " disabled" : "";
+  const clearDisabledAttr = busy || !snap.responded ? " disabled" : "";
+  const readTimeText = escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString());
+  const storedHtml = formatObdDtcList("Stored (Mode 03)", snap.storedDtcs);
+  const pendingHtml = formatObdDtcList("Pending (Mode 07)", snap.pendingDtcs);
+  const permanentHtml = formatObdDtcList("Permanent (Mode 0A)", snap.permanentDtcs);
+  return `<section class="data-panel"><h3>Live OBD-II scan · ${escapeHtml(snap.adapterName || "Vehicle adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}${voltageSuffix}</p><p>Check engine light (MIL): <b>${formatObdMilState(snap.milOn)}</b>${reportedCountSuffix}</p>${storedHtml}${pendingHtml}${permanentHtml}${readingsTableHtml}${errorsHtml}<p class="ledger-note">${escapeHtml(snap.protocol || "")} · read ${readTimeText}</p><div class="job-actions"><button class="secondary" type="button" id="obd-copy-to-ro"${copyDisabledAttr}>${icon("file-text", 14)} Copy findings to ${escapeHtml(order?.id || "RO")} notes</button><button class="ghost" type="button" id="obd-live-clear"${clearDisabledAttr}>${icon("eraser", 14)} Clear codes (Mode 04)...</button></div></section>`;
+}
+
+function obdReadButtonLabel(busy, connected) {
+  if (busy === "scan") return "Reading vehicle...";
+  if (connected) return "Read vehicle (VIN, DTCs & live PIDs)";
+  return "Connect an adapter to read vehicle";
 }
 
 function obdLiveSection() {
   const hw = bayHw();
+  const connected = bayLive();
   const snap = hw.snapshot;
-  const order = state.orders.find(item => item.id === hw.snapshotOrderId);
-  const vinWarning = snap && order?.vin && snap.vin && normalizeVin(order.vin) !== normalizeVin(snap.vin)
+  const selectedId = hw.snapshotOrderId || state.orders[0]?.id || "";
+  const order = state.orders.find(item => item.id === selectedId);
+  const hasVinMismatch = Boolean(snap && order?.vin && snap.vin && normalizeVin(order.vin) !== normalizeVin(snap.vin));
+  const vinWarning = hasVinMismatch
     ? `<div class="messaging-status idle">${icon("triangle-alert", 17)}<div><strong>VIN mismatch</strong><span>The vehicle reports ${escapeHtml(snap.vin)}, but ${escapeHtml(order.id)} lists ${escapeHtml(order.vin)}.</span></div></div>`
     : "";
-  const codes = (label, list) => `<p><b>${label}:</b> ${list?.length ? list.map(code => `<span class="mono">${escapeHtml(code)}</span>`).join(", ") : "none"}</p>`;
-  const readings = (snap?.readings || []).map(reading => `<tr><td>${escapeHtml(reading.name)}</td><td class="mono">${escapeHtml(reading.value === null || reading.value === undefined ? "-" : String(reading.value))} ${escapeHtml(reading.unit || "")}</td></tr>`).join("");
-  const mil = snap?.milOn === true ? "ON" : snap?.milOn === false ? "off" : "unknown";
-  const result = snap
-    ? `<section class="data-panel"><h3>${snap.simulator ? "Simulator" : "Live"} scan · ${escapeHtml(snap.adapterName || "J2534 adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}</p><p>Check engine light: <b>${mil}</b>${snap.reportedDtcCount !== undefined && snap.reportedDtcCount !== null ? ` · ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : ""}</p>${codes("Stored", snap.storedDtcs)}${codes("Pending", snap.pendingDtcs)}${codes("Permanent", snap.permanentDtcs)}${readings ? `<table><thead><tr><th>Reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>` : ""}${(snap.errors || []).length ? `<ul class="ledger-note">${snap.errors.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}<p class="ledger-note">${escapeHtml(snap.protocol || "")} · read ${escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString())}</p><div class="job-actions"><button class="ghost" type="button" id="obd-live-clear"${hw.busy || !snap.responded ? " disabled" : ""}>${icon("eraser", 14)} Clear codes...</button></div></section>`
+  const allCodes = [...(snap?.storedDtcs || []), ...(snap?.pendingDtcs || []), ...(snap?.permanentDtcs || [])];
+  const orderOpts = state.orders.map(item => {
+    const selectedAttr = item.id === selectedId ? " selected" : "";
+    return `<option value="${escapeHtml(item.id)}"${selectedAttr}>${escapeHtml(item.id)} · ${escapeHtml(item.vehicle)} · ${escapeHtml(item.customer)}</option>`;
+  }).join("");
+  const fallbackOption = '<option value="">No repair orders</option>';
+  const submitDisabledAttr = hw.busy || !connected ? " disabled" : "";
+  const aiButtonHtml = allCodes.length && order
+    ? `<button class="secondary" type="button" id="obd-send-ai">${icon("sparkles", 14)} Diagnose codes in AI workbench</button>`
     : "";
-  return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit"${hw.busy ? " disabled" : ""}>${icon("activity", 14)} ${hw.busy === "scan" ? "Reading vehicle..." : "Read vehicle"}</button></div></form>${result}`;
+  return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderOpts || fallbackOption}</select></label><div class="full job-actions"><button class="primary" type="submit"${submitDisabledAttr}>${icon("activity", 14)} ${obdReadButtonLabel(hw.busy, connected)}</button>${aiButtonHtml}</div></form>${obdSnapshotResultPanel(snap, order, hw.busy)}`;
 }
 
+function formatLatestObdSession(latest) {
+  if (!latest) {
+    return `<div class="home-empty"><p>No vehicle scans recorded yet. Connect your J2534 or ELM327 adapter above and click Read vehicle.</p></div>`;
+  }
+  const dtcItems = (latest.dtcs || []).map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("");
+  const dtcsHtml = dtcItems ? `<ul>${dtcItems}</ul>` : `<p>No trouble codes recorded.</p>`;
+  const readingParts = (latest.readings || []).map(r => `${escapeHtml(r.name || r.Name)}: ${escapeHtml(String(r.value ?? r.Value ?? "-"))} ${escapeHtml(r.unit || r.Unit || "")}`).join(" · ");
+  const readingsHtml = readingParts ? `<p class="ledger-note">${readingParts}</p>` : "";
+  const scannedTime = escapeHtml(new Date(latest.scannedAt || Date.now()).toLocaleString());
+  const performerHtml = latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)} · ${scannedTime}</p>` : "";
+  return `<section class="data-panel"><h3>Latest vehicle scan record</h3><p>${escapeHtml(latest.label || "Live OBD-II scan")}</p><p class="mono">${escapeHtml(latest.vin || "VIN not reported")} · ${escapeHtml(latest.vehicle || "")} (${escapeHtml(latest.orderId || "")})</p>${dtcsHtml}${readingsHtml}${performerHtml}${scanAiPanel(latest)}</section>`;
+}
+
+let scanAiBusy = "";
+function scanAiPanel(scan) {
+  const analysis = scan.aiAnalysis;
+  const analyzeButton = `<button class="secondary" type="button" data-ai-scan-analyze="${escapeAttr(scan.id)}" ${scanAiBusy ? "disabled" : ""}>${icon("sparkles", 14)} ${scanAiBusy === scan.id ? "Analyzing codes…" : analysis ? "Re-analyze with AI" : "Analyze codes with AI"}</button>`;
+  if (!analysis) return `<div class="messaging-actions">${analyzeButton}</div>`;
+  const apply = analysis.draft
+    ? `<button class="primary" type="button" data-ai-scan-apply="${escapeAttr(scan.id)}" ${analysis.appliedAt ? "disabled" : ""}>${icon("clipboard-plus", 14)} ${analysis.appliedAt ? `Added to ${escapeHtml(scan.orderId)}` : `Add AI estimate to ${escapeHtml(scan.orderId)}`}</button>`
+    : "";
+  return `<div class="ai-panel"><div class="eyebrow">AI likely cause · advisory, verify with tests</div><p style="white-space:pre-wrap">${escapeHtml(analysis.message || "")}</p><p class="ai-disclaimer">Codes: ${escapeHtml((analysis.codes || []).join(", ") || "none")} · ${escapeHtml(analysis.model || "")}. Parts are added unpriced and labor hours are AI suggestions to verify against the labor guide.</p><div class="messaging-actions">${apply}${analyzeButton}</div></div>`;
+}
+async function analyzeScanWithAi(scanId) {
+  const scan = state.diagnosticSessions.find(item => item.id === scanId);
+  if (!scan) return;
+  scanAiBusy = scanId;
+  render();
+  try {
+    const result = await apiFetch("/diagnostics/analyze", { method: "POST", body: JSON.stringify({ orderId: scan.orderId, scanId: scan.id, dtcs: scan.dtcs || [], vin: scan.vin, vehicle: scan.vehicle, readings: scan.readings || [], milOn: scan.milOn ?? null }) });
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { message: result.message || "", model: result.model || "", at: now(), codes: (result.dtcs || []).map(item => item.code), draft: estimateDraftAction(result) } });
+    if (result.invalidCodes?.length) toast(`Ignored unreadable codes: ${result.invalidCodes.join(", ")}`);
+  } catch (error) {
+    toast(error.message || "AI analysis failed");
+  }
+  scanAiBusy = "";
+  render();
+}
+async function applyScanAiEstimate(scanId) {
+  const scan = state.diagnosticSessions.find(item => item.id === scanId);
+  if (!scan?.aiAnalysis?.draft) return;
+  const lines = diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes: scan.aiAnalysis.codes || [] });
+  if (!lines.length) { toast("The AI draft had no labor or parts to add"); return }
+  if (await addLinesToTargetOrder(lines, "the AI diagnostic estimate", scan.orderId)) {
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: now() } });
+    render();
+  }
+}
 function obdBay() {
   const live = bayLive();
-  const latest = [...state.diagnosticSessions].reverse()[0];
-  const latestTitle = latest?.mode === "live" ? "Latest live record" : "Latest simulated scan";
-  const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} · ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value]) => `${name} ${value}`).join(" · "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
-  const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
+  const sessions = live
+    ? state.diagnosticSessions.filter(session => session?.mode !== "simulator" && !session?.simulator)
+    : state.diagnosticSessions;
+  const latest = [...sessions].reverse()[0];
   const subtitle = live
-    ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes."
+    ? "Live SAE J1979 OBD-II diagnostics over J2534 Pass-Thru or ELM327: read VIN, stored/pending/permanent trouble codes, live engine PIDs, and clear codes."
     : "Bench simulator until a J2534 adapter is connected in the ShopCrank Windows app.";
-  return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${result}`);
+  const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
+  return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${formatLatestObdSession(latest)}`);
+}
+
+function formatKeyJobRow(job) {
+  const modeLabel = job.simulated ? "Logged" : "Live";
+  const resultText = job.result ? `${job.result}: ${job.message || ""}` : (job.message || "");
+  return `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${modeLabel}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(resultText)}</td></tr>`;
+}
+
+function bayJ2534Connected() {
+  const status = bayHw().status;
+  return Boolean(status?.connected ?? status?.Connected);
+}
+
+function bayJ2534Simulator() {
+  const status = bayHw().status;
+  return Boolean((status?.connected ?? status?.Connected) && (status?.simulator ?? status?.Simulator));
 }
 
 function keyProgrammingBay() {
-  const live = bayLive();
-  const rows = [...state.keyJobs].reverse().map(job => `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${job.simulated ? "Simulator" : "Live"}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(job.result ? `${job.result}: ${job.message || ""}` : job.message || "")}</td></tr>`).join("");
-  const modes = `<option value="simulator">Simulator</option><option value="live"${live ? "" : " disabled"}>Live (J2534 adapter)${live ? "" : " - connect an adapter first"}</option>`;
-  return shell(`${heading("Authorized keys", live ? "Key programming" : "Key programming (Simulator)", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs also need the connected vehicle's VIN to match the repair order and a confirmation before anything is written. Every live session is logged. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><label>Operation<select name="operation">${KEY_OPERATIONS.map(item => `<option value="${item.id}">${item.label}</option>`).join("")}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${live ? "Start key job" : "Record key job"}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No key jobs recorded.</td></tr>`}</tbody></table></div>`);
+  const live = bayJ2534Live();
+  const hostReady = bayJ2534Connected() && Boolean(window.shopcrankDiagnostics);
+  const rows = [...state.keyJobs].reverse().map(formatKeyJobRow).join("");
+  const emptyKeyRows = '<tr><td colspan="6">No key jobs recorded.</td></tr>';
+  const liveOptionAttrs = live ? " selected" : " disabled";
+  const liveOptionSuffix = live ? "" : " — connect a J2534 adapter first";
+  const simOptionAttrs = live ? "" : " selected";
+  const simLabel = hostReady ? "Bench simulator (authorized)" : "Log authorized key job";
+  const modes = `<option value="live"${liveOptionAttrs}>Live (J2534 + AutoAuth)${liveOptionSuffix}</option><option value="simulator"${simOptionAttrs}>${simLabel}</option>`;
+  const operationOptions = KEY_OPERATIONS.map(item => `<option value="${item.id}">${item.label}</option>`).join("");
+  const fallbackOrderOption = '<option value="">No repair orders</option>';
+  const submitLabel = hostReady || live ? "Start key job" : "Record key job";
+  return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs need AutoAuth, a matching VIN, and confirmation before anything is written. Bench simulator runs the same authorize → unlock → program path safely. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
 }
 
 async function rememberBayRecord(type, collection, record) {
@@ -4446,28 +4845,66 @@ async function rememberBayRecord(type, collection, record) {
   try { await saveShopEntity(type, record); } catch (error) { console.error(`Could not sync ${type}`, error); }
 }
 
+function normalizeObdSnapshot(snap = {}) {
+  const readings = (snap.readings ?? snap.Readings ?? []).map(r => ({
+    pid: r.pid ?? r.Pid ?? "",
+    name: r.name ?? r.Name ?? "",
+    value: r.value ?? r.Value ?? null,
+    unit: r.unit ?? r.Unit ?? "",
+    raw: r.raw ?? r.Raw ?? "",
+  }));
+  return {
+    source: snap.source ?? snap.Source ?? "live",
+    simulator: Boolean(snap.simulator ?? snap.Simulator),
+    adapterName: snap.adapterName ?? snap.AdapterName ?? "J2534 adapter",
+    protocol: snap.protocol ?? snap.Protocol ?? "ISO 15765-4 CAN 11-bit 500 kbps",
+    responded: Boolean(snap.responded ?? snap.Responded),
+    vin: snap.vin ?? snap.Vin ?? "",
+    milOn: snap.milOn ?? snap.MilOn ?? null,
+    reportedDtcCount: snap.reportedDtcCount ?? snap.ReportedDtcCount ?? null,
+    supportedPids: snap.supportedPids ?? snap.SupportedPids ?? [],
+    readings,
+    storedDtcs: snap.storedDtcs ?? snap.StoredDtcs ?? [],
+    pendingDtcs: snap.pendingDtcs ?? snap.PendingDtcs ?? [],
+    permanentDtcs: snap.permanentDtcs ?? snap.PermanentDtcs ?? [],
+    errors: snap.errors ?? snap.Errors ?? [],
+    voltage: snap.voltage ?? snap.Voltage ?? null,
+    readAt: snap.readAt ?? snap.ReadAt ?? now(),
+  };
+}
+
 async function runLiveObdScan(orderId) {
   const hw = bayHw();
   const order = state.orders.find(item => item.id === orderId);
   if (!order) { toast("Select a repair order"); return; }
+  if (!bayLive()) { toast("Connect a J2534 or ELM327 adapter first"); return; }
   hw.busy = "scan";
+  hw.error = "";
   render();
   try {
-    const snap = await window.shopcrankDiagnostics.obdSnapshot();
+    const rawSnap = bayElmLive()
+      ? await runElmObdSnapshot(elmCommand)
+      : await window.shopcrankDiagnostics.obdSnapshot();
+    const snap = normalizeObdSnapshot(rawSnap);
     hw.snapshot = snap;
     hw.snapshotOrderId = order.id;
+    if (snap.vin && (!order.vin || /^DEMO|^SIMULATED|pending/i.test(order.vin))) {
+      order.vin = snap.vin;
+      save();
+      void updateOrderInApi(order);
+    }
     const dtcs = [
-      ...(snap.storedDtcs || []).map(code => ({ code, description: "Stored" })),
-      ...(snap.pendingDtcs || []).map(code => ({ code, description: "Pending" })),
-      ...(snap.permanentDtcs || []).map(code => ({ code, description: "Permanent" })),
+      ...(snap.storedDtcs || []).map(code => ({ code, description: "Stored (Mode 03)" })),
+      ...(snap.pendingDtcs || []).map(code => ({ code, description: "Pending (Mode 07)" })),
+      ...(snap.permanentDtcs || []).map(code => ({ code, description: "Permanent (Mode 0A)" })),
     ];
     await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
       id: `scan-${Date.now()}`,
       orderId: order.id,
       customer: order.customer,
       vehicle: order.vehicle,
-      mode: snap.simulator ? "simulator" : "live",
-      label: `${snap.simulator ? "Simulator" : "Live"} scan via ${snap.adapterName || "J2534 adapter"}`,
+      mode: "live",
+      label: `Live OBD-II scan via ${snap.adapterName || "Vehicle adapter"}`,
       vin: snap.vin || "",
       roVin: order.vin || "",
       milOn: snap.milOn ?? null,
@@ -4478,7 +4915,7 @@ async function runLiveObdScan(orderId) {
       performedBy: bayPerformer(),
       scannedAt: snap.readAt || now(),
     });
-    toast(snap.responded ? "Vehicle read" : "No reply from the vehicle");
+    toast(snap.responded ? "Vehicle read complete" : "No reply from the vehicle ECU");
   } catch (error) {
     hw.error = error.message || "Scan failed";
     toast(hw.error);
@@ -4503,14 +4940,18 @@ function openObdClearConfirm() {
     render();
     const before = [...(snap.storedDtcs || []), ...(snap.pendingDtcs || [])];
     try {
-      await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
+      if (bayElmLive()) {
+        parseElmClearDtcs(await elmCommand("04"));
+      } else {
+        await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
+      }
       await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
         id: `clear-${Date.now()}`,
         kind: "clear",
         orderId: order.id,
         customer: order.customer,
         vehicle: order.vehicle,
-        mode: snap.simulator ? "simulator" : "live",
+        mode: "live",
         label: "Codes cleared (OBD-II mode 04)",
         vin: snap.vin || "",
         dtcs: before.map(code => ({ code, description: "Cleared" })),
@@ -4518,7 +4959,7 @@ function openObdClearConfirm() {
         performedBy: bayPerformer(),
         scannedAt: now(),
       });
-      await recordBayAudit({ kind: "obd.clear_dtcs", orderId: order.id, vin: snap.vin || "", cleared: before, adapter: snap.adapterName || "", simulator: Boolean(snap.simulator) });
+      await recordBayAudit({ kind: "obd.clear_dtcs", orderId: order.id, vin: snap.vin || "", cleared: before, adapter: snap.adapterName || "", simulator: false });
       toast("Codes cleared. Reading the vehicle again.");
       hw.busy = "";
       await runLiveObdScan(order.id);
@@ -4567,7 +5008,7 @@ async function startLiveKeyJob(data) {
     const vinResult = await window.shopcrankDiagnostics.readVin();
     vehicleVin = vinResult?.vin || "";
     step("Read VIN from vehicle", vehicleVin || "no VIN");
-    authorization = assertLiveKeySession({ order, estimates: state.estimates, operation: data.operation, notes: data.notes, vehicleVin, deviceConnected: bayLive() });
+    authorization = assertLiveKeySession({ order, estimates: state.estimates, operation: data.operation, notes: data.notes, vehicleVin, deviceConnected: bayJ2534Live() });
     step("Signed repair order verified", `${authorization?.authorizationName || ""} ${authorization?.signedAt || ""}`.trim());
     if (!procedure) {
       if (data.operation === "identify") {
@@ -4580,8 +5021,8 @@ async function startLiveKeyJob(data) {
         return;
       }
       step("Operation not available live");
-      await saveSession("not_supported", "Live key testing is not available yet. Use the manufacturer's software through the adapter.");
-      toast("Live key testing is not available yet");
+      await saveSession("not_supported", "That operation is not available as a live key write. Use Identify, Add key, Program remote, or All keys lost.");
+      toast("That operation is not available live");
       return;
     }
     const support = await window.shopcrankDiagnostics.keyProcedureSupport({ procedure });
@@ -4591,7 +5032,7 @@ async function startLiveKeyJob(data) {
       showModal(`<div class="modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Not supported for this vehicle</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>${escapeHtml(support?.reason || "ShopCrank cannot run this key procedure on this vehicle.")}</p><p class="ledger-note">Nothing was written to the vehicle. This attempt is in the key job log.</p><div class="modal-actions"><button class="primary" type="button" data-close>OK</button></div></div>`);
       return;
     }
-    openLiveKeyConfirm({ order, authorization, vehicleVin, procedure, support, step, saveSession });
+    openLiveKeyConfirm({ order, authorization, vehicleVin, procedure, support, step, saveSession, mode: "live" });
   } catch (error) {
     step("Blocked", error.message);
     await saveSession("blocked", error.message || "Key job blocked");
@@ -4599,9 +5040,83 @@ async function startLiveKeyJob(data) {
   }
 }
 
+async function startBenchKeyJob(data) {
+  const order = state.orders.find(item => item.id === data.orderId);
+  const hw = bayHw();
+  const steps = [];
+  const step = (name, detail = "") => steps.push({ at: now(), step: name, detail: String(detail || "").slice(0, 500) });
+  const procedure = liveKeyProcedureFor(data.operation);
+  let vehicleVin = "";
+  let authorization = null;
+  let saved = false;
+  const saveSession = async (result, message) => {
+    if (saved) return;
+    saved = true;
+    const record = keyAuditRecord({
+      id: `key-${Date.now()}`,
+      order,
+      user: bayPerformer(),
+      operation: data.operation,
+      procedure,
+      vehicleVin,
+      adapter: hw.status?.adapterName || "simulator",
+      authorization,
+      notes: data.notes,
+      steps,
+      result,
+      message,
+      now: now(),
+    });
+    record.simulated = true;
+    record.mode = "simulate";
+    await rememberBayRecord("keyprogrammingjobs", "keyJobs", record);
+    await recordBayAudit({ kind: "keys.session", ...record });
+    render();
+  };
+  try {
+    step("Bench key job started", `${data.operation} on ${order?.id || "no repair order"}`);
+    const vinResult = await window.shopcrankDiagnostics.readVin();
+    vehicleVin = vinResult?.vin || order?.vin || "";
+    step("Read VIN", vehicleVin || "no VIN");
+    authorization = assertLiveKeySession({
+      order,
+      estimates: state.estimates,
+      operation: data.operation,
+      notes: data.notes,
+      vehicleVin: vehicleVin || order?.vin,
+      deviceConnected: bayJ2534Connected(),
+    });
+    vehicleVin = normalizeVin(vehicleVin || order?.vin);
+    step("Signed repair order verified", `${authorization?.authorizationName || ""}`.trim());
+    if (!procedure) throw new Error("Choose Add key, Program remote, or All keys lost for the bench path.");
+    const support = await window.shopcrankDiagnostics.keyProcedureSupport({ procedure });
+    step("Checked procedure support", support?.reason || "");
+    if (!support?.supported) throw new Error(support?.reason || "Procedure not supported on the bench host.");
+    openLiveKeyConfirm({
+      order,
+      authorization,
+      vehicleVin,
+      procedure,
+      support: { ...support, requiresVehiclePin: false },
+      step,
+      saveSession,
+      mode: "simulate",
+    });
+  } catch (error) {
+    step("Blocked", error.message);
+    await saveSession("blocked", error.message || "Bench key job blocked");
+    toast(error.message || "Bench key job blocked");
+  }
+}
+
 function openLiveKeyConfirm(ctx) {
-  const { order, authorization, vehicleVin, procedure, support, step, saveSession } = ctx;
-  showModal(`<form class="modal" id="key-live-confirm"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Confirm live key programming</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><dl class="detail-list"><dt>Procedure</dt><dd>${escapeHtml(procedure.replace(/_/g, " "))}</dd><dt>Vehicle</dt><dd>${escapeHtml(order.vehicle || "")}</dd><dt>VIN read from vehicle</dt><dd class="mono">${escapeHtml(vehicleVin)}</dd><dt>Customer</dt><dd>${escapeHtml(order.customer || "")}</dd><dt>Signed by</dt><dd>${escapeHtml(authorization?.authorizationName || "")}${authorization?.signedAt ? ` · ${escapeHtml(new Date(authorization.signedAt).toLocaleString())}` : ""}</dd></dl><p>This writes to the vehicle's immobilizer. Keep a battery maintainer connected and do not unplug the adapter until it finishes.</p><label class="full">Type the last 6 characters of the VIN<input name="vinTail" autocomplete="off" required maxlength="6"></label>${support.requiresVehiclePin ? `<label class="full">Immobilizer PIN the vehicle asks for<input name="pin" type="password" autocomplete="off" required></label>` : ""}<label class="check"><input type="checkbox" name="confirm" required> The customer authorized this key work on the signed repair order</label><div class="modal-actions"><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">${icon("key", 14)} Program key</button></div></form>`);
+  const { order, authorization, vehicleVin, procedure, support, step, saveSession, mode = "live" } = ctx;
+  const live = mode === "live";
+  const title = live ? "Confirm live key programming" : "Confirm bench key programming";
+  const warn = live
+    ? "This writes to the vehicle's immobilizer. Keep a battery maintainer connected and do not unplug the adapter until it finishes."
+    : "Bench simulator only — nothing is written to a real vehicle. The authorize → unlock → program path still runs end to end.";
+  showModal(`<form class="modal" id="key-live-confirm"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>${title}</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><dl class="detail-list"><dt>Procedure</dt><dd>${escapeHtml(procedure.replace(/_/g, " "))}</dd><dt>Mode</dt><dd>${live ? "Live" : "Bench simulator"}</dd><dt>Vehicle</dt><dd>${escapeHtml(order.vehicle || "")}</dd><dt>VIN read from vehicle</dt><dd class="mono">${escapeHtml(vehicleVin)}</dd><dt>Customer</dt><dd>${escapeHtml(order.customer || "")}</dd><dt>Signed by</dt><dd>${escapeHtml(authorization?.authorizationName || "")}${authorization?.signedAt ? ` · ${escapeHtml(new Date(authorization.signedAt).toLocaleString())}` : ""}</dd></dl><p>${warn}</p><label class="full">Type the last 6 characters of the VIN<input name="vinTail" autocomplete="off" required maxlength="6"></label>${support.requiresVehiclePin ? `<label class="full">Immobilizer PIN the vehicle asks for<input name="pin" type="password" autocomplete="off" required></label>` : ""}<label class="check"><input type="checkbox" name="confirm" required> The customer authorized this key work on the signed repair order</label><div class="modal-actions"><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">${icon("key", 14)} Program key</button></div></form>`);
   document.querySelectorAll("#key-live-confirm [data-close]").forEach(button => button.addEventListener("click", () => { step("Technician cancelled at confirmation"); void saveSession("cancelled", "Cancelled before anything was written."); }));
   document.querySelector("#key-live-confirm")?.addEventListener("submit", async event => {
     event.preventDefault();
@@ -4612,13 +5127,15 @@ function openLiveKeyConfirm(ctx) {
     closeModal();
     step("Technician confirmed", `VIN ending ${normalizeVin(form.get("vinTail"))}${pin ? ", PIN entered" : ""}`);
     try {
-      const grant = await apiFetch("/diagnostics/authorize", { method: "POST", body: JSON.stringify({ vin: vehicleVin, procedure, mode: "live", orderId: order.id }) });
-      if (!grant?.authorized || !grant.token) throw new Error(grant?.message || "Live key programming was not authorized");
+      const grant = await apiFetch("/diagnostics/authorize", { method: "POST", body: JSON.stringify({ vin: vehicleVin, procedure, mode, orderId: order.id }) });
+      if (!grant?.authorized || !grant.token) throw new Error(grant?.message || "Key programming was not authorized");
       step("Authorization issued", grant.expiresAt ? `expires ${grant.expiresAt}` : "");
+      await window.shopcrankDiagnostics.securityAccess({ scope: "immobilizer" });
+      step("Immobilizer SecurityAccess unlocked");
       const result = await window.shopcrankDiagnostics.programKey({ procedure, authorizationToken: grant.token, pin: pin || undefined });
       step("Procedure finished", JSON.stringify(result || {}));
-      await saveSession("completed", `${procedure.replace(/_/g, " ")} completed`);
-      toast("Key procedure completed");
+      await saveSession("completed", `${procedure.replace(/_/g, " ")} completed (${mode})`);
+      toast(live ? "Key procedure completed" : "Bench key procedure completed");
     } catch (error) {
       step("Failed", error.message);
       await saveSession("failed", error.message || "Key procedure failed");
@@ -4641,12 +5158,13 @@ function bindShopOs() {
     const adapterId = document.querySelector("#bay-adapter")?.value;
     if (!adapterId) return;
     hw.busy = "connect";
+    hw.error = "";
     hw.snapshot = null;
     render();
     try {
       await window.shopcrankDiagnostics.connect({ adapterId, protocol: "ISO15765" });
       await refreshBayHardware();
-      toast("Adapter connected");
+      toast("J2534 adapter connected");
     } catch (error) {
       hw.error = error.message || "Could not connect to the adapter";
     }
@@ -4663,11 +5181,31 @@ function bindShopOs() {
     hw.busy = "";
     render();
   });
+  document.querySelector("#bay-elm-connect")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    hw.busy = "elm";
+    hw.error = "";
+    render();
+    await connectElm();
+    hw.busy = "";
+    render();
+  });
+  document.querySelector("#bay-elm-disconnect")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    hw.busy = "disconnect";
+    hw.snapshot = null;
+    render();
+    await connectElm();
+    hw.busy = "";
+    render();
+  });
   document.querySelector("#obd-live-form")?.addEventListener("submit", event => {
     event.preventDefault();
     void runLiveObdScan(new FormData(event.target).get("orderId"));
   });
   document.querySelector("#obd-live-clear")?.addEventListener("click", openObdClearConfirm);
+  document.querySelectorAll("[data-ai-scan-analyze]").forEach(button => { button.onclick = () => { void analyzeScanWithAi(button.dataset.aiScanAnalyze); }; });
+  document.querySelectorAll("[data-ai-scan-apply]").forEach(button => { button.onclick = () => { void applyScanAiEstimate(button.dataset.aiScanApply); }; });
   document.querySelector("#obd-scan-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const order = state.orders.find(item => item.id === new FormData(event.target).get("orderId"));
@@ -4677,11 +5215,50 @@ function bindShopOs() {
     toast("Simulated scan saved");
     render();
   });
+  document.querySelector("#obd-copy-to-ro")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    const snap = hw.snapshot;
+    const order = state.orders.find(item => item.id === hw.snapshotOrderId);
+    if (!snap || !order) return;
+    const codes = [
+      ...(snap.storedDtcs || []).map(c => `${c} (stored)`),
+      ...(snap.pendingDtcs || []).map(c => `${c} (pending)`),
+      ...(snap.permanentDtcs || []).map(c => `${c} (permanent)`),
+    ];
+    const pidSummary = (snap.readings || [])
+      .filter(r => r.value !== null && r.value !== undefined)
+      .map(r => `${r.name}: ${r.value} ${r.unit || ""}`.trim())
+      .join(", ");
+    const mil = formatObdMilState(snap.milOn);
+    const line = `OBD-II scan (${new Date(snap.readAt || Date.now()).toLocaleString()}, ${snap.adapterName || "adapter"})${snap.vin ? ` · VIN ${snap.vin}` : ""} · MIL ${mil} · Codes: ${codes.length ? codes.join(", ") : "none"}${pidSummary ? ` · PIDs: ${pidSummary}` : ""}`;
+    order.notes = `${order.notes || ""}\n${line}`.trim();
+    save();
+    await updateOrderInApi(order);
+    toast(`OBD-II scan copied to ${order.id} notes`);
+  });
+  document.querySelector("#obd-send-ai")?.addEventListener("click", () => {
+    const hw = bayHw();
+    const snap = hw.snapshot;
+    const order = state.orders.find(item => item.id === hw.snapshotOrderId);
+    if (!snap || !order) return;
+    const codes = [...(snap.storedDtcs || []), ...(snap.pendingDtcs || []), ...(snap.permanentDtcs || [])].join(", ");
+    aiTab = "diagnostics";
+    aiResult = diagnoseLocal(order.vehicle, order.complaint || "Check engine light / DTC scan", codes);
+    state.route = "ai";
+    save();
+    render();
+  });
   document.querySelector("#key-job-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     if (data.mode === "live") {
       await startLiveKeyJob(data);
+      return;
+    }
+    // Bench path: when the J2534 host is connected (simulator or hardware in
+    // simulate mode), run authorize → unlock → program against the host.
+    if (bayJ2534Connected() && window.shopcrankDiagnostics && liveKeyProcedureFor(data.operation)) {
+      await startBenchKeyJob(data);
       return;
     }
     const order = state.orders.find(item => item.id === data.orderId);
@@ -5028,6 +5605,386 @@ render = function () {
     return;
   }
   renderKeyLicenseCore();
+};
+// --- Grok Realtime Voice & Phone Call Forwarding ---
+let grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
+let activeGrokSession = null;
+let activeGrokPhase = "idle";
+let activeGrokTarget = null; // 'assistant' | 'phone' | 'intake'
+
+async function loadGrokVoiceSettings(force = false) {
+  if (grokVoiceSettings.loading || (grokVoiceSettings.loaded && !force)) return;
+  grokVoiceSettings = { ...grokVoiceSettings, loading: true };
+  try {
+    const res = await apiFetch("/voice/grok/status");
+    grokVoiceSettings = { ...res, loaded: true, loading: false };
+  } catch {
+    grokVoiceSettings = { ...grokVoiceSettings, loaded: true, loading: false };
+  }
+  if (state.route === "settings" || (state.route === "ai" && aiTab === "phone")) render();
+}
+
+function syncGrokSavedRecordsToLocalState(toolResult) {
+  const action = toolResult?.action;
+  if (!action) return;
+  if (action.intakeDraft) {
+    const mergedIntake = applyGrokCallToIntakeDraft(loadIntakeDraft(), action.intakeDraft);
+    saveIntakeDraft(mergedIntake);
+  }
+  if (action.estimate && !state.estimates.some(e => e.id === action.estimate.id)) {
+    state.estimates.unshift(action.estimate);
+  }
+  if (action.order && !state.orders.some(o => o.id === action.order.id)) {
+    state.orders.unshift(action.order);
+  }
+  if (action.draft?.customer?.name) {
+    const existingCust = state.customers.find(c => String(c.name || "").toLowerCase() === action.draft.customer.name.toLowerCase());
+    if (!existingCust) {
+      state.customers.unshift({
+        id: action.customerId || `cust-${Date.now()}`,
+        name: action.draft.customer.name,
+        phone: action.draft.customer.phone || "",
+        email: action.draft.customer.email || "",
+        billingAddress: action.draft.customer.address || "",
+      });
+    }
+  }
+  save();
+}
+
+function updateGrokVoiceUiControls() {
+  const isLive = Boolean(activeGrokSession?.isActive());
+  const phase = isLive ? activeGrokPhase : "idle";
+  const placeholder = grokPhasePlaceholder(phase);
+
+  // Composer button & placeholder
+  const composerBtn = document.querySelector("#assistant-grok-voice");
+  if (composerBtn) {
+    composerBtn.classList.toggle("is-live", isLive);
+    composerBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
+    composerBtn.title = isLive ? `End Grok Voice (${placeholder || "Live"})` : "Start Grok Voice Mode";
+    composerBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "Voice live") : "Grok Voice"}</span>`;
+  }
+  const textarea = document.querySelector("#assistant-form textarea[name=message]");
+  if (textarea) {
+    if (!textarea.dataset.defaultPlaceholder) {
+      textarea.dataset.defaultPlaceholder = textarea.getAttribute("placeholder") || "Create an estimate and work order for…";
+    }
+    textarea.setAttribute("placeholder", isLive && placeholder ? placeholder : textarea.dataset.defaultPlaceholder);
+  }
+  const srStatus = document.querySelector("#assistant-voice-sr-status");
+  if (srStatus) {
+    srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
+  }
+
+  // Phone intake tab button
+  const phoneBtn = document.querySelector("#grok-phone-live-btn");
+  if (phoneBtn) {
+    phoneBtn.classList.toggle("is-live", isLive);
+    phoneBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span>`;
+  }
+
+  // Customer Intake Wizard button
+  const intakeBtn = document.querySelector("#intake-grok-voice-btn");
+  if (intakeBtn) {
+    intakeBtn.classList.toggle("is-live", isLive);
+    intakeBtn.innerHTML = `${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "End Grok Voice") : "Grok Voice Intake"}</span>`;
+  }
+}
+
+function startOrStopGrokVoice({ target = "assistant", greetAsReceptionist = false, onWizardIntakeUpdate = null } = {}) {
+  if (activeGrokSession?.isActive()) {
+    activeGrokSession.stop();
+    activeGrokSession = null;
+    activeGrokPhase = "idle";
+    activeGrokTarget = null;
+    updateGrokVoiceUiControls();
+    return;
+  }
+
+  activeGrokTarget = target;
+  let liveUserMsgIndex = -1;
+  let liveAssistantMsgIndex = -1;
+
+  const refreshAssistantList = () => {
+    const list = document.querySelector("#assistant-messages");
+    if (!list) return;
+    list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
+    list.scrollTop = list.scrollHeight;
+    bindAssistantDraftActions();
+  };
+
+  activeGrokSession = createGrokVoiceSession({
+    apiFetch,
+    voice: grokVoiceSettings.voice || "eve",
+    greetAsReceptionist,
+    onPhaseChange: (nextPhase) => {
+      activeGrokPhase = nextPhase;
+      updateGrokVoiceUiControls();
+    },
+    onUserTranscript: (text, { final }) => {
+      if (liveUserMsgIndex < 0 || assistantConversation[liveUserMsgIndex]?.role !== "user") {
+        liveUserMsgIndex = assistantConversation.length;
+        assistantConversation.push({ role: "user", content: text });
+      } else {
+        assistantConversation[liveUserMsgIndex].content = text;
+      }
+      if (final) liveUserMsgIndex = -1;
+      refreshAssistantList();
+    },
+    onAssistantTranscript: (text, { final }) => {
+      if (liveAssistantMsgIndex < 0 || assistantConversation[liveAssistantMsgIndex]?.role !== "assistant") {
+        liveAssistantMsgIndex = assistantConversation.length;
+        assistantConversation.push({ role: "assistant", content: text, actions: [] });
+      } else {
+        assistantConversation[liveAssistantMsgIndex].content = text;
+      }
+      if (final) liveAssistantMsgIndex = -1;
+      refreshAssistantList();
+    },
+    onEstimateCalculated: (calc) => {
+      aiResult = {
+        kind: "estimate",
+        vehicle: calc.vehicle || "Customer Vehicle",
+        lines: (calc.lines || []).map(l => ({
+          service: l.description,
+          hours: l.hours || (l.type === "labor" ? l.quantity : 0),
+          labor: l.type === "labor" ? l.total : 0,
+          parts: l.type === "part" ? l.total : 0,
+          total: l.total,
+          notes: l.source || "",
+        })),
+        fees: calc.fees || [],
+        subtotal: calc.subtotal || 0,
+        tax: calc.tax || 0,
+        total: calc.total || 0,
+        summary: calc.disclaimer || "Preliminary phone estimate prepared by Grok.",
+      };
+      toast(`Grok calculated estimate: ${money(calc.total || 0)}`);
+    },
+    onIntakeSaved: (toolResult) => {
+      syncGrokSavedRecordsToLocalState(toolResult);
+      const action = toolResult.action;
+      if (action) {
+        assistantConversation.push({
+          role: "assistant",
+          content: `Saved Customer Intake (${toolResult.customer} · ${toolResult.vehicle}), Estimate ${toolResult.estimateNumber} (${money(toolResult.estimateTotal)}), and Work Order ${toolResult.orderId}.`,
+          actions: [action],
+        });
+        refreshAssistantList();
+      }
+      if (typeof onWizardIntakeUpdate === "function" && action?.intakeDraft) {
+        onWizardIntakeUpdate(action.intakeDraft);
+      }
+      toast(`Grok filled intake & created ${toolResult.orderId} (${money(toolResult.estimateTotal)})`);
+      if (state.route === "ai" && aiTab === "phone") render();
+    },
+    onError: (err) => {
+      toast(err.message || "Grok Voice could not connect");
+      activeGrokPhase = "idle";
+      updateGrokVoiceUiControls();
+    },
+  });
+
+  void activeGrokSession.start();
+}
+
+const liveAssistantBeforeGrok = liveAssistant;
+liveAssistant = function () {
+  const html = liveAssistantBeforeGrok();
+  const isLive = Boolean(activeGrokSession?.isActive());
+  const phase = isLive ? activeGrokPhase : "idle";
+  const placeholder = grokPhasePlaceholder(phase);
+  const grokBtnHtml = `<button class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" type="button" id="assistant-grok-voice" aria-pressed="${isLive ? "true" : "false"}" title="${isLive ? "End Grok Voice" : "Start Grok Voice Mode"}">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "Voice live") : "Grok Voice"}</span></button><span class="sr-only" role="status" id="assistant-voice-sr-status">${isLive && placeholder ? `Grok Voice: ${placeholder}` : ""}</span>`;
+  return html.replace(
+    '<button class="secondary" type="button" id="assistant-mic"',
+    `${grokBtnHtml}<button class="secondary" type="button" id="assistant-mic"`,
+  );
+};
+
+const bindLiveAssistantBeforeGrok = bindLiveAssistant;
+bindLiveAssistant = function () {
+  bindLiveAssistantBeforeGrok();
+  const grokBtn = document.querySelector("#assistant-grok-voice");
+  if (grokBtn) {
+    grokBtn.onclick = () => startOrStopGrokVoice({ target: "assistant", greetAsReceptionist: false });
+  }
+  const form = document.querySelector("#assistant-form");
+  if (form) {
+    const origSubmit = form.onsubmit;
+    form.onsubmit = async (event) => {
+      if (activeGrokSession?.isActive()) {
+        event.preventDefault();
+        const input = form.elements.message;
+        const text = String(input?.value || "").trim();
+        if (!text) return;
+        input.value = "";
+        assistantConversation.push({ role: "user", content: text });
+        const list = document.querySelector("#assistant-messages");
+        if (list) {
+          list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
+          list.scrollTop = list.scrollHeight;
+        }
+        activeGrokSession.sendTextTurn(text);
+        return;
+      }
+      if (typeof origSubmit === "function") return origSubmit.call(form, event);
+    };
+  }
+  updateGrokVoiceUiControls();
+};
+
+function grokPhoneWebhookUrl() {
+  if (grokVoiceSettings.twilioVoiceWebhookUrl) return grokVoiceSettings.twilioVoiceWebhookUrl;
+  const shopId = sessionClaimShopId(authSession()?.claims) || "your-shop-id";
+  return `${cloudflareConfig.apiUrl}/voice/twilio/incoming/${encodeURIComponent(shopId)}`;
+}
+
+const aiPhoneFormBeforeGrok = aiPhoneForm;
+aiPhoneForm = function () {
+  if (!grokVoiceSettings.loaded && !grokVoiceSettings.loading && !isOfflineDesktop()) {
+    void loadGrokVoiceSettings();
+  }
+  const isLive = Boolean(activeGrokSession?.isActive());
+  const phase = isLive ? activeGrokPhase : "idle";
+  const placeholder = grokPhasePlaceholder(phase);
+  const webhookUrl = grokPhoneWebhookUrl();
+  const grokOrders = state.orders.filter(o => o.source === "grok_voice_call" || o.intake?.source === "grok_voice_call").slice(0, 10);
+  const callRows = grokOrders.map(order => `<tr><td class="mono"><b>${escapeHtml(order.id)}</b></td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "No phone")}</small></td><td>${escapeHtml(order.vehicle)}<small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${escapeHtml(order.complaint || "")}</td><td><b>${money(order.total || 0)}</b></td><td><div class="estimate-actions"><button type="button" class="mini-action" data-grok-open-intake="${escapeAttr(order.id)}">${icon("clipboard-Signature", 13)} Open Intake Form</button><button type="button" class="mini-action" data-order="${escapeAttr(order.id)}">${icon("file-text", 13)} Open RO</button></div></td></tr>`).join("");
+
+  const grokReceptionistCard = `<section class="ai-panel grok-phone-panel"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice (grok-voice-latest)</div><h2>Grok Phone Call Answering & Auto-Intake</h2><p>Forward your shop phone line to Twilio so Grok answers customer calls 24/7, gives ballpark estimates using your $${Number(shopProfile().laborRate || 140).toFixed(2)}/hr labor rate, and automatically fills in Customer Intake forms, Estimates, and Work Orders.</p></div><div class="head-actions"><button type="button" class="primary grok-voice-btn ${isLive ? "is-live" : ""}" id="grok-phone-live-btn">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span></button><button type="button" class="secondary" id="grok-open-intake-modal">${icon("clipboard-list", 14)} Open Intake Form</button></div></div><div class="agentphone-webhook-preview"><span>Twilio Voice Webhook URL (HTTP POST when a call comes in)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">Forward your shop phone number (e.g. dial <b>*72</b> + your Twilio number, or enable No-Answer Call Forwarding with your carrier) to your Twilio Voice number pointing to this webhook. Configure your xAI API key and voice in <b>Settings → Grok Voice & Phone Call Forwarding</b>.</small></div><div class="data-panel" style="margin-top:12px"><table><thead><tr><th>RO</th><th>Caller</th><th>Vehicle</th><th>Concern / Symptoms</th><th>Quoted Estimate</th><th>Actions</th></tr></thead><tbody>${callRows || `<tr><td colspan="6">No Grok phone intakes recorded yet. Click <b>Answer / Test Call with Grok</b> above or call your forwarded shop number to see forms fill automatically.</td></tr>`}</tbody></table></div></section>`;
+
+  return `${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
+};
+
+function grokSettingsPanelHtml() {
+  const canManage = canManageShopAi();
+  const webhookUrl = grokPhoneWebhookUrl();
+  const statusLabel = grokVoiceSettings.configured
+    ? `Grok Voice connected (${grokVoiceSettings.keySource === "shop" ? `shop key ${grokVoiceSettings.maskedKey}` : "platform key"}) · Voice: ${String(grokVoiceSettings.voice || "eve").toUpperCase()}`
+    : "Add your xAI API key (console.x.ai) to enable Grok Phone Call Answering and Live Voice Mode";
+  const voiceSelectOptions = GROK_VOICE_OPTIONS.map(opt => `<option value="${escapeAttr(opt.id)}" ${(grokVoiceSettings.voice || "eve") === opt.id ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("");
+  const removeBtn = grokVoiceSettings.configured && grokVoiceSettings.keySource === "shop"
+    ? `<button type="button" class="secondary" id="grok-voice-remove-key">${icon("trash-2", 14)} Remove xAI key</button>`
+    : "";
+
+  const formHtml = canManage
+    ? `<form class="form-grid" id="grok-voice-config-form" autocomplete="off"><label>xAI API Key (Grok)<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.configured ? "Leave blank to keep existing key, or paste xai-..." : "xai-..."}" ${grokVoiceSettings.configured ? "" : "required"}/></label><label>Grok Receptionist Voice<select name="voice">${voiceSelectOptions}</select></label><label>Shop Business Hours (spoken to callers)<input name="shopHours" value="${escapeAttr(grokVoiceSettings.shopHours || "Monday–Friday 8:00 AM – 5:30 PM")}"/></label><label>Shop / Twilio Forwarding Number<input name="forwardingPhone" placeholder="+18065550199" value="${escapeAttr(grokVoiceSettings.forwardingPhone || "")}"/></label><label class="full">Custom Opening Greeting (optional)<input name="greeting" placeholder="Thanks for calling! I'm Grok, the shop's automated service advisor. How can I help with your vehicle today?" value="${escapeAttr(grokVoiceSettings.greeting || "")}"/></label><label class="full">Receptionist Instructions & Shop Policies (optional)<textarea name="instructions" rows="2" placeholder="e.g., Standard diagnostic fee is $140 waived with repair. We service domestic and Asian vehicles; no heavy diesel.">${escapeHtml(grokVoiceSettings.instructions || "")}</textarea></label><div class="full agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL (Paste in Twilio Console → Phone Numbers → Voice → "A call comes in" HTTP POST)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">To forward your existing shop phone line: enable Unconditional (*72) or Busy/No-Answer (*71) call forwarding on your shop phone carrier to your Twilio number. When a call arrives, Grok answers immediately, quotes estimates, and saves the Customer Intake, Vehicle, Estimate, and Work Order in ShopCrank.</small></div><div class="full"><button class="primary" type="submit">${icon("phone-call", 14)} Save Grok Voice & Phone Settings</button>${removeBtn}</div></form>`
+    : `<div class="agentphone-webhook-preview"><span>Twilio Incoming Voice Webhook URL</span><code>${escapeHtml(webhookUrl)}</code></div><p class="form-help">Only shop owners and admins can update Grok Voice settings.</p>`;
+
+  return `<section class="settings-panel grok-voice-settings" id="grok-voice-settings"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice & Call Forwarding</div><h2>Have Grok Answer Shop Phone Calls</h2><p>${escapeHtml(statusLabel)}</p></div>${icon("phone-incoming", 20)}</div>${formHtml}</section>`;
+}
+
+const settingsBeforeGrok = settings;
+settings = function () {
+  const page = settingsBeforeGrok();
+  if (isOfflineDesktop()) return page;
+  return page.replace("</main>", `${grokSettingsPanelHtml()}</main>`);
+};
+
+const openCustomerIntakeBeforeGrok = openCustomerIntake;
+function openCustomerIntakeWithDraft(draft) {
+  saveIntakeDraft(draft);
+  openCustomerIntake();
+}
+openCustomerIntake = function () {
+  openCustomerIntakeBeforeGrok();
+  const meta = document.querySelector("#intake-host .intake-head-meta");
+  if (meta && !meta.querySelector("#intake-grok-voice-btn")) {
+    const isLive = Boolean(activeGrokSession?.isActive());
+    const phase = isLive ? activeGrokPhase : "idle";
+    const placeholder = grokPhasePlaceholder(phase);
+    meta.insertAdjacentHTML(
+      "afterbegin",
+      `<button type="button" class="secondary grok-voice-btn ${isLive ? "is-live" : ""}" id="intake-grok-voice-btn" title="Have Grok listen to the call and fill this intake form">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? (placeholder || "End Grok Voice") : "Grok Voice Intake"}</span></button>`,
+    );
+    document.querySelector("#intake-grok-voice-btn")?.addEventListener("click", () => {
+      startOrStopGrokVoice({
+        target: "intake",
+        greetAsReceptionist: true,
+        onWizardIntakeUpdate: (newDraft) => {
+          const merged = applyGrokCallToIntakeDraft(loadIntakeDraft(), newDraft);
+          saveIntakeDraft(merged);
+          openCustomerIntakeWithDraft(merged);
+        },
+      });
+    });
+  }
+};
+
+const bindBeforeGrok = bind;
+bind = function () {
+  bindBeforeGrok();
+  if (!currentUser() || isOfflineDesktop()) return;
+
+  if (state.route === "settings" && !grokVoiceSettings.loaded) {
+    void loadGrokVoiceSettings();
+  }
+
+  document.querySelector("#grok-voice-config-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const button = form.querySelector("button[type=submit]");
+    const data = Object.fromEntries(new FormData(form));
+    button.disabled = true;
+    try {
+      const result = await apiFetch("/voice/grok/configure", {
+        method: "POST",
+        body: JSON.stringify({
+          apiKey: String(data.apiKey || "").trim() || undefined,
+          voice: data.voice,
+          shopHours: data.shopHours,
+          forwardingPhone: data.forwardingPhone,
+          greeting: data.greeting,
+          instructions: data.instructions,
+        }),
+      });
+      grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+      toast("Grok Voice & Phone Call Forwarding settings saved");
+      render();
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "Could not save Grok Voice settings");
+    }
+  });
+
+  document.querySelector("#grok-voice-remove-key")?.addEventListener("click", async (event) => {
+    if (!confirm("Remove this shop's xAI API key?")) return;
+    event.currentTarget.disabled = true;
+    try {
+      const result = await apiFetch("/voice/grok/configure", { method: "DELETE" });
+      grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+      toast("xAI API key removed");
+      render();
+    } catch (error) {
+      toast(error.message || "Could not remove xAI API key");
+      render();
+    }
+  });
+
+  document.querySelector("#grok-phone-live-btn")?.addEventListener("click", () => {
+    startOrStopGrokVoice({ target: "phone", greetAsReceptionist: true });
+  });
+
+  document.querySelector("#grok-open-intake-modal")?.addEventListener("click", () => {
+    openCustomerIntake();
+  });
+
+  document.querySelectorAll("[data-grok-open-intake]").forEach((btn) => {
+    btn.onclick = () => {
+      const order = state.orders.find(o => o.id === btn.dataset.grokOpenIntake);
+      if (order?.intake) {
+        openCustomerIntakeWithDraft(order.intake);
+      } else if (order) {
+        const draft = applyGrokCallToIntakeDraft(emptyIntakeDraft(), {
+          customer: { firstName: order.customer, phone: order.phone },
+          vehicle: { vin: order.vin, model: order.vehicle },
+          concern: { description: order.complaint },
+        });
+        openCustomerIntakeWithDraft(draft);
+      }
+    };
+  });
 };
 
 void startApp();

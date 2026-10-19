@@ -153,7 +153,7 @@ export async function verifyUnlockTokenSignature(secret, token, nowMs = Date.now
   return { ok: true, claims };
 }
 
-export async function verifyDeviceProof(publicKeyBase64, { purpose, subject, signedAt, signature }, nowMs = Date.now()) {
+export async function verifyDeviceProof(publicKeyBase64, { purpose, subject, signedAt, signature, nonce }, nowMs = Date.now()) {
   const at = Number(signedAt);
   if (!Number.isFinite(at) || Math.abs(nowMs - at) > DEVICE_PROOF_MAX_SKEW_MS || !signature) return false;
   try {
@@ -168,7 +168,7 @@ export async function verifyDeviceProof(publicKeyBase64, { purpose, subject, sig
       { name: 'ECDSA', hash: 'SHA-256' },
       key,
       base64UrlDecode(String(signature)),
-      encoder.encode(deviceProofMessage({ purpose, subject, signedAt: at })),
+      encoder.encode(deviceProofMessage({ purpose, subject, signedAt: at, nonce })),
     );
   } catch {
     return false;
@@ -252,6 +252,8 @@ function requestView(row, { admin = false } = {}) {
 export async function redeemUnlockToken(env, context, input, { purpose, nowMs = Date.now() }) {
   const token = String(input?.token || '');
   const deviceId = cleanText(input?.deviceId, 80);
+  const nonce = cleanText(input?.nonce, 80);
+  const authorizationProof = String(purpose).startsWith('authorize:');
   let claims = null;
   const deny = async (reason) => {
     await recordLicenseAudit(env, 'token.denied', {
@@ -267,15 +269,29 @@ export async function redeemUnlockToken(env, context, input, { purpose, nowMs = 
   if (!verified.ok) return deny(verified.reason);
   if (claims.sid !== context.shopId) return deny('shop_mismatch');
   if (!deviceId || deviceId !== claims.did) return deny('device_mismatch');
+  if (authorizationProof && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nonce)) {
+    return deny('nonce_invalid');
+  }
   const device = await env.DB.prepare(
     'SELECT public_key, status FROM license_devices WHERE license_id = ? AND device_id = ?',
   ).bind(claims.lid, deviceId).first();
   if (!device || device.status !== 'active') return deny('device_not_bound');
   const proofOk = await verifyDeviceProof(device.public_key, {
-    purpose, subject: await sha256Hex(token), signedAt: input?.signedAt, signature: input?.signature,
+    purpose, subject: await sha256Hex(token), signedAt: input?.signedAt, signature: input?.signature, nonce: authorizationProof ? nonce : undefined,
   }, nowMs);
   if (!proofOk) return deny('device_proof');
   const nowIso = new Date(nowMs).toISOString();
+  if (authorizationProof) {
+    await env.DB.prepare('DELETE FROM license_authorization_nonces WHERE consumed_at < ?')
+      .bind(new Date(nowMs - 2 * DEVICE_PROOF_MAX_SKEW_MS).toISOString()).run();
+    const consumed = await env.DB.prepare(`
+      INSERT INTO license_authorization_nonces (nonce, license_id, device_id, consumed_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(nonce) DO NOTHING
+      RETURNING nonce
+    `).bind(nonce, claims.lid, deviceId, nowIso).first();
+    if (!consumed) return deny('nonce_replayed');
+  }
   // Single statement: the live license state is checked and the use counted together.
   const used = await env.DB.prepare(`
     UPDATE licenses SET use_count = use_count + 1, last_used_at = ?
@@ -400,20 +416,21 @@ async function submitLicenseRequest(request, env, context, nowMs) {
     throw new HttpError(400, 'The proof file must be uploaded from this shop');
   }
   const requestedDevices = parseDeviceCount(body.requestedDevices, 1);
-  const pending = await env.DB.prepare(
-    "SELECT id FROM license_requests WHERE shop_id = ? AND status = 'pending' LIMIT 1",
-  ).bind(context.shopId).first();
-  if (pending) throw new HttpError(409, 'This shop already has a license request waiting for review');
   const id = `licreq-${crypto.randomUUID()}`;
   const nowIso = new Date(nowMs).toISOString();
-  await env.DB.prepare(`
+  const inserted = await env.DB.prepare(`
     INSERT INTO license_requests (id, shop_id, requested_by, requester_email, contact_name, business_name, license_number,
       proof_details, proof_file_key, proof_file_name, requested_devices, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM license_requests WHERE shop_id = ? AND status = 'pending'
+    )
+    RETURNING id
   `).bind(
     id, context.shopId, context.userId, context.email || '', contactName, businessName, licenseNumber || null,
-    proofDetails, proofFileKey || null, cleanText(body.proofFileName, 160) || null, requestedDevices, nowIso, nowIso,
-  ).run();
+    proofDetails, proofFileKey || null, cleanText(body.proofFileName, 160) || null, requestedDevices, nowIso, nowIso, context.shopId,
+  ).first();
+  if (!inserted) throw new HttpError(409, 'This shop already has a license request waiting for review');
   await recordLicenseAudit(env, 'request.submitted', {
     requestId: id, shopId: context.shopId, actor: context, detail: { requestedDevices, hasProofFile: Boolean(proofFileKey) },
   }, nowMs);
@@ -559,9 +576,15 @@ async function updateLicense(env, context, id, body, nowMs) {
   const customerName = body.customerName !== undefined ? cleanText(body.customerName, 160) : before.customer_name;
   if (!customerName) throw new HttpError(400, 'Customer name is required');
   const notes = body.notes !== undefined ? cleanText(body.notes, 2000) : before.notes;
-  await env.DB.prepare(`
-    UPDATE licenses SET expires_at = ?, max_devices = ?, customer_name = ?, notes = ?, updated_at = ? WHERE id = ?
-  `).bind(expiresAt, maxDevices, customerName, notes || null, new Date(nowMs).toISOString(), id).run();
+  const updated = await env.DB.prepare(`
+    UPDATE licenses SET expires_at = ?, max_devices = ?, customer_name = ?, notes = ?, updated_at = ?
+    WHERE id = ? AND status != 'revoked'
+      AND (SELECT COUNT(*) FROM license_devices WHERE license_id = licenses.id AND status = 'active') <= ?
+    RETURNING id
+  `).bind(expiresAt, maxDevices, customerName, notes || null, new Date(nowMs).toISOString(), id, maxDevices).first();
+  if (!updated) {
+    throw new HttpError(409, 'Remove surplus devices before reducing the licensed device limit, then refresh the license');
+  }
   await recordLicenseAudit(env, 'license.updated', {
     licenseId: id, shopId: before.shop_id, actor: context,
     detail: {

@@ -11,7 +11,7 @@ Locked public prices. Founding rates are invite-only and do not appear on `/pric
 
 Annual prepay on any tier is 10 months for 12 (2 months free). Unlimited users on every tier. No per-seat fee.
 
-Founding Member, first 50, private link only: Solo $49, Shop $99, Shop Pro $199. Those rates stay while the subscription stays active. The page is `/founding?invite=…`.
+Founding Member offer is locked for launch: first 50 shops, private link only — Solo $49, Shop $99, Shop Pro $199. Those rates stay while the subscription stays active. The page is `/founding?invite=…`. Do not change N or prices in public posts without updating `FOUNDING_MEMBER_CAP` / `FOUNDING_PLANS` in `worker/src/plans.mjs`.
 
 ## What the product actually does
 

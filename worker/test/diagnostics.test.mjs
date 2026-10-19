@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { DIAGNOSTIC_PROCEDURES, PROGRAMMING_MODES, mintCapabilityToken, procedureSpec } from '../src/diagnostics.mjs';
+import {
+  DIAGNOSTIC_PROCEDURES,
+  PROGRAMMING_MODES,
+  mintCapabilityToken,
+  procedureSpec,
+  signedRepairOrderForKeys,
+} from '../src/diagnostics.mjs';
 
 const require = createRequire(import.meta.url);
 const { verifyCapabilityToken } = require('../../diagnostics/j2534-host-node/capability-token.js');
@@ -46,6 +52,22 @@ test('Worker-minted ECDSA token verifies in the host verifier (cross-runtime)', 
   assert.throws(() => verifyCapabilityToken(token, { mode: 'simulate', consume: false }), /mode mismatch/);
 });
 
+test('immobilizer capability expiry is capped by the verified license deadline', async () => {
+  const { pkcs8 } = await generateKeyEnv();
+  const expiry = new Date(Date.now() + 60_000).toISOString();
+  const { payload } = await mintCapabilityToken({ DIAGNOSTICS_SIGNING_PRIVATE_KEY: pkcs8 }, {
+    procedure: 'add_key', vin: '1C6SRFHT0LN123456', shopId: 'shop-1', mode: 'live', expiresAt: expiry,
+  });
+  assert.equal(payload.exp, Date.parse(expiry));
+  await assert.rejects(
+    mintCapabilityToken({ DIAGNOSTICS_SIGNING_PRIVATE_KEY: pkcs8 }, {
+      procedure: 'add_key', vin: '1C6SRFHT0LN123456', shopId: 'shop-1', mode: 'live',
+      expiresAt: new Date(Date.now() - 1).toISOString(),
+    }),
+    /Authorization has expired/,
+  );
+});
+
 test('a client holding only the public key cannot forge a token', async () => {
   const { spki } = await generateKeyEnv();
   process.env.DIAGNOSTICS_SIGNING_PUBLIC_KEY = spki;
@@ -66,4 +88,51 @@ test('single-use consumption is enforced with expiry pruning', async () => {
   });
   assert.ok(verifyCapabilityToken(token, {}));
   assert.throws(() => verifyCapabilityToken(token, {}), /already used/);
+});
+
+function entitiesDb({ order }) {
+  return {
+    prepare(sql) {
+      return {
+        bind() {
+          return {
+            first: async () => (sql.includes("'orders'") && order ? { data_json: JSON.stringify(order) } : null),
+            all: async () => ({ results: [] }),
+          };
+        },
+      };
+    },
+  };
+}
+
+test('live key authorization needs the order estimateApproval signature for the same VIN', async () => {
+  const vin = '1C6SRFHT0LN123456';
+  const approval = {
+    status: 'approved',
+    type: 'signature',
+    signedAt: '2026-10-01T00:00:00Z',
+    authorizationName: 'Pat Customer',
+    signatureKey: 'shops/shop-1/signature/pat.png',
+  };
+  const order = { id: 'RO-1', vin, estimateApproval: approval };
+  const ok = await signedRepairOrderForKeys(entitiesDb({ order }), 'shop-1', 'RO-1', vin);
+  assert.equal(ok.authorizationName, 'Pat Customer');
+  assert.equal(ok.signatureKey, approval.signatureKey);
+
+  // Client-writable estimates register must not authorize live keys.
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { id: 'RO-1', vin },
+  }), 'shop-1', 'RO-1', vin), null);
+
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { ...order, estimateApproval: { ...approval, signedAt: '' } },
+  }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { ...order, estimateApproval: { ...approval, status: 'sent' } },
+  }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { ...order, vin: '1C6SRFHT0LN999999' },
+  }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order: null }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({ order }), 'shop-1', '', vin), null);
 });

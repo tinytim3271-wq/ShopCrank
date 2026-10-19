@@ -486,6 +486,137 @@ test('Google sign-in from the apex host uses the registered www callback', async
   );
 });
 
+test('Google sign-in uses GOOGLE_REDIRECT_ORIGIN when it matches the canonical host', async () => {
+  const env = {
+    GOOGLE_CLIENT_ID: 'google-client.apps.googleusercontent.com',
+    GOOGLE_CLIENT_SECRET: 'google-secret',
+    GOOGLE_REDIRECT_ORIGIN: 'https://www.shopcrank.com',
+  };
+  const start = await worker.fetch(
+    new Request('https://www.shopcrank.com/api/auth/google?returnTo=%2Fdispatch'),
+    env,
+  );
+  assert.equal(start.status, 302);
+  const authorizationUrl = new URL(start.headers.get('location'));
+  assert.equal(authorizationUrl.origin, 'https://accounts.google.com');
+  assert.equal(
+    authorizationUrl.searchParams.get('redirect_uri'),
+    'https://www.shopcrank.com/api/auth/google/callback',
+  );
+});
+
+test('Google sign-in bridges through a non-canonical GOOGLE_REDIRECT_ORIGIN and hands session back', async (t) => {
+  const clientId = 'google-client.apps.googleusercontent.com';
+  const bridgeOrigin = 'https://oauth-bridge.example.test';
+  const keyPair = await crypto.subtle.generateKey(
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: 'SHA-256',
+    },
+    true,
+    ['sign', 'verify'],
+  );
+  const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  publicJwk.kid = 'google-key';
+  const env = {
+    GOOGLE_CLIENT_ID: clientId,
+    GOOGLE_CLIENT_SECRET: 'google-secret',
+    GOOGLE_REDIRECT_ORIGIN: bridgeOrigin,
+    ALLOWED_ORIGINS: `https://www.shopcrank.com,${bridgeOrigin}`,
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) {
+            return {
+              async first() {
+                if (/FROM founding_invites/i.test(sql)) {
+                  throw new Error('D1_ERROR: no such table: founding_invites: SQLITE_ERROR');
+                }
+                assert.match(sql, /FROM users WHERE email/);
+                return {
+                  id: 'user-google',
+                  email: 'owner@example.test',
+                  shop_id: 'shop-google',
+                  role: 'admin',
+                  name: 'Google Owner',
+                  enabled: 1,
+                };
+              },
+              async run() {
+                assert.match(sql, /INSERT INTO login_tokens/);
+                assert.equal(args[1], 'owner@example.test');
+                assert.equal(args[3], '/dispatch');
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+
+  const firstHop = await worker.fetch(
+    new Request('https://www.shopcrank.com/api/auth/google?returnTo=%2Fdispatch'),
+    env,
+  );
+  assert.equal(firstHop.status, 302);
+  assert.equal(
+    firstHop.headers.get('location'),
+    `${bridgeOrigin}/api/auth/google?returnTo=%2Fdispatch&origin=https%3A%2F%2Fwww.shopcrank.com`,
+  );
+
+  const secondHop = await worker.fetch(new Request(firstHop.headers.get('location')), env);
+  assert.equal(secondHop.status, 302);
+  const authorizationUrl = new URL(secondHop.headers.get('location'));
+  assert.equal(
+    authorizationUrl.searchParams.get('redirect_uri'),
+    `${bridgeOrigin}/api/auth/google/callback`,
+  );
+  const state = authorizationUrl.searchParams.get('state');
+  const nonce = authorizationUrl.searchParams.get('nonce');
+  const cookies = secondHop.headers.getSetCookie().map((value) => value.split(';', 1)[0]).join('; ');
+
+  const encode = (value) => base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)));
+  const header = encode({ alg: 'RS256', kid: publicJwk.kid, typ: 'JWT' });
+  const payload = encode({
+    iss: 'https://accounts.google.com',
+    aud: clientId,
+    sub: 'google-subject',
+    email: 'owner@example.test',
+    email_verified: true,
+    name: 'Google Owner',
+    nonce,
+    iat: Math.floor(Date.now() / 1000) - 5,
+    exp: Math.floor(Date.now() / 1000) + 300,
+  });
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    keyPair.privateKey,
+    new TextEncoder().encode(`${header}.${payload}`),
+  );
+  const idToken = `${header}.${payload}.${base64UrlEncode(new Uint8Array(signature))}`;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url) === 'https://oauth2.googleapis.com/token') {
+      return Response.json({ id_token: idToken });
+    }
+    return Response.json({ keys: [publicJwk] });
+  });
+
+  const callback = await worker.fetch(
+    new Request(
+      `${bridgeOrigin}/api/auth/google/callback?code=authorization-code&state=${encodeURIComponent(state)}`,
+      { headers: { Cookie: cookies } },
+    ),
+    env,
+  );
+  assert.equal(callback.status, 302);
+  const handoff = new URL(callback.headers.get('location'));
+  assert.equal(handoff.origin, 'https://www.shopcrank.com');
+  assert.equal(handoff.pathname, '/api/auth/callback');
+  assert.match(handoff.searchParams.get('token') || '', /^[a-f0-9]{32}$/);
+});
+
 test('Google callback rejects a mismatched OAuth state before token exchange', async (t) => {
   const fetched = t.mock.method(globalThis, 'fetch', async () => {
     assert.fail('invalid state must not be exchanged');
@@ -500,4 +631,112 @@ test('Google callback rejects a mismatched OAuth state before token exchange', a
   assert.equal(response.status, 401);
   assert.match((await response.json()).message, /invalid or expired/i);
   assert.equal(fetched.mock.callCount(), 0);
+});
+
+test('magic-link stores public signup plan and shop details', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let inserted = null;
+  const env = {
+    AUTH_EXPOSE_LOGIN_LINK: '1',
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) {
+            return {
+              async first() {
+                assert.match(sql, /SELECT created_at, used_at, expires_at FROM login_tokens/);
+                return null;
+              },
+              async run() {
+                assert.match(sql, /INSERT INTO login_tokens/);
+                inserted = {
+                  email: args[1],
+                  returnTo: args[3],
+                };
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/auth/magic-link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'new-owner@example.test',
+      plan: 'shop_pro',
+      shopName: 'High Plains Auto',
+      ownerName: 'Lee Owner',
+      returnTo: '/app',
+    }),
+  }), env);
+  assert.equal(response.status, 200);
+  assert.equal(inserted.email, 'new-owner@example.test');
+  const stored = new URL(inserted.returnTo, 'https://shopcrank.invalid');
+  assert.equal(stored.pathname, '/app');
+  assert.equal(stored.searchParams.get('trialPlan'), 'shop_pro');
+  assert.equal(stored.searchParams.get('trialShop'), 'High Plains Auto');
+  assert.equal(stored.searchParams.get('trialOwner'), 'Lee Owner');
+});
+
+test('magic-link callback creates a 14-day public trial for new shops', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'error', () => {});
+  const token = 'e'.repeat(32);
+  const batches = [];
+  const env = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) {
+            return {
+              sql,
+              args,
+              async first() {
+                if (/FROM login_tokens/.test(sql)) {
+                  return {
+                    id: 'login-signup',
+                    email: 'trial@example.test',
+                    return_to: '/app?trialPlan=shop_pro&trialShop=Trial%20Shop&trialOwner=Trial%20Owner',
+                    expires_at: new Date(Date.now() + 60_000).toISOString(),
+                    used_at: null,
+                    auth_method: 'magic_link',
+                  };
+                }
+                if (/FROM users WHERE email/.test(sql)) return null;
+                if (/FROM founding_invites/.test(sql)) return null;
+                assert.fail(`unexpected query: ${sql}`);
+              },
+              async run() {
+                assert.fail(`unexpected run: ${sql}`);
+              },
+            };
+          },
+        };
+      },
+      async batch(statements) {
+        batches.push(statements);
+        return statements.map(() => ({ success: true }));
+      },
+    },
+  };
+  const response = await worker.fetch(
+    new Request(`https://app.example.test/api/auth/callback?token=${token}`),
+    env,
+  );
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('Location'), 'https://app.example.test/app');
+  assert.equal(batches.length, 3);
+  assert.match(batches[0][0].sql, /INSERT INTO shops/);
+  assert.equal(batches[0][0].args[1], 'Trial Shop');
+  assert.equal(batches[0][2].args[3], 'Trial Owner');
+  assert.match(batches[1][0].sql, /INSERT INTO accounts/);
+  assert.match(batches[1][1].sql, /INSERT INTO subscriptions/);
+  assert.equal(batches[1][1].args[1], 'shop_pro');
+  const trialEnds = Date.parse(batches[1][1].args[2]);
+  assert.ok(Number.isFinite(trialEnds));
+  assert.ok(trialEnds > Date.now() + 13 * 86400000);
+  assert.ok(trialEnds < Date.now() + 15 * 86400000);
+  assert.match(batches[2][0].sql, /INSERT INTO sessions/);
 });

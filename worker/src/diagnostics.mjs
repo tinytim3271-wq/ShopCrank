@@ -31,11 +31,14 @@ export function procedureSpec(procedure) {
  * The token is scoped to a single procedure, VIN, shop, and mode, is single-use
  * (jti), and expires. Clients hold only the public key and cannot forge these.
  */
-export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, actor }) {
+export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, actor, expiresAt }) {
   const spec = procedureSpec(procedure);
   if (!spec) throw new Error(`Unknown diagnostic procedure: ${procedure}`);
   const privateKey = await importEcdsaPrivateKey(env.DIAGNOSTICS_SIGNING_PRIVATE_KEY);
   const now = Date.now();
+  const expiryLimit = expiresAt === undefined ? Infinity : Date.parse(expiresAt);
+  if (!Number.isFinite(expiryLimit) && expiryLimit !== Infinity) throw new Error('Invalid authorization expiry');
+  if (expiryLimit <= now) throw new Error('Authorization has expired');
   const payload = {
     v: 2,
     procedure,
@@ -45,11 +48,48 @@ export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, a
     mode,
     actor: actor || null,
     iat: now,
-    exp: now + spec.ttlMs,
+    exp: Math.min(now + spec.ttlMs, expiryLimit),
     jti: crypto.randomUUID().replaceAll('-', ''),
   };
   const payloadB64 = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
   const signingInput = `v2.${payloadB64}`;
   const signature = await ecdsaP256SignBase64Url(privateKey, signingInput);
   return { token: `${signingInput}.${signature}`, payload };
+}
+
+/**
+ * Live key programming is authorized by a signed repair order in the shop's own
+ * records rather than an AutoAuth login: the order must carry this VIN and have
+ * an approved, signed estimateApproval recorded through the Worker approval path.
+ *
+ * Do not trust the separate `estimates` entity register — those status/signedAt
+ * fields are client-writable without server validation and can forge this gate.
+ */
+export async function signedRepairOrderForKeys(db, shopId, orderId, vin) {
+  const id = String(orderId || '').trim();
+  const wanted = String(vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!id || !shopId || wanted.length !== 17) return null;
+  const order = await db.prepare(
+    "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'orders' AND entity_id = ?",
+  ).bind(shopId, id).first();
+  if (!order) return null;
+  let orderData = {};
+  try { orderData = JSON.parse(order.data_json || '{}'); } catch { return null; }
+  if (String(orderData.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') !== wanted) return null;
+  const approval = orderData.estimateApproval;
+  if (
+    approval
+    && approval.status === 'approved'
+    && approval.signedAt
+    && String(approval.authorizationName || '').trim()
+  ) {
+    return {
+      estimateId: String(orderData.id || id),
+      authorizationName: approval.authorizationName,
+      signedAt: approval.signedAt,
+      signatureKey: approval.signatureKey || null,
+      type: approval.type || null,
+    };
+  }
+  return null;
 }

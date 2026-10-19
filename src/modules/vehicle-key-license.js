@@ -50,9 +50,27 @@ export async function loadDeviceIdentity() {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
   const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey));
   const publicKey = btoa(String.fromCharCode(...spki));
-  const identity = { privateKey: pair.privateKey, publicKey, deviceId: await deviceIdForPublicKey(publicKey), createdAt: new Date().toISOString() };
-  await writeRecord('device', identity);
-  return identity;
+  const candidate = { privateKey: pair.privateKey, publicKey, deviceId: await deviceIdForPublicKey(publicKey), createdAt: new Date().toISOString() };
+  const db = await openStore();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE, 'readwrite');
+      const store = transaction.objectStore(STORE);
+      let identity;
+      const request = store.get('device');
+      request.onsuccess = () => {
+        const saved = request.result;
+        identity = saved?.privateKey && saved.publicKey && saved.deviceId ? saved : candidate;
+        if (identity === candidate) store.put(candidate, 'device');
+      };
+      request.onerror = () => transaction.abort();
+      transaction.oncomplete = () => resolve(identity);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || request.error);
+    });
+  } finally {
+    db.close();
+  }
 }
 
 export const loadStoredUnlock = () => readRecord('unlock').then(value => value || null);
@@ -65,11 +83,11 @@ function base64Url(bytes) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export async function signDeviceProof(identity, purpose, subject, signedAt = Date.now()) {
+export async function signDeviceProof(identity, purpose, subject, signedAt = Date.now(), nonce) {
   const signature = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
     identity.privateKey,
-    new TextEncoder().encode(deviceProofMessage({ purpose, subject, signedAt })),
+    new TextEncoder().encode(deviceProofMessage({ purpose, subject, signedAt, nonce })),
   );
   return { signedAt, signature: base64Url(new Uint8Array(signature)) };
 }
@@ -83,7 +101,8 @@ export async function redeemRequestBody(identity, token) {
 }
 
 export async function authorizeUnlock(identity, token, procedure, vin) {
-  return { token, deviceId: identity.deviceId, ...(await signDeviceProof(identity, authorizePurpose(procedure, vin), await sha256Hex(token))) };
+  const nonce = crypto.randomUUID();
+  return { token, deviceId: identity.deviceId, nonce, ...(await signDeviceProof(identity, authorizePurpose(procedure, vin), await sha256Hex(token), Date.now(), nonce)) };
 }
 
 const PROOF_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
@@ -145,7 +164,8 @@ function requestForm({ escapeHtml, icon }, previous) {
 export function keyLicensePanelHtml(view, { escapeHtml, icon }) {
   const head = `<div class="eyebrow">Vehicle key license</div>`;
   if (!view || view.loading) return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}<p>Checking this device's key license…</p></section>`;
-  if (view.error) return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}<p>${escapeHtml(view.error)}</p><button class="secondary" type="button" id="key-license-refresh">${icon('refresh-cw', 14)} Try again</button></section>`;
+  const refresh = `<button class="secondary" type="button" id="key-license-refresh">${icon('refresh-cw', 14)} Refresh</button>`;
+  if (view.error) return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}<p>${escapeHtml(view.error)}</p>${refresh}</section>`;
   const { license, requests = [], canRequest } = view.status || {};
   const latest = requests[0];
   const deviceLine = view.deviceId ? `<p class="ledger-note">This device: <span class="mono">${escapeHtml(view.deviceId.slice(0, 12))}…</span></p>` : '';
@@ -179,7 +199,7 @@ export function keyLicensePanelHtml(view, { escapeHtml, icon }) {
   }
   const busy = view.busy ? `<p class="ledger-note">${escapeHtml(view.busy)}</p>` : '';
   const failure = view.lastError ? `<p class="login-error" role="alert">${escapeHtml(view.lastError)}</p>` : '';
-  return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}${failure}${body}${deviceLine}${busy}</section>`;
+  return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}${refresh}${failure}${body}${deviceLine}${busy}</section>`;
 }
 
 function shortId(value) {

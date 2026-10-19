@@ -28,3 +28,11 @@ test('the ordering panel shows the username and keeps the password out of the pa
   assert.doesNotMatch(panel, /type="password"[^>]*value=/);
   assert.match(panel, /Search on AutoZone Pro/);
 });
+
+test('the panel never offers to copy or paste the saved password', () => {
+  for (const canSave of [true, false]) {
+    const panel = orderingPanelHtml({ connected: true, username: 'counter', password: 'leaked-secret' }, { canSave, ...html });
+    assert.doesNotMatch(panel, /leaked-secret/);
+    assert.doesNotMatch(panel, /paste the saved password|copy the AutoZone Pro login|Password copied/i);
+  }
+});

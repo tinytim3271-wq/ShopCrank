@@ -6,6 +6,7 @@ const { resolveAuthDeepLink } = require('./auth-deep-link');
 const edition = require('./edition.json');
 const vault = require('./local-vault');
 const { configurePortableData } = require('./portable-data');
+const { isPrintPopupUrl } = require('./print-window');
 
 try {
   configurePortableData(app, edition);
@@ -55,6 +56,7 @@ function registerOfflineIpc() {
 function registerDiagnosticsIpc() {
   const handlers = {
     'diagnostics:listAdapters': () => diagnostics.listAdapters(),
+    'diagnostics:autoDetectAndConnect': () => diagnostics.autoDetectAndConnect(),
     'diagnostics:connect': (_e, params) => diagnostics.connect(params),
     'diagnostics:disconnect': () => diagnostics.disconnect(),
     'diagnostics:getConnectionStatus': () => diagnostics.getConnectionStatus(),
@@ -116,6 +118,22 @@ function createWindow() {
     );
   }
   window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isPrintPopupUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 900,
+          height: 1100,
+          autoHideMenuBar: true,
+          backgroundColor: '#ffffff',
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          },
+        },
+      };
+    }
     if (edition.demo !== true && isTrustedUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });

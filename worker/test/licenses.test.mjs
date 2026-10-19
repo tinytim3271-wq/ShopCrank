@@ -30,8 +30,8 @@ async function makeDevice(label = 'Bay 1 laptop') {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
   const publicKey = Buffer.from(await crypto.subtle.exportKey('spki', pair.publicKey)).toString('base64');
   const deviceId = await deviceIdForPublicKey(publicKey);
-  const sign = async (purpose, subject, signedAt) => base64Url(new Uint8Array(await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, new TextEncoder().encode(deviceProofMessage({ purpose, subject, signedAt })),
+  const sign = async (purpose, subject, signedAt, nonce) => base64Url(new Uint8Array(await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, new TextEncoder().encode(deviceProofMessage({ purpose, subject, signedAt, nonce })),
   )));
   return { label, publicKey, deviceId, sign };
 }
@@ -303,18 +303,29 @@ test('audit details drop secrets passed by mistake but keep token versions', asy
   assert.deepEqual(JSON.parse(row.detail_json), { tokenVersion: 4 });
 });
 
-test('live key-programming gate binds the device proof to the procedure and VIN', async () => {
+test('live key-programming gate binds each device proof to the procedure, VIN, and one-time nonce', async () => {
   const h = harness();
   await approvedLicense(h);
   const device = await makeDevice();
   const { token } = (await h.issue(device)).body;
   const vin = '1C6SRFHT0LN123456';
   const request = new Request(`${ORIGIN}/api/diagnostics/authorize`, { method: 'POST' });
-  const unlock = async (purpose) => ({
-    token, deviceId: device.deviceId, signedAt: h.clock.now, signature: await device.sign(purpose, await sha256Hex(token), h.clock.now),
-  });
-  const ok = await requireVehicleKeyUnlock(h.env, technician, await unlock(authorizePurpose('add_key', vin)), { procedure: 'add_key', vin, request, nowMs: h.clock.now });
+  const unlock = async (purpose) => {
+    const nonce = crypto.randomUUID();
+    const signedAt = h.clock.now;
+    return {
+      token, deviceId: device.deviceId, signedAt, nonce,
+      signature: await device.sign(purpose, await sha256Hex(token), signedAt, nonce),
+    };
+  };
+  const proof = await unlock(authorizePurpose('add_key', vin));
+  const ok = await requireVehicleKeyUnlock(h.env, technician, proof, { procedure: 'add_key', vin, request, nowMs: h.clock.now });
   assert.equal(ok.useCount, 1);
+  await assert.rejects(
+    requireVehicleKeyUnlock(h.env, technician, proof, { procedure: 'add_key', vin, request, nowMs: h.clock.now }),
+    error => error.status === 403 && error.message === GENERIC_UNLOCK_ERROR,
+    'a captured authorization proof cannot be replayed',
+  );
   await assert.rejects(
     requireVehicleKeyUnlock(h.env, technician, await unlock(authorizePurpose('add_key', '1C6SRFHT0LN999999')), { procedure: 'add_key', vin, request, nowMs: h.clock.now }),
     error => error.status === 403 && error.message === GENERIC_UNLOCK_ERROR,
@@ -323,6 +334,36 @@ test('live key-programming gate binds the device proof to the procedure and VIN'
     requireVehicleKeyUnlock(h.env, technician, undefined, { procedure: 'add_key', vin, request, nowMs: h.clock.now }),
     error => error.status === 403 && error.message === GENERIC_UNLOCK_ERROR,
   );
+});
+
+test('simultaneous license requests create only one pending request', async () => {
+  const h = harness();
+  const request = {
+    contactName: 'Dana Owner', businessName: 'High Plains Auto', proofDetails: 'NASTF VSP registration LSID-4471',
+  };
+  const results = await Promise.all([
+    h.customer(shopAdmin, 'POST', 'licenses/requests', request),
+    h.customer(shopAdmin, 'POST', 'licenses/requests', request),
+  ]);
+  assert.deepEqual(results.map(result => result.status).sort(), [201, 409]);
+  const pending = await h.env.DB.prepare("SELECT COUNT(*) AS count FROM license_requests WHERE shop_id = ? AND status = 'pending'")
+    .bind(shopAdmin.shopId).first();
+  assert.equal(Number(pending.count), 1);
+});
+
+test('license device limit cannot be reduced below active device bindings', async () => {
+  const h = harness();
+  const license = await approvedLicense(h, { maxDevices: 2 });
+  const first = await makeDevice('First laptop');
+  const second = await makeDevice('Second laptop');
+  assert.equal((await h.issue(first)).status, 201);
+  assert.equal((await h.issue(second)).status, 201);
+  assert.equal((await h.platform('PUT', `admin/licenses/${license.id}`, { maxDevices: 1 })).status, 409);
+
+  assert.equal((await h.platform(
+    'POST', `admin/licenses/${license.id}/devices/${encodeURIComponent(first.deviceId)}/revoke`,
+  )).status, 200);
+  assert.equal((await h.platform('PUT', `admin/licenses/${license.id}`, { maxDevices: 1 })).status, 200);
 });
 
 test('admin panel API: owner-only, expiry required at approval, deny, and audit log', async () => {

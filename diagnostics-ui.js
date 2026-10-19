@@ -20,7 +20,7 @@ function oemDiagApi() {
 }
 
 function isOemDiagnosticsAvailable() {
-  return Boolean(window.shopcrankDesktop && window.shopcrankDiagnostics);
+  return Boolean(window.shopcrankDiagnostics);
 }
 
 function platformFromVin(vin) {
@@ -121,6 +121,9 @@ function normalizeOemAdapter(adapter) {
     dllPath: adapter.dllPath ?? adapter.DllPath ?? '',
     protocols: adapter.protocols ?? adapter.Protocols ?? [],
     firmware: adapter.firmware ?? adapter.Firmware ?? '',
+    bitness: adapter.bitness ?? adapter.Bitness ?? '',
+    usable: adapter.usable ?? adapter.Usable ?? true,
+    usabilityNote: adapter.usabilityNote ?? adapter.UsabilityNote ?? '',
   };
 }
 
@@ -451,6 +454,10 @@ async function oemProgram(procedure) {
   const mode = diag.programmingMode === 'live' ? 'live' : 'simulate';
   if (!confirm(`${procedureLabel(procedure)} (${mode} mode)? Confirm the VIN and vehicle state before continuing.`)) return;
   const { token, vin } = await oemAuthorize(procedure);
+  // Immobilizer procedures require SecurityAccess before RoutineControl.
+  if (!diag.security?.scope || diag.security.scope !== 'immobilizer') {
+    await oemUnlockSecurity('immobilizer');
+  }
   const result = await oemDiagApi().programKey({ procedure, authorizationToken: token });
   await oemAudit({ kind: 'diagnostics.program', procedure, vin, mode, keys: result.keys, remotes: result.remotes });
   saveOemDiagState({
