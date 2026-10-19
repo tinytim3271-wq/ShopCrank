@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  FOUNDING_MEMBER_CAP,
   FOUNDING_PLANS,
   LIVE_DIAGNOSTICS_PLANS,
   PUBLIC_PLANS,
@@ -40,11 +41,13 @@ test('public prices are the locked launch catalog and match the pricing page', (
 });
 
 test('founding prices stay off the public page and on the invite page', () => {
+  assert.equal(FOUNDING_MEMBER_CAP, 50);
   assert.deepEqual(FOUNDING_PLANS.map(plan => plan.monthlyPriceCents), [4900, 9900, 19900]);
   assert.match(founding, /\$49/);
   assert.match(founding, /\$99/);
   assert.match(founding, /\$199/);
   assert.match(founding, /invite/);
+  assert.match(founding, new RegExp(`first ${FOUNDING_MEMBER_CAP}`));
   assert.equal(LIVE_DIAGNOSTICS_PLANS.has('shop'), false);
   assert.equal(LIVE_DIAGNOSTICS_PLANS.has('shop_pro'), true);
   assert.equal(LIVE_DIAGNOSTICS_PLANS.has('founding_pro'), true);

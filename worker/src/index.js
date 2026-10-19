@@ -54,6 +54,7 @@ import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFa
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
+  FOUNDING_MEMBER_CAP,
   LIVE_DIAGNOSTICS_PLANS,
   PUBLIC_TRIAL_DAYS,
   claimDecision,
@@ -3289,7 +3290,7 @@ async function handleFounding(request, env) {
   if (action === 'status' && request.method === 'GET') {
     const counter = await env.DB.prepare('SELECT claimed, cap FROM founding_counter WHERE id = 1').first();
     const claimed = Number(counter?.claimed || 0);
-    const cap = Number(counter?.cap || 50);
+    const cap = Number(counter?.cap || FOUNDING_MEMBER_CAP);
     return json({ claimed, cap, remaining: Math.max(0, cap - claimed), open: claimed < cap });
   }
   if (action === 'validate' && request.method === 'GET') {
@@ -3300,12 +3301,14 @@ async function handleFounding(request, env) {
     const counter = await env.DB.prepare('SELECT claimed, cap FROM founding_counter WHERE id = 1').first();
     const decision = claimDecision({ invite, counter, planId: 'founding_shop' });
     if (!decision.ok && decision.status === 400) return json({ valid: false, message: decision.message }, 400);
+    const claimed = Number(counter?.claimed || 0);
+    const cap = Number(counter?.cap || FOUNDING_MEMBER_CAP);
     return json({
       valid: decision.ok,
       message: decision.ok ? 'Invite accepted.' : decision.message,
-      claimed: Number(counter?.claimed || 0),
-      cap: Number(counter?.cap || 50),
-      remaining: Math.max(0, Number(counter?.cap || 50) - Number(counter?.claimed || 0)),
+      claimed,
+      cap,
+      remaining: Math.max(0, cap - claimed),
     }, decision.ok ? 200 : decision.status);
   }
   if (action === 'claim' && request.method === 'POST') {

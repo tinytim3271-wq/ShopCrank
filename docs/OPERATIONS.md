@@ -53,3 +53,17 @@
 - Check Cloudflare dashboard logs (Worker, Pages, R2 access patterns) for correlated failures.
 - Verify required secrets/vars still exist and were not rotated incorrectly.
 - Mitigate fast (rollback or feature toggle), then document root cause and follow-up tasks.
+
+## Google OAuth cutover
+- OAuth Web client lives in GCP project `com-yourcarguy806-mechpr-fc4af` (project number `451228968006`).
+- Client id (public): `451228968006-ebcekb6k5etif5qnp43n7hiroo0td6vd.apps.googleusercontent.com`
+- Authorized JavaScript origin: `https://www.shopcrank.com`
+- Authorized redirect URI: `https://www.shopcrank.com/api/auth/google/callback`
+- Worker var `GOOGLE_REDIRECT_ORIGIN` is set to that origin in `wrangler.jsonc`. **Do not deploy the Worker until Google accepts the URI.**
+- Verify: `npm run verify:google-oauth` (exits 0 when registered, 1 while still mismatched).
+- Then: `npm run deploy:worker`. Cloudflare cannot register Google Cloud OAuth clients.
+
+## Live key programming (AutoAuth unlock)
+- Per-shop AutoAuth login is stored encrypted in D1 (`POST /api/diagnostics/autoauth`).
+- Platform unlock endpoint is Worker secret `AUTOAUTH_UNLOCK_URL`. When unset, live SecurityAccess returns intentional HTTP 501.
+- Set with `npx wrangler secret put AUTOAUTH_UNLOCK_URL` once the licensed unlock partner URL is available. Do not invent a placeholder URL in production.

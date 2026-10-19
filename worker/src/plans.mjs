@@ -3,6 +3,9 @@
 /** Free trial length for public signup and founding claims. */
 export const PUBLIC_TRIAL_DAYS = 14;
 
+/** Locked Founding Member scarcity: first N shops keep invite rates. */
+export const FOUNDING_MEMBER_CAP = 50;
+
 export const PUBLIC_PLANS = [
   {
     id: 'solo',
@@ -163,7 +166,7 @@ export function claimDecision({ invite, counter, planId }) {
   if (!invite) return { ok: false, status: 404, message: 'This invite link is not valid.' };
   if (invite.used_at) return { ok: false, status: 409, message: 'This invite was already used.' };
   const claimed = Number(counter?.claimed || 0);
-  const cap = Number(counter?.cap || 50);
+  const cap = Number(counter?.cap || FOUNDING_MEMBER_CAP);
   if (claimed >= cap) return { ok: false, status: 409, message: 'Founding Member spots are full.' };
   return { ok: true, claimed: claimed + 1, cap, remaining: cap - claimed - 1 };
 }

@@ -486,8 +486,28 @@ test('Google sign-in from the apex host uses the registered www callback', async
   );
 });
 
-test('Google sign-in bridges through GOOGLE_REDIRECT_ORIGIN and hands session back to canonical origin', async (t) => {
+test('Google sign-in uses GOOGLE_REDIRECT_ORIGIN when it matches the canonical host', async () => {
+  const env = {
+    GOOGLE_CLIENT_ID: 'google-client.apps.googleusercontent.com',
+    GOOGLE_CLIENT_SECRET: 'google-secret',
+    GOOGLE_REDIRECT_ORIGIN: 'https://www.shopcrank.com',
+  };
+  const start = await worker.fetch(
+    new Request('https://www.shopcrank.com/api/auth/google?returnTo=%2Fdispatch'),
+    env,
+  );
+  assert.equal(start.status, 302);
+  const authorizationUrl = new URL(start.headers.get('location'));
+  assert.equal(authorizationUrl.origin, 'https://accounts.google.com');
+  assert.equal(
+    authorizationUrl.searchParams.get('redirect_uri'),
+    'https://www.shopcrank.com/api/auth/google/callback',
+  );
+});
+
+test('Google sign-in bridges through a non-canonical GOOGLE_REDIRECT_ORIGIN and hands session back', async (t) => {
   const clientId = 'google-client.apps.googleusercontent.com';
+  const bridgeOrigin = 'https://oauth-bridge.example.test';
   const keyPair = await crypto.subtle.generateKey(
     {
       name: 'RSASSA-PKCS1-v1_5',
@@ -503,8 +523,8 @@ test('Google sign-in bridges through GOOGLE_REDIRECT_ORIGIN and hands session ba
   const env = {
     GOOGLE_CLIENT_ID: clientId,
     GOOGLE_CLIENT_SECRET: 'google-secret',
-    GOOGLE_REDIRECT_ORIGIN: 'https://www.yourcarguy806.com',
-    ALLOWED_ORIGINS: 'https://www.shopcrank.com,https://www.yourcarguy806.com',
+    GOOGLE_REDIRECT_ORIGIN: bridgeOrigin,
+    ALLOWED_ORIGINS: `https://www.shopcrank.com,${bridgeOrigin}`,
     DB: {
       prepare(sql) {
         return {
@@ -543,7 +563,7 @@ test('Google sign-in bridges through GOOGLE_REDIRECT_ORIGIN and hands session ba
   assert.equal(firstHop.status, 302);
   assert.equal(
     firstHop.headers.get('location'),
-    'https://www.yourcarguy806.com/api/auth/google?returnTo=%2Fdispatch&origin=https%3A%2F%2Fwww.shopcrank.com',
+    `${bridgeOrigin}/api/auth/google?returnTo=%2Fdispatch&origin=https%3A%2F%2Fwww.shopcrank.com`,
   );
 
   const secondHop = await worker.fetch(new Request(firstHop.headers.get('location')), env);
@@ -551,7 +571,7 @@ test('Google sign-in bridges through GOOGLE_REDIRECT_ORIGIN and hands session ba
   const authorizationUrl = new URL(secondHop.headers.get('location'));
   assert.equal(
     authorizationUrl.searchParams.get('redirect_uri'),
-    'https://www.yourcarguy806.com/api/auth/google/callback',
+    `${bridgeOrigin}/api/auth/google/callback`,
   );
   const state = authorizationUrl.searchParams.get('state');
   const nonce = authorizationUrl.searchParams.get('nonce');
@@ -585,7 +605,7 @@ test('Google sign-in bridges through GOOGLE_REDIRECT_ORIGIN and hands session ba
 
   const callback = await worker.fetch(
     new Request(
-      `https://www.yourcarguy806.com/api/auth/google/callback?code=authorization-code&state=${encodeURIComponent(state)}`,
+      `${bridgeOrigin}/api/auth/google/callback?code=authorization-code&state=${encodeURIComponent(state)}`,
       { headers: { Cookie: cookies } },
     ),
     env,

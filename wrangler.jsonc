@@ -26,7 +26,9 @@
     "DEEPGRAM_LISTEN_MODEL": "nova-3",
     "DEEPGRAM_SPEAK_MODEL": "flux-kit-en",
     "ALLOWED_ORIGINS": "https://www.shopcrank.com,https://shopcrank.com,https://shopcrank-dispatch.pages.dev,https://www.yourcarguy806.com",
-    "GOOGLE_REDIRECT_ORIGIN": "https://www.yourcarguy806.com",
+    // Same-origin Google callback on the production host (register this URI in
+    // Google Cloud OAuth before deploy: https://www.shopcrank.com/api/auth/google/callback).
+    "GOOGLE_REDIRECT_ORIGIN": "https://www.shopcrank.com",
     "PAGES_ORIGIN": "https://shopcrank-dispatch.pages.dev",
     "AUTH_EMAIL_FROM": "noreply@shopcrank.com"
   },
