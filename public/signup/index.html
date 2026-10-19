@@ -62,7 +62,10 @@
         }
         if (["starter", "shop", "pro"].includes(plan)) {
           document.querySelector('input[name="returnTo"]').value = `/app?plan=${encodeURIComponent(plan)}`;
-          document.querySelector('.auth-links a[href="/login"]').href = `/login?plan=${encodeURIComponent(plan)}`;
+          document.addEventListener("DOMContentLoaded", () => {
+            const loginLink = document.querySelector('.auth-links a[href="/login"]');
+            if (loginLink) loginLink.href = `/login?plan=${encodeURIComponent(plan)}`;
+          });
         }
         document.querySelector("#signup-form").addEventListener("submit", async (event) => {
           event.preventDefault();
