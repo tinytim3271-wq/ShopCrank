@@ -3276,6 +3276,140 @@
     }
   });
 
+  // src/modules/print-document.js
+  function runPrint(win) {
+    try {
+      win.focus();
+      win.print();
+    } catch {
+    }
+  }
+  function armPrintControls(win, run) {
+    const doc = win.document;
+    if (!doc?.querySelectorAll) return;
+    doc.querySelectorAll("button").forEach((button) => {
+      const replacement = button.cloneNode(true);
+      replacement.removeAttribute("onclick");
+      button.replaceWith(replacement);
+      replacement.addEventListener("click", (event) => {
+        event.preventDefault();
+        run();
+      });
+    });
+  }
+  function schedulePrint(win, schedule2, autoPrint) {
+    let started = false;
+    const run = () => runPrint(win);
+    armPrintControls(win, run);
+    if (!autoPrint) return;
+    const start = () => {
+      if (started) return;
+      started = true;
+      schedule2(run);
+    };
+    if (win.document?.readyState === "complete") {
+      start();
+      return;
+    }
+    win.addEventListener?.("load", start, { once: true });
+  }
+  function printInFrame(target, html, schedule2, autoPrint) {
+    const doc = target.document;
+    if (!doc?.createElement || !doc.body) return false;
+    const frame = doc.createElement("iframe");
+    frame.setAttribute("title", "Print");
+    frame.style.cssText = "position:fixed;left:-10000px;top:0;width:850px;height:1100px;border:0";
+    doc.body.appendChild(frame);
+    const childDoc = frame.contentDocument;
+    const childWin = frame.contentWindow;
+    if (!childDoc || !childWin) {
+      frame.remove();
+      return false;
+    }
+    childDoc.open();
+    childDoc.write(String(html ?? ""));
+    childDoc.close();
+    const remove = () => frame.remove();
+    childWin.addEventListener?.("afterprint", remove, { once: true });
+    const fallback = setTimeout(remove, 12e4);
+    fallback.unref?.();
+    schedulePrint(childWin, schedule2, autoPrint);
+    return true;
+  }
+  function openBlobDocument(target, html, schedule2, autoPrint) {
+    if (typeof target.Blob !== "function" || typeof target.URL?.createObjectURL !== "function") return false;
+    const url = target.URL.createObjectURL(new target.Blob([String(html ?? "")], { type: "text/html" }));
+    let win = null;
+    try {
+      win = target.open?.(url, "_blank") ?? null;
+    } catch {
+      win = null;
+    }
+    const release = setTimeout(() => {
+      try {
+        target.URL.revokeObjectURL(url);
+      } catch {
+      }
+    }, 6e4);
+    release.unref?.();
+    if (!win) return false;
+    try {
+      win.opener = null;
+    } catch {
+    }
+    try {
+      win.addEventListener("load", () => schedulePrint(win, schedule2, autoPrint), { once: true });
+    } catch {
+    }
+    return true;
+  }
+  function openWritableDocument(target, html, schedule2, autoPrint) {
+    let win = null;
+    try {
+      win = target.open?.("", "_blank") ?? null;
+    } catch {
+      win = null;
+    }
+    if (!win?.document) return false;
+    try {
+      win.opener = null;
+    } catch {
+    }
+    try {
+      win.document.open();
+      win.document.write(String(html ?? ""));
+      win.document.close();
+      schedulePrint(win, schedule2, autoPrint);
+      return true;
+    } catch {
+      try {
+        win.close();
+      } catch {
+      }
+      return false;
+    }
+  }
+  function openPrintDocument(html, options = {}) {
+    const target = options.windowObject || globalThis;
+    const notify = options.toast || (() => {
+    });
+    const blockedMessage = options.blockedMessage || "Allow pop-ups to print";
+    const autoPrint = options.autoPrint !== false;
+    const schedule2 = options.schedule || ((fn) => setTimeout(fn, 0));
+    const markup = String(html ?? "");
+    const blobAvailable = typeof target.Blob === "function" && typeof target.URL?.createObjectURL === "function";
+    if (blobAvailable) {
+      if (openBlobDocument(target, markup, schedule2, autoPrint)) return true;
+    } else if (openWritableDocument(target, markup, schedule2, autoPrint)) return true;
+    if (printInFrame(target, markup, schedule2, autoPrint)) return true;
+    notify(blockedMessage);
+    return false;
+  }
+  var init_print_document = __esm({
+    "src/modules/print-document.js"() {
+    }
+  });
+
   // src/modules/filing/forms.js
   function money(n) {
     return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
@@ -3284,9 +3418,7 @@
     return String(s ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
   }
   function printHtml(title, body) {
-    const win = window.open("", "_blank", "noopener");
-    if (!win) return false;
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+    return openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
 @page{size:letter;margin:.4in}
 body{font:11px/1.35 Arial,Helvetica,sans-serif;color:#111;margin:0;padding:12px}
@@ -3301,9 +3433,7 @@ h1{font-size:16px;margin:0 0 8px}
 .notice{margin-top:14px;padding:8px;border:1px solid #999;background:#f7f7f7;font-size:9px}
 @media print{button{display:none}}
 button{margin-top:12px;padding:8px 14px}
-</style></head><body>${body}<button type="button" onclick="window.print()">Print / Save as PDF</button></body></html>`);
-    win.document.close();
-    return true;
+</style></head><body>${body}<button type="button">Print / Save as PDF</button></body></html>`, { autoPrint: true });
   }
   function openW2Form(data) {
     const y = data.taxYear || (/* @__PURE__ */ new Date()).getFullYear();
@@ -3378,6 +3508,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   var init_forms = __esm({
     "src/modules/filing/forms.js"() {
+      init_print_document();
     }
   });
 
@@ -3712,13 +3843,11 @@ button{margin-top:12px;padding:8px 14px}
     const profile = app.shopProfile();
     const brand = app.printableBrand(profile);
     const body = customerInspectionDocument(inspection, profile, app.escapeHtml, app.cloudflareConfig.apiUrl);
-    const win = window.open("", "_blank", "noopener");
-    if (!win) {
-      app.toast("Allow pop-ups to print the inspection");
-      return;
-    }
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button" onclick="window.print()">Print inspection</button></body></html>`);
-    win.document.close();
+    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
+      toast: app.toast,
+      blockedMessage: "Allow pop-ups to print the inspection",
+      autoPrint: true
+    });
   }
   function presentCatalogInspection(app, existing = null, catalogId = existing?.catalogId) {
     const catalog = shopInspection(catalogId);
@@ -3803,6 +3932,7 @@ button{margin-top:12px;padding:8px 14px}
   var init_catalog_inspection_ui = __esm({
     "src/runtime/catalog-inspection-ui.js"() {
       init_shop_inspections();
+      init_print_document();
     }
   });
 
@@ -10990,11 +11120,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const partRows = billableLines.filter((line) => ["part", "fee"].includes(line.type)).map((line) => `<tr><td><b>${line.type === "fee" ? "Fee \xB7 " : ""}${escapeHtml(line.description)}</b><small>${escapeHtml(line.notes || "")}</small></td><td>${line.type === "fee" ? "Flat fee" : Number(line.quantity)}</td><td>${line.priceStatus === "pending" ? "Pending" : money4(line.unitPrice)}</td><td>${line.priceStatus === "pending" ? "Pending" : money4(line.total)}</td></tr>`).join("");
     const supplies = estimate.fees.find((fee) => /shop supplies/i.test(fee.description))?.amount || 0;
     const approvalMarkup = estimateApprovalMarkup(order.estimateApproval);
-    const win = window.open("", "_blank");
-    if (!win) return toast("Allow pop-ups to print the job card");
-    win.opener = null;
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(order.id)} job card</title><style>${brand.style}body{font:12px/1.45 system-ui,sans-serif;max-width:920px;margin:auto;padding:24px;color:#17231e}h2{margin:20px 0 7px;color:var(--brand);font-size:16px;text-transform:uppercase}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}.meta div,.concern{padding:10px;border:1px solid #d9dedb}.meta span{display:block;color:#64726b;font-size:9px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d9dedb;text-align:left;vertical-align:top}th{background:#eef3f0;font-size:9px;text-transform:uppercase}td small{display:block;margin-top:3px;color:#59665f}.totals{width:360px;margin:18px 0 0 auto}.totals div{display:flex;justify-content:space-between;padding:4px}.totals .total{margin-top:5px;border-top:2px solid #17231e;font-size:16px;font-weight:800}.notes{margin-top:18px;padding:10px;border:1px solid #e1d3a9;background:#fff8e7}.estimate-approval-record{display:flex;justify-content:space-between;gap:20px;margin-top:20px;padding:14px;border:1px solid #b9d0c2;background:#edf5ef}.estimate-approval-record span,.estimate-approval-record strong{display:block}.estimate-approval-record span{font-size:9px;text-transform:uppercase}.estimate-approval-record img{max-width:260px;max-height:90px;object-fit:contain}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:50px}.signatures div{border-top:1px solid #17231e;padding-top:5px;font-size:9px}@media print{body{padding:0}}</style></head><body>${brand.header}<h1>Work order ${escapeHtml(order.id)}</h1><div class="meta"><div><span>Customer</span><b>${escapeHtml(order.customer)}</b><br>${escapeHtml(order.phone || "")}</div><div><span>Vehicle</span><b>${escapeHtml(order.vehicle)}</b><br>VIN ${escapeHtml(order.vin || "Not provided")}</div></div><div class="concern"><b>Customer complaint</b><p>${escapeHtml(order.complaint || "")}</p></div><h2>Labor assignments</h2><table><thead><tr><th>Labor line</th><th>Technician</th><th>Hours</th><th>Rate</th><th>Line total</th></tr></thead><tbody>${laborRows || `<tr><td colspan="5">No labor lines.</td></tr>`}</tbody></table><h2>Parts</h2><table><thead><tr><th>Part</th><th>Quantity</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${partRows || `<tr><td colspan="4">No parts.</td></tr>`}</tbody></table><div class="totals"><div><span>Parts</span><b>${money4(estimate.parts)}</b></div><div><span>Labor</span><b>${money4(estimate.labor)}</b></div><div><span>Shop supplies</span><b>${money4(supplies)}</b></div><div><span>Discount</span><b>-${money4(estimate.discountAmount || 0)}</b></div><div><span>Tax</span><b>${money4(estimate.tax)}</b></div><div class="total"><span>Total</span><b>${money4(estimate.total)}</b></div></div>${estimate.exclusions?.length ? `<div class="notes"><b>Not included / pending</b><ul>${estimate.exclusions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}${approvalMarkup}<div class="signatures"><div>Service writer / date</div><div>Technician / date</div></div><script>window.addEventListener('load',()=>window.print())<\/script></body></html>`);
-    win.document.close();
+    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(order.id)} job card</title><style>${brand.style}body{font:12px/1.45 system-ui,sans-serif;max-width:920px;margin:auto;padding:24px;color:#17231e}h2{margin:20px 0 7px;color:var(--brand);font-size:16px;text-transform:uppercase}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}.meta div,.concern{padding:10px;border:1px solid #d9dedb}.meta span{display:block;color:#64726b;font-size:9px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d9dedb;text-align:left;vertical-align:top}th{background:#eef3f0;font-size:9px;text-transform:uppercase}td small{display:block;margin-top:3px;color:#59665f}.totals{width:360px;margin:18px 0 0 auto}.totals div{display:flex;justify-content:space-between;padding:4px}.totals .total{margin-top:5px;border-top:2px solid #17231e;font-size:16px;font-weight:800}.notes{margin-top:18px;padding:10px;border:1px solid #e1d3a9;background:#fff8e7}.estimate-approval-record{display:flex;justify-content:space-between;gap:20px;margin-top:20px;padding:14px;border:1px solid #b9d0c2;background:#edf5ef}.estimate-approval-record span,.estimate-approval-record strong{display:block}.estimate-approval-record span{font-size:9px;text-transform:uppercase}.estimate-approval-record img{max-width:260px;max-height:90px;object-fit:contain}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:50px}.signatures div{border-top:1px solid #17231e;padding-top:5px;font-size:9px}@media print{body{padding:0}}</style></head><body>${brand.header}<h1>Work order ${escapeHtml(order.id)}</h1><div class="meta"><div><span>Customer</span><b>${escapeHtml(order.customer)}</b><br>${escapeHtml(order.phone || "")}</div><div><span>Vehicle</span><b>${escapeHtml(order.vehicle)}</b><br>VIN ${escapeHtml(order.vin || "Not provided")}</div></div><div class="concern"><b>Customer complaint</b><p>${escapeHtml(order.complaint || "")}</p></div><h2>Labor assignments</h2><table><thead><tr><th>Labor line</th><th>Technician</th><th>Hours</th><th>Rate</th><th>Line total</th></tr></thead><tbody>${laborRows || `<tr><td colspan="5">No labor lines.</td></tr>`}</tbody></table><h2>Parts</h2><table><thead><tr><th>Part</th><th>Quantity</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${partRows || `<tr><td colspan="4">No parts.</td></tr>`}</tbody></table><div class="totals"><div><span>Parts</span><b>${money4(estimate.parts)}</b></div><div><span>Labor</span><b>${money4(estimate.labor)}</b></div><div><span>Shop supplies</span><b>${money4(supplies)}</b></div><div><span>Discount</span><b>-${money4(estimate.discountAmount || 0)}</b></div><div><span>Tax</span><b>${money4(estimate.tax)}</b></div><div class="total"><span>Total</span><b>${money4(estimate.total)}</b></div></div>${estimate.exclusions?.length ? `<div class="notes"><b>Not included / pending</b><ul>${estimate.exclusions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}${approvalMarkup}<div class="signatures"><div>Service writer / date</div><div>Technician / date</div></div></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the job card", autoPrint: true });
   }
   function jobWorkflowSteps(order, invoice) {
     const approval = !order.estimateRevisionPending && (order.estimateApproval?.status === "approved" || ["approved", "in_progress", "waiting_parts", "completed", "invoiced"].includes(order.status));
@@ -12222,6 +12348,7 @@ ${catRows}
       init_payments();
       init_card_terminal();
       init_help_menu();
+      init_print_document();
       init_technician_assignment();
       init_intake_wizard();
       init_work_order_editor();
@@ -12676,13 +12803,7 @@ ${catRows}
         const itemRows = invoicePrintLineItems(invoice).map((item) => `<tr><td>${escapeHtml(item.type === "fee" ? "Fee" : item.type === "part" ? "Part" : "Labor")}</td><td><b>${escapeHtml(item.description)}</b><small>${escapeHtml(item.detail)}</small></td><td>${money4(item.amount)}</td></tr>`).join("");
         const fallbackRow = `<tr><td>Summary</td><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money4(breakdown.subtotal)}</td></tr>`;
         const paymentRows = paymentRecords().filter((payment) => payment.invoiceNumber === invoice.number).map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${escapeHtml(payment.reference || "")}</td><td>${money4(Number(payment.amount || 0))}</td></tr>`).join("");
-        const win = window.open("", "_blank", "noopener");
-        if (!win) {
-          toast("Allow pop-ups to print the invoice");
-          return;
-        }
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
-        win.document.close();
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print invoice</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the invoice", autoPrint: true });
       };
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
@@ -12708,26 +12829,16 @@ ${catRows}
         });
       };
       printCustomerStatement = function(name) {
-        const invoices2 = state.invoices.filter((invoice) => invoice.customer === name), payments2 = paymentRecords().filter((payment) => payment.customer === name), balance = customerBalance(name), profile = shopProfile(), brand = printableBrand(profile), invoiceRows = invoices2.map((invoice) => `<tr><td>${escapeHtml(invoice.number)}</td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.status || "")}</td><td>${money4(invoice.amount)}</td><td>${money4(invoiceBalance(invoice))}</td></tr>`).join(""), paymentRows = payments2.map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${money4(Number(payment.amount || 0))}</td><td>${escapeHtml(payment.invoiceNumber || "")}</td></tr>`).join(""), win = window.open("", "_blank", "noopener");
-        if (!win) {
-          toast("Allow pop-ups to print the statement");
-          return;
-        }
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(name)} statement</title><style>${brand.style}body{font:12px/1.6 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.total{margin-top:18px;padding:12px;border-top:4px solid var(--brand);font-size:16px;text-align:right}</style></head><body>${brand.header}<h2>Customer Statement: ${escapeHtml(name)}</h2><p>Generated ${escapeHtml((/* @__PURE__ */ new Date()).toLocaleDateString())}</p><h3>Invoices</h3><table><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invoiceRows || `<tr><td colspan="5">No invoices.</td></tr>`}</tbody></table><h3>Payments</h3><table><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${paymentRows || `<tr><td colspan="4">No payments.</td></tr>`}</tbody></table><p class="total">Account Balance: ${money4(balance)}</p><button type="button" onclick="window.print()">Print statement</button></body></html>`);
-        win.document.close();
+        const invoices2 = state.invoices.filter((invoice) => invoice.customer === name), payments2 = paymentRecords().filter((payment) => payment.customer === name), balance = customerBalance(name), profile = shopProfile(), brand = printableBrand(profile), invoiceRows = invoices2.map((invoice) => `<tr><td>${escapeHtml(invoice.number)}</td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.status || "")}</td><td>${money4(invoice.amount)}</td><td>${money4(invoiceBalance(invoice))}</td></tr>`).join(""), paymentRows = payments2.map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${money4(Number(payment.amount || 0))}</td><td>${escapeHtml(payment.invoiceNumber || "")}</td></tr>`).join("");
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(name)} statement</title><style>${brand.style}body{font:12px/1.6 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.total{margin-top:18px;padding:12px;border-top:4px solid var(--brand);font-size:16px;text-align:right}</style></head><body>${brand.header}<h2>Customer Statement: ${escapeHtml(name)}</h2><p>Generated ${escapeHtml((/* @__PURE__ */ new Date()).toLocaleDateString())}</p><h3>Invoices</h3><table><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invoiceRows || `<tr><td colspan="5">No invoices.</td></tr>`}</tbody></table><h3>Payments</h3><table><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${paymentRows || `<tr><td colspan="4">No payments.</td></tr>`}</tbody></table><p class="total">Account Balance: ${money4(balance)}</p><button type="button">Print statement</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the statement", autoPrint: true });
       };
       printInspectionReport = function(inspection) {
         if (inspection?.catalogId) {
           printCatalogInspection(catalogInspectionApp(), inspection);
           return;
         }
-        const profile = shopProfile(), brand = printableBrand(profile), counts = (inspection.items || []).reduce((total, item) => (total[item.status] = (total[item.status] || 0) + 1, total), {}), itemRows = (inspection.items || []).map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.status === "not_checked" ? "Not checked" : item.status || "")}</td><td>${escapeHtml(item.note || "")}</td></tr>`).join(""), damage = (inspection.damageZones || []).map(escapeHtml).join(", "), approvalRows = (inspection.approvalHistory || []).map((entry) => `<tr><td>${escapeHtml(entry.status)}</td><td>${escapeHtml(entry.actorName || "")}</td><td>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</td><td>${escapeHtml(entry.note || "")}</td></tr>`).join(""), photos = (inspection.photoKeys || []).map((key) => `<img src="${escapeHtml(`${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}`)}" alt="Inspection photo"/>`).join(""), win = window.open("", "_blank", "noopener");
-        if (!win) {
-          toast("Allow pop-ups to print the inspection");
-          return;
-        }
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} \xB7 <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} \xB7 <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damage ? `<p><b>Damage zones:</b> ${damage}</p>` : ""}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${inspection.recommendations ? `<h3>Recommendations</h3><p>${escapeHtml(inspection.recommendations)}</p>` : ""}${photos ? `<h3>Photos</h3><div class="photos">${photos}</div>` : ""}${approvalRows ? `<h3>Approval history</h3><table><thead><tr><th>Decision</th><th>By</th><th>Date</th><th>Note</th></tr></thead><tbody>${approvalRows}</tbody></table>` : ""}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print inspection</button></body></html>`);
-        win.document.close();
+        const profile = shopProfile(), brand = printableBrand(profile), counts = (inspection.items || []).reduce((total, item) => (total[item.status] = (total[item.status] || 0) + 1, total), {}), itemRows = (inspection.items || []).map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.status === "not_checked" ? "Not checked" : item.status || "")}</td><td>${escapeHtml(item.note || "")}</td></tr>`).join(""), damage = (inspection.damageZones || []).map(escapeHtml).join(", "), approvalRows = (inspection.approvalHistory || []).map((entry) => `<tr><td>${escapeHtml(entry.status)}</td><td>${escapeHtml(entry.actorName || "")}</td><td>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</td><td>${escapeHtml(entry.note || "")}</td></tr>`).join(""), photos = (inspection.photoKeys || []).map((key) => `<img src="${escapeHtml(`${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}`)}" alt="Inspection photo"/>`).join("");
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} \xB7 <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} \xB7 <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damage ? `<p><b>Damage zones:</b> ${damage}</p>` : ""}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${inspection.recommendations ? `<h3>Recommendations</h3><p>${escapeHtml(inspection.recommendations)}</p>` : ""}${photos ? `<h3>Photos</h3><div class="photos">${photos}</div>` : ""}${approvalRows ? `<h3>Approval history</h3><table><thead><tr><th>Decision</th><th>By</th><th>Date</th><th>Note</th></tr></thead><tbody>${approvalRows}</tbody></table>` : ""}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print inspection</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the inspection", autoPrint: true });
       };
       updateOrderWithInvoiceCore = updateOrderInApi;
       updateOrderInApi = async function(record, options) {
