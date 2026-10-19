@@ -5963,15 +5963,16 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     if (!value2 || value2.replace(/\s/g, "") === String(command).toUpperCase().replace(/\s/g, "") || /^(SEARCHING|BUS INIT|STOPPED|OK\b|ELM327|AT\b)/.test(value2)) {
       return [];
     }
+    const numbered = /^\s*\d+\s*:\s*/.test(value2);
     value2 = value2.replace(/^\s*\d+\s*:\s*/, "");
     let header = false;
-    if (/^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value2.replace(/\s/g, ""))) {
+    if (!numbered && /^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value2.replace(/\s/g, ""))) {
       const compact = value2.replace(/\s/g, "");
       value2 = compact.slice(compact.startsWith("18") ? 8 : 3);
       header = true;
     }
     let parts = value2.match(/[0-9A-F]+/g) || [];
-    if (!header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
+    if (!numbered && !header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
       parts.shift();
       header = true;
     }
@@ -5981,6 +5982,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       parts = parts.flatMap((part) => part.length === 2 ? [part] : part.length % 2 === 0 ? part.match(/../g) || [] : []);
     }
     let bytes = parts.map((part) => parseInt(part, 16)).filter(Number.isFinite);
+    if (numbered) return bytes;
     if (header && bytes.length && bytes[0] <= 15) bytes.shift();
     if (bytes[0] >= 16 && bytes[0] <= 31) bytes = bytes.slice(2);
     else if (bytes[0] >= 32 && bytes[0] <= 47) bytes = bytes.slice(1);

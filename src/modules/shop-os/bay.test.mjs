@@ -146,6 +146,7 @@ test("live ELM327 OBD-II parser decodes VIN, monitor status, PIDs, and mode 03/0
 
   assert.deepEqual(parseElmModeDtcs("43 02 04 20 03 00", 0x03), ["P0420", "P0300"]);
   assert.deepEqual(parseElmModeDtcs("43010420", 0x03), ["P0420"]);
+  assert.deepEqual(parseElmModeDtcs("00C\r0:430501000200\r1:10001100120000", 0x03), ["P0100", "P0200", "P1000", "P1100", "P1200"]);
   assert.deepEqual(parseElmModeDtcs("47 01 01 71", 0x07), ["P0171"]);
   assert.deepEqual(parseElmModeDtcs("47010171", 0x07), ["P0171"]);
 
