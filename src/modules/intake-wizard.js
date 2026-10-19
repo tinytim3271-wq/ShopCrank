@@ -321,15 +321,18 @@ export function findIntakeCustomer(customers = [], draft = {}) {
   )) || null;
 }
 
-export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
+export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [], customer = null } = {}) {
   const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
   const approval = draft.estimate?.approval || 'pending';
   const status = approval === 'approved' ? 'approved' : 'estimate';
   const assigned = applyAssignments({ id }, draft.assignments || [], users);
+  const missingPhotos = missingRequiredPhotos(draft);
   return {
     id,
-    customer: customerDisplayName(draft),
-    phone: String(draft.customer?.phone || '').trim(),
+    customerId: customer?.id || '',
+    customer: String(customer?.name || '').trim() || customerDisplayName(draft),
+    phone: String(customer?.phone || draft.customer?.phone || '').trim(),
+    email: String(customer?.email || draft.customer?.email || '').trim(),
     vehicle: vehicleLabel(draft) || 'Vehicle pending',
     vin: String(draft.vehicle?.vin || '').trim().toUpperCase() || 'VIN pending',
     complaint: String(draft.concern?.description || '').trim() || 'Customer concern pending',
@@ -362,6 +365,8 @@ export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, us
       diagnosis: draft.diagnosis,
       disclaimer: INTAKE_DISCLAIMER,
       approval,
+      photosWaived: missingPhotos.length > 0 && draft.photosWaived === true,
+      missingPhotos,
     },
   };
 }
@@ -381,7 +386,8 @@ export function canConvertIntake(draft = {}) {
   const problems = [];
   if (missingCustomerFields(draft).length) problems.push('Customer name, phone, and email are required.');
   if (missingVehicleFields(draft).length) problems.push('Enter a VIN or the year, make, and model.');
-  if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(', ')}.`);
+  const missingPhotos = missingRequiredPhotos(draft);
+  if (missingPhotos.length && draft.photosWaived !== true) problems.push(`Required photos: ${missingPhotos.join(', ')}. Add them on the Photos step, or tick "Convert without the required photos" below.`);
   if (draft.estimate?.approval === 'denied') problems.push('This estimate was denied. Update the approval before creating the work order.');
   return { ok: problems.length === 0, problems };
 }
@@ -481,7 +487,9 @@ function reviewStep(draft, users) {
   }).join('')}`;
   return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml(customerDisplayName(draft) || 'Missing')}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml(vehicleLabel(draft) || draft.vehicle.vin || 'Missing')}</dd></div><div><dt>Concern</dt><dd>${escapeHtml(draft.concern.description || 'Missing')}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options('primary')}</select></label><label>Secondary technician<select name="assign-secondary">${options('secondary')}</select></label><label>Apprentice<select name="assign-apprentice">${options('apprentice')}</select></label></div>
+${missingRequiredPhotos(draft).length ? `<label class="intake-waiver"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? 'checked' : ''}/> Convert without the required photos (${escapeHtml(missingRequiredPhotos(draft).join(', '))}). The work order notes they are missing.</label>` : ''}
 ${check.ok ? '' : `<div class="import-errors">${check.problems.map(problem => `<span>${escapeHtml(problem)}</span>`).join('')}</div>`}
+${draft.convertError ? `<div class="import-errors"><span>Could not create the work order: ${escapeHtml(draft.convertError)}</span></div>` : ''}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
 }
 
@@ -550,6 +558,7 @@ function readForm(draft, form) {
     next.estimate.approval = data.approval || 'pending';
   }
   if (step === 'review') {
+    next.photosWaived = Boolean(form.querySelector('[name="photosWaived"]')?.checked);
     next.assignments = ['primary', 'secondary', 'apprentice'].flatMap(role => {
       const employeeId = data[`assign-${role}`];
       if (!employeeId) return [];
@@ -616,11 +625,23 @@ export function mountIntakeWizard(host, {
       if (form) current = readForm(current, form);
       const check = canConvertIntake(current);
       if (!check.ok) {
+        current.convertError = '';
         persist('blocked');
         paint();
+        host.querySelector('.import-errors')?.scrollIntoView?.({ block: 'nearest' });
         return;
       }
-      await onConvert?.(current);
+      const button = host.querySelector('#intake-convert');
+      if (button) { button.disabled = true; button.textContent = 'Creating work order...'; }
+      try {
+        current.convertError = '';
+        await onConvert?.(current);
+      } catch (error) {
+        current.convertError = error?.message || 'The work order could not be saved. Your intake is still saved on this device.';
+        persist('convert-failed');
+        paint();
+        host.querySelector('.import-errors')?.scrollIntoView?.({ block: 'nearest' });
+      }
     });
     host.querySelector('#intake-decode')?.addEventListener('click', async () => {
       if (form) current = readForm(current, form);
