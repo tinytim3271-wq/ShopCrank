@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: node --test scripts/provision-shopcrank-com.test.mjs
 
   provision:
@@ -50,7 +50,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Check Cloudflare credentials
         id: creds
         env:

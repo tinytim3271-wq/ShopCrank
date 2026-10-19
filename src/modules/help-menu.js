@@ -229,7 +229,7 @@ export const HELP_TOPICS = [
     ],
     limits: [
       'Plate lookup and Carfax stay off until those providers are connected.',
-      'AutoZone Pro ordering needs a saved login on this screen.',
+      'AutoZone Pro ordering opens AutoZone Pro; each user signs in with their own AutoZone Pro user.',
     ],
     keywords: ['shopops', 'vehicles', 'inventory', 'parts', 'inspections'],
   },
@@ -256,16 +256,16 @@ export const HELP_TOPICS = [
     route: 'obd',
     roles: FLOOR,
     title: 'OBD bay',
-    summary: 'Shop-bay OBD tools tied to a repair order when the bay simulator or host is available.',
+    summary: 'Live SAE J1979 OBD-II diagnostics over a J2534 Pass-Thru VCI or ELM327 serial adapter tied to a repair order.',
     steps: [
-      'Select the work order for the vehicle in the bay.',
-      'Run the scan the bay supports and copy codes into the RO notes.',
-      'Verify safety-critical findings before releasing the vehicle.',
+      'Connect your J2534 Pass-Thru VCI or USB/Bluetooth ELM327 adapter with the vehicle ignition ON.',
+      'Select the work order for the vehicle in the bay and click Read vehicle to pull the VIN, stored/pending/permanent trouble codes, and live engine PIDs.',
+      'Copy scan findings into the RO notes or send trouble codes to the AI workbench.',
     ],
     limits: [
-      'Simulated bay results are not a substitute for a live tool on a customer vehicle.',
+      'Clearing trouble codes (Mode 04) also resets freeze-frame data and readiness monitors.',
     ],
-    keywords: ['obd', 'codes', 'scan', 'bay'],
+    keywords: ['obd', 'codes', 'scan', 'bay', 'j2534', 'elm327'],
   },
   {
     id: 'keys',

@@ -19,7 +19,7 @@ export function withOptimisticConcurrencyHeaders(options = {}, expectedUpdatedAt
 export function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
   const method = String(options.method || 'GET').toUpperCase();
   const isEntityMutation = path.startsWith('/entities/') && ['POST', 'PUT', 'DELETE'].includes(method);
-  const containsSensitiveEndpoint = path === '/agentphone/configure';
+  const containsSensitiveEndpoint = path === '/agentphone/configure' || path === '/voice/grok/configure';
   const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !containsSensitiveEndpoint;
   if (!queueable) return { path, options, queueable: false };
   let body = null;

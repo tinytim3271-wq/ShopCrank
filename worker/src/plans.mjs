@@ -1,5 +1,8 @@
 /** Commercial catalog. Public prices stay off the founding invite. */
 
+/** Free trial length for public signup and founding claims. */
+export const PUBLIC_TRIAL_DAYS = 14;
+
 export const PUBLIC_PLANS = [
   {
     id: 'solo',

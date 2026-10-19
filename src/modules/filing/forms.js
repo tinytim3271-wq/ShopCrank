@@ -2,6 +2,7 @@
  * Printable W-2 and 1099-NEC form layouts for employee / IRS Copy B style filing.
  * Opens a print window; user can Save as PDF from the browser print dialog.
  */
+import { openPrintDocument } from '../print-document.js';
 
 function money(n) {
   return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
@@ -16,9 +17,7 @@ function esc(s) {
 }
 
 function printHtml(title, body) {
-  const win = window.open('', '_blank', 'noopener');
-  if (!win) return false;
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  return openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
 @page{size:letter;margin:.4in}
 body{font:11px/1.35 Arial,Helvetica,sans-serif;color:#111;margin:0;padding:12px}
@@ -33,9 +32,7 @@ h1{font-size:16px;margin:0 0 8px}
 .notice{margin-top:14px;padding:8px;border:1px solid #999;background:#f7f7f7;font-size:9px}
 @media print{button{display:none}}
 button{margin-top:12px;padding:8px 14px}
-</style></head><body>${body}<button type="button" onclick="window.print()">Print / Save as PDF</button></body></html>`);
-  win.document.close();
-  return true;
+</style></head><body>${body}<button type="button">Print / Save as PDF</button></body></html>`, { autoPrint: true });
 }
 
 /**

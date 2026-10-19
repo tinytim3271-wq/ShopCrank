@@ -11,11 +11,13 @@
 import { escapeHtml, escapeAttr } from '../shared/html.js';
 
 let conversationHistory = [];
+let lastInteractionId = null;
 let isVoiceRecording = false;
 let mediaRecorder = null;
 let audioStream = null;
 let audioChunks = [];
 let speechSynthUtterance = null;
+let activeTtsAudio = null;
 let isSpeaking = false;
 let voiceOutputEnabled = true;
 let isModalOpen = false;
@@ -139,21 +141,60 @@ function renderMessageItem(msg) {
 }
 
 /**
- * Text-to-speech speak function
+ * Text-to-speech speak function (Gemini 3.8 TTS with Web Speech API fallback)
  */
-function speakText(text) {
-  if (!voiceOutputEnabled || !('speechSynthesis' in window)) return;
+async function speakText(text) {
+  if (!voiceOutputEnabled) return;
+  const cleanSpeech = String(text || '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[*_#`~]/g, '')
+    .slice(0, 600);
+  if (!cleanSpeech.trim()) return;
+
+  stopSpeaking();
+
+  if (typeof window.Audio === 'function' && typeof fetch === 'function') {
+    try {
+      const ttsRes = await fetch('/api/ai/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: cleanSpeech,
+          model: 'gemini-3.8-flash-tts',
+          voice: 'Kore',
+          style: 'cheerful and friendly',
+        }),
+      });
+      if (ttsRes && ttsRes.ok) {
+        const ttsPayload = await ttsRes.json().catch(() => null);
+        if (ttsPayload?.audio) {
+          const mime = ttsPayload.mimeType || 'audio/wav';
+          activeTtsAudio = new window.Audio(`data:${mime};base64,${ttsPayload.audio}`);
+          isSpeaking = true;
+          updateVoicePlayButton(true);
+          activeTtsAudio.onended = () => {
+            isSpeaking = false;
+            updateVoicePlayButton(false);
+          };
+          activeTtsAudio.onerror = () => {
+            isSpeaking = false;
+            updateVoicePlayButton(false);
+          };
+          await activeTtsAudio.play();
+          return;
+        }
+      }
+    } catch {
+      // Fall back to browser speechSynthesis below
+    }
+  }
+
+  if (!('speechSynthesis' in window)) return;
   try {
     window.speechSynthesis.cancel();
-    // Clean markdown or technical noise for smoother speech
-    const cleanSpeech = text
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/[*_#`~]/g, '')
-      .slice(0, 450);
-
     const UtteranceClass = window.SpeechSynthesisUtterance;
     if (!UtteranceClass) return;
-    speechSynthUtterance = new UtteranceClass(cleanSpeech);
+    speechSynthUtterance = new UtteranceClass(cleanSpeech.slice(0, 450));
     speechSynthUtterance.rate = 1.05;
     speechSynthUtterance.pitch = 1.0;
     speechSynthUtterance.onstart = () => {
@@ -179,6 +220,15 @@ export function isAssistantSpeaking() {
 }
 
 function stopSpeaking() {
+  if (activeTtsAudio) {
+    try {
+      activeTtsAudio.pause();
+      activeTtsAudio.currentTime = 0;
+    } catch {
+      // Ignore audio pause errors
+    }
+    activeTtsAudio = null;
+  }
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
@@ -365,10 +415,14 @@ async function handleSendMessage(text) {
         message: trimmed,
         history: historyPayload,
         context: shopContext,
+        ...(lastInteractionId ? { previousInteractionId: lastInteractionId } : {}),
       }),
     });
 
     const data = await response.json();
+    if (data.interactionId) {
+      lastInteractionId = data.interactionId;
+    }
     const answer = data.message || data.content || 'I completed the request.';
 
     conversationHistory.push({

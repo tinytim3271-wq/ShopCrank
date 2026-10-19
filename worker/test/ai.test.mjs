@@ -7,6 +7,7 @@ import {
   MECHPRO_SYSTEM_PROMPT,
   calculateTextCost,
   executeGroundingTool,
+  extractStructuredShopForm,
   loadShopPricing,
   prepareEstimateWorkOrderDraft,
   readAudioWithinLimit,
@@ -14,6 +15,7 @@ import {
   selectAnthropicModel,
   selectTextProvider,
   shouldEscalateToOpus,
+  synthesizeGeminiSpeech,
   transcribeDeepgramAudio,
 } from '../src/ai.mjs';
 import { AiChatSession } from '../src/chat-session.mjs';
@@ -599,4 +601,120 @@ test('Workers AI usage is never priced with Anthropic rates', () => {
     calculateTextCost({ ANTHROPIC_SONNET_INPUT_USD_PER_MTOK: '3', ANTHROPIC_SONNET_OUTPUT_USD_PER_MTOK: '15' }, 'workers-ai', 1000, 1000),
     { providerCostUsd: null, billedUsd: null },
   );
+});
+
+test('Gemini Interactions API supports server-side state via previousInteractionId', async () => {
+  const GEMINI_KEY = 'AIzaSyGeminiKeyForTests1234567890abcd';
+  const calls = [];
+  const env = {
+    AI_ENABLED: '1',
+    GEMINI_API_KEY: GEMINI_KEY,
+    AI_TEXT_PROVIDER: 'gemini',
+    GEMINI_USE_INTERACTIONS: '1',
+  };
+  const fetcher = async (url, init = {}) => {
+    const body = JSON.parse(init.body || '{}');
+    calls.push({ url: String(url), body });
+    const turn = calls.length;
+    return Response.json({
+      id: `inter_${turn}`,
+      output_text: turn === 1 ? 'Noted 2 dogs.' : 'There are 8 paws in your house.',
+      usage: { total_input_tokens: 10, total_output_tokens: 6 },
+    });
+  };
+
+  const turn1 = await runAnthropicTurn(env, {
+    shopId: 'shop-a',
+    message: 'I have 2 dogs in my house.',
+    fetcher,
+  });
+  assert.equal(turn1.model, 'gemini-3.8-flash');
+  assert.equal(turn1.interactionId, 'inter_1');
+  assert.equal(turn1.text, 'Noted 2 dogs.');
+  assert.equal(calls[0].body.previous_interaction_id, undefined);
+
+  const turn2 = await runAnthropicTurn(env, {
+    shopId: 'shop-a',
+    message: 'How many paws are in my house?',
+    previousInteractionId: turn1.interactionId,
+    fetcher,
+  });
+  assert.equal(turn2.interactionId, 'inter_2');
+  assert.equal(turn2.text, 'There are 8 paws in your house.');
+  assert.equal(calls[1].body.previous_interaction_id, 'inter_1');
+});
+
+test('synthesizeGeminiSpeech calls Gemini 3.8 Flash TTS with speech_metadata and voice config', async () => {
+  const GEMINI_KEY = 'AIzaSyGeminiKeyForTests1234567890abcd';
+  let capturedBody = null;
+  const result = await synthesizeGeminiSpeech({
+    AI_ENABLED: '1',
+    GEMINI_API_KEY: GEMINI_KEY,
+  }, {
+    text: 'Have a wonderful day!',
+    voice: 'Kore',
+    style: 'cheerful and friendly',
+    fetcher: async (url, init) => {
+      assert.equal(String(url), 'https://generativelanguage.googleapis.com/v1beta/interactions');
+      capturedBody = JSON.parse(init.body);
+      return Response.json({
+        id: 'tts_1',
+        steps: [{
+          type: 'model_output',
+          content: [{ type: 'audio', data: 'UklGRg==', mime_type: 'audio/wav' }],
+        }],
+      });
+    },
+  });
+  assert.equal(capturedBody.model, 'gemini-3.8-flash-tts');
+  assert.equal(capturedBody.response_format.type, 'audio');
+  assert.deepEqual(capturedBody.generation_config.speech_config, [{ voice: 'Kore' }]);
+  assert.equal(capturedBody.input[0].content[0].annotations[0].style, 'cheerful and friendly');
+  assert.equal(result.audio, 'UklGRg==');
+  assert.equal(result.mimeType, 'audio/wav');
+});
+
+test('extractStructuredShopForm returns strictly validated 3 Cs and line items JSON', async () => {
+  const GEMINI_KEY = 'AIzaSyGeminiKeyForTests1234567890abcd';
+  let capturedPayload = null;
+  const result = await extractStructuredShopForm({
+    AI_ENABLED: '1',
+    GEMINI_API_KEY: GEMINI_KEY,
+  }, {
+    shopId: 'shop-a',
+    formType: 'diagnostic_3c',
+    notes: 'Cust states brake pedal feels spongy and grinding from RR. RR caliper seized, metal to metal on rotor. Book time 2.2 hrs.',
+    fetcher: async (_url, init) => {
+      capturedPayload = JSON.parse(init.body);
+      return Response.json({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({
+                complaint: 'Customer reports brake pedal feels soft/spongy accompanied by a grinding noise from the right rear.',
+                cause: 'Right rear brake caliper seized, resulting in metal-to-metal contact with the rotor.',
+                correction: 'Replace rear brake rotors and pads, replace right rear caliper, and bleed brake system.',
+                severity: 'CRITICAL',
+                dtc_codes: ['C0037'],
+                module_system: 'ABS',
+                suggested_line_items: [
+                  { item_type: 'PART', description: 'Rear Ceramic Brake Pad Set', quantity: 1.0, estimated_hours: null },
+                  { item_type: 'LABOR', description: 'Rear Brake Replacement & System Bleed', quantity: 1.0, estimated_hours: 2.2 },
+                ],
+              }),
+            }],
+          },
+        }],
+        usageMetadata: { promptTokenCount: 40, candidatesTokenCount: 60 },
+      });
+    },
+  });
+
+  assert.equal(capturedPayload.generationConfig.responseMimeType, 'application/json');
+  assert.equal(capturedPayload.generationConfig.temperature, 0.1);
+  assert.equal(result.formType, 'diagnostic_3c');
+  assert.equal(result.data.severity, 'CRITICAL');
+  assert.deepEqual(result.data.dtc_codes, ['C0037']);
+  assert.equal(result.data.suggested_line_items.length, 2);
+  assert.equal(result.data.suggested_line_items[1].estimated_hours, 2.2);
 });

@@ -4,6 +4,7 @@ import {
   customerInspectionDocument,
   shopInspection,
 } from '../modules/shop-inspections.js';
+import { openPrintDocument } from '../modules/print-document.js';
 
 function readItems(form, catalog, existing) {
   const source = existing?.items?.length ? existing.items : null;
@@ -175,13 +176,11 @@ export function printCatalogInspection(app, inspection) {
   const profile = app.shopProfile();
   const brand = app.printableBrand(profile);
   const body = customerInspectionDocument(inspection, profile, app.escapeHtml, app.cloudflareConfig.apiUrl);
-  const win = window.open('', '_blank', 'noopener');
-  if (!win) {
-    app.toast('Allow pop-ups to print the inspection');
-    return;
-  }
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button" onclick="window.print()">Print inspection</button></body></html>`);
-  win.document.close();
+  openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
+    toast: app.toast,
+    blockedMessage: 'Allow pop-ups to print the inspection',
+    autoPrint: true,
+  });
 }
 
 export function presentCatalogInspection(app, existing = null, catalogId = existing?.catalogId) {

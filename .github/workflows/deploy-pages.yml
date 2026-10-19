@@ -23,7 +23,8 @@ jobs:
           node-version: 24
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild esbuild
       - run: npm run build:web && npm run stage:pages
 
       - name: Deploy to Cloudflare Pages

@@ -54,9 +54,27 @@ async function makeDevice() {
 }
 
 test('end to end through the Worker: request, approve, issue, live key authorize, revoke', async () => {
-  const { call } = await setup();
+  const { env, call } = await setup();
   const connect = await call('owner@hpa.test', 'POST', '/diagnostics/autoauth', { accountId: 'hpa', apiKey: 'test-key' });
   assert.equal(connect.status, 201);
+
+  // Live immobilizer authorize also requires a signed repair order for this VIN
+  // (checked before the vehicle-key license unlock).
+  const orderNow = new Date().toISOString();
+  const orderJson = JSON.stringify({
+    id: 'RO-1',
+    vin: VIN,
+    estimateApproval: {
+      status: 'approved',
+      typed: true,
+      authorizationName: 'Dana Owner',
+      signedAt: orderNow,
+    },
+  }).replace(/'/g, "''");
+  env.DB.sqlite.exec(`
+    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES ('high-plains', 'orders', 'RO-1', '${orderJson}', 'test', '${orderNow}', '${orderNow}');
+  `);
 
   const submitted = await call('owner@hpa.test', 'POST', '/licenses/requests', {
     contactName: 'Dana', businessName: 'High Plains Auto', proofDetails: 'NASTF VSP LSID-4471', requestedDevices: 1,

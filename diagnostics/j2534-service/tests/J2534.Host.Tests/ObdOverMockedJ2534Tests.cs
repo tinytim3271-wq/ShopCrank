@@ -178,6 +178,8 @@ public sealed class ObdOverMockedJ2534Tests
     public async Task LiveKeyProgrammingIsRefusedWithoutAVerifiedProcedureAndWritesNothing()
     {
         var (session, dll) = Connect();
+        // Opt out of the shipped Stellantis catalog so unsupported platforms stay fail-closed.
+        session.KeyCatalog = KeyProcedureCatalog.Default;
         var support = await Call(session, "keyProcedureSupport", new { procedure = "add_key" });
         Assert.Null(support.Error);
         var supportJson = Json(support.Result!);
@@ -188,6 +190,18 @@ public sealed class ObdOverMockedJ2534Tests
         Assert.Contains("does not have a verified live add key procedure", attempt.Error?.Message);
         foreach (var write in new byte[] { 0x10, 0x27, 0x2E, 0x31, 0x34, 0x36 })
             Assert.False(dll.SentService(write), $"service 0x{write:X2} must not be sent");
+    }
+
+    [Fact]
+    public async Task StellantisLiveCatalogReportsAddKeySupportedForCoveredWmi()
+    {
+        var (session, _) = Connect();
+        var support = await Call(session, "keyProcedureSupport", new { procedure = "add_key" });
+        Assert.Null(support.Error);
+        var supportJson = Json(support.Result!);
+        Assert.True(supportJson.GetProperty("supported").GetBoolean());
+        Assert.Equal(Vin, supportJson.GetProperty("vin").GetString());
+        Assert.False(supportJson.GetProperty("requiresVehiclePin").GetBoolean());
     }
 
     [Fact]
@@ -204,9 +218,19 @@ public sealed class ObdOverMockedJ2534Tests
         ]);
         await Assert.ThrowsAsync<InvalidOperationException>(() => session.ProgramKeyAsync("add_key", Vin, null));
         Assert.Equal(0, executed);
+
+        // Live programming requires an open immobilizer SecurityAccess session first.
+        session.SecurityAccessProviderOverride = new SimulatorSecurityAccessProvider();
+        dll.Responder = request => request switch
+        {
+            [0x10, 0x02] => [[0x50, 0x02]],
+            [0x27, 0x03] => [[0x67, 0x03, 0xA1, 0xB2, 0xC3, 0xD4]],
+            [0x27, 0x04, ..] => [[0x67, 0x04]],
+            _ => Car(request),
+        };
+        await session.SecurityAccessAsync("immobilizer");
         await session.ProgramKeyAsync("add_key", Vin, "4321");
         Assert.Equal(1, executed);
-        Assert.False(dll.SentService(0x27));
     }
 
     [Fact]

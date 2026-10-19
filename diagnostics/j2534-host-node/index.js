@@ -60,6 +60,8 @@ function handleRequest(req) {
   }
 }
 
+const KEY_PROCEDURES = ['add_key', 'all_keys_lost', 'program_remote', 'erase_keys'];
+
 function dispatch(method, params) {
   switch (method) {
     case 'ping':
@@ -82,9 +84,13 @@ function dispatch(method, params) {
       return clearDtcs(params);
     case 'securityAccess':
       return securityAccess(params);
-    case 'programKey':
     case 'addKey':
       return programKey('add_key', params);
+    case 'programKey': {
+      const procedure = String(params.procedure || 'add_key').trim();
+      if (!KEY_PROCEDURES.includes(procedure)) throw new Error(`Unsupported key procedure: ${procedure}`);
+      return programKey(procedure, params);
+    }
     case 'allKeysLost':
       return programKey('all_keys_lost', params);
     case 'programRemote':
@@ -118,8 +124,6 @@ function dispatch(method, params) {
       throw new Error(`Unknown method: ${method}`);
   }
 }
-
-const KEY_PROCEDURES = ['add_key', 'all_keys_lost', 'program_remote', 'erase_keys'];
 
 /** Generic OBD-II snapshot from the bench simulator (same shape as the .NET host). */
 function obdSnapshot() {

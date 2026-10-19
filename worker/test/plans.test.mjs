@@ -5,6 +5,7 @@ import {
   FOUNDING_PLANS,
   LIVE_DIAGNOSTICS_PLANS,
   PUBLIC_PLANS,
+  PUBLIC_TRIAL_DAYS,
   claimDecision,
   dollars,
   hasPlanCapability,
@@ -16,6 +17,10 @@ import {
 const migration = readFileSync(new URL('../migrations/0004_launch_plans.sql', import.meta.url), 'utf8');
 const pricing = readFileSync(new URL('../../public/pricing/index.html', import.meta.url), 'utf8');
 const founding = readFileSync(new URL('../../public/founding/index.html', import.meta.url), 'utf8');
+
+test('public trial length is fourteen days', () => {
+  assert.equal(PUBLIC_TRIAL_DAYS, 14);
+});
 
 test('public prices are the locked launch catalog and match the pricing page', () => {
   assert.deepEqual(PUBLIC_PLANS.map(plan => [plan.id, plan.monthlyPriceCents, plan.aiPhoneMinutes, plan.diagnosticsMode]), [
