@@ -25,7 +25,7 @@ public static class RpcDispatcher
                 "clearDtcs" => await ClearDtcs(request.Params, session),
                 "securityAccess" => await session.SecurityAccessAsync(GetString(request.Params, "scope") ?? "immobilizer"),
                 "addKey" => await ProgramKey("add_key", request.Params, session),
-                "programKey" => await ProgramKey("add_key", request.Params, session),
+                "programKey" => await ProgramKey(GetString(request.Params, "procedure") ?? "add_key", request.Params, session),
                 "allKeysLost" => await ProgramKey("all_keys_lost", request.Params, session),
                 "programRemote" => await ProgramKey("program_remote", request.Params, session),
                 "eraseKeys" => await ProgramKey("erase_keys", request.Params, session),

@@ -60,16 +60,14 @@ test("key programming rejects bypass and cloning requests", () => {
   );
 });
 
-test("live programmer mode fails closed", () => {
-  assert.throws(
-    () => assertKeyJobAllowed({
-      order,
-      estimates: signed,
-      operation: "program",
-      liveProgrammer: true,
-    }),
-    /licensed programmer/i,
-  );
+test("all keys lost is an allowed operation on a signed repair order", () => {
+  assert.doesNotThrow(() => assertKeyJobAllowed({
+    order,
+    estimates: signed,
+    operation: "all_keys_lost",
+    notes: "Customer lost every key",
+  }));
+  assert.equal(liveKeyProcedureFor("all_keys_lost"), "all_keys_lost");
 });
 
 test("simulator results are labeled and do not claim a live tool", () => {

@@ -454,6 +454,10 @@ async function oemProgram(procedure) {
   const mode = diag.programmingMode === 'live' ? 'live' : 'simulate';
   if (!confirm(`${procedureLabel(procedure)} (${mode} mode)? Confirm the VIN and vehicle state before continuing.`)) return;
   const { token, vin } = await oemAuthorize(procedure);
+  // Immobilizer procedures require SecurityAccess before RoutineControl.
+  if (!diag.security?.scope || diag.security.scope !== 'immobilizer') {
+    await oemUnlockSecurity('immobilizer');
+  }
   const result = await oemDiagApi().programKey({ procedure, authorizationToken: token });
   await oemAudit({ kind: 'diagnostics.program', procedure, vin, mode, keys: result.keys, remotes: result.remotes });
   saveOemDiagState({

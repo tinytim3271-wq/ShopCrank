@@ -71,6 +71,7 @@ public sealed class DiagnosticSession : IDisposable
         _adapterId = adapterId;
         _protocol = "ISO15765";
         _simulator = false;
+        _keyCatalog = KeyProcedureCatalog.StellantisVerified;
         _device = device;
         _device.Connect(PassThruApi.PROTOCOL_ISO15765, baudRate);
         _adapterName = adapterName;
@@ -205,8 +206,17 @@ public sealed class DiagnosticSession : IDisposable
     readonly List<object> _keys = [];
     readonly List<object> _remotes = [];
 
-    ISecurityAccessProvider SecurityProvider() =>
-        _simulator ? new SimulatorSecurityAccessProvider() : new FailClosedSecurityAccessProvider();
+    /// <summary>Test seam: override the live/simulator SecurityAccess provider.</summary>
+    public ISecurityAccessProvider? SecurityAccessProviderOverride { get; set; }
+
+    ISecurityAccessProvider SecurityProvider()
+    {
+        if (SecurityAccessProviderOverride is not null) return SecurityAccessProviderOverride;
+        if (_simulator) return new SimulatorSecurityAccessProvider();
+        var apiBase = Environment.GetEnvironmentVariable("SHOP_CRANK_API_BASE");
+        if (!string.IsNullOrWhiteSpace(apiBase)) return new CloudSecurityAccessProvider();
+        return new FailClosedSecurityAccessProvider();
+    }
 
     static int SecurityLevel(string scope) => scope == "flash" ? 0x05 : 0x03;
 
@@ -252,12 +262,14 @@ public sealed class DiagnosticSession : IDisposable
         if (!_simulator)
         {
             // Live writes only run a procedure that has been verified for this vehicle.
-            // Nothing is sent to the vehicle when there isn't one.
+            // Nothing is sent to the vehicle when there isn't one. SecurityAccess
+            // (AutoAuth) must already be open for the immobilizer scope.
             var support = _keyCatalog.Evaluate(procedure, vin, simulator: false);
             if (!support.Supported) throw new NotSupportedException(support.Reason);
             var definition = _keyCatalog.Find(procedure, vin)!;
             if (definition.RequiresVehiclePin && string.IsNullOrWhiteSpace(pin))
                 throw new InvalidOperationException("This vehicle asks for its immobilizer PIN for this procedure. Enter the PIN to continue, or stop here. ShopCrank does not work around vehicle security.");
+            RequireSecurity("immobilizer");
             Log("tx", "-", "", $"Live key procedure start: {procedure} for {vin}");
             var result = definition.Execute!(new KeyProcedureContext { Vin = vin, Procedure = procedure, Pin = pin, Log = Log, Channel = CreateChannel() });
             Log("rx", "-", "", $"Live key procedure finished: {procedure}");

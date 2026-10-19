@@ -4,11 +4,16 @@ export const KEY_OPERATIONS = [
   { id: "identify", label: "Identify" },
   { id: "add", label: "Add key" },
   { id: "program", label: "Program remote" },
+  { id: "all_keys_lost", label: "All keys lost" },
   { id: "test", label: "Test" },
 ];
 
 const FORBIDDEN_KEY_REQUEST = /bypass|clon(?:e|ing)|rolling[-\s]?code|stolen|immobilizer\s+bypass|\bfrp\b/i;
-const LIVE_KEY_PROCEDURES = Object.freeze({ add: 'add_key', program: 'program_remote' });
+const LIVE_KEY_PROCEDURES = Object.freeze({
+  add: "add_key",
+  program: "program_remote",
+  all_keys_lost: "all_keys_lost",
+});
 
 export const ELM_SNAPSHOT_PIDS = [
   { pid: 0x04, code: '0x04', command: '0104', name: 'Calculated engine load', unit: '%' },
@@ -37,19 +42,16 @@ export function isRoAuthorizedForKeys(order, estimates = []) {
   return Boolean(signedEstimateForOrder(order, estimates));
 }
 
-export function assertKeyJobAllowed({ order, estimates, operation, notes, liveProgrammer = false }) {
+export function assertKeyJobAllowed({ order, estimates, operation, notes }) {
   const request = `${operation || ""} ${notes || ""}`;
   if (FORBIDDEN_KEY_REQUEST.test(request)) {
     throw new Error("That request is not available. Key work stays on a signed repair order.");
   }
   if (!KEY_OPERATIONS.some((item) => item.id === operation)) {
-    throw new Error("Choose identify, add, program, or test.");
+    throw new Error("Choose identify, add, program, all keys lost, or test.");
   }
   if (!isRoAuthorizedForKeys(order, estimates)) {
     throw new Error("A signed repair order for this vehicle is required before key programming.");
-  }
-  if (liveProgrammer) {
-    throw new Error("Live programming needs a shop-licensed programmer. This session stays on the simulator.");
   }
 }
 
