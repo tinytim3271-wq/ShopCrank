@@ -15,7 +15,7 @@ export function orderingPanelHtml(account = {}, { canSave = false, escapeHtml, i
   const connected = Boolean(account.connected && account.username);
   const status = connected
     ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>AutoZone Pro account on file</strong><span>${escapeHtml(account.username)}</span></div></div>`
-    : `<div class="messaging-status idle">${icon('lock', 17)}<div><strong>No AutoZone Pro account on file</strong><span>An owner or admin can record the shop account. Shop Crank encrypts it and never shows or copies the password to anyone.</span></div></div>`;
+    : `<div class="messaging-status idle">${icon('lock', 17)}<div><strong>No AutoZone Pro account on file</strong><span>An owner or admin can record the shop account. ShopCrank encrypts it and never shows or copies the password to anyone.</span></div></div>`;
   const form = canSave
     ? `<form id="autozone-login-form" class="form-grid">
         <label>Username<input name="username" autocomplete="off" value="${escapeHtml(account.username || '')}" required /></label>
@@ -28,7 +28,7 @@ export function orderingPanelHtml(account = {}, { canSave = false, escapeHtml, i
     ? '<p class="login-error">Sign in to the shop account to see the AutoZone Pro account status.</p>'
     : '';
   return `<section class="settings-panel autozone-ordering">
-      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open AutoZone Pro from Shop Crank and sign in with your own AutoZone Pro user. Saved passwords are never displayed or copied to the browser. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon('shopping-cart', 20)}</div>
+      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open AutoZone Pro from ShopCrank and sign in with your own AutoZone Pro user. Saved passwords are never displayed or copied to the browser. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon('shopping-cart', 20)}</div>
       ${status}
       ${unavailable}
       ${form}

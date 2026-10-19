@@ -1,4 +1,4 @@
-/** Canonical public hostname for Shop Crank on Cloudflare. */
+/** Canonical public hostname for ShopCrank on Cloudflare. */
 export const CANONICAL_HOST = 'www.shopcrank.com';
 export const APEX_HOST = 'shopcrank.com';
 export const CANONICAL_ORIGIN = 'https://www.shopcrank.com';

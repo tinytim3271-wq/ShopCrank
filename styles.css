@@ -244,5 +244,6 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 }
 
 
-.brand-mark{background-image:url('./assets/shopcrank-logo.jpg');background-size:cover;background-position:center;background-repeat:no-repeat}
+.brand-mark{background-image:url('./assets/brand/logo-icon-192.png');background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#074251;border-radius:8px;box-shadow:0 6px 16px rgba(7,66,81,.25)}
 .brand-mark svg{display:none}
+.brand-name{text-transform:none;letter-spacing:.02em}

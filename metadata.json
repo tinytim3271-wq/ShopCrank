@@ -1,6 +1,6 @@
 {
-  "name": "MechPro",
-  "description": "MechPro dispatch board, scheduling, and work order management for mobile and in-shop mechanic service.",
+  "name": "ShopCrank",
+  "description": "ShopCrank dispatch board, scheduling, and work order management for mobile and in-shop mechanic service. Run the shop. Read the car. Get paid.",
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

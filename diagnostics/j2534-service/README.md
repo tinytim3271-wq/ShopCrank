@@ -1,11 +1,11 @@
 # J2534 Pass-Thru Host (Windows)
 
-Native JSON-RPC named-pipe service used by the Shop Crank Windows desktop app for Dodge/Ram OEM diagnostics.
+Native JSON-RPC named-pipe service used by the ShopCrank Windows desktop app for Dodge/Ram OEM diagnostics.
 
 ## Architecture
 
 ```
-Shop Crank Electron → J2534.Host.exe (named pipe) → vendor J2534 DLL → USB adapter → vehicle CAN
+ShopCrank Electron → J2534.Host.exe (named pipe) → vendor J2534 DLL → USB adapter → vehicle CAN
 ```
 
 ## Build (Windows or Linux cross-publish)
@@ -29,7 +29,7 @@ Output: `publish/win-x64/J2534.Host.exe` (self-contained .NET 8, win-x64).
 
 ### Windows registry
 
-Shop Crank scans these locations (most USB adapters, including TOPDON RLink X7, register under **WOW6432Node** on 64-bit Windows):
+ShopCrank scans these locations (most USB adapters, including TOPDON RLink X7, register under **WOW6432Node** on 64-bit Windows):
 
 - `HKLM\SOFTWARE\PassThruSupport.04.04`
 - `HKLM\SOFTWARE\WOW6432Node\PassThruSupport.04.04`
@@ -40,7 +40,7 @@ Shop Crank scans these locations (most USB adapters, including TOPDON RLink X7, 
 
 1. Install **RLink Platform** from TOPDON and register/activate the device.
 2. In RLink Platform: **Drivers → Driver Download** — install the J2534 driver for your target OEM stack.
-3. Plug the X7 into USB, wait for Windows to finish installing, then click **Refresh** in Shop Crank OEM Diagnostics.
+3. Plug the X7 into USB, wait for Windows to finish installing, then click **Refresh** in ShopCrank OEM Diagnostics.
 
 ## Simulator
 

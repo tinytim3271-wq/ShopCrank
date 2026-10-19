@@ -2,16 +2,16 @@ SHOP_CRANK FLASH-DRIVE DEMO — WINDOWS x64
 
 1. Extract the ENTIRE ShopCrank-Demo-USB ZIP into a folder on a writable USB drive.
    Do not run inside the ZIP or copy just the EXE.
-2. Double-click "Shop Crank Demo.exe". No install, Node.js, or internet is required.
+2. Double-click "ShopCrank Demo.exe". No install, Node.js, or internet is required.
 3. Create a local sign-in using a demo email, name, and a password you choose.
    This is not a cloud account; no email is sent.
 4. Explore the sample customers, dispatch, work orders, estimates and invoices.
-5. Close Shop Crank before safely ejecting the drive. Wait for the app to fully exit.
+5. Close ShopCrank before safely ejecting the drive. Wait for the app to fully exit.
 
 Your local account, shop records, browser profile and logs are stored in the
-"Shop Crank Demo Data" folder beside the EXE, so they travel with this copy.
-Back up the entire folder. To reset the demo, close Shop Crank and delete only
-"Shop Crank Demo Data". Do not use real customer data: this is a demo, and shop
+"ShopCrank Demo Data" folder beside the EXE, so they travel with this copy.
+Back up the entire folder. To reset the demo, close ShopCrank and delete only
+"ShopCrank Demo Data". Do not use real customer data: this is a demo, and shop
 records on the drive are not encrypted.
 
 Cloud sync, Google/email login, cloud AI, online payments, messaging, and live
@@ -21,5 +21,5 @@ connected production work with authorized services and licensed hardware.
 
 Use a Windows 10/11 x64 computer and a writable drive. Organization policies
 may block unsigned executables; ask your administrator rather than disabling
-security protections. If the drive is read-only, Shop Crank stops with an error
+security protections. If the drive is read-only, ShopCrank stops with an error
 instead of silently saving your demo to the computer.

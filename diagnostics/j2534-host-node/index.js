@@ -1,5 +1,5 @@
 /**
- * Shop Crank J2534 diagnostic host — Node.js implementation with simulator mode.
+ * ShopCrank J2534 diagnostic host — Node.js implementation with simulator mode.
  * On Windows with a real J2534 DLL, the C# J2534.Host.exe is preferred.
  * This host provides the same JSON-RPC named-pipe protocol for development and CI.
  */
@@ -129,7 +129,7 @@ function obdSnapshot() {
   return {
     source: 'simulator',
     simulator: true,
-    adapterName: 'Shop Crank CAN Simulator',
+    adapterName: 'ShopCrank CAN Simulator',
     protocol: 'ISO 15765-4 CAN 11-bit 500 kbps (engine ECU 0x7E0)',
     responded: true,
     vin: SIM_VIN,
@@ -199,8 +199,8 @@ function listAdapters() {
   }
   adapters.push({
     id: 'simulator',
-    name: 'Shop Crank CAN Simulator (Dodge/Ram bench)',
-    vendor: 'Shop Crank',
+    name: 'ShopCrank CAN Simulator (Dodge/Ram bench)',
+    vendor: 'ShopCrank',
     dllPath: 'builtin-simulator',
     protocols: ['CAN', 'ISO15765'],
     firmware: '1.0.0-sim',
@@ -550,7 +550,7 @@ function identifyVehicle() {
     networkTopology,
     identifiedAt: new Date().toISOString(),
     adapterInfo: {
-      vendor: sim.adapterId === 'simulator' ? 'Shop Crank' : 'J2534',
+      vendor: sim.adapterId === 'simulator' ? 'ShopCrank' : 'J2534',
       dll: sim.adapterId === 'simulator' ? 'builtin-simulator' : sim.adapterId,
       firmware: '1.0.0',
     },

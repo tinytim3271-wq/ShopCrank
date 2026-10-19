@@ -35,6 +35,18 @@ import {
 import { createPartstechHandlers } from './integrations/partstech.mjs';
 import { createLaborGuideHandlers } from './integrations/labor-guide.mjs';
 import { createQuickbooksHandlers } from './integrations/quickbooks.mjs';
+import {
+  buildGeneralImportCsv,
+  enrichStripePaymentIds,
+  getRevrecConfig,
+  listEnabledRevrecShops,
+  markRevrecExport,
+  resolveStripeChargeId,
+  revrecStatusPayload,
+  s3Configured,
+  uploadDailyCsv,
+  upsertRevrecConfig,
+} from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
 import { storeUploadedFile } from './routes/files.mjs';
 import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, signedRepairOrderForKeys } from './diagnostics.mjs';
@@ -366,11 +378,11 @@ async function resolveContext(request, env) {
     };
   }
   let claims;
-  if (env.DEV_AUTH_BYPASS === '1' && request.headers.get('X-MechPro-Dev-Email')) {
+  if (env.DEV_AUTH_BYPASS === '1' && (request.headers.get('X-ShopCrank-Dev-Email') || request.headers.get('X-MechPro-Dev-Email'))) {
     claims = {
-      sub: request.headers.get('X-MechPro-Dev-Sub') || 'local-development',
-      email: request.headers.get('X-MechPro-Dev-Email'),
-      name: request.headers.get('X-MechPro-Dev-Name') || 'Local Developer',
+      sub: (request.headers.get('X-ShopCrank-Dev-Sub') || request.headers.get('X-MechPro-Dev-Sub')) || 'local-development',
+      email: (request.headers.get('X-ShopCrank-Dev-Email') || request.headers.get('X-MechPro-Dev-Email')),
+      name: (request.headers.get('X-ShopCrank-Dev-Name') || request.headers.get('X-MechPro-Dev-Name')) || 'Local Developer',
     };
   } else {
     const token = request.headers.get('Cf-Access-Jwt-Assertion');
@@ -389,7 +401,7 @@ async function resolveContext(request, env) {
   const mapping = await env.DB.prepare(
     'SELECT shop_id, role, name, enabled FROM users WHERE email = ? COLLATE NOCASE',
   ).bind(email).first();
-  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active Shop Crank account is mapped to this Access identity');
+  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active ShopCrank account is mapped to this Access identity');
   return {
     shopId: mapping.shop_id,
     role: mapping.role,
@@ -418,7 +430,7 @@ async function requirePlanCapability(context, env, capability) {
     'SELECT plan_id, status, current_period_end FROM subscriptions WHERE shop_id = ? LIMIT 1',
   ).bind(context.shopId).first();
   if (!hasPlanCapability(subscription, capability)) {
-    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active Shop Crank plan`);
+    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active ShopCrank plan`);
   }
 }
 
@@ -1327,8 +1339,8 @@ async function aiAnswer(env, shopId, message, history = [], options = {}) {
 async function handleAssistant(request, env, context, analytics) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
-  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'Shop Crank AI chat sessions are not configured');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'ShopCrank AI is not enabled');
+  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'ShopCrank AI chat sessions are not configured');
   await enforceAiRateLimit(env, context);
   const body = await requestJson(request);
   const message = String(body.message || '').trim().slice(0, 4000);
@@ -1351,8 +1363,11 @@ async function runAssistantSessionTurn(env, context, body, message) {
   const id = env.AI_CHAT_SESSIONS.idFromName(`${context.shopId}:${sessionId}`);
   const stub = env.AI_CHAT_SESSIONS.get(id);
   const headers = new Headers({ 'Content-Type': 'application/json' });
+  headers.set('X-ShopCrank-Shop-Id', context.shopId);
   headers.set('X-MechPro-Shop-Id', context.shopId);
+  headers.set('X-ShopCrank-User-Id', context.userId);
   headers.set('X-MechPro-User-Id', context.userId);
+  headers.set('X-ShopCrank-Ai-Session-Id', sessionId);
   headers.set('X-MechPro-Ai-Session-Id', sessionId);
   const sessionResponse = await stub.fetch(new Request('https://ai-session.internal/turn', {
     method: 'POST',
@@ -1402,13 +1417,15 @@ async function handleVoiceSession(request, env, context) {
     throw new HttpError(426, 'A WebSocket upgrade is required');
   }
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'ShopCrank AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
   await enforceAiRateLimit(env, context);
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
   const headers = new Headers(request.headers);
+  headers.set('X-ShopCrank-Shop-Id', context.shopId);
   headers.set('X-MechPro-Shop-Id', context.shopId);
+  headers.set('X-ShopCrank-User-Id', context.userId);
   headers.set('X-MechPro-User-Id', context.userId);
   headers.delete('Cookie');
   headers.delete('Cf-Access-Jwt-Assertion');
@@ -1735,6 +1752,171 @@ async function handlePaymentRecord(request, env, context, analytics) {
   return json(result, 201);
 }
 
+async function runRevenueRecognitionExport(env, shopId, {
+  upload = true,
+  currency,
+} = {}) {
+  const config = await getRevrecConfig(env, shopId);
+  const exportCurrency = String(currency || config.currency || 'usd').toLowerCase();
+  const [payments, invoices, orders] = await Promise.all([
+    listEntities(env, shopId, 'payments'),
+    listEntities(env, shopId, 'invoices'),
+    listEntities(env, shopId, 'orders'),
+  ]);
+  const stripeKey = await getIntegrationSecret(env, shopId, 'stripe-secret-key');
+  const chargeCache = new Map();
+  const resolveChargeId = async (payment) => {
+    const cacheKey = String(payment.id || payment.reference || '');
+    if (chargeCache.has(cacheKey)) return chargeCache.get(cacheKey);
+    let chargeId = payment.stripeChargeId || null;
+    if (!chargeId && stripeKey) {
+      try {
+        chargeId = await resolveStripeChargeId(stripeKey, payment);
+      } catch {
+        chargeId = null;
+      }
+    }
+    chargeCache.set(cacheKey, chargeId);
+    return chargeId;
+  };
+
+  // Pre-resolve Stripe charge ids so CSV build stays sync.
+  const enrichedPayments = [];
+  for (const payment of payments || []) {
+    if (payment?.stripeChargeId) {
+      enrichedPayments.push(payment);
+      continue;
+    }
+    const chargeId = await resolveChargeId(payment);
+    enrichedPayments.push(chargeId ? { ...payment, stripeChargeId: chargeId } : payment);
+  }
+
+  const csv = buildGeneralImportCsv(enrichedPayments, invoices, orders, {
+    currency: exportCurrency,
+    resolveChargeId: payment => payment.stripeChargeId || null,
+  });
+
+  if (!upload) {
+    return { csv, objectKey: null, rowCount: csv.trim().split('\n').length - 1 };
+  }
+
+  try {
+    const uploaded = await uploadDailyCsv(env, shopId, csv);
+    await markRevrecExport(env, shopId, { objectKey: uploaded.objectKey });
+    return { csv, objectKey: uploaded.objectKey, rowCount: csv.trim().split('\n').length - 1 };
+  } catch (error) {
+    await markRevrecExport(env, shopId, { error: error.message || String(error) });
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(error.status || 502, error.message || 'Revenue Recognition export failed');
+  }
+}
+
+async function handleRevenueRecognitionStatus(request, env, context) {
+  if (request.method !== 'GET') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'owner', 'super_admin']);
+  const shopId = context.shopId;
+  if (!shopId) throw new HttpError(400, 'Shop context is required');
+  const [config, stripeKey] = await Promise.all([
+    getRevrecConfig(env, shopId),
+    getIntegrationSecret(env, shopId, 'stripe-secret-key'),
+  ]);
+  return json(revrecStatusPayload(config, {
+    stripeConfigured: Boolean(stripeKey),
+    s3Ready: s3Configured(env),
+    shopId,
+  }));
+}
+
+async function handleRevenueRecognitionConfigure(request, env, context) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'owner', 'super_admin']);
+  const shopId = context.shopId;
+  if (!shopId) throw new HttpError(400, 'Shop context is required');
+  const body = await requestJson(request);
+  const currency = body.currency != null ? String(body.currency).trim().toLowerCase() : undefined;
+  if (currency && !/^[a-z]{3}$/.test(currency)) {
+    throw new HttpError(400, 'currency must be a three-letter ISO code');
+  }
+  const config = await upsertRevrecConfig(env, shopId, {
+    enabled: body.enabled,
+    currency,
+  });
+  const stripeKey = await getIntegrationSecret(env, shopId, 'stripe-secret-key');
+  return json(revrecStatusPayload(config, {
+    stripeConfigured: Boolean(stripeKey),
+    s3Ready: s3Configured(env),
+    shopId,
+  }));
+}
+
+async function handleRevenueRecognitionExport(request, env, context) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'owner', 'super_admin']);
+  const shopId = context.shopId;
+  if (!shopId) throw new HttpError(400, 'Shop context is required');
+  if (!s3Configured(env)) {
+    throw new HttpError(503, 'Revenue Recognition S3 is not configured on the platform');
+  }
+  const result = await runRevenueRecognitionExport(env, shopId, { upload: true });
+  const config = await getRevrecConfig(env, shopId);
+  const stripeKey = await getIntegrationSecret(env, shopId, 'stripe-secret-key');
+  return json({
+    ...revrecStatusPayload(config, {
+      stripeConfigured: Boolean(stripeKey),
+      s3Ready: true,
+      shopId,
+    }),
+    exported: true,
+    rowCount: result.rowCount,
+    objectKey: result.objectKey,
+  });
+}
+
+async function handleRevenueRecognitionCsv(request, env, context) {
+  if (request.method !== 'GET') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['admin', 'owner', 'super_admin']);
+  const shopId = context.shopId;
+  if (!shopId) throw new HttpError(400, 'Shop context is required');
+  const result = await runRevenueRecognitionExport(env, shopId, { upload: false });
+  return new Response(result.csv, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="shopcrank-revrec-${shopId}.csv"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+async function runScheduledRevenueRecognitionExports(env) {
+  const shops = await listEnabledRevrecShops(env);
+  const results = [];
+  for (const shop of shops) {
+    const shopId = shop.shop_id;
+    try {
+      if (!s3Configured(env)) {
+        await markRevrecExport(env, shopId, { error: 'Revenue Recognition S3 is not configured on the platform' });
+        results.push({ shopId, ok: false, error: 's3_not_configured' });
+        continue;
+      }
+      const stripeKey = await getIntegrationSecret(env, shopId, 'stripe-secret-key');
+      if (!stripeKey) {
+        await markRevrecExport(env, shopId, { error: 'Shop Stripe account is not connected' });
+        results.push({ shopId, ok: false, error: 'stripe_not_configured' });
+        continue;
+      }
+      const exported = await runRevenueRecognitionExport(env, shopId, {
+        upload: true,
+        currency: shop.currency,
+      });
+      results.push({ shopId, ok: true, objectKey: exported.objectKey, rowCount: exported.rowCount });
+    } catch (error) {
+      results.push({ shopId, ok: false, error: error.message || String(error) });
+    }
+  }
+  return results;
+}
+
 function stripeWebhookUrlForShop(request, shopId) {
   const url = new URL(request.url);
   return `${url.origin}/api/payments/webhook/${encodeURIComponent(shopId)}`;
@@ -1833,6 +2015,8 @@ async function handleStripeWebhook(request, env, shopId, analytics) {
       const payments = await listPaymentsByInvoice(env, shopId, invoiceNumber);
       const amount = Number(session.amount_total || 0) / 100;
       if (amount <= 0 || amount > openInvoiceBalance(invoice.amount, payments)) throw new HttpError(400, 'Payment amount exceeds the invoice balance');
+      const stripeKey = await getIntegrationSecret(env, shopId, 'stripe-secret-key');
+      const stripeIds = await enrichStripePaymentIds(stripeKey, session);
       await recordPaymentToTarget(env, context, {
         targetType: 'invoice',
         targetId: invoiceNumber,
@@ -1841,6 +2025,8 @@ async function handleStripeWebhook(request, env, shopId, analytics) {
         receivedAt: new Date().toISOString(),
         reference: id,
         note: 'Stripe checkout payment',
+        ...(stripeIds.stripePaymentIntentId ? { stripePaymentIntentId: stripeIds.stripePaymentIntentId } : {}),
+        ...(stripeIds.stripeChargeId ? { stripeChargeId: stripeIds.stripeChargeId } : {}),
       }, { paymentId: id });
       capturePostHogEvent(env, { shopId, userId: `stripe-webhook:${shopId}` }, 'payment_completed', {
         amount,
@@ -2142,7 +2328,7 @@ function desktopHandoffPage(token) {
 <head>
   <meta charset="utf-8">
   <meta name="referrer" content="no-referrer">
-  <title>Return to Shop Crank</title>
+  <title>Return to ShopCrank</title>
   <style>
     body { font-family: "Segoe UI", sans-serif; background: #18252b; color: #f4f7f8; margin: 0; min-height: 100vh; display: grid; place-items: center; }
     main { max-width: 28rem; padding: 2rem; }
@@ -2153,8 +2339,8 @@ function desktopHandoffPage(token) {
 <body>
   <main>
     <h1>Google sign-in succeeded</h1>
-    <p>Open Shop Crank to finish signing in. If Windows asks which app to use, choose Shop Crank.</p>
-    <a href="${link}">Open Shop Crank</a>
+    <p>Open ShopCrank to finish signing in. If Windows asks which app to use, choose ShopCrank.</p>
+    <a href="${link}">Open ShopCrank</a>
   </main>
 </body>
 </html>`;
@@ -2955,6 +3141,10 @@ async function route(request, env, analytics) {
   if (path === '/payments/checkout-session') return handleCheckout(request, env, context, analytics);
   if (path === '/payments/stripe/status') return handleStripeStatus(request, env, context);
   if (path === '/payments/stripe/configure') return handleStripeConfigure(request, env, context, analytics);
+  if (path === '/revenue-recognition/status') return handleRevenueRecognitionStatus(request, env, context);
+  if (path === '/revenue-recognition/configure') return handleRevenueRecognitionConfigure(request, env, context);
+  if (path === '/revenue-recognition/export') return handleRevenueRecognitionExport(request, env, context);
+  if (path === '/revenue-recognition/export.csv') return handleRevenueRecognitionCsv(request, env, context);
   if (path === '/subscription/entitlement') return handleEntitlement(request, env, context);
   if (segments[0] === 'admin' && segments[1] === 'accounts') return handleAdmin(request, env, context, segments, analytics);
   throw new HttpError(404, 'Not found');
@@ -3004,6 +3194,23 @@ async function proxyPagesRequest(request, env) {
 }
 
 export default {
+  async scheduled(controller, env, executionCtx) {
+    const run = runScheduledRevenueRecognitionExports(env)
+      .then((results) => {
+        console.log(JSON.stringify({
+          message: 'revenue recognition export cron',
+          cron: controller?.cron || null,
+          shops: results.length,
+          ok: results.filter(item => item.ok).length,
+          failed: results.filter(item => !item.ok).length,
+        }));
+      })
+      .catch((error) => {
+        console.error('revenue recognition export cron failed', error);
+      });
+    if (executionCtx?.waitUntil) executionCtx.waitUntil(run);
+    else await run;
+  },
   async fetch(request, env, executionCtx) {
     const posthog = getPostHog(env);
     const analytics = {

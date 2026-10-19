@@ -20,7 +20,7 @@ test('phone-order snapshot resolves to the phone section and names the work orde
   assert.match(topic.title, /Phone order/i);
   assert.match(topic.summary, /RO-1040 · Ada · F-150/);
   assert.match(topic.summary, /Stripe/i);
-  assert.ok(topic.limits.some((line) => /Never paste a card number into a Shop Crank/i.test(line)));
+  assert.ok(topic.limits.some((line) => /Never paste a card number into a ShopCrank/i.test(line)));
 });
 
 test('office search for payroll returns nothing; admin and technician search return payroll', () => {
@@ -102,7 +102,7 @@ test('syncHelp leaves the panel open after the route changes', () => {
   resetHelpUi();
 });
 
-test('topic text has no seed-key procedure and does not tell the reader to type a card into Shop Crank', () => {
+test('topic text has no seed-key procedure and does not tell the reader to type a card into ShopCrank', () => {
   const keys = helpContext({ route: 'keys', role: 'technician' });
   const blob = `${keys.summary} ${keys.steps.join(' ')} ${keys.limits.join(' ')}`;
   assert.match(keys.limits.join(' '), /does not provide seed-key bypass/i);
@@ -111,6 +111,6 @@ test('topic text has no seed-key procedure and does not tell the reader to type 
   const phone = helpContext({ route: 'pos', role: 'office', subview: 'phone' });
   const phoneBlob = `${phone.summary} ${phone.steps.join(' ')} ${phone.limits.join(' ')}`;
   assert.match(phoneBlob, /Stripe/i);
-  assert.equal(/type the card (number )?into Shop Crank/i.test(phoneBlob), false);
-  assert.match(phoneBlob, /Never paste a card number into a Shop Crank/i);
+  assert.equal(/type the card (number )?into ShopCrank/i.test(phoneBlob), false);
+  assert.match(phoneBlob, /Never paste a card number into a ShopCrank/i);
 });

@@ -146,13 +146,13 @@ jobs:
               throw "$name smoke test failed: $($process.ExitCode)"
             }
           }
-          $exe = Join-Path $demo "Shop Crank Demo.exe"
+          $exe = Join-Path $demo "ShopCrank Demo.exe"
           Invoke-DemoSmokeTest $exe "USB Demo"
-          if (!(Test-Path (Join-Path $demo "Shop Crank Demo Data"))) { throw "Drive-local profile missing" }
+          if (!(Test-Path (Join-Path $demo "ShopCrank Demo Data"))) { throw "Drive-local profile missing" }
           # Run again after relocating the entire folder, as when the drive letter changes.
           $moved = Join-Path $env:RUNNER_TEMP "Moved USB Demo"
           Move-Item $demo $moved
-          Invoke-DemoSmokeTest (Join-Path $moved "Shop Crank Demo.exe") "Relocated USB Demo"
+          Invoke-DemoSmokeTest (Join-Path $moved "ShopCrank Demo.exe") "Relocated USB Demo"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: shopcrank-usb-demo
@@ -188,13 +188,13 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           TAG="desktop-v${VERSION}"
           REPO="${{ github.repository }}"
-          NOTES="Automated Windows build from ${GITHUB_SHA}. Includes the production installer/ZIP, the offline PC installer ShopCrank-Offline-Setup-${VERSION}.exe, plus ShopCrank-Demo-USB-${VERSION}.zip: extract the entire demo ZIP to a writable flash drive and run Shop Crank Demo.exe offline."
+          NOTES="Automated Windows build from ${GITHUB_SHA}. Includes the production installer/ZIP, the offline PC installer ShopCrank-Offline-Setup-${VERSION}.exe, plus ShopCrank-Demo-USB-${VERSION}.zip: extract the entire demo ZIP to a writable flash drive and run ShopCrank Demo.exe offline."
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/windows/*.exe dist/windows/*.zip --clobber --repo "$REPO"
           else
             gh release create "$TAG" dist/windows/*.exe dist/windows/*.zip \
               --repo "$REPO" \
-              --title "Shop Crank Desktop ${VERSION}" \
+              --title "ShopCrank Desktop ${VERSION}" \
               --notes "$NOTES"
           fi
 

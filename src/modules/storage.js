@@ -1,5 +1,5 @@
 /**
- * Shared storage helpers — single source of truth for Shop Crank local keys.
+ * Shared storage helpers — single source of truth for ShopCrank local keys.
  */
 import { storageKeys } from '../shared/config.js';
 
