@@ -72,7 +72,7 @@ async function main() {
     console.log(`  2. Add Authorized JavaScript origin: ${CANONICAL_ORIGIN}`);
     console.log(`  3. Add Authorized redirect URI:     ${EXPECTED_REDIRECT}`);
     console.log('  4. Save, wait ~1–5 minutes, re-run this script');
-    console.log('  5. Then: npm run deploy:worker  (wrangler.jsonc already points GOOGLE_REDIRECT_ORIGIN at ShopCrank)');
+    console.log('  5. Set GOOGLE_REDIRECT_ORIGIN to https://www.shopcrank.com in wrangler.jsonc, then npm run deploy:worker');
     process.exit(1);
   }
 
