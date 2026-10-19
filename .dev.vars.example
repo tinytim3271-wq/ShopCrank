@@ -7,6 +7,13 @@ INTEGRATION_ENCRYPTION_KEY=replace-with-a-long-random-value
 DIAGNOSTICS_CAPABILITY_SECRET=replace-with-a-different-random-value
 # Base64 DER PKCS#8 ECDSA P-256 private key for /api/diagnostics/authorize
 DIAGNOSTICS_SIGNING_PRIVATE_KEY=replace-with-base64-pkcs8-p256-private-key
+# Vehicle key licensing: HMAC-SHA256 key that signs license unlock tokens
+# (at least 32 characters; unlock fails closed without it). Worker-only, never
+# shipped to clients. Production: npx wrangler secret put LICENSE_TOKEN_SECRET
+# Changing it invalidates every outstanding unlock token.
+LICENSE_TOKEN_SECRET=replace-with-a-random-value-of-at-least-32-characters
+# The license admin console is limited to the platform owner emails in ACCESS_ADMIN_EMAILS.
+
 # Licensed AutoAuth seed→key unlock endpoint for live SecurityAccess.
 # POST JSON { provider, accountId, apiKey, vin, level, scope, seedBase64, shopId }
 # must return { keyBase64 }. Required for live immobilizer / programming unlocks.

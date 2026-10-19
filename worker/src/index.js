@@ -75,6 +75,7 @@ import {
   usageCostsForResult,
 } from './ai.mjs';
 import { handleShopAiSettings } from './shop-ai.mjs';
+import { handleLicenseAdmin, handleLicenses, isLicensePath, requireVehicleKeyUnlock, unlockLandingPage } from './licenses.mjs';
 import {
   handleGrokClientSecret,
   handleGrokToolCall,
@@ -244,7 +245,8 @@ function withCors(response, request, env) {
     headers.set('Vary', 'Origin');
   }
   headers.set('X-Content-Type-Options', 'nosniff');
-  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isLicensePath(new URL(request.url).pathname)) headers.set('Referrer-Policy', 'no-referrer');
+  else if (headers.get('Referrer-Policy') !== 'no-referrer') headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -1187,8 +1189,36 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
         }, 501);
       }
     }
+    // Live key programming also needs this device's vehicle-key license unlock,
+    // checked live against the license database on every job.
+    let vehicleKeyLicense = null;
+    if (mode === 'live' && spec.klass === 'immobilizer') {
+      const orderId = String(body.orderId || '').trim();
+      const order = orderId ? await getEntity(env, context.shopId, 'orders', orderId) : null;
+      const approval = normalizeEstimateApproval(order?.estimateApproval);
+      const signedOrder = order
+        && String(order.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === vin
+        && order.linesLockedAt
+        && approval?.status === 'approved'
+        && approval.type === 'signature'
+        && approval.authorizationName
+        && Number.isFinite(Date.parse(approval.signedAt))
+        ? approval
+        : null;
+      if (!signedOrder) {
+        return json({
+          authorized: false,
+          message: 'Live key programming needs a signed repair order whose VIN matches this vehicle.',
+        }, 403);
+      }
+      if (signedOrder.signatureKey) {
+        await verifyOrderApprovalSignature(env, context, signedOrder);
+      }
+      vehicleKeyLicense = await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
+    }
     const { token, payload } = await mintCapabilityToken(env, {
       procedure, vin, shopId: context.shopId, mode, actor: context.userId,
+      ...(vehicleKeyLicense ? { expiresAt: vehicleKeyLicense.expiresAt } : {}),
     });
     captureForContext(analytics, context, 'diagnostics_authorized', {
       procedure,
@@ -3355,6 +3385,7 @@ async function route(request, env, analytics) {
   }
   if (path === '/healthz') return json({ ok: true, service: HEALTHZ_SERVICE });
   if (segments[0] === 'founding') return handleFounding(request, env);
+  if (path === '/licenses/unlock' && request.method === 'GET') return unlockLandingPage();
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
   if (segments[0] === 'customer-documents') {
     return handleCustomerDocument(request, env, decodeURIComponent(segments[1] || ''));
@@ -3508,6 +3539,8 @@ async function route(request, env, analytics) {
   if (path === '/revenue-recognition/export.csv') return handleRevenueRecognitionCsv(request, env, context);
   if (path === '/subscription/entitlement') return handleEntitlement(request, env, context);
   if (segments[0] === 'admin' && segments[1] === 'accounts') return handleAdmin(request, env, context, segments, analytics);
+  if (segments[0] === 'admin' && segments[1] === 'licenses') return handleLicenseAdmin(request, env, context, segments);
+  if (segments[0] === 'licenses') return handleLicenses(request, env, context, segments);
   throw new HttpError(404, 'Not found');
 }
 

@@ -26,6 +26,12 @@ export default [
         setInterval: 'readonly',
         clearInterval: 'readonly',
         structuredClone: 'readonly',
+        crypto: 'readonly',
+        TextEncoder: 'readonly',
+        URLSearchParams: 'readonly',
+        atob: 'readonly',
+        btoa: 'readonly',
+        indexedDB: 'readonly',
       },
     },
     rules: {
@@ -43,6 +49,8 @@ export default [
         setTimeout: 'readonly',
         URL: 'readonly',
         structuredClone: 'readonly',
+        crypto: 'readonly',
+        Buffer: 'readonly',
       },
     },
     rules: {

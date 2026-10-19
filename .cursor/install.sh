@@ -49,6 +49,10 @@ DIAGNOSTICS_SIGNING_PRIVATE_KEY=$(grep -v -- '-----' "$DIAG_PRIV" | tr -d '\n')
 EOF
   echo "Created local .dev.vars for Worker development"
 fi
+if ! grep -q '^LICENSE_TOKEN_SECRET=' .dev.vars; then
+  echo "LICENSE_TOKEN_SECRET=$(openssl rand -hex 32)" >> .dev.vars
+  echo "Added a local LICENSE_TOKEN_SECRET to .dev.vars"
+fi
 
 # Apply D1 migrations to the local (miniflare) database used by `wrangler dev`.
 # If a previous local DB schema drifts from tracked migrations, reset local state
