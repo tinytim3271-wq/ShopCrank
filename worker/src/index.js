@@ -3550,11 +3550,28 @@ async function route(request, env, analytics) {
 async function servePublicDownload(request, env) {
   if (!['GET', 'HEAD'].includes(request.method)) return null;
   const key = publicDownloadObjectKey(new URL(request.url).pathname);
-  if (!key || !env.FILES) return null;
+  if (!key) return null;
+  if (!env.FILES) {
+    return new Response('Download storage is not configured.', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
   const object = request.method === 'HEAD'
     ? await env.FILES.head(key)
     : await env.FILES.get(key);
-  if (!object) return null;
+  // Never fall through to the HTML marketing site for missing installers —
+  // that looks like a "download" that opens a web page instead of a file.
+  if (!object) {
+    const name = key.split('/').pop();
+    return new Response(
+      `Installer not found: ${name}. The Android APK may be available; Windows builds publish from the windows-desktop GitHub Action into R2.`,
+      {
+        status: 404,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+      },
+    );
+  }
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set('ETag', object.httpEtag);
