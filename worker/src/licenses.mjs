@@ -77,7 +77,7 @@ function parseDeviceCount(value, fallback = 1) {
   return count;
 }
 
-const SENSITIVE_DETAIL_KEYS = /token|signature|secret|publickey/i;
+const SENSITIVE_DETAIL_KEYS = /^(?:token|unlockurl|signature|secret|publickey)$/i;
 
 export async function recordLicenseAudit(env, event, fields = {}, nowMs = Date.now()) {
   const detail = Object.fromEntries(Object.entries(fields.detail || {})

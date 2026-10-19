@@ -290,6 +290,17 @@ test('GET on the unlock link never redeems, and tokens never reach the audit log
   const serialized = JSON.stringify(await h.audit());
   assert.ok(!serialized.includes(token));
   assert.ok(!serialized.includes(token.split('.')[2]));
+  const issuedEvent = (await h.audit()).find(row => row.event === 'token.issued');
+  assert.deepEqual(JSON.parse(issuedEvent.detail_json), { exp: EXPIRY, tokenVersion: 1 });
+});
+
+test('audit details drop secrets passed by mistake but keep token versions', async () => {
+  const h = harness();
+  await (await import('../src/licenses.mjs')).recordLicenseAudit(h.env, 'test.event', {
+    detail: { token: 'sck1.a.b', signature: 'sig', publicKey: 'pk', unlockUrl: 'https://x/#token=a', tokenVersion: 4 },
+  });
+  const [row] = await h.audit();
+  assert.deepEqual(JSON.parse(row.detail_json), { tokenVersion: 4 });
 });
 
 test('live key-programming gate binds the device proof to the procedure and VIN', async () => {
