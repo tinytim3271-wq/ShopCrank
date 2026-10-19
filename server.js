@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import diagnosticsBridge from './desktop/diagnostics-bridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -111,6 +112,44 @@ app.post('/api/diagnostics/authorize', (req, res) => {
 
 app.post('/api/diagnostics/audit', (req, res) => {
   res.json({ ok: true });
+});
+
+const LOCAL_DIAGNOSTIC_RPC = {
+  listAdapters: () => diagnosticsBridge.listAdapters(),
+  autoDetectAndConnect: () => diagnosticsBridge.autoDetectAndConnect(),
+  connect: (params) => diagnosticsBridge.connect(params || {}),
+  disconnect: () => diagnosticsBridge.disconnect(),
+  getConnectionStatus: () => diagnosticsBridge.getConnectionStatus(),
+  readVin: () => diagnosticsBridge.readVin(),
+  identifyEcus: () => diagnosticsBridge.identifyEcus(),
+  readDtcs: () => diagnosticsBridge.readDtcs(),
+  clearDtcs: (params) => diagnosticsBridge.clearDtcs(params || {}),
+  securityAccess: (params) => diagnosticsBridge.securityAccess(params || {}),
+  programKey: (params) => diagnosticsBridge.programKey(params || {}),
+  codeModule: (params) => diagnosticsBridge.codeModule(params || {}),
+  bidirectionalControl: (params) => diagnosticsBridge.bidirectionalControl(params || {}),
+  flashModule: (params) => diagnosticsBridge.flashModule(params || {}),
+  startLiveLog: () => diagnosticsBridge.startLiveLog(),
+  stopLiveLog: () => diagnosticsBridge.stopLiveLog(),
+  pollLiveLog: (params) => diagnosticsBridge.pollLiveLog(params?.since ?? params ?? 0),
+  identifyVehicle: () => diagnosticsBridge.identifyVehicle(),
+  obdSnapshot: () => diagnosticsBridge.obdSnapshot(),
+  obdClearDtcs: (params) => diagnosticsBridge.obdClearDtcs(params || {}),
+  keyProcedureSupport: (params) => diagnosticsBridge.keyProcedureSupport(params || {}),
+};
+
+app.post('/api/diagnostics/j2534/:method', async (req, res) => {
+  const method = String(req.params.method || '').trim();
+  const handler = LOCAL_DIAGNOSTIC_RPC[method];
+  if (!handler) {
+    return res.status(404).json({ ok: false, error: `Unsupported diagnostic method: ${method}` });
+  }
+  try {
+    const result = await handler(req.body || {});
+    res.json({ ok: true, result });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message || 'Diagnostic operation failed' });
+  }
 });
 
 // Vehicle decode endpoint
