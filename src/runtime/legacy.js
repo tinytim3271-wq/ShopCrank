@@ -88,7 +88,7 @@ import {
   estimateFromAssistantDraft,
   workOrderDraftFromEstimate,
 } from '../modules/estimate-templates.js';
-import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, runElmObdSnapshot, signedEstimateForOrder, simulateKeyJob } from '../modules/shop-os/bay.js';
+import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, parseElmClearDtcs, runElmObdSnapshot, signedEstimateForOrder, simulateKeyJob } from '../modules/shop-os/bay.js';
 import {
   APPROVAL_CUSTOM_LABEL_MAX,
   APPROVAL_NOTE_MAX,
@@ -4402,7 +4402,11 @@ function ensureBrowserDiagnosticsClient() {
     const response = await fetch(`${cloudflareConfig.apiUrl}/diagnostics/j2534/${encodeURIComponent(method)}`, {
       method: "POST",
       credentials: "include",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-ShopCrank-Local-Client": "1",
+      },
       body: JSON.stringify(payload || {}),
     });
     const data = await response.json().catch(() => ({}));
@@ -4787,7 +4791,7 @@ function openObdClearConfirm() {
     const before = [...(snap.storedDtcs || []), ...(snap.pendingDtcs || [])];
     try {
       if (bayElmLive()) {
-        await elmCommand("04");
+        parseElmClearDtcs(await elmCommand("04"));
       } else {
         await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
       }
@@ -4988,7 +4992,8 @@ function bindShopOs() {
       .filter(r => r.value !== null && r.value !== undefined)
       .map(r => `${r.name}: ${r.value} ${r.unit || ""}`.trim())
       .join(", ");
-    const line = `OBD-II scan (${new Date(snap.readAt || Date.now()).toLocaleString()}, ${snap.adapterName || "adapter"})${snap.vin ? ` · VIN ${snap.vin}` : ""} · MIL ${snap.milOn ? "ON" : "OFF"} · Codes: ${codes.length ? codes.join(", ") : "none"}${pidSummary ? ` · PIDs: ${pidSummary}` : ""}`;
+    const mil = formatObdMilState(snap.milOn);
+    const line = `OBD-II scan (${new Date(snap.readAt || Date.now()).toLocaleString()}, ${snap.adapterName || "adapter"})${snap.vin ? ` · VIN ${snap.vin}` : ""} · MIL ${mil} · Codes: ${codes.length ? codes.join(", ") : "none"}${pidSummary ? ` · PIDs: ${pidSummary}` : ""}`;
     order.notes = `${order.notes || ""}\n${line}`.trim();
     save();
     await updateOrderInApi(order);

@@ -3277,6 +3277,25 @@
   });
 
   // src/modules/print-document.js
+  function resolveBaseHref(target) {
+    const candidate = String(target?.document?.baseURI || target?.location?.href || "").trim();
+    if (!candidate || /^(?:about|blob|data|javascript):/i.test(candidate)) return "";
+    return candidate;
+  }
+  function withBaseHref(html, target) {
+    const markup = String(html ?? "");
+    if (/<base\b/i.test(markup)) return markup;
+    const baseHref = resolveBaseHref(target);
+    if (!baseHref) return markup;
+    const baseTag = `<base href="${escapeHtml(baseHref)}">`;
+    if (/<head\b[^>]*>/i.test(markup)) {
+      return markup.replace(/<head\b[^>]*>/i, (match) => `${match}${baseTag}`);
+    }
+    if (/<html\b[^>]*>/i.test(markup)) {
+      return markup.replace(/<html\b[^>]*>/i, (match) => `${match}<head>${baseTag}</head>`);
+    }
+    return `${baseTag}${markup}`;
+  }
   function runPrint(win) {
     try {
       win.focus();
@@ -3396,7 +3415,7 @@
     const blockedMessage = options.blockedMessage || "Allow pop-ups to print";
     const autoPrint = options.autoPrint !== false;
     const schedule2 = options.schedule || ((fn) => setTimeout(fn, 0));
-    const markup = String(html ?? "");
+    const markup = withBaseHref(html, target);
     const blobAvailable = typeof target.Blob === "function" && typeof target.URL?.createObjectURL === "function";
     if (blobAvailable) {
       if (openBlobDocument(target, markup, schedule2, autoPrint)) return true;
@@ -3407,6 +3426,7 @@
   }
   var init_print_document = __esm({
     "src/modules/print-document.js"() {
+      init_html();
     }
   });
 
@@ -5951,7 +5971,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       header = true;
     }
     let parts = value2.match(/[0-9A-F]+/g) || [];
-    if (!header && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
+    if (!header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
       parts.shift();
       header = true;
     }
@@ -6018,6 +6038,20 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       }
     }
     return [...new Set(codes)];
+  }
+  function parseElmClearDtcs(raw) {
+    const parsed = parseElmPayload(raw, "04");
+    if (parsed.adapterError) throw new Error(`Adapter reported ${parsed.adapterError}`);
+    if (parsed.noData) throw new Error("Vehicle ECU returned NO DATA for Mode 04 clear codes");
+    const rejected = parsed.frames.find((frame) => frame[0] === 127 && frame[1] === 4);
+    if (rejected) {
+      const nrc = (rejected[2] ?? 0).toString(16).padStart(2, "0").toUpperCase();
+      throw new Error(`Vehicle ECU rejected Mode 04 clear codes (NRC 0x${nrc})`);
+    }
+    if (!parsed.frames.some((frame) => frame[0] === 68)) {
+      throw new Error("Vehicle ECU did not confirm Mode 04 code clear");
+    }
+    return { ok: true };
   }
   function parseElmVin(raw) {
     const parsed = parseElmPayload(raw, "0902");
@@ -12161,7 +12195,11 @@ ${catRows}
       const response = await fetch(`${cloudflareConfig2.apiUrl}/diagnostics/j2534/${encodeURIComponent(method)}`, {
         method: "POST",
         credentials: "include",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-ShopCrank-Local-Client": "1"
+        },
         body: JSON.stringify(payload || {})
       });
       const data = await response.json().catch(() => ({}));
@@ -12526,7 +12564,7 @@ ${catRows}
       const before = [...snap.storedDtcs || [], ...snap.pendingDtcs || []];
       try {
         if (bayElmLive()) {
-          await elmCommand("04");
+          parseElmClearDtcs(await elmCommand("04"));
         } else {
           await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
         }
@@ -12734,7 +12772,8 @@ ${catRows}
         ...(snap.permanentDtcs || []).map((c) => `${c} (permanent)`)
       ];
       const pidSummary = (snap.readings || []).filter((r) => r.value !== null && r.value !== void 0).map((r) => `${r.name}: ${r.value} ${r.unit || ""}`.trim()).join(", ");
-      const line = `OBD-II scan (${new Date(snap.readAt || Date.now()).toLocaleString()}, ${snap.adapterName || "adapter"})${snap.vin ? ` \xB7 VIN ${snap.vin}` : ""} \xB7 MIL ${snap.milOn ? "ON" : "OFF"} \xB7 Codes: ${codes.length ? codes.join(", ") : "none"}${pidSummary ? ` \xB7 PIDs: ${pidSummary}` : ""}`;
+      const mil = formatObdMilState(snap.milOn);
+      const line = `OBD-II scan (${new Date(snap.readAt || Date.now()).toLocaleString()}, ${snap.adapterName || "adapter"})${snap.vin ? ` \xB7 VIN ${snap.vin}` : ""} \xB7 MIL ${mil} \xB7 Codes: ${codes.length ? codes.join(", ") : "none"}${pidSummary ? ` \xB7 PIDs: ${pidSummary}` : ""}`;
       order.notes = `${order.notes || ""}
 ${line}`.trim();
       save();

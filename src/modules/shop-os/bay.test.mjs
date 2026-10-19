@@ -9,6 +9,7 @@ import {
   liveKeyProcedureFor,
   isRoAuthorizedForKeys,
   normalizeVin,
+  parseElmClearDtcs,
   parseElmModeDtcs,
   parseElmMonitorStatus,
   parseElmVin,
@@ -139,8 +140,21 @@ test("live ELM327 OBD-II parser decodes VIN, monitor status, PIDs, and mode 03/0
   assert.equal(rpm.value, 780);
   assert.equal(rpm.unit, "rpm");
 
+  const compactRpm = decodeElmPidReading(0x0C, "410C0C30");
+  assert.equal(compactRpm?.value, 780);
+  assert.equal(compactRpm?.unit, "rpm");
+
   assert.deepEqual(parseElmModeDtcs("43 02 04 20 03 00", 0x03), ["P0420", "P0300"]);
+  assert.deepEqual(parseElmModeDtcs("43010420", 0x03), ["P0420"]);
   assert.deepEqual(parseElmModeDtcs("47 01 01 71", 0x07), ["P0171"]);
+  assert.deepEqual(parseElmModeDtcs("47010171", 0x07), ["P0171"]);
+
+  assert.deepEqual(parseElmClearDtcs("44"), { ok: true });
+  assert.deepEqual(parseElmClearDtcs("7E8 01 44"), { ok: true });
+  assert.throws(() => parseElmClearDtcs("NO DATA"), /NO DATA/i);
+  assert.throws(() => parseElmClearDtcs("UNABLE TO CONNECT"), /UNABLE TO CONNECT/i);
+  assert.throws(() => parseElmClearDtcs("7F 04 22"), /rejected Mode 04/i);
+  assert.throws(() => parseElmClearDtcs(""), /did not confirm Mode 04/i);
 
   const responses = {
     "0902": `49 02 01 ${vinHex}`,

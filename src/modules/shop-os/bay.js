@@ -144,7 +144,7 @@ export function elmFrameBytes(line, command = '') {
     header = true;
   }
   let parts = value.match(/[0-9A-F]+/g) || [];
-  if (!header && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
+  if (!header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
     parts.shift();
     header = true;
   }
@@ -216,6 +216,21 @@ export function parseElmModeDtcs(raw, mode = 0x03) {
     }
   }
   return [...new Set(codes)];
+}
+
+export function parseElmClearDtcs(raw) {
+  const parsed = parseElmPayload(raw, '04');
+  if (parsed.adapterError) throw new Error(`Adapter reported ${parsed.adapterError}`);
+  if (parsed.noData) throw new Error('Vehicle ECU returned NO DATA for Mode 04 clear codes');
+  const rejected = parsed.frames.find(frame => frame[0] === 0x7f && frame[1] === 0x04);
+  if (rejected) {
+    const nrc = (rejected[2] ?? 0).toString(16).padStart(2, '0').toUpperCase();
+    throw new Error(`Vehicle ECU rejected Mode 04 clear codes (NRC 0x${nrc})`);
+  }
+  if (!parsed.frames.some(frame => frame[0] === 0x44)) {
+    throw new Error('Vehicle ECU did not confirm Mode 04 code clear');
+  }
+  return { ok: true };
 }
 
 export function parseElmVin(raw) {
