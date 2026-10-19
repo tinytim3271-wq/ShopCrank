@@ -6,8 +6,10 @@
 export const DEVICE_PROOF_PREFIX = 'shopcrank-license-device';
 export const DEVICE_PROOF_MAX_SKEW_MS = 5 * 60 * 1000;
 
-export function deviceProofMessage({ purpose, subject, signedAt }) {
-  return [DEVICE_PROOF_PREFIX, String(purpose), String(subject), String(signedAt)].join('\n');
+export function deviceProofMessage({ purpose, subject, signedAt, nonce }) {
+  const parts = [DEVICE_PROOF_PREFIX, String(purpose), String(subject), String(signedAt)];
+  if (nonce !== undefined) parts.push(String(nonce));
+  return parts.join('\n');
 }
 
 export function authorizePurpose(procedure, vin) {

@@ -28,7 +28,21 @@ async function setup() {
     LICENSE_TOKEN_SECRET: 'e2e-license-secret-0123456789abcdef0123456789',
     INTEGRATION_ENCRYPTION_KEY: 'e2e-integration-key-0123456789',
     DIAGNOSTICS_SIGNING_PRIVATE_KEY: Buffer.from(await crypto.subtle.exportKey('pkcs8', pair.privateKey)).toString('base64'),
+    FILES: { head: async () => ({ httpMetadata: { contentType: 'image/png' } }) },
   };
+  DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind('high-plains', 'orders', 'RO-1', JSON.stringify({
+      id: 'RO-1', vin: VIN, linesLockedAt: now,
+      estimateApproval: {
+        status: 'approved', type: 'signature', authorizationName: 'Dana Customer', signedAt: now,
+        signatureKey: 'shops/high-plains/signatures/ro-1.png',
+      },
+    }), 'owner-1', now, now).runSync();
+  DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind('high-plains', 'orders', 'RO-UNSIGNED', JSON.stringify({
+      id: 'RO-UNSIGNED', vin: VIN, linesLockedAt: now,
+        estimateApproval: { status: 'approved', type: 'other', authorizationName: 'Dana Customer' },
+    }), 'owner-1', now, now).runSync();
   const call = async (email, method, path, body) => {
     const response = await worker.fetch(new Request(`https://www.shopcrank.com/api${path}`, {
       method,
@@ -47,8 +61,8 @@ async function makeDevice() {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
   const publicKey = Buffer.from(await crypto.subtle.exportKey('spki', pair.publicKey)).toString('base64');
   const deviceId = await deviceIdForPublicKey(publicKey);
-  const sign = async (purpose, subject, signedAt) => Buffer.from(await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, new TextEncoder().encode(deviceProofMessage({ purpose, subject, signedAt })),
+  const sign = async (purpose, subject, signedAt, nonce) => Buffer.from(await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, new TextEncoder().encode(deviceProofMessage({ purpose, subject, signedAt, nonce })),
   )).toString('base64url');
   return { publicKey, deviceId, sign };
 }
@@ -100,13 +114,24 @@ test('end to end through the Worker: request, approve, issue, live key authorize
   assert.equal(landing.status, 200);
   assert.equal(landing.headers.get('Referrer-Policy'), 'no-referrer');
 
-  const authorize = async (licenseUnlock) => call('tech@hpa.test', 'POST', '/diagnostics/authorize', {
-    vin: VIN, procedure: 'add_key', mode: 'live', orderId: 'RO-1', licenseUnlock,
+  const authorize = async (licenseUnlock, orderId = 'RO-1') => call('tech@hpa.test', 'POST', '/diagnostics/authorize', {
+    vin: VIN, procedure: 'add_key', mode: 'live', orderId, licenseUnlock,
   });
   const unlock = async () => {
     const at = Date.now();
-    return { token, deviceId: device.deviceId, signedAt: at, signature: await device.sign(authorizePurpose('add_key', VIN), await sha256Hex(token), at) };
+    const nonce = crypto.randomUUID();
+    return {
+      token, deviceId: device.deviceId, signedAt: at, nonce,
+      signature: await device.sign(authorizePurpose('add_key', VIN), await sha256Hex(token), at, nonce),
+    };
   };
+  const missingOrder = await authorize(await unlock(), 'RO-MISSING');
+  assert.equal(missingOrder.status, 403);
+  assert.match(missingOrder.body.message, /signed repair order/);
+  const unsignedOrder = await authorize(await unlock(), 'RO-UNSIGNED');
+  assert.equal(unsignedOrder.status, 403);
+  assert.match(unsignedOrder.body.message, /signed repair order/);
+
   const missing = await authorize(undefined);
   assert.equal(missing.status, 403);
   assert.equal(missing.body.message, GENERIC_UNLOCK_ERROR);

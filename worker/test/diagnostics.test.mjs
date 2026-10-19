@@ -52,6 +52,22 @@ test('Worker-minted ECDSA token verifies in the host verifier (cross-runtime)', 
   assert.throws(() => verifyCapabilityToken(token, { mode: 'simulate', consume: false }), /mode mismatch/);
 });
 
+test('immobilizer capability expiry is capped by the verified license deadline', async () => {
+  const { pkcs8 } = await generateKeyEnv();
+  const expiry = new Date(Date.now() + 60_000).toISOString();
+  const { payload } = await mintCapabilityToken({ DIAGNOSTICS_SIGNING_PRIVATE_KEY: pkcs8 }, {
+    procedure: 'add_key', vin: '1C6SRFHT0LN123456', shopId: 'shop-1', mode: 'live', expiresAt: expiry,
+  });
+  assert.equal(payload.exp, Date.parse(expiry));
+  await assert.rejects(
+    mintCapabilityToken({ DIAGNOSTICS_SIGNING_PRIVATE_KEY: pkcs8 }, {
+      procedure: 'add_key', vin: '1C6SRFHT0LN123456', shopId: 'shop-1', mode: 'live',
+      expiresAt: new Date(Date.now() - 1).toISOString(),
+    }),
+    /Authorization has expired/,
+  );
+});
+
 test('a client holding only the public key cannot forge a token', async () => {
   const { spki } = await generateKeyEnv();
   process.env.DIAGNOSTICS_SIGNING_PUBLIC_KEY = spki;

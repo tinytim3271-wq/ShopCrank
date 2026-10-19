@@ -1191,11 +1191,34 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
     }
     // Live key programming also needs this device's vehicle-key license unlock,
     // checked live against the license database on every job.
+    let vehicleKeyLicense = null;
     if (mode === 'live' && spec.klass === 'immobilizer') {
-      await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
+      const orderId = String(body.orderId || '').trim();
+      const order = orderId ? await getEntity(env, context.shopId, 'orders', orderId) : null;
+      const approval = normalizeEstimateApproval(order?.estimateApproval);
+      const signedOrder = order
+        && String(order.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === vin
+        && order.linesLockedAt
+        && approval?.status === 'approved'
+        && approval.type === 'signature'
+        && approval.authorizationName
+        && Number.isFinite(Date.parse(approval.signedAt))
+        ? approval
+        : null;
+      if (!signedOrder) {
+        return json({
+          authorized: false,
+          message: 'Live key programming needs a signed repair order whose VIN matches this vehicle.',
+        }, 403);
+      }
+      if (signedOrder.signatureKey) {
+        await verifyOrderApprovalSignature(env, context, signedOrder);
+      }
+      vehicleKeyLicense = await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
     }
     const { token, payload } = await mintCapabilityToken(env, {
       procedure, vin, shopId: context.shopId, mode, actor: context.userId,
+      ...(vehicleKeyLicense ? { expiresAt: vehicleKeyLicense.expiresAt } : {}),
     });
     captureForContext(analytics, context, 'diagnostics_authorized', {
       procedure,
