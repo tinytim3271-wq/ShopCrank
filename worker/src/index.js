@@ -72,6 +72,7 @@ import {
   usageCostsForResult,
 } from './ai.mjs';
 import { handleShopAiSettings } from './shop-ai.mjs';
+import { handleLicenseAdmin, handleLicenses, isLicensePath, requireVehicleKeyUnlock, unlockLandingPage } from './licenses.mjs';
 import { AiChatSession } from './chat-session.mjs';
 import { AiVoiceSession } from './voice-session.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
@@ -231,7 +232,8 @@ function withCors(response, request, env) {
     headers.set('Vary', 'Origin');
   }
   headers.set('X-Content-Type-Options', 'nosniff');
-  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isLicensePath(new URL(request.url).pathname)) headers.set('Referrer-Policy', 'no-referrer');
+  else if (headers.get('Referrer-Policy') !== 'no-referrer') headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -1146,6 +1148,11 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
           message: 'Live programming requires your shop to sign in to a vehicle security (AutoAuth) account. Connect it in OEM Diagnostics, or use Simulate mode.',
         }, 501);
       }
+    }
+    // Live key programming also needs this device's vehicle-key license unlock,
+    // checked live against the license database on every job.
+    if (mode === 'live' && spec.klass === 'immobilizer') {
+      await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
     }
     const { token, payload } = await mintCapabilityToken(env, {
       procedure, vin, shopId: context.shopId, mode, actor: context.userId,
@@ -2953,6 +2960,7 @@ async function route(request, env, analytics) {
   }
   if (path === '/healthz') return json({ ok: true, service: HEALTHZ_SERVICE });
   if (segments[0] === 'founding') return handleFounding(request, env);
+  if (path === '/licenses/unlock' && request.method === 'GET') return unlockLandingPage();
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
   if (segments[0] === 'customer-documents') {
     return handleCustomerDocument(request, env, decodeURIComponent(segments[1] || ''));
@@ -3077,6 +3085,8 @@ async function route(request, env, analytics) {
   if (path === '/revenue-recognition/export.csv') return handleRevenueRecognitionCsv(request, env, context);
   if (path === '/subscription/entitlement') return handleEntitlement(request, env, context);
   if (segments[0] === 'admin' && segments[1] === 'accounts') return handleAdmin(request, env, context, segments, analytics);
+  if (segments[0] === 'admin' && segments[1] === 'licenses') return handleLicenseAdmin(request, env, context, segments);
+  if (segments[0] === 'licenses') return handleLicenses(request, env, context, segments);
   throw new HttpError(404, 'Not found');
 }
 
