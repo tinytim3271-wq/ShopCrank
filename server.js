@@ -327,7 +327,7 @@ const PORT = 3000;
 const HOST = '0.0.0.0';
 
 const server = app.listen(PORT, HOST, () => {
-  console.log(`MechPro server listening on http://${HOST}:${PORT}`);
+  console.log(`ShopCrank server listening on http://${HOST}:${PORT}`);
 });
 
 server.on('error', (err) => {

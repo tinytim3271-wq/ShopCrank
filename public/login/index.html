@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sign in to Shop Crank</title>
+    <title>Sign in to ShopCrank</title>
     <link rel="canonical" href="https://www.shopcrank.com/login/" />
-    <link rel="icon" href="/shopcrank-icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/assets/brand/logo-icon-192.png" type="image/png" />
     <link rel="stylesheet" href="/assets/fonts/fonts.css" />
     <link rel="stylesheet" href="/market.css" />
   </head>
   <body class="auth-screen">
     <main class="auth-card">
-      <a class="brand" href="/features"><span class="brand-mark">M</span><span><strong>SHOP_CRANK</strong><small>Shop operating system</small></span></a>
+      <a class="brand" href="/features"><span class="brand-mark" role="img" aria-label="ShopCrank"></span><span><strong>ShopCrank</strong><small>Run the shop. Read the car. Get paid.</small></span></a>
       <h1>Sign in with your work email</h1>
-      <p>We will open a one-time link for this browser. Shop Crank never receives your password.</p>
+      <p>We will open a one-time link for this browser. ShopCrank never receives your password.</p>
       <form id="login-form">
         <label for="email">Work email<input id="email" type="email" name="email" placeholder="you@yourshop.com" autocomplete="username" required /></label>
         <button class="btn primary" type="submit">Continue securely</button>
@@ -62,7 +62,7 @@
           errorEl.hidden = false;
           errorEl.className = 'error';
           errorEl.textContent = /failed to fetch|networkerror|load failed/i.test(raw)
-            ? 'Could not reach Shop Crank sign-in. Use the latest Windows installer from Downloads, or open the site in a browser.'
+            ? 'Could not reach ShopCrank sign-in. Use the latest Windows installer from Downloads, or open the site in a browser.'
             : (raw || 'Sign-in failed.');
           button.disabled = false;
         }

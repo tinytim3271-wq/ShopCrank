@@ -1,6 +1,6 @@
 # Cloudflare SaaS Architecture
 
-This is the target architecture for turning Shop Crank into a public, paid SaaS on
+This is the target architecture for turning ShopCrank into a public, paid SaaS on
 Cloudflare. Cloudflare Access should be reserved for internal operator/admin
 surfaces only; customer signup, login, billing, and shop access should be owned
 by the app.
@@ -24,7 +24,7 @@ flowchart LR
   Visitor[Public visitor] --> CF[Cloudflare edge]
   Customer[Shop user] --> CF
   Stripe[Stripe webhooks] --> CF
-  CF --> Worker[Shop Crank Worker]
+  CF --> Worker[ShopCrank Worker]
   Worker --> Pages[Pages static assets]
   Worker --> D1[(D1)]
   Worker --> R2[(R2)]
@@ -216,7 +216,7 @@ Stripe owns payment collection. D1 owns the application entitlement snapshot.
 ```mermaid
 sequenceDiagram
   participant Buyer
-  participant App as Shop Crank Worker
+  participant App as ShopCrank Worker
   participant Stripe
   participant D1
   participant Email
@@ -333,7 +333,7 @@ Worker vars:
 ```text
 APP_ORIGIN=https://www.shopcrank.com
 PAGES_ORIGIN=https://shopcrank-dispatch.pages.dev
-EMAIL_FROM=Shop Crank <support@shopcrank.com>
+EMAIL_FROM=ShopCrank <support@shopcrank.com>
 AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
 ```
 

@@ -23,3 +23,6 @@ android/.settings/
 !.env.example
 .tmp-*
 secon.code-workspace
+
+.firecrawl/
+

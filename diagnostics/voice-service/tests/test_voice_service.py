@@ -1,4 +1,4 @@
-"""Tests for the Shop Crank voice intake service.
+"""Tests for the ShopCrank voice intake service.
 
 Run with pytest or directly: python3 test_voice_service.py
 """

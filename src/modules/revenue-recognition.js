@@ -33,7 +33,7 @@ export function revenueRecognitionPanelHtml(status = {}, {
     <li>Enable Stripe Revenue Recognition on this shop's Stripe account.</li>
     <li>In Stripe Dashboard → Data Management, add an Amazon S3 connector.</li>
     <li>Point the connector at folder <code>${escapeHtml(folder)}</code> and map it to Revenue Recognition general import.</li>
-    <li>Turn on sync below. Shop Crank writes a CSV there daily at 06:00 UTC.</li>
+    <li>Turn on sync below. ShopCrank writes a CSV there daily at 06:00 UTC.</li>
   </ol>`;
   const actions = canSave
     ? `<form class="form-grid" id="revrec-config-form">

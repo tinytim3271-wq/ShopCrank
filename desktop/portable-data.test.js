@@ -22,8 +22,8 @@ test('portable profile and shop records follow the executable, not the working d
     mkdirSync(original);
     const paths = {};
     const app = { setPath: (key, value) => { paths[key] = value; } };
-    const dir = configurePortableData(app, { offline: true, portable: true }, path.join(original, 'Shop Crank Demo.exe'));
-    assert.equal(dir, path.join(original, 'Shop Crank Demo Data'));
+    const dir = configurePortableData(app, { offline: true, portable: true }, path.join(original, 'ShopCrank Demo.exe'));
+    assert.equal(dir, path.join(original, 'ShopCrank Demo Data'));
     assert.equal(paths.userData, dir);
     assert.equal(paths.sessionData, dir);
     assert.ok(existsSync(paths.logs));
@@ -32,12 +32,12 @@ test('portable profile and shop records follow the executable, not the working d
     vault.createAccount(dir, account);
     vault.saveShop(dir, { orders: [{ id: 'USB-1' }] });
     assert.deepEqual(vault.loadShop(dir), { orders: [{ id: 'USB-1' }] });
-    assert.equal(configurePortableData(app, { portable: true }, path.join(original, 'Shop Crank Demo.exe')), dir);
+    assert.equal(configurePortableData(app, { portable: true }, path.join(original, 'ShopCrank Demo.exe')), dir);
     assert.deepEqual(vault.loadShop(paths.userData), { orders: [{ id: 'USB-1' }] });
     const moved = path.join(root, 'USB B');
     renameSync(original, moved);
-    configurePortableData(app, { portable: true }, path.join(moved, 'Shop Crank Demo.exe'));
-    assert.equal(paths.userData, path.join(moved, 'Shop Crank Demo Data'));
+    configurePortableData(app, { portable: true }, path.join(moved, 'ShopCrank Demo.exe'));
+    assert.equal(paths.userData, path.join(moved, 'ShopCrank Demo Data'));
     assert.deepEqual(vault.loadShop(paths.userData), { orders: [{ id: 'USB-1' }] });
     assert.equal(vault.signIn(paths.userData, account).email, account.email);
   } finally {
@@ -77,14 +77,14 @@ test('demo packaging excludes credentials and does not inherit production resour
 
 test('demo document title matches the packaged product name', () => {
   const html = readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-  assert.match(html, /<title>[^<]*Shop Crank[^<]*<\/title>/);
+  assert.match(html, /<title>[^<]*ShopCrank[^<]*<\/title>/);
 });
 
 test('an unusable portable data directory fails instead of using host storage', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'shopcrank-portable-'));
   try {
-    writeFileSync(path.join(root, 'Shop Crank Demo Data'), 'not a directory');
-    assert.throws(() => configurePortableData({ setPath: () => assert.fail() }, { portable: true }, path.join(root, 'Shop Crank Demo.exe')));
+    writeFileSync(path.join(root, 'ShopCrank Demo Data'), 'not a directory');
+    assert.throws(() => configurePortableData({ setPath: () => assert.fail() }, { portable: true }, path.join(root, 'ShopCrank Demo.exe')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

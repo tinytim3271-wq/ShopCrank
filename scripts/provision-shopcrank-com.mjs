@@ -625,7 +625,7 @@ export async function provisionShopcrankCom({
 
 export function formatReport(report) {
   const lines = [
-    `Shop Crank Cloudflare provision: ${report.ok ? 'ok' : 'failed'}`,
+    `ShopCrank Cloudflare provision: ${report.ok ? 'ok' : 'failed'}`,
     `Account: ${report.accountId}`,
     `Pages ${PAGES_PROJECT} → ${CANONICAL_HOST}`,
     `Worker ${WORKER_NAME} routes: ${desiredWorkerRoutes().join(', ')}`,

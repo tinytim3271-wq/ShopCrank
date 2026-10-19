@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { stdin as input, stdout as output, stderr } from 'node:process';
 import { pathToFileURL } from 'node:url';
 
-const HELP_TEXT = `Guided Shop Crank email sign-in setup
+const HELP_TEXT = `Guided ShopCrank email sign-in setup
 
 Usage:
   node scripts/setup-email-signin.mjs [--dry-run] [--local]
@@ -15,7 +15,7 @@ Options:
   --local      Allow an http://localhost... or http://127.0.0.1... webhook URL
 
 This script:
-  1. Explains what Shop Crank needs for email sign-in
+  1. Explains what ShopCrank needs for email sign-in
   2. Prompts for your email webhook URL
   3. Optionally prompts for a webhook bearer secret
   4. Confirms before writing Worker secrets with Wrangler
@@ -105,11 +105,11 @@ function requireInteractiveTerminal() {
 }
 
 function printIntro({ dryRun, local }) {
-  console.log('Shop Crank email sign-in setup');
+  console.log('ShopCrank email sign-in setup');
   console.log('');
   console.log('This guided setup stores Worker secrets for the email sign-in webhook.');
   console.log('The built-in sender is https://www.shopcrank.com/api/auth/send-login');
-  console.log('It accepts Shop Crank JSON { email, loginUrl, returnTo } and returns 202');
+  console.log('It accepts ShopCrank JSON { email, loginUrl, returnTo } and returns 202');
   console.log('only after Cloudflare Email accepts the message.');
   console.log('');
   console.log('Important:');
@@ -245,7 +245,7 @@ function printNextSteps({ dryRun, wroteSecret, local }) {
   } else if (wroteSecret) {
     console.log('1. Deploy the Worker so the updated remote secret is active: `npm run deploy:worker`.');
   }
-  console.log('2. Open your Shop Crank site and go to `/login`.');
+  console.log('2. Open your ShopCrank site and go to `/login`.');
   console.log('3. Enter an email address you control and request a sign-in link.');
   console.log('4. Confirm your webhook receives `{ email, loginUrl, returnTo }` and that the email arrives.');
   if (local) {
@@ -266,7 +266,7 @@ export async function main(argv = process.argv.slice(2)) {
   printIntro(options);
 
   const webhookUrl = validateWebhookUrl(
-    await promptLine('Webhook URL for Shop Crank sign-in emails: '),
+    await promptLine('Webhook URL for ShopCrank sign-in emails: '),
     { allowLocal: options.local },
   );
   if (options.local && !options.dryRun && new URL(webhookUrl).protocol === 'http:') {

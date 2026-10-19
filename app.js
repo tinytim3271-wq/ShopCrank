@@ -2114,7 +2114,7 @@
   }
   function orderingPanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4, icon: icon2 }) {
     const connected = Boolean(account.connected && account.username);
-    const status = connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>AutoZone Pro login saved</strong><span>${escapeHtml4(account.username)}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. Shop Crank encrypts them and does not put them on the work order.</span></div></div>`;
+    const status = connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>AutoZone Pro login saved</strong><span>${escapeHtml4(account.username)}</span></div></div>` : `<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. ShopCrank encrypts them and does not put them on the work order.</span></div></div>`;
     const form = canSave ? `<form id="autozone-login-form" class="form-grid">
         <label>Username<input name="username" autocomplete="off" value="${escapeHtml4(account.username || "")}" required /></label>
         <label>Password<input name="password" type="password" autocomplete="new-password" required /></label>
@@ -2123,7 +2123,7 @@
       </form>` : '<p class="ops-note">Ask an owner or admin to save the shop AutoZone Pro login.</p>';
     const unavailable = account.unavailable ? '<p class="login-error">Sign in to the shop account to store or copy the AutoZone Pro login.</p>' : "";
     return `<section class="settings-panel autozone-ordering">
-      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from Shop Crank. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon2("shopping-cart", 20)}</div>
+      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from ShopCrank. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon2("shopping-cart", 20)}</div>
       ${status}
       ${unavailable}
       ${form}
@@ -2369,15 +2369,15 @@
     const selectedProvider = activeProvider === "anthropic" ? "anthropic" : "gemini";
     const selectedConsoleUrl = providerConsoleUrl(selectedProvider);
     const providerOptions = `<label class="full">AI provider<select name="provider" required><option value="anthropic"${selectedProvider === "anthropic" ? " selected" : ""}>Anthropic Claude</option><option value="gemini"${selectedProvider === "gemini" ? " selected" : ""}>Google Gemini</option></select></label>`;
-    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off">${providerOptions}<label class="full">API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "AIza..." : "sk-ant-..."}" required/></label><label class="full">Model (optional)<input name="model" type="text" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "gemini-2.5-flash" : "claude-sonnet-5"}"/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">Shop Crank tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
-    return `<section class="settings-panel shop-ai-settings" id="shop-ai-settings"><div class="statement-head"><div><div class="eyebrow">AI</div><h2>Shop Crank AI provider</h2><p>${escapeHtml4(SHOP_AI_PROMPT)}</p><p><a href="${status.consoleUrl || selectedConsoleUrl}" target="_blank" rel="noopener noreferrer">Get an API key for ${selectedProvider === "gemini" ? "Google Gemini at aistudio.google.com" : "Anthropic at console.anthropic.com"}</a></p></div>${icon2("sparkles", 20)}</div>${statusHtml}${errorHtml}${unavailableHtml}${form}</section>`;
+    const form = canManage ? `<form class="form-grid" id="shop-ai-key-form" autocomplete="off">${providerOptions}<label class="full">API key<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "AIza..." : "sk-ant-..."}" required/></label><label class="full">Model (optional)<input name="model" type="text" spellcheck="false" placeholder="${selectedProvider === "gemini" ? "gemini-2.5-flash" : "claude-sonnet-5"}"/></label><div class="full"><button class="primary" type="submit">${icon2("key-round", 14)} ${status.hasKey ? "Replace key" : "Save key"}</button>${removeButton}<small class="form-help">ShopCrank tests the key with a tiny request before saving. It is encrypted on the server and never shown again; only the last 4 characters are displayed.</small></div></form>` : '<p class="form-help">Only shop owners and admins can add or change the AI key.</p>';
+    return `<section class="settings-panel shop-ai-settings" id="shop-ai-settings"><div class="statement-head"><div><div class="eyebrow">AI</div><h2>ShopCrank AI provider</h2><p>${escapeHtml4(SHOP_AI_PROMPT)}</p><p><a href="${status.consoleUrl || selectedConsoleUrl}" target="_blank" rel="noopener noreferrer">Get an API key for ${selectedProvider === "gemini" ? "Google Gemini at aistudio.google.com" : "Anthropic at console.anthropic.com"}</a></p></div>${icon2("sparkles", 20)}</div>${statusHtml}${errorHtml}${unavailableHtml}${form}</section>`;
   }
   var ANTHROPIC_CONSOLE_URL, GEMINI_CONSOLE_URL, SHOP_AI_PROMPT, MASK;
   var init_shop_ai_settings = __esm({
     "src/modules/shop-ai-settings.js"() {
       ANTHROPIC_CONSOLE_URL = "https://console.anthropic.com/settings/keys";
       GEMINI_CONSOLE_URL = "https://aistudio.google.com/app/apikey";
-      SHOP_AI_PROMPT = "Gemini is included with your Shop Crank subscription. If you prefer, you can switch this shop to your own Claude (Anthropic) or Gemini key at any time.";
+      SHOP_AI_PROMPT = "Gemini is included with your ShopCrank subscription. If you prefer, you can switch this shop to your own Claude (Anthropic) or Gemini key at any time.";
       MASK = "\u2022\u2022\u2022\u2022";
     }
   });
@@ -2416,6 +2416,59 @@
   }
   var init_quickbooks = __esm({
     "src/modules/quickbooks.js"() {
+    }
+  });
+
+  // src/modules/revenue-recognition.js
+  function revrecStatusLabel(status = {}) {
+    if (status.unavailable) return "Revenue Recognition sync unavailable";
+    if (!status.stripeConfigured) return "Connect shop Stripe payments first";
+    if (!status.s3Configured) return "Platform S3 export is not configured yet";
+    if (status.enabled) return "Daily sync enabled";
+    return "Sync disabled";
+  }
+  function revrecReady(status = {}) {
+    return Boolean(status.stripeConfigured && status.s3Configured);
+  }
+  function revenueRecognitionPanelHtml(status = {}, {
+    canSave = false,
+    escapeHtml: escapeHtml4 = (v) => String(v ?? ""),
+    icon: icon2 = () => ""
+  } = {}) {
+    const enabled = Boolean(status.enabled);
+    const ready = revrecReady(status);
+    const label2 = revrecStatusLabel(status);
+    const tone = enabled && ready && !status.lastError ? "ready" : "idle";
+    const lastExport = status.lastExportedAt ? new Date(status.lastExportedAt).toLocaleString() : "Never";
+    const lastError = status.lastError ? `<p class="login-error">${escapeHtml4(status.lastError)}</p>` : "";
+    const folder = status.folderHint || (status.shopId ? `revrec/${status.shopId}/general/` : "revrec/{shopId}/general/");
+    const banner = `<div class="messaging-status ${tone}">${icon2(enabled && ready ? "circle-check" : "landmark", 17)}<div><strong>${escapeHtml4(label2)}</strong><span>Last export: ${escapeHtml4(lastExport)}${status.lastObjectKey ? ` \xB7 ${escapeHtml4(status.lastObjectKey)}` : ""}</span></div></div>`;
+    const checklist = `<ol class="ops-note revrec-checklist">
+    <li>Enable Stripe Revenue Recognition on this shop's Stripe account.</li>
+    <li>In Stripe Dashboard \u2192 Data Management, add an Amazon S3 connector.</li>
+    <li>Point the connector at folder <code>${escapeHtml4(folder)}</code> and map it to Revenue Recognition general import.</li>
+    <li>Turn on sync below. ShopCrank writes a CSV there daily at 06:00 UTC.</li>
+  </ol>`;
+    const actions = canSave ? `<form class="form-grid" id="revrec-config-form">
+        <label class="toggle-field full"><input type="checkbox" name="enabled" ${enabled ? "checked" : ""}/><span>Sync cash / check / bank payments and service periods to Stripe Revenue Recognition</span></label>
+        <label>Currency<input name="currency" maxlength="3" value="${escapeHtml4(status.currency || "usd")}"/></label>
+        <div class="full messaging-actions">
+          <button class="primary" type="submit">${icon2("save", 14)} Save sync settings</button>
+          <button class="secondary" type="button" id="revrec-export-now" ${ready ? "" : "disabled"}>${icon2("upload", 14)} Export now</button>
+          <button class="secondary" type="button" id="revrec-download-csv">${icon2("download", 14)} Download CSV</button>
+        </div>
+      </form>` : '<p class="ops-note">Ask an owner or admin to enable Revenue Recognition sync.</p>';
+    return `<section class="settings-panel revrec-panel">
+    <div class="statement-head"><div><div class="eyebrow">Accounting</div><h2>Stripe Revenue Recognition</h2><p>Import non-Stripe payments and recognition service periods into this shop's Stripe RevRec reports.</p></div>${icon2("book-open", 20)}</div>
+    ${banner}
+    ${lastError}
+    ${checklist}
+    ${actions}
+    <div id="revrec-sync-status" class="ops-note"></div>
+  </section>`;
+  }
+  var init_revenue_recognition = __esm({
+    "src/modules/revenue-recognition.js"() {
     }
   });
 
@@ -3256,7 +3309,7 @@ button{margin-top:12px;padding:8px 14px}
     const y = data.taxYear || (/* @__PURE__ */ new Date()).getFullYear();
     const body = `
 <h1>Form W-2 Wage and Tax Statement \u2014 ${y}</h1>
-<p class="meta">Copy B \u2014 To Be Filed With Employee\u2019s FEDERAL Tax Return \xB7 Generated by Shop Crank for filing / SSA Business Services Online upload prep. Verify EIN and SSN before submitting.</p>
+<p class="meta">Copy B \u2014 To Be Filed With Employee\u2019s FEDERAL Tax Return \xB7 Generated by ShopCrank for filing / SSA Business Services Online upload prep. Verify EIN and SSN before submitting.</p>
 <div class="grid">
   <div class="box"><label>a Employee\u2019s social security number</label><b>***-**-${esc(data.employee.ssnLast4 || "XXXX")}</b></div>
   <div class="box"><label>b Employer identification number (EIN)</label><b>${esc(data.employer.ein || "XX-XXXXXXX")}</b></div>
@@ -3276,14 +3329,14 @@ button{margin-top:12px;padding:8px 14px}
   <div class="box"><label>16 State wages, tips, etc.</label><b>${money(data.stateWages || 0)}</b></div>
   <div class="box"><label>17 State income tax</label><b>${money(data.stateTax || 0)}</b></div>
 </div>
-<div class="notice">File Copy A electronically with SSA (ssa.gov/employer). Give Copies B, C, and 2 to the employee by January 31. Shop Crank generates this statement from shop payroll records; confirm SSN and EIN before e-filing.</div>`;
+<div class="notice">File Copy A electronically with SSA (ssa.gov/employer). Give Copies B, C, and 2 to the employee by January 31. ShopCrank generates this statement from shop payroll records; confirm SSN and EIN before e-filing.</div>`;
     return printHtml(`W-2 ${y} ${data.employee.name}`, body);
   }
   function open1099NecForm(data) {
     const y = data.taxYear || (/* @__PURE__ */ new Date()).getFullYear();
     const body = `
 <h1>Form 1099-NEC Nonemployee Compensation \u2014 ${y}</h1>
-<p class="meta">Copy B For Recipient \xB7 Generated by Shop Crank for IRS / recipient filing. File Copy A with the IRS (FIRE / IRIS) when required.</p>
+<p class="meta">Copy B For Recipient \xB7 Generated by ShopCrank for IRS / recipient filing. File Copy A with the IRS (FIRE / IRIS) when required.</p>
 <div class="grid">
   <div class="box"><label>PAYER\u2019S name, street address, city, state, ZIP</label><b>${esc(data.payer.name)}<br>${esc(data.payer.address)}</b></div>
   <div class="box"><label>PAYER\u2019S TIN</label><b>${esc(data.payer.tin || "")}</b></div>
@@ -3293,7 +3346,7 @@ button{margin-top:12px;padding:8px 14px}
   <div class="box"><label>1 Nonemployee compensation</label><b>${money(data.nonemployeeCompensation)}</b></div>
   <div class="box"><label>4 Federal income tax withheld</label><b>${money(data.federalTaxWithheld || 0)}</b></div>
 </div>
-<div class="notice">File with the IRS when nonemployee compensation is $600 or more. Recipients use this for Schedule C / income reporting. Shop Crank does not transmit to IRS FIRE until transmitter credentials are configured; download the e-file package and submit via IRS IRIS/FIRE or your CPA.</div>`;
+<div class="notice">File with the IRS when nonemployee compensation is $600 or more. Recipients use this for Schedule C / income reporting. ShopCrank does not transmit to IRS FIRE until transmitter credentials are configured; download the e-file package and submit via IRS IRIS/FIRE or your CPA.</div>`;
     return printHtml(`1099-NEC ${y} ${data.recipient.name}`, body);
   }
   function buildEfw2Text(employer, employees2, taxYear) {
@@ -3358,7 +3411,7 @@ button{margin-top:12px;padding:8px 14px}
       ["6", "Total taxes before adjustments", summary.totalTax],
       [],
       ["Portal", "https://www.irs.gov/businesses/small-businesses-self-employed/e-file-employment-tax-forms"],
-      ["Note", "Enter these amounts in IRS e-file / EFTPS or provide to your CPA. Shop Crank prepares the worksheet from payroll records."]
+      ["Note", "Enter these amounts in IRS e-file / EFTPS or provide to your CPA. ShopCrank prepares the worksheet from payroll records."]
     ];
     return csvFromRows(rows);
   }
@@ -3422,10 +3475,10 @@ button{margin-top:12px;padding:8px 14px}
     const safeEmail = escapeText(email);
     const device = portable ? "drive" : "computer";
     const shortDevice = portable ? "drive" : "PC";
-    const storage = portable ? "Shop Crank Demo Data folder beside the executable on this drive" : "Shop Crank Offline folder on this computer";
+    const storage = portable ? "ShopCrank Demo Data folder beside the executable on this drive" : "ShopCrank Offline folder on this computer";
     const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="name" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
     const confirmField = hasAccount ? "" : `<label for="offline-confirm">Confirm password</label><input id="offline-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8"/>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "Shop Crank Demo" : "Shop Crank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. Shop Crank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "ShopCrank Demo" : "ShopCrank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. ShopCrank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
   }
   function stripOfflineSecrets(value2) {
     if (Array.isArray(value2)) return value2.map(stripOfflineSecrets);
@@ -4131,7 +4184,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "login",
           roles: ["*"],
           title: "Sign in",
-          summary: "Open Shop Crank with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.",
+          summary: "Open ShopCrank with your work email. On the online site you get a sign-in link. The offline Windows app can use a local owner password.",
           steps: [
             "Enter your work email and request a sign-in link, or use Google when that button is shown.",
             "Open the email on this device and follow the link within fifteen minutes.",
@@ -4155,7 +4208,7 @@ button{margin-top:12px;padding:8px 14px}
             "Sign out and sign in again after the profile is active."
           ],
           limits: [
-            "Shop Crank will not invent an employee profile from Access alone for non-owner roles."
+            "ShopCrank will not invent an employee profile from Access alone for non-owner roles."
           ],
           keywords: ["pending", "employee", "profile", "deactivated"]
         },
@@ -4164,7 +4217,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "superadmin",
           roles: ["super_admin"],
           title: "Platform console",
-          summary: "Manage customer shops on Shop Crank: create accounts, credits, suspension, and Stripe keys for a shop.",
+          summary: "Manage customer shops on ShopCrank: create accounts, credits, suspension, and Stripe keys for a shop.",
           steps: [
             "Review the customer shop list and each shop\u2019s subscription status.",
             "Create a shop with owner name, email, shop name, and shop ID when onboarding a customer.",
@@ -4288,7 +4341,7 @@ button{margin-top:12px;padding:8px 14px}
             "Cancel on the reader from this screen if the customer walks away."
           ],
           limits: [
-            "Card numbers are never typed into Shop Crank on the reader path.",
+            "Card numbers are never typed into ShopCrank on the reader path.",
             "Technicians do not have Card terminal."
           ],
           keywords: ["pos", "terminal", "reader", "card present", "debit"]
@@ -4304,10 +4357,10 @@ button{margin-top:12px;padding:8px 14px}
             "Select Phone order, then choose the work order or invoice.",
             "Enter the amount and choose Enter card to open Stripe\u2019s Payment Element.",
             "Type the card only in the Stripe fields. Confirm the charge when the form is complete.",
-            "Keep this tab open until Shop Crank shows the payment recorded."
+            "Keep this tab open until ShopCrank shows the payment recorded."
           ],
           limits: [
-            "Never paste a card number into a Shop Crank note, chat, or work-order field.",
+            "Never paste a card number into a ShopCrank note, chat, or work-order field.",
             "Phone entry needs the publishable key saved on Payments.",
             "Mail-order / telephone (MOTO) may fall back to a normal keyed charge if Stripe has not enabled MOTO on the account."
           ],
@@ -4392,7 +4445,7 @@ button{margin-top:12px;padding:8px 14px}
             "Document the result on the work order."
           ],
           limits: [
-            "Shop Crank does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.",
+            "ShopCrank does not provide seed-key bypass, immobilizer cloning, or key-programming algorithms.",
             "Unsupported gateway or make combinations stay blocked."
           ],
           keywords: ["keys", "programming", "fob", "immobilizer"]
@@ -4486,7 +4539,7 @@ button{margin-top:12px;padding:8px 14px}
           route: "imports",
           roles: ADMIN_ONLY,
           title: "Import data",
-          summary: "Bring customers, vehicles, or other supported lists into Shop Crank from a file.",
+          summary: "Bring customers, vehicles, or other supported lists into ShopCrank from a file.",
           steps: [
             "Pick the import type the screen lists.",
             "Preview rows before you confirm the write.",
@@ -4508,7 +4561,7 @@ button{margin-top:12px;padding:8px 14px}
             "Send only to customers who asked for contact on that channel."
           ],
           limits: [
-            "Do not send unsolicited mail from Shop Crank.",
+            "Do not send unsolicited mail from ShopCrank.",
             "Email routing on the apex domain stays with Google Workspace MX."
           ],
           keywords: ["messaging", "sms", "email"]
@@ -5165,8 +5218,8 @@ button{margin-top:12px;padding:8px 14px}
   function searchLaborGuide(query2 = "", services = CANNED_MENU) {
     const needle = String(query2 || "").trim().toLowerCase();
     if (needle.length < 2) return [];
-    const shopHits = SHOP_CRANK_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "Shop Crank guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
-    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "Shop Crank guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
+    const shopHits = SHOP_CRANK_LABOR.filter((item) => item.name.toLowerCase().includes(needle) || needle.includes(item.name.toLowerCase())).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: item.hours, price: null, notes: item.notes }));
+    const canned = services.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(needle)).slice(0, 6).map((item) => ({ source: "ShopCrank guide", name: item.name, hours: null, price: item.menuPrice || null, notes: item.description || "" }));
     return [...shopHits, ...canned].slice(0, 8);
   }
   function seedEstimateLines(draft = {}) {
@@ -5217,7 +5270,7 @@ button{margin-top:12px;padding:8px 14px}
     if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
     return {
       source: "shop-checklist",
-      notice: "Shop Crank AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
+      notice: "ShopCrank AI is not connected. This is a shop checklist from the words on the intake, not a remote diagnosis.",
       causes
     };
   }
@@ -5348,7 +5401,7 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
     const priced = priceIntakeEstimate(draft, profile);
     const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
     return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
-<p class="form-help">Lookup uses the Shop Crank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
+<p class="form-help">Lookup uses the ShopCrank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
 <div id="labor-results"></div>
 <table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
 <label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
@@ -5542,11 +5595,11 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         const hits = searchLaborGuide(query2);
         const box = host.querySelector("#labor-results");
         if (!box) return;
-        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No Shop Crank guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
+        box.innerHTML = hits.length ? `<ul class="intake-causes">${hits.map((hit) => `<li><button type="button" class="mini-action" data-add-labor="${escapeAttr3(hit.name)}" data-hours="${hit.hours || 1}">${escapeHtml3(hit.name)}</button><p>${escapeHtml3(hit.notes)} \xB7 ${escapeHtml3(hit.source)}${hit.hours ? ` \xB7 ${hit.hours} hr` : ""}</p></li>`).join("")}</ul>` : '<p class="form-help">No ShopCrank guide match. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>';
         box.querySelectorAll("[data-add-labor]").forEach((button) => {
           button.addEventListener("click", () => {
             if (form) current = readForm(current, form);
-            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "Shop Crank guide" });
+            current.estimate.lines.push({ type: "labor", description: button.dataset.addLabor, quantity: Number(button.dataset.hours) || 1, source: "ShopCrank guide" });
             persist("labor");
             paint();
           });
@@ -5570,7 +5623,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       init_estimate_templates();
       init_canned_services();
       init_technician_assignment();
-      INTAKE_STORAGE_KEY = "Shop Crank-intake-draft-v1";
+      INTAKE_STORAGE_KEY = "ShopCrank-intake-draft-v1";
       INTAKE_DISCLAIMER = "PRELIMINARY ESTIMATE DISCLAIMER\n\nThis estimate is based on the information available at the time of inspection. Additional issues may be identified during diagnosis, testing, disassembly, or repair. Parts pricing, labor times, and availability may change. Authorization will be obtained before performing additional work. Final invoice amounts may differ from this estimate.";
       INTAKE_STEPS = [
         { id: "customer", label: "Customer" },
@@ -5735,7 +5788,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   }
   function assertLiveKeySession({ order, estimates = [], operation, notes, vehicleVin, deviceConnected }) {
     assertKeyJobAllowed({ order, estimates, operation, notes });
-    if (!deviceConnected) throw new Error("Connect the J2534 adapter in the Shop Crank desktop app before a live key job.");
+    if (!deviceConnected) throw new Error("Connect the J2534 adapter in the ShopCrank desktop app before a live key job.");
     const roVin = normalizeVin(order?.vin);
     if (roVin.length !== 17) throw new Error("Add the 17-character VIN to this repair order before a live key job.");
     const carVin = normalizeVin(vehicleVin);
@@ -6119,7 +6172,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     const shopId = status?.shopId || sessionClaimShopId(authSession()?.claims) || "";
     const webhookUrl = status?.webhookUrl || (shopId ? `${location.origin}${cloudflareConfig2.apiUrl}/payments/webhook/${encodeURIComponent(shopId)}` : "");
     const statusLabel3 = configured ? `Connected${config.accountLabel ? ` \xB7 ${escapeHtml(config.accountLabel)}` : ""}` : "Stripe keys not saved yet";
-    return shell(`${heading("Online payments", "Payment service", "Connect this shop's Stripe account so customers can pay invoices online with a hosted Checkout link.", false)}<section class="messaging-panel"><div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "credit-card", 17)}<div><strong>${configured ? "Online card payments ready" : "Online card payments not connected"}</strong><span>${statusLabel3}. Secrets stay encrypted on the Worker \u2014 the browser never stores them.</span></div></div><div class="service-contract"><h2>Stripe Checkout for invoices</h2><p>Paste your Stripe secret key and webhook signing secret. Shop Crank creates Checkout Sessions through <code>POST /payments/checkout-session</code> and records payments when Stripe posts <code>checkout.session.completed</code> to your shop webhook.</p><label class="full">Webhook endpoint (Stripe Dashboard \u2192 Developers \u2192 Webhooks)<input id="stripe-webhook-url" readonly value="${escapeAttr(webhookUrl)}" placeholder="Sign in to load the shop webhook URL"/><div class="messaging-actions"><button class="secondary" type="button" id="copy-stripe-webhook" ${webhookUrl ? "" : "disabled"}>${icon("copy", 14)} Copy webhook URL</button></div></label><p class="ai-disclaimer">Subscribe the webhook to event <b>checkout.session.completed</b> only. Use test keys (<code>sk_test_</code>) until you are ready for live cards.</p></div><form class="form-grid" id="billing-form"><label class="full">Stripe secret key *<input name="secretKey" type="password" autocomplete="off" placeholder="sk_test_\u2026 or sk_live_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved key. Enter a new key only to replace it." : "Required. Starts with sk_test_ or sk_live_."}</small></label><label class="full">Webhook signing secret *<input name="webhookSecret" type="password" autocomplete="off" placeholder="whsec_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved signing secret." : "From the Stripe webhook endpoint details."}</small></label><label class="full">Stripe publishable key<input name="publishableKey" autocomplete="off" placeholder="pk_test_\u2026 or pk_live_\u2026"/><small>${status?.hasPublishableKey ? "Saved. Enter a new key only to replace it. Required for phone orders." : "Starts with pk_test_ or pk_live_. Required before the office can type a card for a phone order."}</small></label><label>Account label<input name="accountLabel" value="${escapeAttr(config.accountLabel || "")}" placeholder="e.g. Main shop Stripe"/></label><label>Shop name on receipts<input name="shopName" value="${escapeAttr(config.shopName || "Your Car Guy")}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled || configured ? "checked" : ""}/><span>Enable Pay online on open invoices</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="refresh-stripe-status">${icon("refresh-cw", 14)} Refresh status</button><button class="primary" type="submit">${icon("save", 14)} Save Stripe keys</button></div></form></section>`);
+    return shell(`${heading("Online payments", "Payment service", "Connect this shop's Stripe account so customers can pay invoices online with a hosted Checkout link.", false)}<section class="messaging-panel"><div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "credit-card", 17)}<div><strong>${configured ? "Online card payments ready" : "Online card payments not connected"}</strong><span>${statusLabel3}. Secrets stay encrypted on the Worker \u2014 the browser never stores them.</span></div></div><div class="service-contract"><h2>Stripe Checkout for invoices</h2><p>Paste your Stripe secret key and webhook signing secret. ShopCrank creates Checkout Sessions through <code>POST /payments/checkout-session</code> and records payments when Stripe posts <code>checkout.session.completed</code> to your shop webhook.</p><label class="full">Webhook endpoint (Stripe Dashboard \u2192 Developers \u2192 Webhooks)<input id="stripe-webhook-url" readonly value="${escapeAttr(webhookUrl)}" placeholder="Sign in to load the shop webhook URL"/><div class="messaging-actions"><button class="secondary" type="button" id="copy-stripe-webhook" ${webhookUrl ? "" : "disabled"}>${icon("copy", 14)} Copy webhook URL</button></div></label><p class="ai-disclaimer">Subscribe the webhook to event <b>checkout.session.completed</b> only. Use test keys (<code>sk_test_</code>) until you are ready for live cards.</p></div><form class="form-grid" id="billing-form"><label class="full">Stripe secret key *<input name="secretKey" type="password" autocomplete="off" placeholder="sk_test_\u2026 or sk_live_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved key. Enter a new key only to replace it." : "Required. Starts with sk_test_ or sk_live_."}</small></label><label class="full">Webhook signing secret *<input name="webhookSecret" type="password" autocomplete="off" placeholder="whsec_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved signing secret." : "From the Stripe webhook endpoint details."}</small></label><label class="full">Stripe publishable key<input name="publishableKey" autocomplete="off" placeholder="pk_test_\u2026 or pk_live_\u2026"/><small>${status?.hasPublishableKey ? "Saved. Enter a new key only to replace it. Required for phone orders." : "Starts with pk_test_ or pk_live_. Required before the office can type a card for a phone order."}</small></label><label>Account label<input name="accountLabel" value="${escapeAttr(config.accountLabel || "")}" placeholder="e.g. Main shop Stripe"/></label><label>Shop name on receipts<input name="shopName" value="${escapeAttr(config.shopName || "Your Car Guy")}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled || configured ? "checked" : ""}/><span>Enable Pay online on open invoices</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="refresh-stripe-status">${icon("refresh-cw", 14)} Refresh status</button><button class="primary" type="submit">${icon("save", 14)} Save Stripe keys</button></div></form></section>`);
   }
   function cardTerminal() {
     const model = cardTerminalModel({
@@ -6141,13 +6194,13 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     const identity = `<div class="full pos-identity"><span>Customer</span><strong>${escapeHtml(selected?.customer || "Select a work order")}</strong><span>Vehicle</span><strong>${escapeHtml(selected?.vehicle || "Vehicle comes from the work order")}</strong></div>`;
     const amountField = `<label>Amount<input name="amount" id="pos-amount" type="number" min="0.50" step="0.01" value="${selected && selected.balance >= 0.5 ? selected.balance.toFixed(2) : ""}" required/></label>`;
     const orderField = `<label class="full">Work order<select name="orderId" id="pos-order" required>${options || `<option value="">No work orders</option>`}</select></label>`;
-    const phoneNotice = posPhoneEntry ? "Type the card number, expiration, security code, and postal code from the phone call. Stripe collects the card. Shop Crank stores the approval on the work order." : "Add the Stripe publishable key on the Payments page first. It starts with pk_test_ or pk_live_ and must belong to the same account as the secret key.";
+    const phoneNotice = posPhoneEntry ? "Type the card number, expiration, security code, and postal code from the phone call. Stripe collects the card. ShopCrank stores the approval on the work order." : "Add the Stripe publishable key on the Payments page first. It starts with pk_test_ or pk_live_ and must belong to the same account as the secret key.";
     const counter = posMode === "phone" ? `<form class="form-grid" id="pos-phone-form">${orderField}${identity}${amountField}<div class="full" id="pos-card-element"></div><p class="ai-disclaimer">${escapeHtml(phoneNotice)}</p><div class="full messaging-actions"><button class="primary" type="submit" id="pos-phone-prepare" ${!selected || selected.balance < 0.5 || !posPhoneEntry ? "disabled" : ""}>${icon("credit-card", 14)} Enter card</button><button class="primary" type="button" id="pos-phone-charge" hidden>${icon("check", 14)} Charge card</button></div><p class="pos-status" id="pos-phone-status" hidden></p></form>` : `<form class="form-grid" id="pos-form">${orderField}${identity}${amountField}<label>Reader<select name="readerId" id="pos-reader" required>${readerOptions || `<option value="">No reader</option>`}</select></label><div class="full messaging-actions"><button class="secondary" type="button" id="pos-refresh">${icon("refresh-cw", 14)} Refresh readers</button><button class="secondary" type="button" id="pos-cancel" ${posCharge ? "" : "disabled"}>${icon("x", 14)} Cancel on reader</button><button class="primary" type="submit" id="pos-charge" ${!selected || selected.balance < 0.5 || !model.readers.length ? "disabled" : ""}>${icon("credit-card", 14)} Charge card</button></div>${chargeNote}</form>`;
     return shell(`${heading("Front counter", "Card terminal", "Take a card on the reader, or type a card for a purchase made over the phone.", false)}<section class="messaging-panel pos-terminal"><div class="messaging-status ${model.configured ? "ready" : "idle"}">${icon("credit-card", 17)}<div><strong>${posMode === "phone" ? "Phone order" : model.configured ? "Card reader ready" : "Card reader not connected"}</strong><span>${escapeHtml(posMode === "phone" ? phoneNotice : connection)}</span></div></div><div class="accounting-tabs"><button class="tab ${posMode === "reader" ? "active" : ""}" type="button" data-pos-mode="reader">Card reader</button><button class="tab ${posMode === "phone" ? "active" : ""}" type="button" data-pos-mode="phone">Phone order</button></div>${counter}<section class="pos-writeup"><h2>Technician write-up</h2><p>The recovery note uses the customer and vehicle on the selected work order.</p><pre id="pos-writeup">${escapeHtml(writeup.ready ? writeup.text : "Select a work order that has both a customer name and a vehicle. Those details are written into the note. They are not filled in from memory.")}</pre><button class="secondary" type="button" id="pos-save-writeup" ${writeup.ready ? "" : "disabled"}>${icon("save", 14)} Save on work order</button></section></section>`);
   }
   function messaging() {
     const config = state.messagingSettings;
-    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; Shop Crank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${config.shopName || "Your Car Guy"}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
+    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${config.shopName || "Your Car Guy"}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
   }
   async function loadIntegrationStatus() {
     try {
@@ -6171,7 +6224,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from Shop Crank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>Shop Crank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button></div></form></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button></div></form></section>`);
   }
   function support() {
     if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -6180,7 +6233,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     <section class="messaging-panel"><div class="statement-head"><div><div class="eyebrow">Help center</div><h2>Common questions</h2></div>${icon("life-buoy", 20)}</div>
       <details><summary>Why does a labor time say unverified?</summary><p>MOTOR or ALLDATA has not returned a licensed operation. Confirm the vehicle and operation, then enter shop time manually.</p></details>
       <details><summary>Why is texting unavailable?</summary><p>The platform Twilio number, webhook, and A2P 10DLC campaign must be configured. Customers who text STOP remain blocked until they text START.</p></details>
-      <details><summary>How do I connect accounting?</summary><p>An admin opens Integrations, connects the approved Intuit app, and syncs Shop Crank records one way to QuickBooks Online.</p></details>
+      <details><summary>How do I connect accounting?</summary><p>An admin opens Integrations, connects the approved Intuit app, and syncs ShopCrank records one way to QuickBooks Online.</p></details>
       <details><summary>How do I import existing shop data?</summary><p>Use Import data for supported CSV files. Request assisted migration below for mapping, validation, and reconciliation.</p></details>
       ${statusUrl ? `<p><a class="secondary" href="${escapeAttr(statusUrl)}" target="_blank" rel="noopener noreferrer">${icon("activity", 14)} Service status</a></p>` : ""}</section>
     <section class="messaging-panel"><h2>Contact support</h2><form class="form-grid" id="support-ticket-form"><label>Category<select name="category"><option value="technical">Technical issue</option><option value="billing">Billing</option><option value="onboarding">Onboarding</option><option value="data_migration">Data migration</option><option value="feedback">Feedback</option></select></label><label>Priority<select name="priority"><option value="normal">Normal</option><option value="urgent">Urgent \u2014 shop blocked</option></select></label><label class="full">Subject<input name="subject" maxlength="160" required/></label><label class="full">What happened?<textarea name="description" maxlength="8000" required placeholder="Include the affected work order, expected result, and exact error. Do not include passwords or card data."></textarea></label><div class="full"><button class="primary" type="submit">${icon("send", 14)} Submit ticket</button></div></form></section>`);
@@ -6252,7 +6305,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     });
   }
   function openGlobalAssistant() {
-    showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>Shop Crank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`);
+    showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>ShopCrank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`);
     bindLiveAssistant();
   }
   function toggleAssistantPause() {
@@ -6270,8 +6323,8 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     });
   }
   function liveAssistant() {
-    const rows = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
-    return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Live voice assistant</div><h2>Ask Shop Crank anything</h2><p>Talk or type questions about shop operations, vehicles, work orders, invoices, and repair decisions.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Your live assistant is ready. Ask a question to begin.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Ask about a customer, repair, invoice, or shop task..."></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Speak to Shop Crank">${icon("mic", 15)} Speak</button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div></form></section>`;
+    const rows = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
+    return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Live voice assistant</div><h2>Ask ShopCrank anything</h2><p>Talk or type questions about shop operations, vehicles, work orders, invoices, and repair decisions.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Your live assistant is ready. Ask a question to begin.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Ask about a customer, repair, invoice, or shop task..."></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Speak to ShopCrank">${icon("mic", 15)} Speak</button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div></form></section>`;
   }
   function aiWorkbench() {
     const tabs = [["workflow", "RO workflow"], ["diagnostics", "Diagnostics"], ["estimate", "Estimator"], ["saved-estimates", "Estimates"], ["guide", "Repair guide"], ["phone", "Phone intake"]], body = { workflow: aiWorkflowForm(), diagnostics: aiDiagnosticsForm(), estimate: aiEstimateForm(), "saved-estimates": savedEstimates(), guide: aiGuideForm(), phone: aiPhoneForm() }[aiTab];
@@ -6332,7 +6385,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   }
   function workflowResult(result) {
     const order = result.order || {}, causes = result.diagnostics.causes.map((cause) => `<article class="cause-card"><div class="cause-title"><h3>${escapeHtml(cause.cause)}</h3><span class="ai-tag ${cause.likelihood.toLowerCase()}">${cause.likelihood}</span></div><p>${escapeHtml(cause.explanation)}</p><small><b>Evidence that raises likelihood:</b> ${escapeHtml(cause.evidence)}</small><div class="cause-tools"><b>Tools:</b> ${cause.tools.map(escapeHtml).join(" \xB7 ")}</div>${cause.tests.map((test, index) => `<section class="test-procedure"><h4>Test ${index + 1}: ${escapeHtml(test.name)}</h4><ol>${test.procedure.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol><div class="expected-readings"><p><b>Pass / normal:</b> ${escapeHtml(test.good)}</p><p><b>Fail / supports cause:</b> ${escapeHtml(test.bad)}</p></div><div class="worksheet-reading">Actual reading / observation: ______________________________________________</div></section>`).join("")}<h4>Repair options after confirmation</h4><ul class="repair-options">${cause.repairs.map((option) => worksheetCheck("Option", option)).join("")}</ul></article>`).join(""), parts = result.estimate.lines.map((line) => `<tr><td>${escapeHtml(line.service)}</td><td>${line.hours.toFixed(2)}</td><td>${money4(line.parts)}</td><td><b>${money4(line.total)}</b></td></tr>`).join(""), steps = result.guide.steps.map((step, index) => worksheetCheck(`Step ${index + 1}`, stepText(step))).join(""), safety = result.guide.safety.map((item) => `<li>${escapeHtml(item)}</li>`).join(""), qc = result.guide.postRepair.map((item, index) => worksheetCheck(`QC ${index + 1}`, item)).join("");
-    return `<section class="ai-result"><div class="ai-result-head no-print"><div><div class="eyebrow">Generated technician workflow</div><h2>${escapeHtml(result.orderId)}</h2><p>Ranked causes, detailed tests, repair choices, and final quality control.</p></div><div class="ai-result-actions"><button class="secondary" type="button" onclick="window.print()">${icon("printer", 14)} Print technician packet</button><button class="primary" id="apply-ai-workflow">${icon("save", 14)} Apply to work order</button></div></div><div class="technician-worksheet" id="ai-technician-printable"><header class="worksheet-header"><div><div class="eyebrow">Shop Crank diagnostic & repair worksheet</div><h2>${escapeHtml(result.orderId)} \xB7 ${escapeHtml(order.vehicle || result.diagnostics.vehicle)}</h2></div><div class="worksheet-assignment"><span>Assigned technician</span><b>${escapeHtml(order.technician || "Unassigned")}</b></div></header><section class="worksheet-meta"><div><span>Customer</span><b>${escapeHtml(order.customer || "Not recorded")}</b></div><div><span>VIN</span><b class="mono">${escapeHtml(order.vin || "VIN pending")}</b></div><div><span>Bay / assignment</span><b>${escapeHtml(order.bay || "Unassigned")}</b></div><div><span>Promise</span><b>${escapeHtml(order.promise || "Not scheduled")}</b></div><div class="wide"><span>Customer complaint</span><b>${escapeHtml(order.complaint || result.diagnostics.symptoms)}</b></div></section><aside class="worksheet-warning"><b>Technician verification required.</b> Likelihood ranks prioritize testing; they are not a diagnosis or authorization to replace parts. Use current manufacturer information and record objective results.</aside><section class="worksheet-section"><div class="worksheet-section-head"><div><span>01</span><h2>Ranked causes & diagnostic procedures</h2></div><div class="likelihood-key"><b class="high">High</b><b class="medium">Medium</b><b class="minor">Minor</b></div></div><div class="cause-list">${causes}</div></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>02</span><h2>Preliminary estimate</h2></div></div><table><thead><tr><th>Service</th><th>Labor hours</th><th>Parts</th><th>Line total</th></tr></thead><tbody>${parts}</tbody></table><div class="ai-total"><span>Preliminary estimated total</span><b>${money4(result.estimate.total)}</b></div><p class="worksheet-fineprint">Inspect and obtain customer authorization before additional work. Part fitment, labor operations, taxes, fluids, programming, sublet work, and hidden damage may change the final estimate.</p></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>03</span><h2>Detailed repair checklist</h2></div></div><h3>Safety and stop-work conditions</h3><ul class="safety-list">${safety}</ul><ul class="worksheet-checklist">${steps}</ul></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>04</span><h2>Post-repair verification</h2></div></div><ul class="worksheet-checklist two-column">${qc}</ul><div class="worksheet-notes"><b>Technician findings, actual readings, torque references, parts used, and additional recommendations</b><div></div><div></div><div></div><div></div></div><footer class="worksheet-signoff"><label>Technician signature <span></span></label><label>Date / time <span></span></label><label>QC signature <span></span></label></footer></section></div></section>`;
+    return `<section class="ai-result"><div class="ai-result-head no-print"><div><div class="eyebrow">Generated technician workflow</div><h2>${escapeHtml(result.orderId)}</h2><p>Ranked causes, detailed tests, repair choices, and final quality control.</p></div><div class="ai-result-actions"><button class="secondary" type="button" onclick="window.print()">${icon("printer", 14)} Print technician packet</button><button class="primary" id="apply-ai-workflow">${icon("save", 14)} Apply to work order</button></div></div><div class="technician-worksheet" id="ai-technician-printable"><header class="worksheet-header"><div><div class="eyebrow">ShopCrank diagnostic & repair worksheet</div><h2>${escapeHtml(result.orderId)} \xB7 ${escapeHtml(order.vehicle || result.diagnostics.vehicle)}</h2></div><div class="worksheet-assignment"><span>Assigned technician</span><b>${escapeHtml(order.technician || "Unassigned")}</b></div></header><section class="worksheet-meta"><div><span>Customer</span><b>${escapeHtml(order.customer || "Not recorded")}</b></div><div><span>VIN</span><b class="mono">${escapeHtml(order.vin || "VIN pending")}</b></div><div><span>Bay / assignment</span><b>${escapeHtml(order.bay || "Unassigned")}</b></div><div><span>Promise</span><b>${escapeHtml(order.promise || "Not scheduled")}</b></div><div class="wide"><span>Customer complaint</span><b>${escapeHtml(order.complaint || result.diagnostics.symptoms)}</b></div></section><aside class="worksheet-warning"><b>Technician verification required.</b> Likelihood ranks prioritize testing; they are not a diagnosis or authorization to replace parts. Use current manufacturer information and record objective results.</aside><section class="worksheet-section"><div class="worksheet-section-head"><div><span>01</span><h2>Ranked causes & diagnostic procedures</h2></div><div class="likelihood-key"><b class="high">High</b><b class="medium">Medium</b><b class="minor">Minor</b></div></div><div class="cause-list">${causes}</div></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>02</span><h2>Preliminary estimate</h2></div></div><table><thead><tr><th>Service</th><th>Labor hours</th><th>Parts</th><th>Line total</th></tr></thead><tbody>${parts}</tbody></table><div class="ai-total"><span>Preliminary estimated total</span><b>${money4(result.estimate.total)}</b></div><p class="worksheet-fineprint">Inspect and obtain customer authorization before additional work. Part fitment, labor operations, taxes, fluids, programming, sublet work, and hidden damage may change the final estimate.</p></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>03</span><h2>Detailed repair checklist</h2></div></div><h3>Safety and stop-work conditions</h3><ul class="safety-list">${safety}</ul><ul class="worksheet-checklist">${steps}</ul></section><section class="worksheet-section"><div class="worksheet-section-head"><div><span>04</span><h2>Post-repair verification</h2></div></div><ul class="worksheet-checklist two-column">${qc}</ul><div class="worksheet-notes"><b>Technician findings, actual readings, torque references, parts used, and additional recommendations</b><div></div><div></div><div></div><div></div></div><footer class="worksheet-signoff"><label>Technician signature <span></span></label><label>Date / time <span></span></label><label>QC signature <span></span></label></footer></section></div></section>`;
   }
   function diagnosticsResult(result) {
     return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Diagnostic report</div><h2>${escapeHtml(result.vehicle)}</h2><p>${escapeHtml(result.urgency)} priority \xB7 ${result.hours.toFixed(2)} labor hours estimated</p></div></div><div class="ai-result-grid"><section><h3>Probable causes</h3><ul class="ai-causes">${result.causes.map((c) => `<li><b>${escapeHtml(c.cause)}</b><span class="ai-tag ${escapeAttr(c.likelihood.toLowerCase())}">${escapeHtml(c.likelihood)}</span><small>${escapeHtml(c.explanation)}</small></li>`).join("")}</ul></section><section><h3>Recommended tests</h3><ul class="ai-checklist">${result.tests.map((test) => `<li>${icon("check-circle-2", 13)}${escapeHtml(test)}</li>`).join("")}</ul><p class="ai-disclaimer">${escapeHtml(result.notes)}</p></section></div></section>`;
@@ -6553,7 +6606,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     try {
       response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/" }) });
     } catch (error) {
-      if (error instanceof TypeError) throw new Error("Could not reach Shop Crank sign-in. Check your internet connection and try again.");
+      if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again.");
       throw error;
     }
     const payload = await response.json().catch(() => ({}));
@@ -6603,7 +6656,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     closeModal();
     save();
     render();
-    toast("Signed out of Shop Crank");
+    toast("Signed out of ShopCrank");
   }
   function readMutationQueue() {
     return mutationQueueStore.read().filter((item) => item?.method === "DELETE" || item?.body);
@@ -6640,15 +6693,15 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       desktopEntitlementVerified = true;
       return true;
     }
-    if (!navigator.onLine) throw new Error("Shop Crank Desktop requires an internet connection to verify your subscription.");
+    if (!navigator.onLine) throw new Error("ShopCrank Desktop requires an internet connection to verify your subscription.");
     let response;
     try {
       response = await authorizedApiRequest("/subscription/entitlement", { cache: "no-store" });
     } catch {
-      throw new Error("Shop Crank could not reach the subscription service. Check your internet connection and try again.");
+      throw new Error("ShopCrank could not reach the subscription service. Check your internet connection and try again.");
     }
     const body = await response.json().catch(() => ({}));
-    if (!response.ok || body.active !== true) throw new Error(body.status === "expired" ? "Your Shop Crank subscription has expired." : body.status === "suspended" ? "This Shop Crank subscription is suspended." : "An active Shop Crank subscription is required for the Windows app.");
+    if (!response.ok || body.active !== true) throw new Error(body.status === "expired" ? "Your ShopCrank subscription has expired." : body.status === "suspended" ? "This ShopCrank subscription is suspended." : "An active ShopCrank subscription is required for the Windows app.");
     desktopEntitlementVerified = true;
     desktopLoginMessage = "";
     return true;
@@ -6691,13 +6744,13 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   async function apiFetch(path, options = {}) {
     if (isOfflineDesktop()) {
       if (String(path).startsWith("/ai/")) {
-        const aiError = new Error("Shop Crank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
+        const aiError = new Error("ShopCrank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
         aiError.retryable = false;
         throw aiError;
       }
       const method = String(options.method || "GET").toUpperCase();
       if (method === "GET" || method === "HEAD") {
-        const offlineError = new Error("This copy of Shop Crank keeps shop records on this computer.");
+        const offlineError = new Error("This copy of ShopCrank keeps shop records on this computer.");
         offlineError.retryable = false;
         throw offlineError;
       }
@@ -6717,7 +6770,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     } catch (error) {
       if (mutation.queueable && (error.retryable || !navigator.onLine || error instanceof TypeError)) {
         queueEntityMutation(mutation);
-        if (!options.silent) toast("Saved offline. Shop Crank will sync when the connection returns.");
+        if (!options.silent) toast("Saved offline. ShopCrank will sync when the connection returns.");
         return { queued: true };
       }
       throw error;
@@ -7116,7 +7169,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
   }
   function shell(content) {
     const user = currentUser(), profile = shopProfile(), shift = openShift(user.id);
-    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Shop operating system</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
+    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
   }
   function heading(kicker, title, description, action = true) {
     return `<div class="page-head"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p>${description}</p></div><div class="head-actions"><button class="secondary" id="export-button">${icon("download", 15)} Export</button>${action ? `<button class="primary" id="new-ro-button">${icon("plus", 15)} New work order</button>` : ""}</div></div>`;
@@ -7260,7 +7313,8 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       orderingPanelHtml(autozoneAccount, { canSave, escapeHtml, icon }),
       partstechPanelHtml(partstechAccount, { canSave, escapeHtml, icon }),
       laborGuidePanelHtml(laborGuideAccount, { canSave, escapeHtml, icon }),
-      quickbooksPanelHtml(quickbooksAccount, { canSave, escapeHtml, icon })
+      quickbooksPanelHtml(quickbooksAccount, { canSave, escapeHtml, icon }),
+      revenueRecognitionPanelHtml(revrecStatus, { canSave, escapeHtml, icon })
     ].join("");
   }
   async function loadAutozoneAccount(force = false) {
@@ -7304,6 +7358,17 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       quickbooksAccount = { ...account, loaded: true };
     } catch {
       quickbooksAccount = { connected: false, loaded: true, unavailable: true };
+    }
+    if (state.route === "shopops" && shopOpsTab === "ordering") render();
+  }
+  async function loadRevrecStatus(force = false) {
+    if (revrecStatus.loaded && !force) return;
+    revrecStatus = { ...revrecStatus, loaded: true };
+    try {
+      const status = await apiFetch("/revenue-recognition/status");
+      revrecStatus = { ...status, loaded: true };
+    } catch {
+      revrecStatus = { enabled: false, loaded: true, unavailable: true };
     }
     if (state.route === "shopops" && shopOpsTab === "ordering") render();
   }
@@ -7837,6 +7902,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       void loadPartstechAccount();
       void loadLaborGuideAccount();
       void loadQuickbooksAccount();
+      void loadRevrecStatus();
     }
     document.querySelector("#partstech-connect-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -7978,6 +8044,57 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       const status = document.querySelector("#qbo-sync-status");
       if (status) status.textContent = "Sync uses per-record POST /integrations/quickbooks/sync from invoices and customers.";
       toast("Open a customer or invoice and sync from there, or call the sync API with entityType/localId");
+    });
+    document.querySelector("#revrec-config-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      try {
+        const status = await apiFetch("/revenue-recognition/configure", {
+          method: "POST",
+          body: JSON.stringify({
+            enabled: data.enabled === "on",
+            currency: String(data.currency || "usd").trim().toLowerCase()
+          })
+        });
+        revrecStatus = { ...status, loaded: true };
+        toast(status.enabled ? "Revenue Recognition sync enabled" : "Revenue Recognition sync disabled");
+        render();
+      } catch (error) {
+        toast(error.message || "Could not save Revenue Recognition settings");
+      }
+    });
+    document.querySelector("#revrec-export-now")?.addEventListener("click", async () => {
+      const note = document.querySelector("#revrec-sync-status");
+      if (note) note.textContent = "Uploading CSV to S3\u2026";
+      try {
+        const status = await apiFetch("/revenue-recognition/export", { method: "POST", body: "{}" });
+        revrecStatus = { ...status, loaded: true };
+        if (note) note.textContent = `Exported ${status.rowCount ?? 0} row(s) to ${status.objectKey || "S3"}`;
+        toast("Revenue Recognition export uploaded");
+        render();
+      } catch (error) {
+        if (note) note.textContent = error.message || "Export failed";
+        toast(error.message || "Could not export Revenue Recognition CSV");
+      }
+    });
+    document.querySelector("#revrec-download-csv")?.addEventListener("click", async () => {
+      try {
+        const response = await authorizedApiRequest("/revenue-recognition/export.csv", { method: "GET", headers: { Accept: "text/csv" } });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.message || `Download failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `shopcrank-revrec-${revrecStatus.shopId || "export"}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast("Revenue Recognition CSV downloaded");
+      } catch (error) {
+        toast(error.message || "Could not download Revenue Recognition CSV");
+      }
     });
     document.querySelectorAll("[data-ops-tab]").forEach((button) => button.onclick = () => {
       shopOpsTab = button.dataset.opsTab;
@@ -8225,12 +8342,12 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   }
   function settings() {
     const t = state.taxSettings, stateOptions = usStates.map((s) => `<option value="${s.code}" ${t.state === s.code ? "selected" : ""}>${s.name}</option>`).join("");
-    return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout Shop Crank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="Your Car Guy"/></label><label>Phone<input value="555-0100"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`);
+    return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout ShopCrank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="Your Car Guy"/></label><label>Phone<input value="555-0100"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`);
   }
   function loginScreen() {
     if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon });
     const googleUrl = `${cloudflareConfig2.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Dispatch & work orders</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to Shop Crank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open Shop Crank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active Shop Crank customer or employee profile."}</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
   }
   async function upgradeShopPlan() {
     const plans = [["shop", "Shop \xB7 $139/mo"], ["solo", "Solo \xB7 $69/mo"], ["shop_pro", "Shop Pro \xB7 $279/mo"], ["enterprise", "Enterprise \xB7 $559/mo"]];
@@ -8271,7 +8388,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   }
   function platformShell(content) {
     const user = currentUser();
-    return `<div class="app-shell platform-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Platform console</small></div></div><div class="nav-label">Platform</div><nav class="nav">${nav("superadmin", "building-2", "Customer shops")}<a class="nav-button" href="/downloads" target="_blank" rel="noopener">${icon("download")} Downloads</a><a class="nav-button" href="/pricing" target="_blank" rel="noopener">${icon("badge-dollar-sign")} Pricing</a></nav><div class="sidebar-foot"><div class="shop-card"><strong>Platform admin</strong><span>${escapeHtml(user?.email || "")}</span></div><button class="user-row" id="sign-out" type="button"><div class="avatar">${initials(user?.name || "P")}</div><div><strong>${escapeHtml(user?.name || "Platform")}</strong><span>Sign out</span></div></button></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation">${icon("menu")}</button><div class="top-actions"><button class="secondary" id="refresh-platform" type="button">${icon("refresh-cw", 14)} Refresh</button><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Get apps</a></div></header><div class="content">${content}</div></main></div>`;
+    return `<div class="app-shell platform-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Platform console</small></div></div><div class="nav-label">Platform</div><nav class="nav">${nav("superadmin", "building-2", "Customer shops")}<a class="nav-button" href="/downloads" target="_blank" rel="noopener">${icon("download")} Downloads</a><a class="nav-button" href="/pricing" target="_blank" rel="noopener">${icon("badge-dollar-sign")} Pricing</a></nav><div class="sidebar-foot"><div class="shop-card"><strong>Platform admin</strong><span>${escapeHtml(user?.email || "")}</span></div><button class="user-row" id="sign-out" type="button"><div class="avatar">${initials(user?.name || "P")}</div><div><strong>${escapeHtml(user?.name || "Platform")}</strong><span>Sign out</span></div></button></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation">${icon("menu")}</button><div class="top-actions"><button class="secondary" id="refresh-platform" type="button">${icon("refresh-cw", 14)} Refresh</button><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Get apps</a></div></header><div class="content">${content}</div></main></div>`;
   }
   function subscriptionBadge(account) {
     const status = String(account.subscriptionStatus || "missing");
@@ -8575,7 +8692,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     const input = form.elements.message, sendButton = form.querySelector("button[type=submit]"), append = (role, content) => {
       assistantConversation.push({ role, content });
       const list = document.querySelector("#assistant-messages");
-      list.innerHTML = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
+      list.innerHTML = assistantConversation.map((item) => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join("");
       list.scrollTop = list.scrollHeight;
     };
     form.onsubmit = async (event) => {
@@ -9292,7 +9409,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         state.users = sanitizeUsers(state.users);
         return local;
       }
-      if (error instanceof TypeError) throw new Error("Could not reach Shop Crank. Sign in from the online desktop window or check your internet connection.");
+      if (error instanceof TypeError) throw new Error("Could not reach ShopCrank. Sign in from the online desktop window or check your internet connection.");
       throw error;
     }
     const active = employees2.find((user) => user.active && String(user.email || "").trim().toLowerCase() === normalized);
@@ -9322,7 +9439,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function pendingProfileScreen() {
     const pending = pendingAuthProfile || {};
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">Shop Crank</div><small>Account almost ready</small></div></div><div class="eyebrow">Employee profile required</div><h1>${pending.reason === "deactivated" ? "Your shop profile is deactivated" : "Ask an admin to finish setup"}</h1><p>${pending.reason === "deactivated" ? `The Cloudflare Access identity <strong>${escapeHtml(pending.email || "")}</strong> works, but the matching employee profile is inactive.` : `You signed in as <strong>${escapeHtml(pending.email || "")}</strong> (${escapeHtml(roleLabel[pending.role] || pending.role || "team member")}), but this shop does not have an active employee profile for that email yet.`}</p><div class="service-contract"><p>Ask a shop administrator to open <b>Employees</b> and create (or reactivate) a profile using exactly this email:</p><code>${escapeHtml(pending.email || "")}</code></div><div class="modal-actions" style="justify-content:flex-start;margin-top:18px"><button class="primary" id="pending-sign-out">${icon("log-out", 14)} Sign out</button></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Account almost ready</small></div></div><div class="eyebrow">Employee profile required</div><h1>${pending.reason === "deactivated" ? "Your shop profile is deactivated" : "Ask an admin to finish setup"}</h1><p>${pending.reason === "deactivated" ? `The Cloudflare Access identity <strong>${escapeHtml(pending.email || "")}</strong> works, but the matching employee profile is inactive.` : `You signed in as <strong>${escapeHtml(pending.email || "")}</strong> (${escapeHtml(roleLabel[pending.role] || pending.role || "team member")}), but this shop does not have an active employee profile for that email yet.`}</p><div class="service-contract"><p>Ask a shop administrator to open <b>Employees</b> and create (or reactivate) a profile using exactly this email:</p><code>${escapeHtml(pending.email || "")}</code></div><div class="modal-actions" style="justify-content:flex-start;margin-top:18px"><button class="primary" id="pending-sign-out">${icon("log-out", 14)} Sign out</button></div></section></main>`;
   }
   function safeHexColor(value2, fallback) {
     const color = String(value2 || "").trim();
@@ -9420,7 +9537,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function payroll() {
     syncAllPayroll();
     const period = weekPeriod(), admin = currentUser().role === "admin", people = admin ? state.users.filter((user) => user.active) : [currentUser()], stubs = people.map((user) => payStub(user, period));
-    return shell(`${heading("Compensation", "Payroll", admin ? `Weekly payroll for ${period.start} - ${period.end}. Completed jobs automatically add labor hours to the assigned employee.` : `Your weekly pay stub for ${period.start} - ${period.end}.`, false)}<div class="ai-notice">${icon("landmark", 16)}<span>Payroll figures are a small-shop estimate for planning only. Shop Crank does not file taxes, generate W-2/1099 forms, or replace a payroll processor.</span></div>${admin ? `<div class="payroll-actions"><button class="secondary" id="payroll-export">${icon("download", 14)} Export payroll</button><button class="primary" id="sync-payroll">${icon("refresh-cw", 14)} Sync completed jobs</button></div>` : ""}<div class="payroll-summary"><span>Pay period</span><strong>${period.start} - ${period.end}</strong><span>${stubs.reduce((sum, stub) => sum + stub.hours, 0).toFixed(2)} labor hours</span><strong>${money4(stubs.reduce((sum, stub) => sum + stub.net, 0))} net pay</strong></div><div class="payroll-grid">${stubs.map(payStubMarkup).join("") || empty("No active payroll employees")}</div>`);
+    return shell(`${heading("Compensation", "Payroll", admin ? `Weekly payroll for ${period.start} - ${period.end}. Completed jobs automatically add labor hours to the assigned employee.` : `Your weekly pay stub for ${period.start} - ${period.end}.`, false)}<div class="ai-notice">${icon("landmark", 16)}<span>Payroll figures are a small-shop estimate for planning only. ShopCrank does not file taxes, generate W-2/1099 forms, or replace a payroll processor.</span></div>${admin ? `<div class="payroll-actions"><button class="secondary" id="payroll-export">${icon("download", 14)} Export payroll</button><button class="primary" id="sync-payroll">${icon("refresh-cw", 14)} Sync completed jobs</button></div>` : ""}<div class="payroll-summary"><span>Pay period</span><strong>${period.start} - ${period.end}</strong><span>${stubs.reduce((sum, stub) => sum + stub.hours, 0).toFixed(2)} labor hours</span><strong>${money4(stubs.reduce((sum, stub) => sum + stub.net, 0))} net pay</strong></div><div class="payroll-grid">${stubs.map(payStubMarkup).join("") || empty("No active payroll employees")}</div>`);
   }
   function payStub(user, period) {
     const lines = state.payrollEntries.filter((entry) => entry.employeeId === user.id && entry.periodKey === period.key), hours = lines.reduce((sum, line) => sum + line.hours, 0), shiftHours = state.shiftEntries.filter((entry) => entry.userId === user.id && entry.clockOut && String(entry.clockIn).slice(0, 10) >= period.key).reduce((sum, entry) => sum + Number(entry.hours || 0), 0), jobPay = lines.reduce((sum, line) => sum + line.amount, 0), salaryPay = user.employmentType === "Salary" ? Number(user.payRate || 0) / 52 : 0, gross = jobPay + salaryPay, federal = Math.round(gross * 0.12 * 100) / 100, fica = Math.round(gross * 0.0765 * 100) / 100, other = 0;
@@ -9542,7 +9659,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function imports() {
     const cards = Object.entries(importTypes).map(([type, def]) => `<article class="import-card"><div class="import-card-icon">${icon(def.icon, 20)}</div><div><h3>${def.title}</h3><p>Required: ${def.required}</p><p class="import-columns">Columns: ${def.columns}</p></div><button class="secondary" data-import-type="${type}">${icon("upload", 14)} Choose CSV</button><button class="template-link" data-template="${type}">${icon("download", 13)} Template</button></article>`).join("");
-    return shell(`${heading("Data management", "Import records", "Bring historical CSV data into Shop Crank. Records are checked before they are added.", false)}<input id="csv-input" type="file" accept=".csv,text/csv" hidden/><div class="import-note">${icon("shield-check", 16)}<span>Review each batch before confirming it. Valid rows are added to this shop and synced when you are signed in.</span></div><div class="import-grid">${cards}</div>${importPreview ? previewMarkup() : ""}`);
+    return shell(`${heading("Data management", "Import records", "Bring historical CSV data into ShopCrank. Records are checked before they are added.", false)}<input id="csv-input" type="file" accept=".csv,text/csv" hidden/><div class="import-note">${icon("shield-check", 16)}<span>Review each batch before confirming it. Valid rows are added to this shop and synced when you are signed in.</span></div><div class="import-grid">${cards}</div>${importPreview ? previewMarkup() : ""}`);
   }
   function entityName(type) {
     return type === "orders" ? "work order" : type.slice(0, -1);
@@ -9706,7 +9823,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
   }
   function openOnboardingCleanup(count) {
-    showModal(`<div class="modal" id="onboarding-cleanup"><div class="modal-head"><h2>Start with a clean shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status ready">${icon("sparkles", 17)}<div><strong>${count} sample record${count === 1 ? "" : "s"} detected</strong><span>Starting onboarding removes only Shop Crank demo customers, work orders, invoices, and expenses. Employee access and real shop records stay in place.</span></div></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Keep for now</button><button type="button" class="primary" id="start-onboarding-cleanup">${icon("play", 14)} Start onboarding</button></div></div>`);
+    showModal(`<div class="modal" id="onboarding-cleanup"><div class="modal-head"><h2>Start with a clean shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status ready">${icon("sparkles", 17)}<div><strong>${count} sample record${count === 1 ? "" : "s"} detected</strong><span>Starting onboarding removes only ShopCrank demo customers, work orders, invoices, and expenses. Employee access and real shop records stay in place.</span></div></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Keep for now</button><button type="button" class="primary" id="start-onboarding-cleanup">${icon("play", 14)} Start onboarding</button></div></div>`);
     document.querySelector("#start-onboarding-cleanup").onclick = startOnboardingCleanup;
   }
   async function checkOnboardingSamples() {
@@ -10129,7 +10246,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       analyze: async (current) => {
         try {
           const response = await apiFetch("/api/ai/assistant", { method: "POST", body: JSON.stringify({ message: `Shop intake review only. Vehicle ${current.vehicle?.year || ""} ${current.vehicle?.make || ""} ${current.vehicle?.model || ""}. Concern: ${current.concern?.description || ""}. Codes: ${current.diagnosis?.codes || "none"}.` }) });
-          if (response?.reply || response?.message) return { source: "assistant", notice: "Shop Crank assistant response. Confirm every test on the vehicle before selling parts.", causes: [{ name: "Assistant notes", detail: response.reply || response.message }] };
+          if (response?.reply || response?.message) return { source: "assistant", notice: "ShopCrank assistant response. Confirm every test on the vehicle before selling parts.", causes: [{ name: "Assistant notes", detail: response.reply || response.message }] };
         } catch {
         }
         return localDiagnosticChecklist(current);
@@ -10706,8 +10823,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     if (!to || to === "Not provided") return toast(`Add a customer ${channel === "email" ? "email address" : "phone number"} first`);
     try {
       const link = await ensureCustomerDocumentLink("estimate", order.id);
-      const subject = `Estimate ${order.id} \u2014 ${state.messagingSettings.shopName || "Shop Crank"}`;
-      const body = `${state.messagingSettings.shopName || "Shop Crank"} estimate for ${order.vehicle}: ${money4(order.total)}. Review each recommended line and sign to approve: ${link.url}`;
+      const subject = `Estimate ${order.id} \u2014 ${state.messagingSettings.shopName || "ShopCrank"}`;
+      const body = `${state.messagingSettings.shopName || "ShopCrank"} estimate for ${order.vehicle}: ${money4(order.total)}. Review each recommended line and sign to approve: ${link.url}`;
       const delivery = await deliverShopMessage({ channel, to, subject, body, metadata: { type: "estimate", workOrderId: order.id, approvalUrl: link.url } });
       order.lastEstimateLink = { url: link.url, expiresAt: link.expiresAt, sentAt: now(), channel, deliveryMode: delivery.mode };
       await updateOrderInApi(order);
@@ -10735,7 +10852,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const lineChoices = kind === "estimate" ? `<fieldset class="onsite-line-choices"><legend>Approve or decline each line</legend>${estimate.lines.map((line) => `<label><input type="checkbox" name="approvedLine" value="${escapeAttr(line.id)}" checked><span><b>${escapeHtml(line.description)}</b><small>${line.type === "part" ? `${line.quantity} \xD7 ${money4(line.unitPrice)}` : line.type === "fee" ? `Flat fee \xB7 ${money4(line.total)}` : `${line.hours.toFixed(2)} hr \xD7 ${money4(line.laborRate)}`}</small></span><strong>${money4(line.total)}</strong></label>`).join("")}</fieldset>` : "";
     const typeOptions = ESTIMATE_APPROVAL_TYPES.map((option) => `<option value="${option.value}">${escapeHtml(option.label)}</option>`).join("");
     const approvalFields = kind === "estimate" ? `<div class="form-grid approval-method-fields"><label>Approval type *<select name="approvalType" id="approval-type">${typeOptions}</select></label><label id="custom-approval-label" hidden>Custom approval type *<input name="customLabel" maxlength="${APPROVAL_CUSTOM_LABEL_MAX}" placeholder="e.g. Approved via fleet manager email"/></label><label class="full">Approval note (optional)<textarea name="approvalNote" maxlength="${APPROVAL_NOTE_MAX}" placeholder="Who approved, callback number, or other audit detail"></textarea></label></div>` : "";
-    showModal(`<form class="modal wide" id="document-signature-form"><div class="modal-head"><h2>${kind === "estimate" ? "Authorize estimate" : "Sign invoice"} on this device</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(number)} \xB7 ${escapeHtml(record.vehicle || "")}</span><strong>${money4(estimate.total ?? estimate.amount)}</strong></div>${lineChoices}${approvalFields}<label>Approver name *<input name="authorizationName" maxlength="100" required value="${escapeAttr(record.customer || "")}"/></label><label class="signature-label" id="signature-capture">Draw signature *<canvas id="signature-pad" width="720" height="220"></canvas></label><p class="ai-disclaimer" id="approval-disclaimer">${kind === "estimate" ? "A signature authorizes the selected work. For phone, in-person, email, text, or other approval, Shop Crank records the current staff user and time instead." : "Signing acknowledges this invoice and the completed work listed on it."}</p></div><div class="modal-actions"><button type="button" class="secondary" id="clear-signature">Clear</button><button type="submit" class="primary" id="save-document-approval">${icon("signature", 14)} ${kind === "estimate" ? "Sign & approve" : "Sign invoice"}</button></div></form>`);
+    showModal(`<form class="modal wide" id="document-signature-form"><div class="modal-head"><h2>${kind === "estimate" ? "Authorize estimate" : "Sign invoice"} on this device</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(number)} \xB7 ${escapeHtml(record.vehicle || "")}</span><strong>${money4(estimate.total ?? estimate.amount)}</strong></div>${lineChoices}${approvalFields}<label>Approver name *<input name="authorizationName" maxlength="100" required value="${escapeAttr(record.customer || "")}"/></label><label class="signature-label" id="signature-capture">Draw signature *<canvas id="signature-pad" width="720" height="220"></canvas></label><p class="ai-disclaimer" id="approval-disclaimer">${kind === "estimate" ? "A signature authorizes the selected work. For phone, in-person, email, text, or other approval, ShopCrank records the current staff user and time instead." : "Signing acknowledges this invoice and the completed work listed on it."}</p></div><div class="modal-actions"><button type="button" class="secondary" id="clear-signature">Clear</button><button type="submit" class="primary" id="save-document-approval">${icon("signature", 14)} ${kind === "estimate" ? "Sign & approve" : "Sign invoice"}</button></div></form>`);
     const canvas = document.querySelector("#signature-pad"), context = canvas.getContext("2d");
     let drawing = false, drawn = false;
     const position = (event) => {
@@ -11110,7 +11227,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function assistantMessageMarkup(item, index) {
     const actions = (item.actions || []).map((action, actionIndex) => action.kind === "estimate_work_order_draft" ? `<button type="button" class="assistant-draft-action" data-assistant-draft="${index}:${actionIndex}">${icon("clipboard-plus", 14)} Save estimate & fill work order</button>` : "").join("");
-    return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "Shop Crank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${actions}</article>`;
+    return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${actions}</article>`;
   }
   function assistantProviderLabel(provider = "") {
     const value2 = String(provider || "").trim().toLowerCase();
@@ -11356,7 +11473,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function filingCenterMarkup() {
     if (!filingCenterOpen) return "";
     const shop = shopFilingProfile();
-    return `<section class="messaging-panel no-print" style="margin-top:16px"><div class="statement-head"><div><div class="eyebrow">E-file center</div><h2>IRS \xB7 Texas Comptroller \xB7 SSA</h2><p>Shop Crank builds portal-ready packages. Transmit via the linked government portals (or your CPA). Configure transmitter credentials in Shop settings when you enroll as an e-file provider.</p></div><button type="button" class="secondary" id="close-filing-center">Close</button></div>
+    return `<section class="messaging-panel no-print" style="margin-top:16px"><div class="statement-head"><div><div class="eyebrow">E-file center</div><h2>IRS \xB7 Texas Comptroller \xB7 SSA</h2><p>ShopCrank builds portal-ready packages. Transmit via the linked government portals (or your CPA). Configure transmitter credentials in Shop settings when you enroll as an e-file provider.</p></div><button type="button" class="secondary" id="close-filing-center">Close</button></div>
 <div class="accounting-grid" style="margin-top:12px">
 <section class="statement"><div class="eyebrow">Sales tax</div><h3>Texas WebFile / EDI</h3><p>List-supplement CSV with 7-digit jurisdiction codes for WebFile or Texas EDI software.</p><a class="secondary" href="https://comptroller.texas.gov/taxes/file-pay/about-webfile.php" target="_blank" rel="noopener">Open WebFile</a></section>
 <section class="statement"><div class="eyebrow">Employment tax</div><h3>IRS Form 941 + EFTPS</h3><p>Quarterly 941 worksheet from payroll withholdings. Pay deposits via EFTPS.</p><a class="secondary" href="https://www.irs.gov/businesses/small-businesses-self-employed/e-file-employment-tax-forms" target="_blank" rel="noopener">IRS employment e-file</a></section>
@@ -11483,7 +11600,7 @@ ${catRows}
 <small>${pack.payments} payments \xB7 Sales tax ${money4(pack.salesTax)} held in 2100</small>
 </section>
 <section class="statement"><div class="statement-head"><div><div class="eyebrow">Filing note</div><h2>Income tax package</h2></div></div>
-<p>Export these CSVs for your CPA or Schedule C. Revenue excludes sales tax collected. Shop Crank does not e-file Form 1040/1120 \u2014 use the package with your preparer or tax software.</p>
+<p>Export these CSVs for your CPA or Schedule C. Revenue excludes sales tax collected. ShopCrank does not e-file Form 1040/1120 \u2014 use the package with your preparer or tax software.</p>
 </section></div></div>`;
   }
   function exportTaxPackagePl() {
@@ -11726,7 +11843,7 @@ ${catRows}
   }
   function bayHardwarePanel() {
     const hw = bayHw();
-    if (!hw.available) return `<div class="messaging-status idle">${icon("monitor", 17)}<div><strong>Simulator</strong><span>Live OBD-II and key work run in the Shop Crank Windows app with a J2534 adapter such as the TOPDON RLink X7. In the browser this bay uses the bench simulator.</span></div></div>`;
+    if (!hw.available) return `<div class="messaging-status idle">${icon("monitor", 17)}<div><strong>Simulator</strong><span>Live OBD-II and key work run in the ShopCrank Windows app with a J2534 adapter such as the TOPDON RLink X7. In the browser this bay uses the bench simulator.</span></div></div>`;
     const status = hw.status || {};
     if (bayLive()) return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Live: ${escapeHtml(status.adapterName || "J2534 adapter")}</strong><span>${escapeHtml(status.protocol || "ISO15765")} \xB7 ${escapeHtml(String(status.voltage ?? "?"))} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${hw.busy ? " disabled" : ""}>Disconnect</button></div>`;
     const adapters = hw.adapters || [];
@@ -11752,7 +11869,7 @@ ${catRows}
     const latestTitle = latest?.mode === "live" ? "Latest live record" : "Latest simulated scan";
     const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} \xB7 ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map((dtc) => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value2]) => `${name} ${value2}`).join(" \xB7 "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
     const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
-    const subtitle = live ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes." : "Bench simulator until a J2534 adapter is connected in the Shop Crank Windows app.";
+    const subtitle = live ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes." : "Bench simulator until a J2534 adapter is connected in the ShopCrank Windows app.";
     return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${result}`);
   }
   function keyProgrammingBay() {
@@ -11922,7 +12039,7 @@ ${catRows}
       step("Checked live procedure support", support2?.reason || "");
       if (!support2?.supported) {
         await saveSession("not_supported", support2?.reason || "This procedure is not supported for this vehicle.");
-        showModal(`<div class="modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Not supported for this vehicle</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>${escapeHtml(support2?.reason || "Shop Crank cannot run this key procedure on this vehicle.")}</p><p class="ledger-note">Nothing was written to the vehicle. This attempt is in the key job log.</p><div class="modal-actions"><button class="primary" type="button" data-close>OK</button></div></div>`);
+        showModal(`<div class="modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Not supported for this vehicle</h2></div><button class="close" type="button" data-close aria-label="Close">${icon("x", 18)}</button></div><p>${escapeHtml(support2?.reason || "ShopCrank cannot run this key procedure on this vehicle.")}</p><p class="ledger-note">Nothing was written to the vehicle. This attempt is in the key job log.</p><div class="modal-actions"><button class="primary" type="button" data-close>OK</button></div></div>`);
         return;
       }
       openLiveKeyConfirm({ order, authorization, vehicleVin, procedure, support: support2, step, saveSession });
@@ -12072,7 +12189,7 @@ ${catRows}
     }
     if (state.route === "settings") render();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -12089,6 +12206,7 @@ ${catRows}
       init_labor_guide();
       init_shop_ai_settings();
       init_quickbooks();
+      init_revenue_recognition();
       init_repair_order_flow();
       init_file_upload();
       init_ai_workflow();
@@ -12262,6 +12380,7 @@ ${catRows}
       partstechAccount = { connected: false, loaded: false };
       laborGuideAccount = { connected: false, provider: "manual", loaded: false };
       quickbooksAccount = { connected: false, loaded: false };
+      revrecStatus = { enabled: false, loaded: false };
       globalThis.mechProElm327 = { normalizeElmResponse, parseElmPid, parseElmDtcs, formatElmResult };
       financeDerivedCache = null;
       modalAutosaveFlush = null;
@@ -12716,13 +12835,13 @@ ${catRows}
       settings = function() {
         const page = settingsAgentPhoneCore();
         if (currentUser()?.role !== "admin") return page;
-        return page.replace("</main>", `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Voice and messaging</div><h2>Connect AgentPhone.ai</h2><p>Give this shop's AgentPhone agent access to the live Shop Crank assistant for calls and messages. Credentials are encrypted by the Worker and never stored in the browser.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section></main>`);
+        return page.replace("</main>", `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Voice and messaging</div><h2>Connect AgentPhone.ai</h2><p>Give this shop's AgentPhone agent access to the live ShopCrank assistant for calls and messages. Credentials are encrypted by the Worker and never stored in the browser.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section></main>`);
       };
       settingsAppsBillingCore = settings;
       settings = function() {
         const page = settingsAppsBillingCore();
         if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page;
-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install Shop Crank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`);
+        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`);
       };
       bindAgentPhoneSettingsCore = bindExpandedFeatures;
       bindExpandedFeatures = function() {
@@ -12751,7 +12870,7 @@ ${catRows}
           return;
         }
         if (existing) return;
-        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open Shop Crank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
+        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
         document.querySelector("#global-assistant").onclick = openGlobalAssistant;
         document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
         lucide.createIcons();
@@ -13541,7 +13660,7 @@ ${catRows}
         const rows = assistantConversation.map(assistantMessageMarkup).join("");
         const provider = assistantProviderFromSettings();
         const providerLabel2 = assistantProviderLabel(provider);
-        return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel2} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Speak or type the customer, vehicle, complaint, parts, labor hours and source, and exclusions. Shop Crank prepares both records for review; it never auto-submits the work order.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for\u2026"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel2}. Missing configuration is reported without a simulated answer.</p></form></section>`;
+        return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel2} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Speak or type the customer, vehicle, complaint, parts, labor hours and source, and exclusions. ShopCrank prepares both records for review; it never auto-submits the work order.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for\u2026"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel2}. Missing configuration is reported without a simulated answer.</p></form></section>`;
       };
       bindLiveAssistant = function() {
         const form = document.querySelector("#assistant-form");
@@ -13877,7 +13996,7 @@ ${currentUser().role === "admin" ? `<div class="payroll-actions" style="margin-t
           hours: acc.hours + s.hours
         }), { federal: 0, ss: 0, med: 0, net: 0, hours: 0 });
         return shell(`${heading("Compensation", "Payroll", admin ? `Weekly payroll for ${period.start} \u2013 ${period.end}. Pub 15-T (2026) withholding \xB7 fileable register & 941/W-2 packages.` : `Your weekly pay stub for ${period.start} \u2013 ${period.end}.`, false)}
-<div class="ai-notice">${icon("landmark", 16)}<span>Withholding uses IRS Pub 15-T (2026) percentage method, employee W-4 fields, and FICA. Shop Crank prepares e-file packages for IRS / SSA portals; it does not transmit until you upload via those portals or configure transmitter credentials.</span></div>
+<div class="ai-notice">${icon("landmark", 16)}<span>Withholding uses IRS Pub 15-T (2026) percentage method, employee W-4 fields, and FICA. ShopCrank prepares e-file packages for IRS / SSA portals; it does not transmit until you upload via those portals or configure transmitter credentials.</span></div>
 ${admin ? `<div class="payroll-actions"><button class="secondary" id="payroll-export">${icon("download", 14)} Export register</button><button class="secondary" id="payroll-export-detail">${icon("download", 14)} Export detail</button><button class="secondary" id="payroll-export-941">${icon("file-text", 14)} 941 worksheet</button><button class="secondary" id="payroll-export-efw2">${icon("upload", 14)} SSA EFW2</button><button class="primary" id="sync-payroll">${icon("refresh-cw", 14)} Sync jobs</button></div>` : ""}
 <div class="payroll-period-controls" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
 <button type="button" class="secondary" id="payroll-prev">${icon("chevron-left", 14)} Prev</button>
@@ -14177,7 +14296,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
             form.reset();
             shopAiSettings = { ...result, loaded: true, loading: false };
             const providerLabel2 = provider === "gemini" ? "Gemini" : "Claude";
-            toast(result.warning ? `${providerLabel2} key saved. ${result.warning}` : `${providerLabel2} key saved. Shop Crank AI now uses ${providerLabel2} for this shop.`);
+            toast(result.warning ? `${providerLabel2} key saved. ${result.warning}` : `${providerLabel2} key saved. ShopCrank AI now uses ${providerLabel2} for this shop.`);
             render();
           } catch (error) {
             button.disabled = false;
@@ -14186,7 +14305,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           }
         });
         document.querySelector("#shop-ai-remove-key")?.addEventListener("click", async (event) => {
-          if (!confirm("Remove this shop's AI provider key? Shop Crank AI will go back to the included AI provider for your subscription.")) return;
+          if (!confirm("Remove this shop's AI provider key? ShopCrank AI will go back to the included AI provider for your subscription.")) return;
           event.currentTarget.disabled = true;
           try {
             const result = await apiFetch("/settings/ai", { method: "DELETE" });
@@ -14309,7 +14428,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
     console.error("Legacy app bootstrap failed", error);
     const root = document.querySelector("#root");
     if (root && !root.innerHTML.trim()) {
-      root.innerHTML = '<main class="login-screen"><section class="login-panel"><h1>Shop Crank could not open</h1><p>Reload the page. If this continues, clear site data for this host and sign in again.</p></section></main>';
+      root.innerHTML = '<main class="login-screen"><section class="login-panel"><h1>ShopCrank could not open</h1><p>Reload the page. If this continues, clear site data for this host and sign in again.</p></section></main>';
     }
   });
 })();

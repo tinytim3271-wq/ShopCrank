@@ -15,7 +15,7 @@ export function orderingPanelHtml(account = {}, { canSave = false, escapeHtml, i
   const connected = Boolean(account.connected && account.username);
   const status = connected
     ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>AutoZone Pro login saved</strong><span>${escapeHtml(account.username)}</span></div></div>`
-    : `<div class="messaging-status idle">${icon('lock', 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. Shop Crank encrypts them and does not put them on the work order.</span></div></div>`;
+    : `<div class="messaging-status idle">${icon('lock', 17)}<div><strong>No AutoZone Pro login saved</strong><span>An owner or admin can store the shop username and password. ShopCrank encrypts them and does not put them on the work order.</span></div></div>`;
   const form = canSave
     ? `<form id="autozone-login-form" class="form-grid">
         <label>Username<input name="username" autocomplete="off" value="${escapeHtml(account.username || '')}" required /></label>
@@ -28,7 +28,7 @@ export function orderingPanelHtml(account = {}, { canSave = false, escapeHtml, i
     ? '<p class="login-error">Sign in to the shop account to store or copy the AutoZone Pro login.</p>'
     : '';
   return `<section class="settings-panel autozone-ordering">
-      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from Shop Crank. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon('shopping-cart', 20)}</div>
+      <div class="statement-head"><div><div class="eyebrow">Parts ordering</div><h2>AutoZone Pro</h2><p>Open the shop's AutoZone Pro account from ShopCrank. After you open it, paste the saved password on AutoZone's sign-in page. Ordering, pricing, and checkout stay on AutoZone Pro.</p></div>${icon('shopping-cart', 20)}</div>
       ${status}
       ${unavailable}
       ${form}

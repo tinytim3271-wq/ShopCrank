@@ -377,11 +377,11 @@ async function resolveContext(request, env) {
     };
   }
   let claims;
-  if (env.DEV_AUTH_BYPASS === '1' && request.headers.get('X-MechPro-Dev-Email')) {
+  if (env.DEV_AUTH_BYPASS === '1' && (request.headers.get('X-ShopCrank-Dev-Email') || request.headers.get('X-MechPro-Dev-Email'))) {
     claims = {
-      sub: request.headers.get('X-MechPro-Dev-Sub') || 'local-development',
-      email: request.headers.get('X-MechPro-Dev-Email'),
-      name: request.headers.get('X-MechPro-Dev-Name') || 'Local Developer',
+      sub: (request.headers.get('X-ShopCrank-Dev-Sub') || request.headers.get('X-MechPro-Dev-Sub')) || 'local-development',
+      email: (request.headers.get('X-ShopCrank-Dev-Email') || request.headers.get('X-MechPro-Dev-Email')),
+      name: (request.headers.get('X-ShopCrank-Dev-Name') || request.headers.get('X-MechPro-Dev-Name')) || 'Local Developer',
     };
   } else {
     const token = request.headers.get('Cf-Access-Jwt-Assertion');
@@ -400,7 +400,7 @@ async function resolveContext(request, env) {
   const mapping = await env.DB.prepare(
     'SELECT shop_id, role, name, enabled FROM users WHERE email = ? COLLATE NOCASE',
   ).bind(email).first();
-  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active Shop Crank account is mapped to this Access identity');
+  if (!mapping || Number(mapping.enabled) !== 1) throw new HttpError(403, 'No active ShopCrank account is mapped to this Access identity');
   return {
     shopId: mapping.shop_id,
     role: mapping.role,
@@ -429,7 +429,7 @@ async function requirePlanCapability(context, env, capability) {
     'SELECT plan_id, status, current_period_end FROM subscriptions WHERE shop_id = ? LIMIT 1',
   ).bind(context.shopId).first();
   if (!hasPlanCapability(subscription, capability)) {
-    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active Shop Crank plan`);
+    throw new HttpError(403, `${capability.replaceAll('_', ' ')} requires an active ShopCrank plan`);
   }
 }
 
@@ -1311,8 +1311,8 @@ async function aiAnswer(env, shopId, message, history = [], options = {}) {
 async function handleAssistant(request, env, context, analytics) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
-  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'Shop Crank AI chat sessions are not configured');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'ShopCrank AI is not enabled');
+  if (!env.AI_CHAT_SESSIONS) throw new HttpError(503, 'ShopCrank AI chat sessions are not configured');
   await enforceAiRateLimit(env, context);
   const body = await requestJson(request);
   const message = String(body.message || '').trim().slice(0, 4000);
@@ -1325,8 +1325,11 @@ async function handleAssistant(request, env, context, analytics) {
   const id = env.AI_CHAT_SESSIONS.idFromName(`${context.shopId}:${sessionId}`);
   const stub = env.AI_CHAT_SESSIONS.get(id);
   const headers = new Headers({ 'Content-Type': 'application/json' });
+  headers.set('X-ShopCrank-Shop-Id', context.shopId);
   headers.set('X-MechPro-Shop-Id', context.shopId);
+  headers.set('X-ShopCrank-User-Id', context.userId);
   headers.set('X-MechPro-User-Id', context.userId);
+  headers.set('X-ShopCrank-Ai-Session-Id', sessionId);
   headers.set('X-MechPro-Ai-Session-Id', sessionId);
   const sessionResponse = await stub.fetch(new Request('https://ai-session.internal/turn', {
     method: 'POST',
@@ -1347,13 +1350,15 @@ async function handleVoiceSession(request, env, context) {
     throw new HttpError(426, 'A WebSocket upgrade is required');
   }
   requireRole(context, ['admin', 'office', 'service_writer', 'technician']);
-  if (!isAiEnabled(env)) throw new HttpError(503, 'Shop Crank AI is not enabled');
+  if (!isAiEnabled(env)) throw new HttpError(503, 'ShopCrank AI is not enabled');
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI is not configured');
   await enforceAiRateLimit(env, context);
   const id = env.AI_VOICE_SESSIONS.newUniqueId();
   const stub = env.AI_VOICE_SESSIONS.get(id);
   const headers = new Headers(request.headers);
+  headers.set('X-ShopCrank-Shop-Id', context.shopId);
   headers.set('X-MechPro-Shop-Id', context.shopId);
+  headers.set('X-ShopCrank-User-Id', context.userId);
   headers.set('X-MechPro-User-Id', context.userId);
   headers.delete('Cookie');
   headers.delete('Cf-Access-Jwt-Assertion');
@@ -2253,7 +2258,7 @@ function desktopHandoffPage(token) {
 <head>
   <meta charset="utf-8">
   <meta name="referrer" content="no-referrer">
-  <title>Return to Shop Crank</title>
+  <title>Return to ShopCrank</title>
   <style>
     body { font-family: "Segoe UI", sans-serif; background: #18252b; color: #f4f7f8; margin: 0; min-height: 100vh; display: grid; place-items: center; }
     main { max-width: 28rem; padding: 2rem; }
@@ -2264,8 +2269,8 @@ function desktopHandoffPage(token) {
 <body>
   <main>
     <h1>Google sign-in succeeded</h1>
-    <p>Open Shop Crank to finish signing in. If Windows asks which app to use, choose Shop Crank.</p>
-    <a href="${link}">Open Shop Crank</a>
+    <p>Open ShopCrank to finish signing in. If Windows asks which app to use, choose ShopCrank.</p>
+    <a href="${link}">Open ShopCrank</a>
   </main>
 </body>
 </html>`;

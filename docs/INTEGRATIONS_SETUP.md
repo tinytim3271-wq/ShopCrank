@@ -1,4 +1,4 @@
-# Shop Crank integration setup
+# ShopCrank integration setup
 
 All integrations run from the existing Cloudflare Worker. Do not put credentials
 in `wrangler.jsonc`, source control, Pages variables, or browser storage. Set
@@ -7,7 +7,7 @@ for local development. Apply D1 migrations before enabling webhooks.
 
 ## Licensed labor guides
 
-Shop Crank supports MOTOR and ALLDATA through a provider-neutral adapter. Until a
+ShopCrank supports MOTOR and ALLDATA through a provider-neutral adapter. Until a
 licensed provider returns an operation, labor remains editable and is shown as
 **Unverified shop estimate**. A response is never marked verified merely
 because an endpoint was configured.
@@ -16,7 +16,7 @@ Timothy must:
 
 1. Ask MOTOR Information Systems for a MOTOR Data as a Service/API license that
    permits labor-time display inside a shop-management product, including
-   multi-tenant resale if Shop Crank will serve other shops.
+   multi-tenant resale if ShopCrank will serve other shops.
 2. Ask ALLDATA for approved API/partner access and the same display/resale
    rights. Their normal web subscription is not automatically an API license.
 3. Obtain the provider's base URL, labor-search path, authentication scheme,
@@ -41,7 +41,7 @@ configuration to the contract supplied during onboarding.
 
 Timothy must create/approve PartsTech and WHI/Epicor Nexpart partner accounts
 and request credentials for each contracted capability. Search, quote, order,
-and punch-out are independently enabled so Shop Crank does not claim an operation
+and punch-out are independently enabled so ShopCrank does not claim an operation
 the contract does not include.
 
 For each `PARTSTECH` or `NEXPART` prefix configure:
@@ -71,14 +71,14 @@ to browser code; the Worker sends API credentials server-side.
 5. Set that URL as the incoming-message webhook for the number.
 
 Inbound and outbound messages are stored in D1. Exact STOP-family messages mark
-the number opted out and block Shop Crank sends; START/UNSTOP restores consent.
+the number opted out and block ShopCrank sends; START/UNSTOP restores consent.
 Twilio may also enforce its own opt-out list. Do not send marketing traffic
 under the transactional campaign. Keep documented consent and honor quiet
 hours. The feature is hidden/disabled when credentials are absent.
 
 Estimate approval links, ready-for-pickup notices, and Stripe-hosted
 text-to-pay links use the same sender. Payment card data never passes through
-SMS or Shop Crank.
+SMS or ShopCrank.
 
 ## QuickBooks Online
 
@@ -91,19 +91,19 @@ SMS or Shop Crank.
    `INTUIT_REDIRECT_URI`, and `INTUIT_ENVIRONMENT` (`sandbox` first, then
    `production` after Intuit review).
 4. Configure `INTUIT_DEFAULT_ITEM_ID` to an active QuickBooks Service item used
-   when a Shop Crank invoice has no item mapping.
+   when a ShopCrank invoice has no item mapping.
 5. An admin connects from **Integrations**. OAuth state and PKCE verifier data
    are short-lived; access and refresh tokens are encrypted in D1 using
    `INTEGRATION_ENCRYPTION_KEY`.
 
-Current synchronization is one-way Shop Crank → QBO for customers, invoices, and
+Current synchronization is one-way ShopCrank → QBO for customers, invoices, and
 payments. Sync metadata prevents losing the QBO ID. This does not import edits
 from QBO or perform accounting reconciliation; verify the sandbox company
 before production use.
 
 ## Stripe Revenue Recognition (per-shop)
 
-Shop Crank can export **general import** CSVs so each shop's Stripe Revenue
+ShopCrank can export **general import** CSVs so each shop's Stripe Revenue
 Recognition reports include:
 
 - Non-Stripe payments (cash, check, bank, and manual card/processor without a
@@ -133,7 +133,7 @@ Cloudflare R2 cannot replace this connector (it requires AWS account ID + IAM).
 3. In Stripe Dashboard → **Data Management** → Amazon S3 connector, grant
    Stripe read access to folder `revrec/{shopId}/general/` and map files to
    Revenue Recognition **general / transactions** import.
-4. In Shop Crank → **Shop operations → Ordering → Stripe Revenue Recognition**,
+4. In ShopCrank → **Shop operations → Ordering → Stripe Revenue Recognition**,
    enable sync (admins/owners). Use **Export now** or **Download CSV** to
    verify the file before relying on the daily job.
 
@@ -147,7 +147,7 @@ ids instead of Checkout `cs_` session ids.
 
 ## Stripe SaaS subscription billing
 
-This is the Shop Crank platform subscription, separate from each shop's Stripe
+This is the ShopCrank platform subscription, separate from each shop's Stripe
 account used to collect customer invoices.
 
 1. In the platform Stripe account create products and recurring USD prices:

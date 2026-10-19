@@ -26,6 +26,6 @@ window.__MECHPRO_BOOTSTRAP_READY__ = (async () => {
   console.error('Legacy app bootstrap failed', error);
   const root = document.querySelector('#root');
   if (root && !root.innerHTML.trim()) {
-    root.innerHTML = '<main class="login-screen"><section class="login-panel"><h1>Shop Crank could not open</h1><p>Reload the page. If this continues, clear site data for this host and sign in again.</p></section></main>';
+    root.innerHTML = '<main class="login-screen"><section class="login-panel"><h1>ShopCrank could not open</h1><p>Reload the page. If this continues, clear site data for this host and sign in again.</p></section></main>';
   }
 });

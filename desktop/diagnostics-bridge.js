@@ -86,7 +86,7 @@ function startHostProcess() {
     const script = hostScriptPath();
     if (!fs.existsSync(script)) {
       throw new Error(
-        `J2534 host script not found at ${script}. Reinstall Shop Crank Desktop or run from a full checkout.`,
+        `J2534 host script not found at ${script}. Reinstall ShopCrank Desktop or run from a full checkout.`,
       );
     }
     hostProcess = spawn(process.execPath, [script], {
@@ -351,7 +351,7 @@ async function obdClearDtcs(params = {}) {
   return rpcCall('obdClearDtcs', { confirmed: true }, 20000);
 }
 
-/** Read-only: does Shop Crank have a verified live key procedure for the connected vehicle? */
+/** Read-only: does ShopCrank have a verified live key procedure for the connected vehicle? */
 async function keyProcedureSupport(params = {}) {
   await ensureHost();
   return rpcCall('keyProcedureSupport', { procedure: String(params.procedure || '') }, 20000);

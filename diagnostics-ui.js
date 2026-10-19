@@ -133,7 +133,7 @@ function formatCommEntry(entry) {
 function friendlyOemError(error) {
   const message = String(error?.message || error || 'Diagnostic operation failed');
   if (/SHOP_CRANK_DIAG_CAPABILITY_SECRET|DIAGNOSTICS_CAPABILITY_SECRET|capability secret/i.test(message)) {
-    return `${message} Reinstall Shop Crank Desktop from Downloads after CI rebuilds the Windows installer with the shop API secret.`;
+    return `${message} Reinstall ShopCrank Desktop from Downloads after CI rebuilds the Windows installer with the shop API secret.`;
   }
   if (/did not become ready|host script not found|J2534 RPC timeout/i.test(message)) {
     return `${message} Confirm J2534.Host.exe is present, vendor drivers are installed, and antivirus is not blocking the diagnostic host.`;
@@ -237,14 +237,14 @@ function oemDiagnosticsView() {
   const adapters = adaptersList.map((a) => `<option value="${escapeHtml(a.id)}" ${diag.selectedAdapter === a.id ? 'selected' : ''}>${escapeHtml(a.name)} (${escapeHtml(a.vendor)})</option>`).join('');
   const adapterHelp = hardwareAdapters.length
     ? ''
-    : `<div class="ledger-note">${icon('info', 15)} No J2534 hardware detected. Install your adapter vendor software (for TOPDON RLink X7: RLink Platform → Drivers → download the J2534 driver), plug in USB, then click Refresh. Shop Crank scans both 64-bit and 32-bit Windows J2534 registry entries.</div>`;
+    : `<div class="ledger-note">${icon('info', 15)} No J2534 hardware detected. Install your adapter vendor software (for TOPDON RLink X7: RLink Platform → Drivers → download the J2534 driver), plug in USB, then click Refresh. ShopCrank scans both 64-bit and 32-bit Windows J2534 registry entries.</div>`;
 
   const desktopNote = desktop
     ? ''
-    : `<div class="ledger-note">${icon('monitor', 15)} The vehicle bus runs in the Shop Crank Windows app with a J2534 pass-thru. Connect the shop AutoAuth account here, then open OEM diagnostics on that PC and choose Live.</div>`;
+    : `<div class="ledger-note">${icon('monitor', 15)} The vehicle bus runs in the ShopCrank Windows app with a J2534 pass-thru. Connect the shop AutoAuth account here, then open OEM diagnostics on that PC and choose Live.</div>`;
   return shell(`${heading('Stellantis OEM', 'Dodge / Ram diagnostics', 'Live OEM programming, module coding, and bidirectional controls on Shop Pro with AutoAuth and a J2534 pass-thru.', false)}
     ${desktopNote}
-    <section class="oem-phase-notice">${icon('shield-alert', 16)}<span><strong>Authorized shop use only.</strong> Diagnostics and any programming-class work require a signed repair order, a licensed J2534 interface, and shop AutoAuth credentials for live mode. Shop Crank does not provide immobilizer bypass, key cloning, rolling-code attacks, or theft-unlock tools.</span></section>
+    <section class="oem-phase-notice">${icon('shield-alert', 16)}<span><strong>Authorized shop use only.</strong> Diagnostics and any programming-class work require a signed repair order, a licensed J2534 interface, and shop AutoAuth credentials for live mode. ShopCrank does not provide immobilizer bypass, key cloning, rolling-code attacks, or theft-unlock tools.</span></section>
     <section class="diagnostics-console oem-diagnostics">
       <div class="oem-preflight">
         <h3>Pre-flight checklist</h3>
@@ -260,7 +260,7 @@ function oemDiagnosticsView() {
         <section class="oem-panel">
           <h3>${icon('usb', 16)} J2534 adapter</h3>
           <div class="messaging-status ${status.connected ? 'ready' : 'idle'}">${icon(status.connected ? 'circle-check' : 'plug-zap', 17)}<div><strong>${status.connected ? 'Connected' : 'Not connected'}</strong><span>${status.connected ? `${escapeHtml(status.protocol || '')} · ${status.voltage ?? '—'} V` : 'Select adapter and connect'}</span></div></div>
-          <label>Adapter<select id="oem-adapter-select">${adapters || '<option value="simulator">Shop Crank CAN Simulator</option>'}</select></label>
+          <label>Adapter<select id="oem-adapter-select">${adapters || '<option value="simulator">ShopCrank CAN Simulator</option>'}</select></label>
           ${adapterHelp}
           <div class="ops-actions">
             <button class="primary" id="oem-refresh-adapters">${icon('refresh-cw', 14)} Refresh</button>

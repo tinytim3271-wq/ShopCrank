@@ -1,9 +1,9 @@
 {
   "name": "shopcrank-desktop",
   "version": "1.1.0",
-  "description": "Shop Crank Dispatch & Work Orders Windows desktop client",
+  "description": "ShopCrank Dispatch & Work Orders Windows desktop client",
   "main": "desktop/main.js",
-  "author": "Shop Crank",
+  "author": "ShopCrank",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "node server.mjs",
@@ -79,10 +79,10 @@
   },
   "build": {
     "appId": "com.shopcrank.dispatch",
-    "productName": "Shop Crank",
+    "productName": "ShopCrank",
     "protocols": [
       {
-        "name": "Shop Crank authentication",
+        "name": "ShopCrank authentication",
         "schemes": [
           "shopcrank"
         ]
@@ -146,7 +146,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Shop Crank"
+      "shortcutName": "ShopCrank"
     }
   },
   "dependencies": {
