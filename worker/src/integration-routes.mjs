@@ -8,6 +8,7 @@ import {
 import {
   SmsIntegrationError,
   parseTwilioInboundWebhook,
+  resolveTwilioShopConfig,
   sendSms,
   smsIntegrationStatus,
 } from './integrations/sms.mjs';
@@ -39,9 +40,18 @@ function integrationError(error) {
   return new HttpError(502, error instanceof Error ? error.message : 'Integration request failed');
 }
 
-export async function handleIntegrationStatus(request, env, context) {
+export async function handleIntegrationStatus(request, env, context, { getSecret = null } = {}) {
   if (request.method !== 'GET') throw new HttpError(405, 'Method not allowed');
-  const sms = smsIntegrationStatus(env);
+  const twilio = await resolveTwilioShopConfig(env, context.shopId, getSecret);
+  const sms = twilio.configured
+    ? smsIntegrationStatus(env, {
+      accountSid: twilio.accountSid,
+      authToken: twilio.authToken,
+      fromNumber: twilio.fromNumber,
+      messagingServiceSid: twilio.messagingServiceSid,
+      keySource: twilio.keySource,
+    })
+    : smsIntegrationStatus(env);
   const quickbooks = Boolean(env.INTUIT_CLIENT_ID && env.INTUIT_CLIENT_SECRET && env.INTUIT_REDIRECT_URI);
   return json({
     labor: getLaborProviderStatus(env),
@@ -116,14 +126,28 @@ async function storeCustomerMessage(env, message) {
   ).run();
 }
 
-export async function handleMessagingIntegration(request, env, context, segments) {
+export async function handleMessagingIntegration(request, env, context, segments, { getSecret = null } = {}) {
   role(context, MESSAGE_ROLES);
   const action = segments[1] || 'status';
+  const twilio = await resolveTwilioShopConfig(env, context.shopId, getSecret);
+  const twilioOverrides = twilio.configured
+    ? {
+      accountSid: twilio.accountSid,
+      authToken: twilio.authToken,
+      fromNumber: twilio.fromNumber,
+      messagingServiceSid: twilio.messagingServiceSid,
+      keySource: twilio.keySource,
+    }
+    : null;
+  const smsStatus = twilioOverrides
+    ? smsIntegrationStatus(env, twilioOverrides)
+    : smsIntegrationStatus(env);
+
   if (action === 'status' && request.method === 'GET') {
-    return json({ sms: smsIntegrationStatus(env) });
+    return json({ sms: smsStatus });
   }
   if (action === 'threads' && request.method === 'GET') {
-    if (!smsIntegrationStatus(env)) return json({ enabled: false, messages: [] });
+    if (!smsStatus) return json({ enabled: false, messages: [] });
     const result = await env.DB.prepare(`
       SELECT id, customer_id, work_order_id, phone, direction, body, provider_message_id,
         message_type, status, created_at
@@ -140,7 +164,7 @@ export async function handleMessagingIntegration(request, env, context, segments
     });
   }
   if (action === 'send' && request.method === 'POST') {
-    if (!smsIntegrationStatus(env)) throw new HttpError(503, 'Built-in SMS is not configured');
+    if (!smsStatus) throw new HttpError(503, 'Built-in SMS is not configured');
     const body = await requestJson(request);
     const phone = String(body.to || '').trim();
     const consent = await consentStatus(env, context.shopId, phone);
@@ -148,7 +172,7 @@ export async function handleMessagingIntegration(request, env, context, segments
     const message = String(body.body || '').trim();
     if (!message) throw new HttpError(400, 'Message body is required');
     try {
-      const result = await sendSms(env, { to: phone, body: message });
+      const result = await sendSms(env, { to: phone, body: message }, { config: twilioOverrides || undefined });
       const createdAt = new Date().toISOString();
       await storeCustomerMessage(env, {
         id: `sms-${crypto.randomUUID()}`, shopId: context.shopId,
@@ -167,11 +191,14 @@ export async function handleMessagingIntegration(request, env, context, segments
   throw new HttpError(404, 'Not found');
 }
 
-export async function handleTwilioWebhook(request, env, shopId) {
+export async function handleTwilioWebhook(request, env, shopId, { getSecret = null } = {}) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   if (!shopId) throw new HttpError(400, 'Shop ID is required');
   try {
-    const message = await parseTwilioInboundWebhook(request, env);
+    const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
+    const message = await parseTwilioInboundWebhook(request, env, {
+      authToken: twilio.authToken || undefined,
+    });
     const now = new Date().toISOString();
     if (message.classification) {
       await env.DB.prepare(`

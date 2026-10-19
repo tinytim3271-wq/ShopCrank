@@ -7,6 +7,7 @@ import {
   createSmsProvider,
   isE164,
   parseTwilioInboundWebhook,
+  resolveTwilioShopConfig,
   sendSms,
   smsIntegrationStatus,
 } from '../src/integrations/sms.mjs';
@@ -166,6 +167,42 @@ test('inbound webhook rejects an invalid Twilio signature', async () => {
       && error.code === 'invalid_webhook_signature'
       && error.status === 401,
   );
+});
+
+test('resolveTwilioShopConfig prefers shop secrets over platform env', async () => {
+  const secrets = {
+    'twilio-account-sid': 'ACshop0000000000000000000000000001',
+    'twilio-auth-token': 'shop-auth-token-abcdef',
+    'twilio-from-number': '+18065550111',
+  };
+  const getSecret = async (_env, _shopId, name) => secrets[name] || '';
+  const resolved = await resolveTwilioShopConfig(
+    {
+      TWILIO_ACCOUNT_SID: 'ACplatform000000000000000000000002',
+      TWILIO_AUTH_TOKEN: 'platform-token',
+      TWILIO_FROM_NUMBER: '+18065550999',
+    },
+    'shop-1',
+    getSecret,
+  );
+  assert.equal(resolved.configured, true);
+  assert.equal(resolved.keySource, 'shop');
+  assert.equal(resolved.accountSid, 'ACshop0000000000000000000000000001');
+  assert.equal(resolved.fromNumber, '+18065550111');
+  assert.equal(resolved.authToken, 'shop-auth-token-abcdef');
+
+  const platformOnly = await resolveTwilioShopConfig(
+    {
+      TWILIO_ACCOUNT_SID: 'ACplatform000000000000000000000002',
+      TWILIO_AUTH_TOKEN: 'platform-token',
+      TWILIO_FROM_NUMBER: '+18065550999',
+    },
+    'shop-1',
+    async () => '',
+  );
+  assert.equal(platformOnly.configured, true);
+  assert.equal(platformOnly.keySource, 'platform');
+  assert.equal(platformOnly.accountSid, 'ACplatform000000000000000000000002');
 });
 
 test('SMS consent keywords classify opt-out and opt-in commands only', () => {

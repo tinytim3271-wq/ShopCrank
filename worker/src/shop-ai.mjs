@@ -21,7 +21,7 @@ export const DEFAULT_SHOP_CLAUDE_MODEL = 'claude-sonnet-5';
 export const DEFAULT_SHOP_GEMINI_MODEL = 'gemini-3.8-flash';
 
 const MASK = '\u2022\u2022\u2022\u2022';
-const MANAGE_ROLES = ['owner', 'admin'];
+const MANAGE_ROLES = ['owner', 'admin', 'super_admin'];
 const VIEW_ROLES = ['owner', 'admin', 'office', 'service_writer', 'technician'];
 const KEY_PROBLEMS = new Set(['invalid_key', 'permission', 'no_credits', 'model_unavailable']);
 

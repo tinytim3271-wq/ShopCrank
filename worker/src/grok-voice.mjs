@@ -6,8 +6,27 @@ import {
   loadShopPricing,
   recordAiUsage,
 } from './ai.mjs';
-import { verifyTwilioWebhookSignature } from './integrations/sms.mjs';
+import {
+  resolveTwilioShopConfig,
+  TWILIO_SECRET_NAMES,
+  verifyTwilioWebhookSignature,
+} from './integrations/sms.mjs';
 import { searchLicensedLabor } from './integrations/labor.mjs';
+
+const PHONE_CREDENTIAL_ROLES = Object.freeze(['admin', 'owner', 'office', 'super_admin']);
+
+function twilioStatusFields(twilio) {
+  return {
+    twilioConfigured: Boolean(twilio?.configured),
+    twilioKeySource: twilio?.keySource || null,
+    twilioMaskedSid: twilio?.accountSid ? `\u2022\u2022\u2022\u2022${twilio.accountSid.slice(-4)}` : '',
+    twilioFromNumber: twilio?.fromNumber || '',
+    twilioMessagingServiceSid: twilio?.messagingServiceSid
+      ? `\u2022\u2022\u2022\u2022${String(twilio.messagingServiceSid).slice(-4)}`
+      : '',
+    twilioHasMessagingService: Boolean(twilio?.messagingServiceSid),
+  };
+}
 
 export const GROK_REALTIME_URL = 'wss://api.x.ai/v1/realtime?model=grok-voice-latest';
 export const GROK_CLIENT_SECRETS_URL = 'https://api.x.ai/v1/realtime/client_secrets';
@@ -1047,8 +1066,9 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
   const rawBody = await request.text();
   const params = new URLSearchParams(rawBody);
 
-  // Verify Twilio signature if TWILIO_AUTH_TOKEN is configured and signature header is present
-  const authToken = String(env?.TWILIO_AUTH_TOKEN || '').trim();
+  // Prefer shop Twilio auth token, then platform env, for signature verification
+  const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
+  const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
   const signature = request.headers.get('X-Twilio-Signature');
   if (authToken && String(env?.TWILIO_VERIFY_VOICE || '1') !== '0') {
     const publicUrl = new URL(request.url);
@@ -1165,10 +1185,11 @@ export async function handleGrokVoiceSettings(request, env, context, {
   const twilioVoiceWebhookUrl = `${origin}/api/voice/twilio/incoming/${encodeURIComponent(shopId)}`;
 
   if (request.method === 'GET') {
-    const [{ apiKey, keySource }, shopSettings, orders] = await Promise.all([
+    const [{ apiKey, keySource }, shopSettings, orders, twilio] = await Promise.all([
       resolveGrokApiKey(env, shopId, getSecret),
       loadGrokShopSettings(env, shopId),
       typeof listEntities === 'function' ? listEntities(env, shopId, 'orders').catch(() => []) : Promise.resolve([]),
+      resolveTwilioShopConfig(env, shopId, getSecret),
     ]);
     const recentGrokCalls = (Array.isArray(orders) ? orders : [])
       .filter((o) => o?.source === 'grok_voice_call')
@@ -1186,11 +1207,13 @@ export async function handleGrokVoiceSettings(request, env, context, {
       autoSaveIntake: shopSettings.autoSaveIntake,
       twilioVoiceWebhookUrl,
       recentCalls: recentGrokCalls,
+      ...twilioStatusFields(twilio),
+      canManage: PHONE_CREDENTIAL_ROLES.includes(context.role),
     });
   }
 
-  if (!['admin', 'owner'].includes(context.role)) {
-    throw new HttpError(403, 'Only shop owners and admins can configure Grok Voice & Phone Call Forwarding');
+  if (!PHONE_CREDENTIAL_ROLES.includes(context.role)) {
+    throw new HttpError(403, 'Only shop admins, owners, and back-office staff can configure phone credentials');
   }
 
   if (request.method === 'POST' || request.method === 'PUT') {
@@ -1202,6 +1225,39 @@ export async function handleGrokVoiceSettings(request, env, context, {
         await saveSecret(env, shopId, 'xai-api-key', validKey);
       }
     }
+
+    if (typeof saveSecret === 'function') {
+      const twilioAccountSid = cleanText(body.twilioAccountSid || '', 64);
+      const twilioAuthToken = cleanText(body.twilioAuthToken || '', 128);
+      const twilioFromNumber = cleanText(body.twilioFromNumber || '', 40);
+      const twilioMessagingServiceSid = cleanText(body.twilioMessagingServiceSid || '', 64);
+
+      if (twilioAccountSid) {
+        if (!/^AC[a-zA-Z0-9]{32}$/.test(twilioAccountSid)) {
+          throw new HttpError(400, 'Twilio Account SID must look like ACxxxxxxxx…');
+        }
+        await saveSecret(env, shopId, TWILIO_SECRET_NAMES.accountSid, twilioAccountSid);
+      }
+      if (twilioAuthToken) {
+        if (twilioAuthToken.length < 16) {
+          throw new HttpError(400, 'Twilio Auth Token looks too short');
+        }
+        await saveSecret(env, shopId, TWILIO_SECRET_NAMES.authToken, twilioAuthToken);
+      }
+      if (twilioFromNumber) {
+        if (!/^\+[1-9]\d{1,14}$/.test(twilioFromNumber)) {
+          throw new HttpError(400, 'Twilio from number must be E.164 (e.g. +18065550199)');
+        }
+        await saveSecret(env, shopId, TWILIO_SECRET_NAMES.fromNumber, twilioFromNumber);
+      }
+      if (twilioMessagingServiceSid) {
+        if (!/^MG[a-zA-Z0-9]{32}$/.test(twilioMessagingServiceSid)) {
+          throw new HttpError(400, 'Twilio Messaging Service SID must look like MGxxxxxxxx…');
+        }
+        await saveSecret(env, shopId, TWILIO_SECRET_NAMES.messagingServiceSid, twilioMessagingServiceSid);
+      }
+    }
+
     const currentSettings = await loadGrokShopSettings(env, shopId);
     const nextSettings = {
       voice: normalizeGrokVoice(body.voice || currentSettings.voice),
@@ -1217,27 +1273,47 @@ export async function handleGrokVoiceSettings(request, env, context, {
     } else if (env?.DB) {
       await upsertShopEntityDirect(env, shopId, 'shopsettings', 'grok_phone', nextSettings, context.userId || 'admin');
     }
-    const { apiKey, keySource } = await resolveGrokApiKey(env, shopId, getSecret);
+    const [{ apiKey, keySource }, twilioAfterSave] = await Promise.all([
+      resolveGrokApiKey(env, shopId, getSecret),
+      resolveTwilioShopConfig(env, shopId, getSecret),
+    ]);
     return json({
       configured: Boolean(apiKey),
       keySource,
       maskedKey: apiKey ? `\u2022\u2022\u2022\u2022${apiKey.slice(-4)}` : '',
       ...nextSettings,
       twilioVoiceWebhookUrl,
+      ...twilioStatusFields(twilioAfterSave),
       saved: true,
     });
   }
 
   if (request.method === 'DELETE') {
+    const body = await requestJson(request).catch(() => ({}));
+    const clearTwilio = Boolean(body?.clearTwilio);
+    const clearXai = body?.clearXai !== false;
     if (typeof deleteSecret === 'function') {
-      await deleteSecret(env, shopId, 'xai-api-key');
+      if (clearXai) await deleteSecret(env, shopId, 'xai-api-key');
+      if (clearTwilio) {
+        await Promise.all([
+          deleteSecret(env, shopId, TWILIO_SECRET_NAMES.accountSid),
+          deleteSecret(env, shopId, TWILIO_SECRET_NAMES.authToken),
+          deleteSecret(env, shopId, TWILIO_SECRET_NAMES.fromNumber),
+          deleteSecret(env, shopId, TWILIO_SECRET_NAMES.messagingServiceSid),
+        ]);
+      }
     }
-    const { apiKey, keySource } = await resolveGrokApiKey(env, shopId, getSecret);
+    const [{ apiKey, keySource }, twilioAfterDelete] = await Promise.all([
+      resolveGrokApiKey(env, shopId, getSecret),
+      resolveTwilioShopConfig(env, shopId, getSecret),
+    ]);
     return json({
       configured: Boolean(apiKey),
       keySource,
+      maskedKey: apiKey ? `\u2022\u2022\u2022\u2022${apiKey.slice(-4)}` : '',
       removed: true,
       twilioVoiceWebhookUrl,
+      ...twilioStatusFields(twilioAfterDelete),
     });
   }
 

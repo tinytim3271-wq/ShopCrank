@@ -3398,7 +3398,9 @@ async function route(request, env, analytics) {
   }
   if (segments[0] === 'agentphone' && segments[1] === 'webhook') return handleAgentPhoneWebhook(request, env, decodeURIComponent(segments[2] || ''));
   if (segments[0] === 'messaging' && segments[1] === 'twilio' && segments[2] === 'webhook') {
-    return handleTwilioWebhook(request, env, decodeURIComponent(segments[3] || ''));
+    return handleTwilioWebhook(request, env, decodeURIComponent(segments[3] || ''), {
+      getSecret: getIntegrationSecret,
+    });
   }
   if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'incoming') {
     return handleTwilioVoiceIncoming(request, env, decodeURIComponent(segments[3] || ''), {
@@ -3436,7 +3438,9 @@ async function route(request, env, analytics) {
   if (path === '/mileage/calculate') return handleMileageCalculate(request, env, context);
   if (segments[0] === 'diagnostics') return handleDiagnostics(request, env, context, segments, analytics);
   if (segments[0] === 'ordering') return handleOrdering(request, env, context, segments);
-  if (path === '/integrations/status') return handleIntegrationStatus(request, env, context);
+  if (path === '/integrations/status') {
+    return handleIntegrationStatus(request, env, context, { getSecret: getIntegrationSecret });
+  }
   if (segments[0] === 'labor-times') {
     await requirePlanCapability(context, env, 'labor_guides');
     return handleLaborIntegration(request, env, context);
@@ -3447,7 +3451,9 @@ async function route(request, env, analytics) {
   }
   if (segments[0] === 'messaging') {
     await requirePlanCapability(context, env, 'sms');
-    return handleMessagingIntegration(request, env, context, segments);
+    return handleMessagingIntegration(request, env, context, segments, {
+      getSecret: getIntegrationSecret,
+    });
   }
   if (segments[0] === 'quickbooks') {
     await requirePlanCapability(context, env, 'quickbooks');

@@ -225,7 +225,117 @@ function cardTerminal() {
     : `<form class="form-grid" id="pos-form">${orderField}${identity}${amountField}<label>Reader<select name="readerId" id="pos-reader" required>${readerOptions || `<option value="">No reader</option>`}</select></label><div class="full messaging-actions"><button class="secondary" type="button" id="pos-refresh">${icon("refresh-cw", 14)} Refresh readers</button><button class="secondary" type="button" id="pos-cancel" ${posCharge ? "" : "disabled"}>${icon("x", 14)} Cancel on reader</button><button class="primary" type="submit" id="pos-charge" ${!selected || selected.balance < 0.5 || !model.readers.length ? "disabled" : ""}>${icon("credit-card", 14)} Charge card</button></div>${chargeNote}</form>`;
   return shell(`${heading("Front counter", "Card terminal", "Take a card on the reader, or type a card for a purchase made over the phone.", false)}<section class="messaging-panel pos-terminal"><div class="messaging-status ${model.configured ? "ready" : "idle"}">${icon("credit-card", 17)}<div><strong>${posMode === "phone" ? "Phone order" : model.configured ? "Card reader ready" : "Card reader not connected"}</strong><span>${escapeHtml(posMode === "phone" ? phoneNotice : connection)}</span></div></div><div class="accounting-tabs"><button class="tab ${posMode === "reader" ? "active" : ""}" type="button" data-pos-mode="reader">Card reader</button><button class="tab ${posMode === "phone" ? "active" : ""}" type="button" data-pos-mode="phone">Phone order</button></div>${counter}<section class="pos-writeup"><h2>Technician write-up</h2><p>The recovery note uses the customer and vehicle on the selected work order.</p><pre id="pos-writeup">${escapeHtml(writeup.ready ? writeup.text : "Select a work order that has both a customer name and a vehicle. Those details are written into the note. They are not filled in from memory.")}</pre><button class="secondary" type="button" id="pos-save-writeup" ${writeup.ready ? "" : "disabled"}>${icon("save", 14)} Save on work order</button></section></section>`);
 }
-function messaging() { const config = state.messagingSettings; return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${config.shopName || "Your Car Guy"}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`) }
+function canManageShopAi() { return ["admin", "owner", "super_admin"].includes(currentUser()?.role || "") }
+
+function canManagePhoneCredentials() { return ["admin", "owner", "office", "super_admin"].includes(currentUser()?.role || "") }
+
+function twilioCredentialsStatusLabel() {
+  if (grokVoiceSettings.twilioConfigured) {
+    const source = grokVoiceSettings.twilioKeySource === "shop" ? "shop account" : "platform";
+    const sid = grokVoiceSettings.twilioMaskedSid || "••••";
+    const from = grokVoiceSettings.twilioFromNumber
+      ? ` · From ${grokVoiceSettings.twilioFromNumber}`
+      : (grokVoiceSettings.twilioHasMessagingService ? " · Messaging Service" : "");
+    return `Twilio connected (${source} ${sid})${from}`;
+  }
+  return "Twilio Account SID and Auth Token not saved yet";
+}
+
+function messagingTwilioPanelHtml() {
+  if (!canManagePhoneCredentials()) return "";
+  if (!grokVoiceSettings.loaded && !grokVoiceSettings.loading && !isOfflineDesktop()) {
+    void loadGrokVoiceSettings();
+  }
+  const twilioLabel = typeof twilioCredentialsStatusLabel === "function"
+    ? twilioCredentialsStatusLabel()
+    : (grokVoiceSettings.twilioConfigured ? "Twilio connected" : "Twilio not configured");
+  return `<section class="messaging-panel"><div class="statement-head"><div><div class="eyebrow">Twilio phone</div><h2>Shop Twilio account</h2><p>Enter this shop’s Twilio Account SID, Auth Token, and From number so Grok voice and built-in SMS use your Twilio account. Only admins, owners, and back-office staff can change these.</p></div>${icon("phone-call", 20)}</div><div class="messaging-status ${grokVoiceSettings.twilioConfigured ? "ready" : "idle"}">${icon(grokVoiceSettings.twilioConfigured ? "circle-check" : "circle-alert", 17)}<div><strong>${escapeHtml(twilioLabel)}</strong><span>Credentials are encrypted on the Worker — the browser never stores them.</span></div></div><div class="messaging-actions"><button type="button" class="primary" id="open-twilio-phone-credentials">${icon("key-round", 14)} Configure Twilio &amp; xAI keys</button></div></section>`;
+}
+
+function twilioInlineSettingsPanelHtml() {
+  if (!canManagePhoneCredentials() || isOfflineDesktop()) return "";
+  if (!grokVoiceSettings.loaded && !grokVoiceSettings.loading) void loadGrokVoiceSettings();
+  const webhookUrl = grokPhoneWebhookUrl();
+  const twilioLabel = twilioCredentialsStatusLabel();
+  const grokStatus = grokVoiceSettings.configured
+    ? `Grok xAI key on file (${grokVoiceSettings.keySource === "shop" ? `shop ${grokVoiceSettings.maskedKey}` : "platform key"})`
+    : "No shop xAI key saved yet — paste one below to enable Grok phone answering";
+  return `<section class="settings-panel twilio-phone-settings" id="twilio-phone-settings"><div class="statement-head"><div><div class="eyebrow">Shop phone (Twilio)</div><h2>Twilio Account SID, Auth Token &amp; number</h2><p>Paste credentials from <a href="https://console.twilio.com" target="_blank" rel="noopener">console.twilio.com</a>. These power Grok call answering and built-in SMS — not AgentPhone.</p></div>${icon("phone-call", 20)}</div><div class="messaging-status ${grokVoiceSettings.twilioConfigured ? "ready" : "idle"}">${icon(grokVoiceSettings.twilioConfigured ? "circle-check" : "circle-alert", 17)}<div><strong>${escapeHtml(twilioLabel)}</strong><span>${escapeHtml(grokStatus)}</span></div></div><form class="form-grid" id="twilio-phone-inline-form" autocomplete="off"><label class="full">Twilio Account SID *<input name="twilioAccountSid" type="text" autocomplete="off" spellcheck="false" placeholder="${grokVoiceSettings.twilioConfigured ? "Leave blank to keep existing SID, or paste AC…" : "ACxxxxxxxx…"}" ${grokVoiceSettings.twilioConfigured ? "" : "required"}/></label><label class="full">Twilio Auth Token *<input name="twilioAuthToken" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.twilioConfigured ? "Leave blank to keep existing token" : "Auth token from Twilio Console"}" ${grokVoiceSettings.twilioConfigured ? "" : "required"}/></label><label>Twilio phone number (From) *<input name="twilioFromNumber" type="tel" autocomplete="off" placeholder="+18065550199" value="${escapeAttr(grokVoiceSettings.twilioFromNumber || "")}" ${grokVoiceSettings.twilioConfigured || grokVoiceSettings.twilioHasMessagingService ? "" : "required"}/><small class="form-help">E.164 format. The number you bought in Twilio.</small></label><label>Messaging Service SID (optional)<input name="twilioMessagingServiceSid" type="text" autocomplete="off" spellcheck="false" placeholder="MGxxxxxxxx…"/></label><label class="full">xAI API key (Grok voice)<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.configured ? "Leave blank to keep existing key, or paste xai-…" : "xai-… from console.x.ai"}"/></label><div class="full agentphone-webhook-preview"><span>Paste this Voice webhook on the Twilio number (Voice → A call comes in → HTTP POST)</span><code>${escapeHtml(webhookUrl)}</code></div><div class="full messaging-actions"><button class="primary" type="submit">${icon("save", 14)} Save Twilio &amp; xAI credentials</button>${grokVoiceSettings.twilioConfigured && grokVoiceSettings.twilioKeySource === "shop" ? `<button type="button" class="secondary" id="twilio-inline-clear">${icon("trash-2", 14)} Clear Twilio</button>` : ""}</div></form></section>`;
+}
+
+function openTwilioPhoneCredentialsDialog() {
+  if (!canManagePhoneCredentials()) {
+    toast("Only shop admins, owners, and back-office staff can manage phone credentials");
+    return;
+  }
+  const webhookUrl = grokPhoneWebhookUrl();
+  const twilioStatus = twilioCredentialsStatusLabel();
+  const grokStatus = grokVoiceSettings.configured
+    ? `Grok xAI key on file (${grokVoiceSettings.keySource === "shop" ? `shop ${grokVoiceSettings.maskedKey}` : "platform key"})`
+    : "No shop xAI key saved yet";
+  showModal(`<form class="modal wide" id="twilio-phone-credentials-form" autocomplete="off"><div class="modal-head"><h2>Twilio &amp; Grok phone credentials</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status ${grokVoiceSettings.twilioConfigured ? "ready" : "idle"}">${icon(grokVoiceSettings.twilioConfigured ? "circle-check" : "phone-call", 17)}<div><strong>${escapeHtml(twilioStatus)}</strong><span>Secrets are encrypted on the Worker and never stored in the browser. Only this shop’s admin, owner, or back-office staff can change them.</span></div></div><div class="form-grid"><label class="full">Twilio Account SID<input name="twilioAccountSid" type="text" autocomplete="off" spellcheck="false" placeholder="${grokVoiceSettings.twilioConfigured ? "Leave blank to keep existing SID, or paste AC…" : "ACxxxxxxxx…"}" ${grokVoiceSettings.twilioConfigured ? "" : "required"}/></label><label class="full">Twilio Auth Token<input name="twilioAuthToken" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.twilioConfigured ? "Leave blank to keep existing token" : "Auth token from Twilio Console"}" ${grokVoiceSettings.twilioConfigured ? "" : "required"}/></label><label>Twilio phone number (From)<input name="twilioFromNumber" type="tel" autocomplete="off" placeholder="+18065550199" value="${escapeAttr(grokVoiceSettings.twilioFromNumber || "")}"/><small class="form-help">E.164. Required unless you use a Messaging Service SID.</small></label><label>Messaging Service SID (optional)<input name="twilioMessagingServiceSid" type="text" autocomplete="off" spellcheck="false" placeholder="${grokVoiceSettings.twilioHasMessagingService ? "Leave blank to keep, or paste MG…" : "MGxxxxxxxx…"}"/></label><label class="full">xAI API key (Grok voice)<input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${grokVoiceSettings.configured ? "Leave blank to keep existing key, or paste xai-…" : "xai-… from console.x.ai"}"/><small class="form-help">${escapeHtml(grokStatus)}. Gemini / Claude keys stay under Shop Crank AI provider in Settings.</small></label><div class="full agentphone-webhook-preview"><span>Twilio Voice webhook (paste in Twilio → Phone Numbers → Voice → A call comes in → HTTP POST)</span><code>${escapeHtml(webhookUrl)}</code></div></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button>${grokVoiceSettings.twilioConfigured && grokVoiceSettings.twilioKeySource === "shop" ? `<button type="button" class="secondary" id="twilio-clear-credentials">${icon("trash-2", 14)} Clear Twilio</button>` : ""}<button class="primary" type="submit">${icon("save", 14)} Save credentials</button></div></form>`);
+
+  document.querySelector("#twilio-phone-credentials-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const button = form.querySelector("button[type=submit]");
+    const data = Object.fromEntries(new FormData(form));
+    const sid = String(data.twilioAccountSid || "").trim();
+    const token = String(data.twilioAuthToken || "").trim();
+    const from = String(data.twilioFromNumber || "").trim();
+    const messagingSid = String(data.twilioMessagingServiceSid || "").trim();
+    const apiKey = String(data.apiKey || "").trim();
+    const payload = {};
+    if (sid) payload.twilioAccountSid = sid;
+    if (token) payload.twilioAuthToken = token;
+    if (from) payload.twilioFromNumber = from;
+    if (messagingSid) payload.twilioMessagingServiceSid = messagingSid;
+    if (apiKey) payload.apiKey = apiKey;
+    if (!grokVoiceSettings.twilioConfigured && (!payload.twilioAccountSid || !payload.twilioAuthToken)) {
+      toast("Account SID and Auth Token are required");
+      return;
+    }
+    if (!grokVoiceSettings.twilioConfigured && !payload.twilioFromNumber && !payload.twilioMessagingServiceSid) {
+      toast("Enter a From number or Messaging Service SID");
+      return;
+    }
+    if (!Object.keys(payload).length) {
+      toast("Enter at least one credential to save");
+      return;
+    }
+    button.disabled = true;
+    try {
+      const result = await apiFetch("/voice/grok/configure", { method: "POST", body: JSON.stringify(payload) });
+      grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+      closeModal();
+      toast("Twilio & Grok phone credentials saved");
+      render();
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "Could not save phone credentials");
+    }
+  });
+
+  document.querySelector("#twilio-clear-credentials")?.addEventListener("click", async (event) => {
+    if (!confirm("Remove this shop’s Twilio Account SID, Auth Token, and numbers?")) return;
+    event.currentTarget.disabled = true;
+    try {
+      const result = await apiFetch("/voice/grok/configure", {
+        method: "DELETE",
+        body: JSON.stringify({ clearTwilio: true, clearXai: false }),
+      });
+      grokVoiceSettings = { ...grokVoiceSettings, ...result, loaded: true, loading: false };
+      closeModal();
+      toast("Twilio credentials cleared");
+      render();
+    } catch (error) {
+      toast(error.message || "Could not clear Twilio credentials");
+      render();
+    }
+  });
+}
+
+function messaging() { const config = state.messagingSettings; return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${config.shopName || "Your Car Guy"}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`) }
 let integrationStatus = null, laborLookupResults = [], partsLookupResult = null;
 async function loadIntegrationStatus() { try { integrationStatus = await apiFetch("/integrations/status") } catch (error) { integrationStatus = { error: error.message } } }
 function integrationState(name, configured) { return `<div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "circle-alert", 17)}<div><strong>${escapeHtml(name)}</strong><span>${configured ? "Configured and available" : "Not configured — this feature stays disabled until credentials are added"}</span></div></div>` }
@@ -1037,7 +1147,7 @@ function bindPlatformAdmin() { document.querySelector("#refresh-platform")?.addE
 
 function openPasswordReset() { showModal(`<div class="modal"><div class="modal-head"><h2>Password and MFA</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><p>ShopCrank authentication is managed by Cloudflare Access and your organization identity provider. Use your identity provider's account-recovery flow or contact your administrator.</p></div><div class="modal-actions"><button type="button" class="primary" data-close>Close</button></div></div>`) }
 function render() { const root = document.querySelector("#root"); if (!currentUser()) { root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } }); lucide.createIcons(); bind(); return } if (!canAccess(state.route)) state.route = (routesForRole(currentUser().role) || ["home"])[0]; const views = { superadmin: superAdmin, home: homeDashboard, dispatch, orders, schedule, customers, chat: teamChat, invoices, pos: cardTerminal, ai: aiWorkbench, messaging, payments, integrations, support, reports, settings }; if (typeof accounting === "function") views.accounting = accounting; if (typeof payroll === "function") views.payroll = payroll; if (typeof imports === "function") views.imports = imports; if (typeof employees === "function") views.employees = employees; if (typeof oemDiagnosticsView === "function") views["oem-diagnostics"] = oemDiagnosticsView; root.innerHTML = DOMPurify.sanitize((views[state.route] || views.home || views.dispatch)(), { USE_PROFILES: { html: true } }); const unread = state.conversations.reduce((sum, item) => sum + chatUnread(item), 0); if (currentUser().role !== "super_admin" && !root.querySelector('[data-route="chat"]') && canAccess("chat")) { const chatNav = root.querySelector('.sidebar [aria-label="Front counter"]') || root.querySelector(".sidebar .nav"); chatNav?.insertAdjacentHTML("beforeend", nav("chat", "messages-square", "Team chat", unread || "")) } if (typeof isOemDiagnosticsAvailable === "function" && isOemDiagnosticsAvailable() && !root.querySelector('[data-route="oem-diagnostics"]')) { const floorNav = root.querySelector('.sidebar [aria-label="Shop floor"]') || root.querySelector(".sidebar .nav"); floorNav?.insertAdjacentHTML("beforeend", nav("oem-diagnostics", "radio-tower", "OEM diagnostics")) } lucide.createIcons(); bind(); bindPlatformAdmin(); bindIntegrations(); document.querySelector("#upgrade-shop-plan")?.addEventListener("click", upgradeShopPlan); bindEstimateActions(); bindMessagingService(); bindPaymentService(); if (state.route === "payments") void loadStripePaymentStatus(); bindTeamChat(); if (typeof bindOemDiagnostics === "function") bindOemDiagnostics(); root.querySelector('[data-route="chat"]')?.addEventListener("click", async () => { await loadChatFromApi(); render() }); scheduleChatRefresh() }
-function bindMessagingService() { document.querySelector("#messaging-form")?.addEventListener("submit", event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your Car Guy" }; if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) { toast("A secure service endpoint is required before enabling delivery"); return } save(); toast("Shop messaging service saved"); render() }); document.querySelector("#test-messaging")?.addEventListener("click", () => { const config = state.messagingSettings; if (!config.endpoint) { toast("Save a secure endpoint before testing"); return } toast("Endpoint saved. Use your shop service test endpoint to verify SMTP and SMS credentials.") }) }
+function bindMessagingService() { document.querySelector("#open-twilio-phone-credentials")?.addEventListener("click", () => openTwilioPhoneCredentialsDialog()); document.querySelector("#messaging-form")?.addEventListener("submit", event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your Car Guy" }; if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) { toast("A secure service endpoint is required before enabling delivery"); return } save(); toast("Shop messaging service saved"); render() }); document.querySelector("#test-messaging")?.addEventListener("click", () => { const config = state.messagingSettings; if (!config.endpoint) { toast("Save a secure endpoint before testing"); return } toast("Endpoint saved. Use your shop service test endpoint to verify SMTP and SMS credentials.") }) }
 async function loadStripePaymentStatus() {
   if (!canAccess("payments")) return;
   try {
@@ -1481,7 +1591,16 @@ settings = function () { const page = settingsDataResetCore(); if (currentUser()
 const bindDataResetCore = bindExpandedFeatures;
 bindExpandedFeatures = function () { bindDataResetCore(); document.querySelector("#open-full-reset")?.addEventListener("click", openFullReset) };
 const settingsAgentPhoneCore = settings;
-settings = function () { const page = settingsAgentPhoneCore(); if (currentUser()?.role !== "admin") return page; return page.replace("</main>", `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Voice and messaging</div><h2>Connect AgentPhone.ai</h2><p>Give this shop's AgentPhone agent access to the live ShopCrank assistant for calls and messages. Credentials are encrypted by the Worker and never stored in the browser.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section></main>`) };
+settings = function () {
+  const page = settingsAgentPhoneCore();
+  const twilioPanel = twilioInlineSettingsPanelHtml();
+  const isAdmin = currentUser()?.role === "admin";
+  if (!twilioPanel && !isAdmin) return page;
+  const agentPhonePanel = isAdmin
+    ? `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above — not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>`
+    : "";
+  return page.replace("</main>", `${twilioPanel}${agentPhonePanel}</main>`);
+};
 const settingsAppsBillingCore = settings;
 settings = function () { const page = settingsAppsBillingCore(); if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page; return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`) };
 
