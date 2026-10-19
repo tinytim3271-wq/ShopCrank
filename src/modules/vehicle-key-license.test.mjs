@@ -83,6 +83,10 @@ test('key app panel covers request, review, unlock, and locked states', () => {
   const requestForm = keyLicensePanelHtml({ status: { license: null, requests: [], canRequest: true } }, helpers);
   assert.match(requestForm, /id="key-license-request-form"/);
   assert.match(requestForm, /name="proofFile"/);
+  const failedSubmit = keyLicensePanelHtml({ lastError: 'Upload failed (401)', draft: { contactName: 'Dana', proofDetails: 'Kept <text>' }, status: { license: null, requests: [], canRequest: true } }, helpers);
+  assert.match(failedSubmit, /role="alert">Upload failed \(401\)/);
+  assert.match(failedSubmit, /value="Dana"/);
+  assert.match(failedSubmit, />Kept &lt;text&gt;<\/textarea>/);
   const techView = keyLicensePanelHtml({ status: { license: null, requests: [], canRequest: false } }, helpers);
   assert.doesNotMatch(techView, /key-license-request-form/);
   const pending = keyLicensePanelHtml({ status: { license: null, requests: [{ status: 'pending', businessName: '<b>HPA</b>', createdAt: '2026-10-19T00:00:00Z' }] } }, helpers);

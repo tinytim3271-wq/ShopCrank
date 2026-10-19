@@ -49,6 +49,8 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // API reads are live data (license status, revocations); never answer them from cache.
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return;
 
   // Always network-first for the main app bundle — never long-cache app.js.
   if (url.pathname.endsWith('/app.js') || url.pathname.endsWith('app.js')) {

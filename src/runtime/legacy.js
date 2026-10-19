@@ -4804,8 +4804,9 @@ async function loadKeyLicense(force = false) {
 }
 async function withKeyLicenseBusy(message, task) {
   keyLicenseView.busy = message;
+  keyLicenseView.lastError = "";
   render();
-  try { await task() } catch (error) { toast(error.message || "Vehicle key license request failed") }
+  try { await task() } catch (error) { keyLicenseView.lastError = error.message || "Vehicle key license request failed"; toast(keyLicenseView.lastError) }
   keyLicenseView.busy = "";
   await loadKeyLicense(true);
 }
@@ -4829,9 +4830,12 @@ function bindKeyLicensePanel() {
   document.querySelector("#key-license-request-form")?.addEventListener("submit", event => {
     event.preventDefault();
     const form = new FormData(event.target), file = form.get("proofFile");
+    const draft = { contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1) };
+    keyLicenseView.draft = draft;
     void withKeyLicenseBusy("Sending your license request…", async () => {
-      const proofFileKey = file && file.size ? await KeyLicense.uploadProof(file, apiFetch) : "";
-      await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1), proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
+      const proofFileKey = file && file.size ? await KeyLicense.uploadProof(file, { apiFetch, fetchImpl: (url, init) => authorizedApiRequest(url.replace(/^\/api(?=\/)/, ""), init) }) : "";
+      await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ ...draft, proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
+      keyLicenseView.draft = null;
       toast("License request sent to ShopCrank for review");
     });
   });
