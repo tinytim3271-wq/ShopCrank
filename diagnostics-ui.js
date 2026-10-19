@@ -20,7 +20,7 @@ function oemDiagApi() {
 }
 
 function isOemDiagnosticsAvailable() {
-  return Boolean(window.shopcrankDesktop && window.shopcrankDiagnostics);
+  return Boolean(window.shopcrankDiagnostics);
 }
 
 function platformFromVin(vin) {
@@ -121,6 +121,9 @@ function normalizeOemAdapter(adapter) {
     dllPath: adapter.dllPath ?? adapter.DllPath ?? '',
     protocols: adapter.protocols ?? adapter.Protocols ?? [],
     firmware: adapter.firmware ?? adapter.Firmware ?? '',
+    bitness: adapter.bitness ?? adapter.Bitness ?? '',
+    usable: adapter.usable ?? adapter.Usable ?? true,
+    usabilityNote: adapter.usabilityNote ?? adapter.UsabilityNote ?? '',
   };
 }
 

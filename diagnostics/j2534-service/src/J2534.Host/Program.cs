@@ -21,7 +21,7 @@ public static class Program
 
         while (true)
         {
-            await using var pipe = new NamedPipeServerStream(
+            var pipe = new NamedPipeServerStream(
                 pipeName,
                 PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
@@ -29,21 +29,27 @@ public static class Program
                 PipeOptions.Asynchronous);
 
             await pipe.WaitForConnectionAsync();
-            try
+            _ = Task.Run(async () =>
             {
-                await HandleClientAsync(pipe, session);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Client error: {ex.Message}");
-            }
+                await using (pipe)
+                {
+                    try
+                    {
+                        await HandleClientAsync(pipe, session);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Client error: {ex.Message}");
+                    }
+                }
+            });
         }
     }
 
     static async Task HandleClientAsync(Stream stream, DiagnosticSession session)
     {
-        using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
-        await using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+        using var reader = new StreamReader(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true) { AutoFlush = true };
 
         while (stream.CanRead)
         {

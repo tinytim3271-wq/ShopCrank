@@ -1,4 +1,4 @@
-/** Shop-bay helpers for simulated OBD scans and repair-order-gated key jobs. */
+/** Shop-bay helpers for OBD-II scans and repair-order-gated key jobs. */
 
 export const KEY_OPERATIONS = [
   { id: "identify", label: "Identify" },
@@ -9,6 +9,19 @@ export const KEY_OPERATIONS = [
 
 const FORBIDDEN_KEY_REQUEST = /bypass|clon(?:e|ing)|rolling[-\s]?code|stolen|immobilizer\s+bypass|\bfrp\b/i;
 const LIVE_KEY_PROCEDURES = Object.freeze({ add: 'add_key', program: 'program_remote' });
+
+export const ELM_SNAPSHOT_PIDS = [
+  { pid: 0x04, code: '0x04', command: '0104', name: 'Calculated engine load', unit: '%' },
+  { pid: 0x05, code: '0x05', command: '0105', name: 'Coolant temperature', unit: 'C' },
+  { pid: 0x0B, code: '0x0B', command: '010B', name: 'Intake manifold pressure', unit: 'kPa' },
+  { pid: 0x0C, code: '0x0C', command: '010C', name: 'Engine speed', unit: 'rpm' },
+  { pid: 0x0D, code: '0x0D', command: '010D', name: 'Vehicle speed', unit: 'km/h' },
+  { pid: 0x0F, code: '0x0F', command: '010F', name: 'Intake air temperature', unit: 'C' },
+  { pid: 0x10, code: '0x10', command: '0110', name: 'Mass air flow', unit: 'g/s' },
+  { pid: 0x11, code: '0x11', command: '0111', name: 'Throttle position', unit: '%' },
+  { pid: 0x2F, code: '0x2F', command: '012F', name: 'Fuel level', unit: '%' },
+  { pid: 0x42, code: '0x42', command: '0142', name: 'Control module voltage', unit: 'V' },
+];
 
 export function signedEstimateForOrder(order, estimates = []) {
   if (!order?.id) return null;
@@ -115,5 +128,230 @@ export function keyAuditRecord({ id, order, user, operation, procedure, vehicleV
     result,
     message: message || '',
     createdAt: now,
+  };
+}
+
+export function elmFrameBytes(line, command = '') {
+  let value = String(line || '').toUpperCase().trim();
+  if (!value || value.replace(/\s/g, '') === String(command).toUpperCase().replace(/\s/g, '') || /^(SEARCHING|BUS INIT|STOPPED|OK\b|ELM327|AT\b)/.test(value)) {
+    return [];
+  }
+  value = value.replace(/^\s*\d+\s*:\s*/, '');
+  let header = false;
+  if (/^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value.replace(/\s/g, ''))) {
+    const compact = value.replace(/\s/g, '');
+    value = compact.slice(compact.startsWith('18') ? 8 : 3);
+    header = true;
+  }
+  let parts = value.match(/[0-9A-F]+/g) || [];
+  if (!header && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
+    parts.shift();
+    header = true;
+  }
+  if (parts.length === 1 && parts[0].length % 2 === 0) {
+    parts = parts[0].match(/../g) || [];
+  } else {
+    parts = parts.flatMap(part => (part.length === 2 ? [part] : part.length % 2 === 0 ? (part.match(/../g) || []) : []));
+  }
+  let bytes = parts.map(part => parseInt(part, 16)).filter(Number.isFinite);
+  if (header && bytes.length && bytes[0] <= 0x0f) bytes.shift();
+  if (bytes[0] >= 0x10 && bytes[0] <= 0x1f) bytes = bytes.slice(2);
+  else if (bytes[0] >= 0x20 && bytes[0] <= 0x2f) bytes = bytes.slice(1);
+  else if (bytes[0] <= 0x0f && bytes[0] === bytes.length - 1) bytes = bytes.slice(1);
+  return bytes;
+}
+
+export function parseElmPayload(raw, command = '') {
+  const text = String(raw ?? '').trim();
+  const upper = text.toUpperCase();
+  const noData = /\bNO\s*DATA\b/.test(upper);
+  const adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || '';
+  const lines = text.replace(/>/g, '\n').split(/[\r\n]+/);
+  const frames = lines.map(line => elmFrameBytes(line, command)).filter(frame => frame.length);
+  const bytes = frames.flat();
+  return { raw: text, noData, adapterError, frames, bytes };
+}
+
+function findServiceReply(bytes, responseService, pid) {
+  for (let index = 0; index < bytes.length; index++) {
+    if (bytes[index] === responseService && (pid === undefined || bytes[index + 1] === pid)) {
+      return bytes.slice(index + (pid === undefined ? 1 : 2));
+    }
+  }
+  return null;
+}
+
+export function formatDtcBytes(first, second) {
+  const systems = ['P', 'C', 'B', 'U'];
+  const system = systems[(first & 0xc0) >> 6];
+  const digit = (first & 0x30) >> 4;
+  return `${system}${digit}${(first & 0x0f).toString(16).toUpperCase()}${second.toString(16).padStart(2, '0').toUpperCase()}`;
+}
+
+export function parseElmModeDtcs(raw, mode = 0x03) {
+  const cmd = mode.toString(16).padStart(2, '0').toUpperCase();
+  const parsed = parseElmPayload(raw, cmd);
+  if (parsed.noData) return [];
+  if (parsed.adapterError) throw new Error(`Adapter reported ${parsed.adapterError}`);
+  const markerByte = 0x40 + mode;
+  const replies = [];
+  let current = null;
+  for (const frame of parsed.frames) {
+    const marker = frame.indexOf(markerByte);
+    if (marker >= 0) {
+      const after = frame.slice(marker + 1);
+      // CAN ISO 15765-4 mode 03/07/0A includes a count byte when total bytes after 0x43/0x47/0x4A is odd
+      const payload = after.length % 2 === 1 ? after.slice(1) : after;
+      current = [...payload];
+      replies.push(current);
+    } else if (current) {
+      current.push(...frame);
+    }
+  }
+  const codes = [];
+  for (const data of replies) {
+    for (let i = 0; i + 1 < data.length; i += 2) {
+      if (data[i] === 0 && data[i + 1] === 0) continue;
+      codes.push(formatDtcBytes(data[i], data[i + 1]));
+    }
+  }
+  return [...new Set(codes)];
+}
+
+export function parseElmVin(raw) {
+  const parsed = parseElmPayload(raw, '0902');
+  if (parsed.noData || parsed.adapterError || !parsed.bytes.length) return '';
+  const ascii = parsed.bytes
+    .filter(byte => (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x5A))
+    .map(byte => String.fromCharCode(byte))
+    .join('');
+  // Remove leading 'I' if 0x49 ('I') from 49 02 header was included in ASCII range
+  const cleaned = normalizeVin(ascii);
+  return cleaned.length >= 17 ? cleaned.slice(-17) : '';
+}
+
+export function parseElmMonitorStatus(raw) {
+  const parsed = parseElmPayload(raw, '0101');
+  if (parsed.noData || parsed.adapterError) return null;
+  const data = findServiceReply(parsed.bytes, 0x41, 0x01);
+  if (!data || data.length < 1) return null;
+  const a = data[0];
+  return {
+    milOn: Boolean(a & 0x80),
+    dtcCount: a & 0x7f,
+  };
+}
+
+export function decodeElmPidReading(pid, raw) {
+  const meta = ELM_SNAPSHOT_PIDS.find(item => item.pid === pid);
+  if (!meta) return null;
+  const parsed = parseElmPayload(raw, meta.command);
+  if (parsed.noData || parsed.adapterError) return null;
+  const data = findServiceReply(parsed.bytes, 0x41, pid);
+  if (!data || !data.length) return null;
+  const A = data[0];
+  const B = data[1] ?? 0;
+  const AB = A * 256 + B;
+  let value = null;
+  switch (pid) {
+    case 0x04:
+    case 0x11:
+    case 0x2F:
+      value = Math.round((A * 100) / 255 * 10) / 10;
+      break;
+    case 0x05:
+    case 0x0F:
+      value = A - 40;
+      break;
+    case 0x0B:
+    case 0x0D:
+      value = A;
+      break;
+    case 0x0C:
+      if (data.length < 2) return null;
+      value = Math.round((AB / 4) * 10) / 10;
+      break;
+    case 0x10:
+      if (data.length < 2) return null;
+      value = Math.round((AB / 100) * 100) / 100;
+      break;
+    case 0x42:
+      if (data.length < 2) return null;
+      value = Math.round((AB / 1000) * 100) / 100;
+      break;
+    default:
+      return null;
+  }
+  return {
+    pid: meta.code,
+    name: meta.name,
+    value,
+    unit: meta.unit,
+    raw: data.slice(0, 2).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(''),
+  };
+}
+
+export async function runElmObdSnapshot(sendCommand) {
+  const errors = [];
+  let vin = '';
+  try {
+    vin = parseElmVin(await sendCommand('0902'));
+  } catch (error) {
+    errors.push(`VIN: ${error.message}`);
+  }
+
+  let monitor = null;
+  try {
+    monitor = parseElmMonitorStatus(await sendCommand('0101'));
+  } catch (error) {
+    errors.push(`Monitor status: ${error.message}`);
+  }
+
+  const readings = [];
+  for (const item of ELM_SNAPSHOT_PIDS) {
+    try {
+      const reading = decodeElmPidReading(item.pid, await sendCommand(item.command));
+      if (reading) readings.push(reading);
+    } catch (error) {
+      errors.push(`${item.name}: ${error.message}`);
+    }
+  }
+
+  let storedDtcs = [];
+  let pendingDtcs = [];
+  let permanentDtcs = [];
+  try { storedDtcs = parseElmModeDtcs(await sendCommand('03'), 0x03); } catch (error) { errors.push(`Stored codes: ${error.message}`); }
+  try { pendingDtcs = parseElmModeDtcs(await sendCommand('07'), 0x07); } catch (error) { errors.push(`Pending codes: ${error.message}`); }
+  try { permanentDtcs = parseElmModeDtcs(await sendCommand('0A'), 0x0A); } catch { /* Mode 0A optional */ }
+
+  let voltage = null;
+  try {
+    const rawVolt = await sendCommand('ATRV');
+    const match = String(rawVolt || '').match(/(\d+(?:\.\d+)?)\s*V/i);
+    if (match) voltage = Number(match[1]);
+  } catch { /* ignore ATRV failure */ }
+
+  const responded = Boolean(vin || monitor || readings.length || storedDtcs.length || pendingDtcs.length || permanentDtcs.length);
+  if (!responded && !errors.length) {
+    errors.push('No reply from the vehicle ECU. Verify ignition is ON and the OBD-II connector is seated.');
+  }
+
+  return {
+    source: 'live',
+    simulator: false,
+    adapterName: 'ELM327 OBD-II adapter',
+    protocol: 'SAE J1979 OBD-II (ELM327 Serial)',
+    responded,
+    vin,
+    milOn: monitor?.milOn ?? null,
+    reportedDtcCount: monitor?.dtcCount ?? storedDtcs.length,
+    supportedPids: readings.map(r => r.pid),
+    readings,
+    storedDtcs,
+    pendingDtcs,
+    permanentDtcs,
+    errors,
+    voltage,
+    readAt: new Date().toISOString(),
   };
 }

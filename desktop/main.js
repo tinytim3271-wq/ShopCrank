@@ -56,6 +56,7 @@ function registerOfflineIpc() {
 function registerDiagnosticsIpc() {
   const handlers = {
     'diagnostics:listAdapters': () => diagnostics.listAdapters(),
+    'diagnostics:autoDetectAndConnect': () => diagnostics.autoDetectAndConnect(),
     'diagnostics:connect': (_e, params) => diagnostics.connect(params),
     'diagnostics:disconnect': () => diagnostics.disconnect(),
     'diagnostics:getConnectionStatus': () => diagnostics.getConnectionStatus(),

@@ -36,9 +36,16 @@ function hostScriptPath() {
 }
 
 function csharpHostPath() {
-  const { app } = require('electron');
-  const packaged = path.join(process.resourcesPath, 'j2534-host', 'J2534.Host.exe');
-  if (app?.isPackaged && fs.existsSync(packaged)) return packaged;
+  let app = null;
+  try {
+    ({ app } = require('electron'));
+  } catch {
+    app = null;
+  }
+  const packaged = typeof process.resourcesPath === 'string' && process.resourcesPath
+    ? path.join(process.resourcesPath, 'j2534-host', 'J2534.Host.exe')
+    : '';
+  if (app?.isPackaged && packaged && fs.existsSync(packaged)) return packaged;
   return path.join(__dirname, '..', 'diagnostics', 'j2534-service', 'publish', 'win-x64', 'J2534.Host.exe');
 }
 
@@ -141,7 +148,7 @@ function rpcCall(method, params = {}, timeoutMs = 15000) {
       buffer += chunk.toString('utf8');
       const newline = buffer.indexOf('\n');
       if (newline < 0) return;
-      const line = buffer.slice(0, newline).trim();
+      const line = buffer.slice(0, newline).replace(/^\uFEFF/, '').trim();
       socket.end();
       clearTimeout(timer);
       try {
@@ -169,30 +176,36 @@ async function listAdapters() {
   await ensureHost();
   return rpcCall('listAdapters');
 }
-Diagnostic
+
 /**
  * Automatically detect available J2534 adapters and connect to the first one found.
  * Returns the result of the `connect` RPC call. Throws if no adapters are present.
  */
 async function autoDetectAndConnect() {
-  // Ensure the host process is running and ready
   await ensureHost();
-  const adapters = await listAdapters();
-  if (!Array.isArray(adapters) || adapters.length === 0) {
+  const listed = await listAdapters();
+  const adapters = (Array.isArray(listed) ? listed : listed?.adapters || [])
+    .filter((adapter) => adapter && adapter.id !== 'simulator' && adapter.usable !== false);
+  if (adapters.length === 0) {
     throw new Error('No J2534 adapters detected');
   }
   const selected = adapters[0];
   const adapterId = selected.id ?? selected.adapterId ?? Object.values(selected)[0];
-  return connect({ adapterId });
+  return connect({ adapterId, protocol: 'ISO15765' });
 }
-
 
 async function connect(params) {
   await ensureHost();
   const result = await rpcCall('connect', params || {});
   if (powerSaveBlockerId === null) {
-    const { powerSaveBlocker } = require('electron');
-    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    try {
+      const { powerSaveBlocker } = require('electron');
+      if (powerSaveBlocker?.start) {
+        powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      }
+    } catch {
+      /* Not running inside Electron */
+    }
   }
   return result;
 }
@@ -201,8 +214,12 @@ async function disconnect() {
   if (!hostProcess) return { connected: false };
   const result = await rpcCall('disconnect');
   if (powerSaveBlockerId !== null) {
-    const { powerSaveBlocker } = require('electron');
-    powerSaveBlocker.stop(powerSaveBlockerId);
+    try {
+      const { powerSaveBlocker } = require('electron');
+      powerSaveBlocker?.stop?.(powerSaveBlockerId);
+    } catch {
+      /* Not running inside Electron */
+    }
     powerSaveBlockerId = null;
   }
   return result;
@@ -374,6 +391,7 @@ function stopHost() {
 module.exports = {
   ensureHost,
   listAdapters,
+  autoDetectAndConnect,
   connect,
   disconnect,
   getConnectionStatus,

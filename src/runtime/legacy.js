@@ -88,7 +88,7 @@ import {
   estimateFromAssistantDraft,
   workOrderDraftFromEstimate,
 } from '../modules/estimate-templates.js';
-import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, signedEstimateForOrder, simulateKeyJob, simulateObdScan } from '../modules/shop-os/bay.js';
+import { KEY_OPERATIONS, assertKeyJobAllowed, assertLiveKeySession, keyAuditRecord, keyConfirmationMatches, liveKeyProcedureFor, normalizeVin, runElmObdSnapshot, signedEstimateForOrder, simulateKeyJob } from '../modules/shop-os/bay.js';
 import {
   APPROVAL_CUSTOM_LABEL_MAX,
   APPROVAL_NOTE_MAX,
@@ -4339,34 +4339,129 @@ function orderChoices() {
   return state.orders.map(order => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} · ${escapeHtml(order.vehicle)} · ${escapeHtml(order.customer)}</option>`).join("");
 }
 
+function ensureBrowserDiagnosticsClient() {
+  if (typeof window === "undefined" || window.shopcrankDiagnostics) return;
+  const invokeHttp = async (method, payload = {}) => {
+    const response = await fetch(`${cloudflareConfig.apiUrl}/diagnostics/j2534/${encodeURIComponent(method)}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) {
+      throw new Error(data?.error || data?.message || `Diagnostics host request failed (${response.status})`);
+    }
+    return data.result ?? data;
+  };
+  window.shopcrankDiagnostics = Object.freeze({
+    listAdapters: () => invokeHttp("listAdapters"),
+    autoDetectAndConnect: () => invokeHttp("autoDetectAndConnect"),
+    connect: (params) => invokeHttp("connect", params),
+    disconnect: () => invokeHttp("disconnect"),
+    getConnectionStatus: () => invokeHttp("getConnectionStatus"),
+    readVin: () => invokeHttp("readVin"),
+    identifyEcus: () => invokeHttp("identifyEcus"),
+    readDtcs: () => invokeHttp("readDtcs"),
+    clearDtcs: (params) => invokeHttp("clearDtcs", params),
+    securityAccess: (params) => invokeHttp("securityAccess", params),
+    programKey: (params) => invokeHttp("programKey", params),
+    codeModule: (params) => invokeHttp("codeModule", params),
+    bidirectionalControl: (params) => invokeHttp("bidirectionalControl", params),
+    flashModule: (params) => invokeHttp("flashModule", params),
+    startLiveLog: () => invokeHttp("startLiveLog"),
+    stopLiveLog: () => invokeHttp("stopLiveLog"),
+    pollLiveLog: (since) => invokeHttp("pollLiveLog", { since }),
+    identifyVehicle: () => invokeHttp("identifyVehicle"),
+    obdSnapshot: () => invokeHttp("obdSnapshot"),
+    obdClearDtcs: (params) => invokeHttp("obdClearDtcs", params),
+    keyProcedureSupport: (params) => invokeHttp("keyProcedureSupport", params),
+  });
+}
+
+function normalizeBayAdapter(adapter) {
+  if (!adapter) return null;
+  const id = String(adapter.id ?? adapter.Id ?? "");
+  if (!id || id === "simulator") return null;
+  return {
+    id,
+    name: adapter.name ?? adapter.Name ?? "J2534 adapter",
+    vendor: adapter.vendor ?? adapter.Vendor ?? "",
+    dllPath: adapter.dllPath ?? adapter.DllPath ?? "",
+    bitness: adapter.bitness ?? adapter.Bitness ?? "",
+    usable: adapter.usable ?? adapter.Usable ?? true,
+    usabilityNote: adapter.usabilityNote ?? adapter.UsabilityNote ?? "",
+  };
+}
+
 function bayHw() {
-  if (!globalThis.__shopcrankBayHardware) globalThis.__shopcrankBayHardware = { adapters: null, status: null, snapshot: null, snapshotOrderId: "", busy: "", error: "", checked: false, refreshing: false };
+  ensureBrowserDiagnosticsClient();
+  if (!globalThis.__shopcrankBayHardware) {
+    globalThis.__shopcrankBayHardware = {
+      adapters: null,
+      status: null,
+      snapshot: null,
+      snapshotOrderId: "",
+      busy: "",
+      error: "",
+      checked: false,
+      refreshing: false,
+    };
+  }
   const hw = globalThis.__shopcrankBayHardware;
-  hw.available = Boolean(window.shopcrankDesktop && window.shopcrankDiagnostics);
+  hw.j2534Available = Boolean(window.shopcrankDiagnostics);
+  hw.serialAvailable = typeof navigator !== "undefined" && Boolean(navigator.serial);
+  hw.available = hw.j2534Available || hw.serialAvailable;
   return hw;
 }
 
-function bayLive() {
+function bayJ2534Live() {
   const status = bayHw().status;
-  return Boolean(status?.connected && !status?.simulator);
+  return Boolean((status?.connected ?? status?.Connected) && !(status?.simulator ?? status?.Simulator));
+}
+
+function bayElmLive() {
+  return Boolean(elmPort?.readable && elmPort?.writable);
+}
+
+function bayLive() {
+  return bayJ2534Live() || bayElmLive();
 }
 
 function bayNavLabel(item) {
-  return (item.route === "obd" || item.route === "keys") && !bayLive() ? `${item.label} (Simulator)` : item.label;
+  return item.label;
 }
 
 async function refreshBayHardware(withAdapters = false) {
   const hw = bayHw();
-  if (!hw.available) return;
+  if (!hw.j2534Available) {
+    hw.checked = true;
+    return;
+  }
   try {
     if (withAdapters || !hw.adapters) {
       const listed = await window.shopcrankDiagnostics.listAdapters();
-      hw.adapters = (listed?.adapters || []).filter(adapter => adapter.id !== "simulator");
+      const rawAdapters = listed?.adapters || listed?.Adapters || [];
+      hw.adapters = rawAdapters.map(normalizeBayAdapter).filter(Boolean);
     }
-    hw.status = await window.shopcrankDiagnostics.getConnectionStatus();
+    const status = await window.shopcrankDiagnostics.getConnectionStatus();
+    hw.status = status
+      ? {
+          connected: Boolean(status.connected ?? status.Connected),
+          simulator: Boolean(status.simulator ?? status.Simulator),
+          adapterId: status.adapterId ?? status.AdapterId ?? null,
+          adapterName: status.adapterName ?? status.AdapterName ?? null,
+          protocol: status.protocol ?? status.Protocol ?? "ISO15765",
+          voltage: status.voltage ?? status.Voltage ?? null,
+        }
+      : { connected: false };
     hw.error = "";
   } catch (error) {
-    hw.error = error.message || "The diagnostics host is not available.";
+    if (!hw.adapters) hw.adapters = [];
+    hw.status = { connected: false };
+    if (window.shopcrankDesktop) {
+      hw.error = error.message || "The J2534 diagnostics host is not available.";
+    }
   }
   hw.checked = true;
 }
@@ -4382,49 +4477,58 @@ async function recordBayAudit(event) {
 
 function bayHardwarePanel() {
   const hw = bayHw();
-  if (!hw.available) return `<div class="messaging-status idle">${icon("monitor", 17)}<div><strong>Simulator</strong><span>Live OBD-II and key work run in the ShopCrank Windows app with a J2534 adapter such as the TOPDON RLink X7. In the browser this bay uses the bench simulator.</span></div></div>`;
   const status = hw.status || {};
-  if (bayLive()) return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Live: ${escapeHtml(status.adapterName || "J2534 adapter")}</strong><span>${escapeHtml(status.protocol || "ISO15765")} · ${escapeHtml(String(status.voltage ?? "?"))} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${hw.busy ? " disabled" : ""}>Disconnect</button></div>`;
+  if (bayJ2534Live()) {
+    return `<div class="messaging-status ready">${icon("plug-zap", 17)}<div><strong>Connected: ${escapeHtml(status.adapterName || "J2534 adapter")}</strong><span>${escapeHtml(status.protocol || "ISO15765")} · ${escapeHtml(String(status.voltage ?? "?"))} V at the DLC</span></div><button class="ghost" type="button" id="bay-disconnect"${hw.busy ? " disabled" : ""}>Disconnect</button></div>`;
+  }
+  if (bayElmLive()) {
+    return `<div class="messaging-status ready">${icon("usb", 17)}<div><strong>Connected: ELM327 OBD-II adapter</strong><span>SAE J1979 OBD-II over USB / Bluetooth-COM serial</span></div><button class="ghost" type="button" id="bay-elm-disconnect"${hw.busy ? " disabled" : ""}>Disconnect</button></div>`;
+  }
   const adapters = hw.adapters || [];
   const choices = adapters.map(adapter => `<option value="${escapeAttr(adapter.id)}"${adapter.usable === false ? " disabled" : ""}>${escapeHtml(adapter.name)} · ${escapeHtml(adapter.vendor || "")}${adapter.bitness ? ` · ${escapeHtml(adapter.bitness)}-bit` : ""}${adapter.usable === false ? " (wrong driver bitness)" : ""}</option>`).join("");
-  const empty = `<p>No J2534 driver found. Install RLink Platform and the TOPDON J2534 driver, plug the RLink X7 into USB and the vehicle, then refresh.</p>`;
+  const empty = `<p>No J2534 Pass-Thru driver detected yet. Plug in your J2534 VCI (such as TOPDON RLink / ArtiDiag) and click Refresh, or connect a USB/Bluetooth ELM327 OBD-II adapter.</p>`;
   const canConnect = adapters.some(adapter => adapter.usable !== false) && !hw.busy;
-  return `<section class="data-panel bay-hardware"><h3>J2534 adapter</h3>${hw.error ? `<p class="form-error">${escapeHtml(hw.error)}</p>` : ""}${adapters.length ? `<div class="form-grid"><label class="full">Adapter<select id="bay-adapter">${choices}</select></label></div>` : empty}<div class="job-actions"><button class="primary" type="button" id="bay-connect"${canConnect ? "" : " disabled"}>${icon("plug", 14)} ${hw.busy === "connect" ? "Connecting..." : "Connect"}</button><button class="ghost" type="button" id="bay-refresh"${hw.busy ? " disabled" : ""}>${icon("refresh-cw", 14)} Refresh</button></div><p class="ledger-note">Until an adapter is connected, this bay runs the bench simulator.</p></section>`;
+  const serialBtn = hw.serialAvailable
+    ? `<button class="secondary" type="button" id="bay-elm-connect"${hw.busy ? " disabled" : ""}>${icon("usb", 14)} ${hw.busy === "elm" ? "Connecting ELM327..." : "Connect USB / Bluetooth ELM327"}</button>`
+    : "";
+  return `<section class="data-panel bay-hardware"><h3>Vehicle diagnostic adapter</h3>${hw.error ? `<p class="form-error">${escapeHtml(hw.error)}</p>` : ""}${adapters.length ? `<div class="form-grid"><label class="full">J2534 Pass-Thru adapter<select id="bay-adapter">${choices}</select></label></div>` : empty}<div class="job-actions"><button class="primary" type="button" id="bay-connect"${canConnect ? "" : " disabled"}>${icon("plug", 14)} ${hw.busy === "connect" ? "Connecting..." : "Connect J2534"}</button>${serialBtn}<button class="ghost" type="button" id="bay-refresh"${hw.busy ? " disabled" : ""}>${icon("refresh-cw", 14)} Refresh adapters</button></div><p class="ledger-note">Connect a J2534 Pass-Thru VCI or ELM327 OBD-II interface with the vehicle ignition ON to read VIN, trouble codes, and live engine PIDs.</p></section>`;
 }
 
 function obdLiveSection() {
   const hw = bayHw();
+  const connected = bayLive();
   const snap = hw.snapshot;
-  const order = state.orders.find(item => item.id === hw.snapshotOrderId);
+  const selectedId = hw.snapshotOrderId || state.orders[0]?.id || "";
+  const order = state.orders.find(item => item.id === selectedId);
   const vinWarning = snap && order?.vin && snap.vin && normalizeVin(order.vin) !== normalizeVin(snap.vin)
     ? `<div class="messaging-status idle">${icon("triangle-alert", 17)}<div><strong>VIN mismatch</strong><span>The vehicle reports ${escapeHtml(snap.vin)}, but ${escapeHtml(order.id)} lists ${escapeHtml(order.vin)}.</span></div></div>`
     : "";
   const codes = (label, list) => `<p><b>${label}:</b> ${list?.length ? list.map(code => `<span class="mono">${escapeHtml(code)}</span>`).join(", ") : "none"}</p>`;
-  const readings = (snap?.readings || []).map(reading => `<tr><td>${escapeHtml(reading.name)}</td><td class="mono">${escapeHtml(reading.value === null || reading.value === undefined ? "-" : String(reading.value))} ${escapeHtml(reading.unit || "")}</td></tr>`).join("");
+  const readings = (snap?.readings || []).map(reading => `<tr><td>${escapeHtml(reading.name || reading.Name || "")}</td><td class="mono">${escapeHtml((reading.value ?? reading.Value) === null || (reading.value ?? reading.Value) === undefined ? "-" : String(reading.value ?? reading.Value))} ${escapeHtml(reading.unit || reading.Unit || "")}</td></tr>`).join("");
   const mil = snap?.milOn === true ? "ON" : snap?.milOn === false ? "off" : "unknown";
+  const allCodes = [...(snap?.storedDtcs || []), ...(snap?.pendingDtcs || []), ...(snap?.permanentDtcs || [])];
   const result = snap
-    ? `<section class="data-panel"><h3>${snap.simulator ? "Simulator" : "Live"} scan · ${escapeHtml(snap.adapterName || "J2534 adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}</p><p>Check engine light: <b>${mil}</b>${snap.reportedDtcCount !== undefined && snap.reportedDtcCount !== null ? ` · ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : ""}</p>${codes("Stored", snap.storedDtcs)}${codes("Pending", snap.pendingDtcs)}${codes("Permanent", snap.permanentDtcs)}${readings ? `<table><thead><tr><th>Reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>` : ""}${(snap.errors || []).length ? `<ul class="ledger-note">${snap.errors.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}<p class="ledger-note">${escapeHtml(snap.protocol || "")} · read ${escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString())}</p><div class="job-actions"><button class="ghost" type="button" id="obd-live-clear"${hw.busy || !snap.responded ? " disabled" : ""}>${icon("eraser", 14)} Clear codes...</button></div></section>`
+    ? `<section class="data-panel"><h3>Live OBD-II scan · ${escapeHtml(snap.adapterName || "Vehicle adapter")}</h3><p class="mono">VIN ${escapeHtml(snap.vin || "not reported")}${snap.voltage ? ` · ${escapeHtml(String(snap.voltage))} V` : ""}</p><p>Check engine light (MIL): <b>${mil}</b>${snap.reportedDtcCount !== undefined && snap.reportedDtcCount !== null ? ` · ECU reports ${escapeHtml(String(snap.reportedDtcCount))} stored` : ""}</p>${codes("Stored (Mode 03)", snap.storedDtcs)}${codes("Pending (Mode 07)", snap.pendingDtcs)}${codes("Permanent (Mode 0A)", snap.permanentDtcs)}${readings ? `<table><thead><tr><th>Live PID reading</th><th>Value</th></tr></thead><tbody>${readings}</tbody></table>` : ""}${(snap.errors || []).length ? `<ul class="ledger-note">${snap.errors.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}<p class="ledger-note">${escapeHtml(snap.protocol || "")} · read ${escapeHtml(new Date(snap.readAt || Date.now()).toLocaleString())}</p><div class="job-actions"><button class="secondary" type="button" id="obd-copy-to-ro"${hw.busy ? " disabled" : ""}>${icon("clipboard-Copy" in {} ? "clipboard" : "file-text", 14)} Copy findings to ${escapeHtml(order?.id || "RO")} notes</button><button class="ghost" type="button" id="obd-live-clear"${hw.busy || !snap.responded ? " disabled" : ""}>${icon("eraser", 14)} Clear codes (Mode 04)...</button></div></section>`
     : "";
-  return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit"${hw.busy ? " disabled" : ""}>${icon("activity", 14)} ${hw.busy === "scan" ? "Reading vehicle..." : "Read vehicle"}</button></div></form>${result}`;
+  const orderOpts = state.orders.map(item => `<option value="${escapeHtml(item.id)}"${item.id === selectedId ? " selected" : ""}>${escapeHtml(item.id)} · ${escapeHtml(item.vehicle)} · ${escapeHtml(item.customer)}</option>`).join("");
+  return `${vinWarning}<form class="form-grid" id="obd-live-form"><label class="full">Repair order<select name="orderId" required>${orderOpts || `<option value="">No repair orders</option>`}</select></label><div class="full job-actions"><button class="primary" type="submit"${hw.busy || !connected ? " disabled" : ""}>${icon("activity", 14)} ${hw.busy === "scan" ? "Reading vehicle..." : connected ? "Read vehicle (VIN, DTCs & live PIDs)" : "Connect an adapter to read vehicle"}</button>${allCodes.length && order ? `<button class="secondary" type="button" id="obd-send-ai">${icon("sparkles", 14)} Diagnose codes in AI workbench</button>` : ""}</div></form>${result}`;
 }
 
 function obdBay() {
-  const live = bayLive();
-  const latest = [...state.diagnosticSessions].reverse()[0];
-  const latestTitle = latest?.mode === "live" ? "Latest live record" : "Latest simulated scan";
-  const result = latest ? `<section class="data-panel"><h3>${latestTitle}</h3><p>${escapeHtml(latest.label || "")}</p><p class="mono">${escapeHtml(latest.vin || "")} · ${escapeHtml(latest.vehicle || "")}</p><ul>${(latest.dtcs || []).map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>${latest.readiness ? `<p>Readiness: ${escapeHtml(Object.entries(latest.readiness).map(([name, value]) => `${name} ${value}`).join(" · "))}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)}</p>` : ""}</section>` : `<div class="home-empty"><p>No scans yet.</p></div>`;
-  const simulator = `<div class="messaging-status idle">${icon("info", 17)}<div><strong>Simulator</strong><span>These readings are sample data, not a connected adapter.</span></div></div><form class="form-grid" id="obd-scan-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><div class="full"><button class="primary" type="submit">${icon("activity", 14)} Run simulated scan</button></div></form>`;
-  const subtitle = live
-    ? "Generic OBD-II over the connected J2534 adapter: VIN, live data, and stored, pending and permanent codes."
-    : "Bench simulator until a J2534 adapter is connected in the ShopCrank Windows app.";
-  return shell(`${heading("Diagnostics", live ? "OBD bay" : "OBD bay (Simulator)", subtitle, false)}${bayHardwarePanel()}${live ? obdLiveSection() : simulator}${result}`);
+  const liveSessions = state.diagnosticSessions.filter(session => session?.mode !== "simulator" && !session?.simulator);
+  const latest = [...liveSessions].reverse()[0];
+  const result = latest
+    ? `<section class="data-panel"><h3>Latest vehicle scan record</h3><p>${escapeHtml(latest.label || "Live OBD-II scan")}</p><p class="mono">${escapeHtml(latest.vin || "VIN not reported")} · ${escapeHtml(latest.vehicle || "")} (${escapeHtml(latest.orderId || "")})</p>${(latest.dtcs || []).length ? `<ul>${latest.dtcs.map(dtc => `<li><b>${escapeHtml(dtc.code)}</b> ${escapeHtml(dtc.description || "")}</li>`).join("")}</ul>` : `<p>No trouble codes recorded.</p>`}${(latest.readings || []).length ? `<p class="ledger-note">${latest.readings.map(r => `${escapeHtml(r.name || r.Name)}: ${escapeHtml(String(r.value ?? r.Value ?? "-"))} ${escapeHtml(r.unit || r.Unit || "")}`).join(" · ")}</p>` : ""}${latest.performedBy?.name ? `<p class="ledger-note">By ${escapeHtml(latest.performedBy.name)} · ${escapeHtml(new Date(latest.scannedAt || Date.now()).toLocaleString())}</p>` : ""}</section>`
+    : `<div class="home-empty"><p>No vehicle scans recorded yet. Connect your J2534 or ELM327 adapter above and click Read vehicle.</p></div>`;
+  const subtitle = "Live SAE J1979 OBD-II diagnostics over J2534 Pass-Thru or ELM327: read VIN, stored/pending/permanent trouble codes, live engine PIDs, and clear codes.";
+  return shell(`${heading("Diagnostics", "OBD bay", subtitle, false)}${bayHardwarePanel()}${obdLiveSection()}${result}`);
 }
 
 function keyProgrammingBay() {
-  const live = bayLive();
-  const rows = [...state.keyJobs].reverse().map(job => `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${job.simulated ? "Simulator" : "Live"}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(job.result ? `${job.result}: ${job.message || ""}` : job.message || "")}</td></tr>`).join("");
-  const modes = `<option value="simulator">Simulator</option><option value="live"${live ? "" : " disabled"}>Live (J2534 adapter)${live ? "" : " - connect an adapter first"}</option>`;
-  return shell(`${heading("Authorized keys", live ? "Key programming" : "Key programming (Simulator)", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs also need the connected vehicle's VIN to match the repair order and a confirmation before anything is written. Every live session is logged. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><label>Operation<select name="operation">${KEY_OPERATIONS.map(item => `<option value="${item.id}">${item.label}</option>`).join("")}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${live ? "Start key job" : "Record key job"}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No key jobs recorded.</td></tr>`}</tbody></table></div>`);
+  const live = bayJ2534Live();
+  const rows = [...state.keyJobs].reverse().map(job => `<tr><td>${escapeHtml(job.operation)}</td><td class="mono">${escapeHtml(job.roNumber || "")}</td><td>${escapeHtml(job.vehicle || "")}</td><td>${job.simulated ? "Logged" : "Live"}</td><td>${escapeHtml(job.performedBy?.name || "")}</td><td>${escapeHtml(job.result ? `${job.result}: ${job.message || ""}` : job.message || "")}</td></tr>`).join("");
+  const modes = `<option value="live"${live ? " selected" : " disabled"}>Live (J2534 adapter)${live ? "" : " - connect an adapter first"}</option><option value="simulator"${live ? "" : " selected"}>Log authorized key job</option>`;
+  return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or test a key only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs also need the connected vehicle's VIN to match the repair order and a confirmation before anything is written. Every live session is logged. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || `<option value="">No repair orders</option>`}</select></label><label>Operation<select name="operation">${KEY_OPERATIONS.map(item => `<option value="${item.id}">${item.label}</option>`).join("")}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${live ? "Start key job" : "Record key job"}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No key jobs recorded.</td></tr>`}</tbody></table></div>`);
 }
 
 async function rememberBayRecord(type, collection, record) {
@@ -4436,28 +4540,66 @@ async function rememberBayRecord(type, collection, record) {
   try { await saveShopEntity(type, record); } catch (error) { console.error(`Could not sync ${type}`, error); }
 }
 
+function normalizeObdSnapshot(snap = {}) {
+  const readings = (snap.readings ?? snap.Readings ?? []).map(r => ({
+    pid: r.pid ?? r.Pid ?? "",
+    name: r.name ?? r.Name ?? "",
+    value: r.value ?? r.Value ?? null,
+    unit: r.unit ?? r.Unit ?? "",
+    raw: r.raw ?? r.Raw ?? "",
+  }));
+  return {
+    source: snap.source ?? snap.Source ?? "live",
+    simulator: Boolean(snap.simulator ?? snap.Simulator),
+    adapterName: snap.adapterName ?? snap.AdapterName ?? "J2534 adapter",
+    protocol: snap.protocol ?? snap.Protocol ?? "ISO 15765-4 CAN 11-bit 500 kbps",
+    responded: Boolean(snap.responded ?? snap.Responded),
+    vin: snap.vin ?? snap.Vin ?? "",
+    milOn: snap.milOn ?? snap.MilOn ?? null,
+    reportedDtcCount: snap.reportedDtcCount ?? snap.ReportedDtcCount ?? null,
+    supportedPids: snap.supportedPids ?? snap.SupportedPids ?? [],
+    readings,
+    storedDtcs: snap.storedDtcs ?? snap.StoredDtcs ?? [],
+    pendingDtcs: snap.pendingDtcs ?? snap.PendingDtcs ?? [],
+    permanentDtcs: snap.permanentDtcs ?? snap.PermanentDtcs ?? [],
+    errors: snap.errors ?? snap.Errors ?? [],
+    voltage: snap.voltage ?? snap.Voltage ?? null,
+    readAt: snap.readAt ?? snap.ReadAt ?? now(),
+  };
+}
+
 async function runLiveObdScan(orderId) {
   const hw = bayHw();
   const order = state.orders.find(item => item.id === orderId);
   if (!order) { toast("Select a repair order"); return; }
+  if (!bayLive()) { toast("Connect a J2534 or ELM327 adapter first"); return; }
   hw.busy = "scan";
+  hw.error = "";
   render();
   try {
-    const snap = await window.shopcrankDiagnostics.obdSnapshot();
+    const rawSnap = bayElmLive()
+      ? await runElmObdSnapshot(elmCommand)
+      : await window.shopcrankDiagnostics.obdSnapshot();
+    const snap = normalizeObdSnapshot(rawSnap);
     hw.snapshot = snap;
     hw.snapshotOrderId = order.id;
+    if (snap.vin && (!order.vin || /^DEMO|^SIMULATED|pending/i.test(order.vin))) {
+      order.vin = snap.vin;
+      save();
+      void updateOrderInApi(order);
+    }
     const dtcs = [
-      ...(snap.storedDtcs || []).map(code => ({ code, description: "Stored" })),
-      ...(snap.pendingDtcs || []).map(code => ({ code, description: "Pending" })),
-      ...(snap.permanentDtcs || []).map(code => ({ code, description: "Permanent" })),
+      ...(snap.storedDtcs || []).map(code => ({ code, description: "Stored (Mode 03)" })),
+      ...(snap.pendingDtcs || []).map(code => ({ code, description: "Pending (Mode 07)" })),
+      ...(snap.permanentDtcs || []).map(code => ({ code, description: "Permanent (Mode 0A)" })),
     ];
     await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
       id: `scan-${Date.now()}`,
       orderId: order.id,
       customer: order.customer,
       vehicle: order.vehicle,
-      mode: snap.simulator ? "simulator" : "live",
-      label: `${snap.simulator ? "Simulator" : "Live"} scan via ${snap.adapterName || "J2534 adapter"}`,
+      mode: "live",
+      label: `Live OBD-II scan via ${snap.adapterName || "Vehicle adapter"}`,
       vin: snap.vin || "",
       roVin: order.vin || "",
       milOn: snap.milOn ?? null,
@@ -4468,7 +4610,7 @@ async function runLiveObdScan(orderId) {
       performedBy: bayPerformer(),
       scannedAt: snap.readAt || now(),
     });
-    toast(snap.responded ? "Vehicle read" : "No reply from the vehicle");
+    toast(snap.responded ? "Vehicle read complete" : "No reply from the vehicle ECU");
   } catch (error) {
     hw.error = error.message || "Scan failed";
     toast(hw.error);
@@ -4493,14 +4635,18 @@ function openObdClearConfirm() {
     render();
     const before = [...(snap.storedDtcs || []), ...(snap.pendingDtcs || [])];
     try {
-      await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
+      if (bayElmLive()) {
+        await elmCommand("04");
+      } else {
+        await window.shopcrankDiagnostics.obdClearDtcs({ confirmed: true });
+      }
       await rememberBayRecord("diagnosticsessions", "diagnosticSessions", {
         id: `clear-${Date.now()}`,
         kind: "clear",
         orderId: order.id,
         customer: order.customer,
         vehicle: order.vehicle,
-        mode: snap.simulator ? "simulator" : "live",
+        mode: "live",
         label: "Codes cleared (OBD-II mode 04)",
         vin: snap.vin || "",
         dtcs: before.map(code => ({ code, description: "Cleared" })),
@@ -4508,7 +4654,7 @@ function openObdClearConfirm() {
         performedBy: bayPerformer(),
         scannedAt: now(),
       });
-      await recordBayAudit({ kind: "obd.clear_dtcs", orderId: order.id, vin: snap.vin || "", cleared: before, adapter: snap.adapterName || "", simulator: Boolean(snap.simulator) });
+      await recordBayAudit({ kind: "obd.clear_dtcs", orderId: order.id, vin: snap.vin || "", cleared: before, adapter: snap.adapterName || "", simulator: false });
       toast("Codes cleared. Reading the vehicle again.");
       hw.busy = "";
       await runLiveObdScan(order.id);
@@ -4631,12 +4777,13 @@ function bindShopOs() {
     const adapterId = document.querySelector("#bay-adapter")?.value;
     if (!adapterId) return;
     hw.busy = "connect";
+    hw.error = "";
     hw.snapshot = null;
     render();
     try {
       await window.shopcrankDiagnostics.connect({ adapterId, protocol: "ISO15765" });
       await refreshBayHardware();
-      toast("Adapter connected");
+      toast("J2534 adapter connected");
     } catch (error) {
       hw.error = error.message || "Could not connect to the adapter";
     }
@@ -4653,18 +4800,59 @@ function bindShopOs() {
     hw.busy = "";
     render();
   });
+  document.querySelector("#bay-elm-connect")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    hw.busy = "elm";
+    hw.error = "";
+    render();
+    await connectElm();
+    hw.busy = "";
+    render();
+  });
+  document.querySelector("#bay-elm-disconnect")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    hw.busy = "disconnect";
+    hw.snapshot = null;
+    render();
+    await connectElm();
+    hw.busy = "";
+    render();
+  });
   document.querySelector("#obd-live-form")?.addEventListener("submit", event => {
     event.preventDefault();
     void runLiveObdScan(new FormData(event.target).get("orderId"));
   });
   document.querySelector("#obd-live-clear")?.addEventListener("click", openObdClearConfirm);
-  document.querySelector("#obd-scan-form")?.addEventListener("submit", async event => {
-    event.preventDefault();
-    const order = state.orders.find(item => item.id === new FormData(event.target).get("orderId"));
-    if (!order) { toast("Select a repair order"); return; }
-    const scan = simulateObdScan(order);
-    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { id: `scan-${Date.now()}`, orderId: order.id, customer: order.customer, performedBy: bayPerformer(), ...scan });
-    toast("Simulated scan saved");
+  document.querySelector("#obd-copy-to-ro")?.addEventListener("click", async () => {
+    const hw = bayHw();
+    const snap = hw.snapshot;
+    const order = state.orders.find(item => item.id === hw.snapshotOrderId);
+    if (!snap || !order) return;
+    const codes = [
+      ...(snap.storedDtcs || []).map(c => `${c} (stored)`),
+      ...(snap.pendingDtcs || []).map(c => `${c} (pending)`),
+      ...(snap.permanentDtcs || []).map(c => `${c} (permanent)`),
+    ];
+    const pidSummary = (snap.readings || [])
+      .filter(r => r.value !== null && r.value !== undefined)
+      .map(r => `${r.name}: ${r.value} ${r.unit || ""}`.trim())
+      .join(", ");
+    const line = `OBD-II scan (${new Date(snap.readAt || Date.now()).toLocaleString()}, ${snap.adapterName || "adapter"})${snap.vin ? ` · VIN ${snap.vin}` : ""} · MIL ${snap.milOn ? "ON" : "OFF"} · Codes: ${codes.length ? codes.join(", ") : "none"}${pidSummary ? ` · PIDs: ${pidSummary}` : ""}`;
+    order.notes = `${order.notes || ""}\n${line}`.trim();
+    save();
+    await updateOrderInApi(order);
+    toast(`OBD-II scan copied to ${order.id} notes`);
+  });
+  document.querySelector("#obd-send-ai")?.addEventListener("click", () => {
+    const hw = bayHw();
+    const snap = hw.snapshot;
+    const order = state.orders.find(item => item.id === hw.snapshotOrderId);
+    if (!snap || !order) return;
+    const codes = [...(snap.storedDtcs || []), ...(snap.pendingDtcs || []), ...(snap.permanentDtcs || [])].join(", ");
+    aiTab = "diagnostics";
+    aiResult = diagnoseLocal(order.vehicle, order.complaint || "Check engine light / DTC scan", codes);
+    state.route = "ai";
+    save();
     render();
   });
   document.querySelector("#key-job-form")?.addEventListener("submit", async event => {

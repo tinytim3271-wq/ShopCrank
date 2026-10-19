@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('shopcrankDesktop', Object.freeze(desktopApi));
 
 contextBridge.exposeInMainWorld('shopcrankDiagnostics', Object.freeze({
   listAdapters: () => invoke('diagnostics:listAdapters'),
+  autoDetectAndConnect: () => invoke('diagnostics:autoDetectAndConnect'),
   connect: (params) => invoke('diagnostics:connect', params),
   disconnect: () => invoke('diagnostics:disconnect'),
   getConnectionStatus: () => invoke('diagnostics:getConnectionStatus'),
