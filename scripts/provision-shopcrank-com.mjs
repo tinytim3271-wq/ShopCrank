@@ -171,11 +171,16 @@ export function isAlreadyConfiguredError(status, errors = []) {
   return /already exists|already been|duplicate|already associated|already attached|already enabled|already configured/.test(text);
 }
 
+function sortedNames(values = []) {
+  return [...values].toSorted((left, right) => String(left).localeCompare(String(right)));
+}
+
 export function secretNames(bindings = []) {
-  return (Array.isArray(bindings) ? bindings : [])
-    .map((binding) => binding?.name)
-    .filter(Boolean)
-    .sort();
+  return sortedNames(
+    (Array.isArray(bindings) ? bindings : [])
+      .map((binding) => binding?.name)
+      .filter(Boolean),
+  );
 }
 
 export function secretCopyPlan({
@@ -210,10 +215,10 @@ export function secretCopyPlan({
   }
 
   return {
-    put: [...new Set(put)].sort(),
-    missingValues: [...new Set(missingValues)].sort(),
-    alreadyOnDest: alreadyOnDest.sort(),
-    copiedFromEnv: put.filter((name) => source.has(name) && !dest.has(name)).sort(),
+    put: sortedNames(new Set(put)),
+    missingValues: sortedNames(new Set(missingValues)),
+    alreadyOnDest: sortedNames(alreadyOnDest),
+    copiedFromEnv: sortedNames(put.filter((name) => source.has(name) && !dest.has(name))),
   };
 }
 

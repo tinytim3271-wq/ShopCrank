@@ -76,9 +76,11 @@ export function emptyIntakeDraft(now = new Date()) {
       recentRepairs: '', accident: '', towed: '', overheating: '',
     },
     diagnosis: {
-      visual: '', roadTest: '', fluids: '', battery: '', codes: '', notes: '', analysis: null,
+      visual: '', roadTest: '', fluids: '', battery: '', codes: '', notes: '',
+      cause: '', correction: '', severity: '', analysis: null,
     },
     estimate: { lines: [], diagnosticCharge: 0, approval: 'pending' },
+    aiFilledFields: {},
     assignments: [],
   };
 }
@@ -134,6 +136,105 @@ export function applyVinDecode(draft, decoded = {}) {
   fill('engine', engine);
   if (decoded.vin) vehicle.vin = String(decoded.vin).toUpperCase();
   return { ...draft, vehicle };
+}
+
+export function applyAiAutofill(draft, formType, data = {}) {
+  const next = structuredClone(draft || emptyIntakeDraft());
+  next.aiFilledFields = { ...(next.aiFilledFields || {}) };
+  const markFilled = (path, value) => {
+    const clean = String(value ?? '').trim();
+    if (!clean) return false;
+    next.aiFilledFields[path] = true;
+    return true;
+  };
+
+  if (formType === 'vehicle_intake') {
+    const mapping = [
+      ['vin', data.vin ? String(data.vin).toUpperCase() : ''],
+      ['plate', data.plate ? String(data.plate).toUpperCase() : ''],
+      ['plateState', data.plate_state || data.plateState || ''],
+      ['year', data.year],
+      ['make', data.make],
+      ['model', data.model],
+      ['trim', data.trim],
+      ['engine', data.engine],
+      ['mileage', data.mileage],
+      ['color', data.color],
+    ];
+    for (const [key, value] of mapping) {
+      if (markFilled(`vehicle.${key}`, value)) {
+        next.vehicle[key] = String(value).trim();
+      }
+    }
+    return next;
+  }
+
+  if (formType === 'diagnostic_3c') {
+    if (markFilled('concern.description', data.complaint)) {
+      next.concern.description = String(data.complaint).trim();
+    }
+    if (markFilled('diagnosis.cause', data.cause)) {
+      next.diagnosis.cause = String(data.cause).trim();
+    }
+    if (markFilled('diagnosis.correction', data.correction)) {
+      next.diagnosis.correction = String(data.correction).trim();
+    }
+    if (markFilled('diagnosis.severity', data.severity)) {
+      next.diagnosis.severity = String(data.severity).trim();
+    }
+    if (Array.isArray(data.dtc_codes) && data.dtc_codes.length) {
+      const codes = data.dtc_codes.join(', ');
+      if (markFilled('diagnosis.codes', codes)) {
+        next.diagnosis.codes = codes;
+      }
+    }
+  }
+
+  if (formType === 'dvi_estimate') {
+    if (Array.isArray(data.checklist_items) && data.checklist_items.length) {
+      const formatted = data.checklist_items
+        .map((item) => `[${item.status || 'YELLOW'}] ${item.component}: ${item.notes || ''}${item.measurement ? ` (${item.measurement})` : ''}`)
+        .join('\n');
+      if (markFilled('diagnosis.visual', formatted)) {
+        next.diagnosis.visual = formatted;
+      }
+    }
+  }
+
+  if (Array.isArray(data.suggested_line_items) && data.suggested_line_items.length) {
+    const mappedLines = data.suggested_line_items
+      .map((item) => {
+        const rawType = String(item.item_type || 'LABOR').toUpperCase();
+        const isPart = rawType === 'PART';
+        return {
+          type: isPart ? 'part' : 'labor',
+          description: String(item.description || '').trim(),
+          quantity: isPart
+            ? Math.max(1, Number(item.quantity) || 1)
+            : Math.max(0.1, Number(item.estimated_hours || item.quantity) || 1),
+          unitPrice: 0,
+          partNumber: item.part_number || null,
+          source: 'Filled by AI',
+          aiFilled: true,
+        };
+      })
+      .filter((line) => line.description);
+    if (mappedLines.length) {
+      next.estimate.lines = mappedLines;
+      next.aiFilledFields['estimate.lines'] = true;
+    }
+  }
+
+  return next;
+}
+
+export function acceptAllAiFields(draft) {
+  const next = structuredClone(draft || emptyIntakeDraft());
+  next.aiFilledFields = {};
+  if (Array.isArray(next.estimate?.lines)) {
+    next.estimate.lines = next.estimate.lines.map((line) => ({ ...line, aiFilled: false }));
+  }
+  return next;
 }
 
 export function searchLaborGuide(query = '', services = CANNED_MENU) {
@@ -285,8 +386,16 @@ export function canConvertIntake(draft = {}) {
   return { ok: problems.length === 0, problems };
 }
 
-function field(name, label, value, { type = 'text', required = false, full = false } = {}) {
-  return `<label class="${full ? 'full' : ''}">${escapeHtml(label)}${required ? ' *' : ''}<input name="${escapeAttr(name)}" type="${type}" value="${escapeAttr(value || '')}" ${required ? 'required' : ''}/></label>`;
+function field(name, label, value, { type = 'text', required = false, full = false, aiFilled = false } = {}) {
+  const badge = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : '';
+  const cls = [full ? 'full' : '', aiFilled ? 'is-ai-filled' : ''].filter(Boolean).join(' ');
+  return `<label class="${cls}">${escapeHtml(label)}${required ? ' *' : ''}${badge}<input name="${escapeAttr(name)}" type="${type}" value="${escapeAttr(value || '')}" ${required ? 'required' : ''}/></label>`;
+}
+
+function aiAcceptBanner(draft, prefix) {
+  const filledKeys = Object.keys(draft.aiFilledFields || {}).filter(key => key.startsWith(prefix));
+  if (!filledKeys.length) return '';
+  return `<div class="ai-review-banner" role="status"><span><strong>Filled by AI</strong> — Review highlighted fields before saving.</span><button type="button" class="secondary" id="intake-ai-accept-all">Accept All</button></div>`;
 }
 
 function progress(step) {
@@ -309,8 +418,9 @@ function customerStep(draft) {
 
 function vehicleStep(draft) {
   const vehicle = draft.vehicle;
-  return `<div class="form-grid">${field('vin', 'VIN', vehicle.vin, { full: true })}${field('plate', 'License plate', vehicle.plate)}${field('plateState', 'Plate state', vehicle.plateState)}${field('year', 'Year', vehicle.year)}${field('make', 'Make', vehicle.make)}${field('model', 'Model', vehicle.model)}${field('trim', 'Trim', vehicle.trim)}${field('engine', 'Engine', vehicle.engine)}${field('transmission', 'Transmission', vehicle.transmission)}${field('mileage', 'Mileage', vehicle.mileage)}${field('color', 'Color', vehicle.color)}</div>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button></div>
+  const ai = draft.aiFilledFields || {};
+  return `${aiAcceptBanner(draft, 'vehicle.')}<div class="form-grid">${field('vin', 'VIN', vehicle.vin, { full: true, aiFilled: Boolean(ai['vehicle.vin']) })}${field('plate', 'License plate', vehicle.plate, { aiFilled: Boolean(ai['vehicle.plate']) })}${field('plateState', 'Plate state', vehicle.plateState, { aiFilled: Boolean(ai['vehicle.plateState']) })}${field('year', 'Year', vehicle.year, { aiFilled: Boolean(ai['vehicle.year']) })}${field('make', 'Make', vehicle.make, { aiFilled: Boolean(ai['vehicle.make']) })}${field('model', 'Model', vehicle.model, { aiFilled: Boolean(ai['vehicle.model']) })}${field('trim', 'Trim', vehicle.trim, { aiFilled: Boolean(ai['vehicle.trim']) })}${field('engine', 'Engine', vehicle.engine, { aiFilled: Boolean(ai['vehicle.engine']) })}${field('transmission', 'Transmission', vehicle.transmission, { aiFilled: Boolean(ai['vehicle.transmission']) })}${field('mileage', 'Mileage', vehicle.mileage, { aiFilled: Boolean(ai['vehicle.mileage']) })}${field('color', 'Color', vehicle.color, { aiFilled: Boolean(ai['vehicle.color']) })}</div>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-decode">Decode vehicle</button><button class="secondary" type="button" id="intake-plate">Lookup plate</button><label class="secondary">Scan VIN / Odometer photo (AI)<input id="intake-autofill-vehicle-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
 <p class="form-help" id="intake-vehicle-note">Plate lookup stays off until a DMV, Carfax, or registration provider is connected. VIN decode uses the shop vehicle decode service.</p>`;
 }
 
@@ -331,17 +441,20 @@ function photoStep(draft) {
 
 function concernStep(draft) {
   const concern = draft.concern;
-  return `<label class="full">Describe concern *<textarea name="description" required>${escapeHtml(concern.description)}</textarea></label>
+  const ai = draft.aiFilledFields || {};
+  const badge = ai['concern.description'] ? ' <span class="ai-filled-badge">Filled by AI</span>' : '';
+  return `${aiAcceptBanner(draft, 'concern.')}<label class="full ${ai['concern.description'] ? 'is-ai-filled' : ''}">Describe concern *${badge}<textarea name="description" required>${escapeHtml(concern.description)}</textarea></label>
 <div class="form-grid">${field('began', 'When did the problem begin?', concern.began)}${field('frequency', 'How often does it occur?', concern.frequency)}${field('lights', 'Warning lights?', concern.lights)}${field('recentRepairs', 'Recent repairs?', concern.recentRepairs)}${field('accident', 'Recent accident?', concern.accident)}${field('towed', 'Vehicle towed in?', concern.towed)}${field('overheating', 'Vehicle overheating?', concern.overheating, { full: true })}</div>`;
 }
 
 function diagnosisStep(draft) {
   const diagnosis = draft.diagnosis;
+  const ai = draft.aiFilledFields || {};
   const analysis = diagnosis.analysis;
   const causes = analysis?.causes?.map(cause => `<li><strong>${escapeHtml(cause.name || cause.cause || 'Check')}</strong><p>${escapeHtml(cause.detail || cause.explanation || '')}</p></li>`).join('') || '';
-  return `<div class="form-grid">${field('visual', 'Visual inspection', diagnosis.visual, { full: true })}${field('roadTest', 'Road test', diagnosis.roadTest)}${field('fluids', 'Fluid levels', diagnosis.fluids)}${field('battery', 'Battery test', diagnosis.battery)}${field('codes', 'DTC codes', diagnosis.codes, { full: true })}</div>
+  return `${aiAcceptBanner(draft, 'diagnosis.')}<div class="form-grid">${field('visual', 'Visual inspection', diagnosis.visual, { full: true, aiFilled: Boolean(ai['diagnosis.visual']) })}${field('roadTest', 'Road test', diagnosis.roadTest)}${field('fluids', 'Fluid levels', diagnosis.fluids)}${field('battery', 'Battery test', diagnosis.battery)}${field('codes', 'DTC codes', diagnosis.codes, { full: true, aiFilled: Boolean(ai['diagnosis.codes']) })}${field('cause', 'Root cause (3 C\'s)', diagnosis.cause, { full: true, aiFilled: Boolean(ai['diagnosis.cause']) })}${field('correction', 'Recommended correction (3 C\'s)', diagnosis.correction, { full: true, aiFilled: Boolean(ai['diagnosis.correction']) })}</div>
 <label class="full">Technician notes<textarea name="notes">${escapeHtml(diagnosis.notes)}</textarea></label>
-<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button></div>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
 ${analysis ? `<section class="ai-notice"><span>${escapeHtml(analysis.notice || '')}</span></section><ul class="intake-causes">${causes}</ul>` : ''}`;
 }
 
@@ -420,7 +533,7 @@ function readForm(draft, form) {
     });
   }
   if (step === 'diagnosis') {
-    ['visual', 'roadTest', 'fluids', 'battery', 'codes', 'notes'].forEach(key => {
+    ['visual', 'roadTest', 'fluids', 'battery', 'codes', 'cause', 'correction', 'notes'].forEach(key => {
       next.diagnosis[key] = String(form.querySelector(`[name="${key}"]`)?.value || data[key] || '').trim();
     });
   }
@@ -457,6 +570,7 @@ export function mountIntakeWizard(host, {
   decodeVin,
   lookupPlate,
   analyze,
+  autofill,
 } = {}) {
   let current = structuredClone(draft || emptyIntakeDraft());
   let timer = 0;
@@ -566,6 +680,40 @@ export function mountIntakeWizard(host, {
       persist('analysis');
       paint();
     });
+    host.querySelector('#intake-ai-accept-all')?.addEventListener('click', () => {
+      if (form) current = readForm(current, form);
+      current = acceptAllAiFields(current);
+      persist('accept-ai');
+      paint();
+    });
+    host.querySelector('#intake-autofill-3c')?.addEventListener('click', async () => {
+      if (form) current = readForm(current, form);
+      if (!autofill) return;
+      const notes = [current.concern?.description, current.diagnosis?.notes, current.diagnosis?.visual, current.diagnosis?.codes]
+        .filter(Boolean)
+        .join('\n');
+      const result = await autofill({ formType: 'diagnostic_3c', notes, draft: current });
+      if (result?.data) {
+        current = applyAiAutofill(current, 'diagnostic_3c', result.data);
+        persist('autofill-3c');
+        paint();
+      }
+    });
+    const bindPhotoAutofill = (selector, formType) => {
+      host.querySelector(selector)?.addEventListener('change', async (event) => {
+        const file = event.target?.files?.[0];
+        if (!file || !autofill) return;
+        if (form) current = readForm(current, form);
+        const result = await autofill({ formType, file, draft: current });
+        if (result?.data) {
+          current = applyAiAutofill(current, formType, result.data);
+          persist(`autofill-${formType}`);
+          paint();
+        }
+      });
+    };
+    bindPhotoAutofill('#intake-autofill-vehicle-photo', 'vehicle_intake');
+    bindPhotoAutofill('#intake-autofill-diag-photo', 'diagnostic_3c');
   }
   paint();
   return {

@@ -137,4 +137,33 @@ describe('openPrintDocument', () => {
     assert.ok(calls.includes('print'));
     assert.equal(calls.includes('toast'), false);
   });
+
+  it('preserves the opener base URI with escaped attributes so relative inspection photos resolve in blob popups', () => {
+    const { win, calls } = fakePrintWindow('loading');
+    let blobHtml = '';
+    const windowObject = {
+      document: {
+        baseURI: 'https://www.shopcrank.com/app?ro="1048"&bay=<2>',
+      },
+      Blob: class InspectionBlob {
+        constructor(parts) {
+          blobHtml = parts.join('');
+        }
+      },
+      URL: {
+        createObjectURL() { return 'blob:inspection'; },
+        revokeObjectURL() {},
+      },
+      open() { return win; },
+    };
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><img src="/api/files/inspection-photo-1.jpg" alt="Inspection photo"></body></html>';
+    const ok = openPrintDocument(html, {
+      windowObject,
+      schedule: fn => fn(),
+    });
+    assert.equal(ok, true);
+    assert.match(blobHtml, /<head><base href="https:\/\/www\.shopcrank\.com\/app\?ro=&quot;1048&quot;&amp;bay=&lt;2&gt;"><meta charset="utf-8"><\/head>/);
+    assert.match(blobHtml, /<img src="\/api\/files\/inspection-photo-1\.jpg" alt="Inspection photo">/);
+    assert.ok(calls.includes('print'));
+  });
 });

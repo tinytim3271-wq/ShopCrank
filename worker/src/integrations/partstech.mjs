@@ -1,5 +1,30 @@
-import { PARTSTECH_API_BASE, PARTSTECH_SECRET_NAME, mapPartstechQuoteItemToEstimateLine, mapPartstechOrderSummary, partstechConnectionStatus } from '../../../src/modules/partstech.js';
+import {
+  PARTSTECH_API_BASE,
+  PARTSTECH_SECRET_NAME,
+  buildPartstechOrderRequest,
+  mapPartstechOrderSummary,
+  mapPartstechQuoteItemToEstimateLine,
+  partstechConnectionStatus,
+} from '../../../src/modules/partstech.js';
 import { HttpError, json, requestJson } from '../http.mjs';
+
+export function partstechSearchParams(keyword, vin = '') {
+  const term = String(keyword || '').trim();
+  const looksLikePartNumber = term.length <= 40 && !/\s/.test(term) && /\d/.test(term);
+  const params = looksLikePartNumber ? { partNumber: term } : { keyword: term };
+  const cleanVin = String(vin || '').trim().toUpperCase();
+  if (cleanVin) params.vin = cleanVin;
+  return params;
+}
+
+function safeRedirectUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'https:' && /(^|\.)partstech\.com$/i.test(url.hostname) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 const ADMIN_ROLES = ['owner', 'admin', 'super_admin'];
 const USE_ROLES = ['owner', 'admin', 'service_writer', 'technician'];
@@ -110,11 +135,7 @@ export function createPartstechHandlers({
       const storeId = String(body.storeId || credentials.storeId || '').trim();
       if (!keyword) throw new HttpError(400, 'keyword or partNumber is required');
       if (!storeId) throw new HttpError(400, 'storeId is required for PartsTech quotes');
-      const searchParams = vin
-        ? { vin, keyword }
-        : /^\d[\w-]*$/.test(keyword) && !/\s/.test(keyword)
-          ? { partNumber: keyword }
-          : { keyword };
+      const searchParams = partstechSearchParams(keyword, vin);
       const payload = await partstechFetch(credentials, '/catalog/quote', {
         method: 'POST',
         body: { storeId, searchParams },
@@ -122,45 +143,62 @@ export function createPartstechHandlers({
         baseUrl,
       });
       const rawItems = payload.parts || payload.items || payload.quotes || payload.results || [];
+      const markupPercent = Math.min(500, Math.max(0, Number(body.markupPercent) || 0));
       const items = (Array.isArray(rawItems) ? rawItems : []).map((item, index) => (
-        mapPartstechQuoteItemToEstimateLine({ ...item, storeId, quoteId: payload.quoteId || payload.id }, index)
+        mapPartstechQuoteItemToEstimateLine({ ...item, storeId, quoteId: payload.quoteId || payload.id }, index, { markupPercent })
       ));
-      await recordAudit?.(env, context, { kind: 'integrations.partstech.quote', keyword, storeId, count: items.length });
-      return json({ connected: true, storeId, items, rawCount: items.length });
+      const unpriced = items.filter(item => item.priceStatus === 'pending').length;
+      await recordAudit?.(env, context, { kind: 'integrations.partstech.quote', keyword, storeId, count: items.length, unpriced });
+      return json({ connected: true, storeId, items, rawCount: items.length, unpriced });
     }
 
-    if (action === 'order' && request.method === 'POST') {
+    if (action === 'order' && !segments[3] && request.method === 'POST') {
       const body = await requestJson(request);
-      const storeId = String(body.storeId || credentials.storeId || '').trim();
-      const sessionId = String(body.sessionId || '').trim();
-      if (!storeId) throw new HttpError(400, 'storeId is required');
-      // Prefer punchout quote session purchase when sessionId is present; otherwise create a quote session.
-      let payload;
-      if (sessionId) {
-        payload = await partstechFetch(credentials, '/punchout/quote/info', {
-          method: 'POST',
-          body: { sessionId },
-          fetcher,
-          baseUrl,
+      if (body.sessionId) throw new HttpError(400, 'Use POST /integrations/partstech/order/status to check a PartsTech session');
+      let orderRequest;
+      try {
+        orderRequest = buildPartstechOrderRequest({
+          storeId: body.storeId || credentials.storeId,
+          lines: body.lines,
+          vin: body.vin,
+          poNumber: body.poNumber || body.repairOrderId,
+          callbackUrl: body.callbackUrl,
         });
-      } else {
-        const parts = Array.isArray(body.parts) ? body.parts : [];
-        if (!parts.length) throw new HttpError(400, 'parts are required to place a PartsTech order');
-        payload = await partstechFetch(credentials, '/punchout/quote/create', {
-          method: 'POST',
-          body: {
-            storeId,
-            callbackUrl: body.callbackUrl || undefined,
-            searchParams: body.searchParams || undefined,
-            parts,
-          },
-          fetcher,
-          baseUrl,
-        });
+      } catch (error) {
+        throw new HttpError(400, error.message);
       }
+      const payload = await partstechFetch(credentials, '/punchout/quote/create', {
+        method: 'POST',
+        body: orderRequest,
+        fetcher,
+        baseUrl,
+      });
+      const sessionId = payload.sessionId || payload.id || null;
+      const redirectUrl = safeRedirectUrl(payload.redirectUrl || payload.url);
+      if (!sessionId || !redirectUrl) throw new HttpError(502, 'PartsTech did not return a checkout session');
+      await recordAudit?.(env, context, {
+        kind: 'integrations.partstech.order_session',
+        storeId: orderRequest.storeId,
+        repairOrderId: String(body.repairOrderId || '').slice(0, 60) || undefined,
+        lineCount: orderRequest.parts.length,
+        sessionId,
+      });
+      return json({ connected: true, status: 'checkout_pending', sessionId, redirectUrl, parts: orderRequest.parts }, 201);
+    }
+
+    if (action === 'order' && segments[3] === 'status' && request.method === 'POST') {
+      const body = await requestJson(request);
+      const sessionId = String(body.sessionId || '').trim();
+      if (!/^[\w-]{4,200}$/.test(sessionId)) throw new HttpError(400, 'A PartsTech sessionId is required');
+      const payload = await partstechFetch(credentials, '/punchout/quote/info', {
+        method: 'POST',
+        body: { sessionId },
+        fetcher,
+        baseUrl,
+      });
       const summary = mapPartstechOrderSummary(payload);
-      await recordAudit?.(env, context, { kind: 'integrations.partstech.order', storeId, orderId: summary.orderId || payload.sessionId });
-      return json({ connected: true, order: summary, sessionId: payload.sessionId || null, redirectUrl: payload.redirectUrl || null });
+      await recordAudit?.(env, context, { kind: 'integrations.partstech.order_status', sessionId, orderId: summary.orderId || undefined, status: summary.status });
+      return json({ connected: true, sessionId, order: summary });
     }
 
     throw new HttpError(404, 'Not found');

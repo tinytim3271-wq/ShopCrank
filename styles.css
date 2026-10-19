@@ -243,7 +243,28 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
   .gemini-drawer{width:100vw}
 }
 
+/* Grok Realtime Voice & Waveform Controls */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.grok-voice-btn{display:inline-flex;align-items:center;gap:6px}
+.grok-voice-btn.is-live{background:#18252b;color:#fff;border-color:#18252b}
+.grok-waveform-svg{display:block;flex-shrink:0}
+.grok-waveform-bars{display:inline-flex;align-items:center;gap:2px;height:16px;vertical-align:middle}
+.grok-waveform-bars span{display:block;width:3px;height:16px;border-radius:1.5px;background:currentColor;transform:scaleY(0.45);transform-origin:center;animation:grokWaveBar 1.1s ease-in-out infinite}
+.grok-waveform-bars span:nth-child(2){animation-delay:.15s}
+.grok-waveform-bars span:nth-child(3){animation-delay:.3s}
+.grok-waveform-bars span:nth-child(4){animation-delay:.45s}
+.grok-waveform-bars[data-phase="speaking"] span{animation-duration:.48s}
+.grok-waveform-bars[data-phase="listening"] span{animation-duration:1.1s}
+.grok-waveform-bars[data-phase="connecting"] span,.grok-waveform-bars[data-phase="thinking"] span{animation-duration:1.5s;opacity:.78}
+@keyframes grokWaveBar{0%,100%{transform:scaleY(0.4)}50%{transform:scaleY(1)}}
+@media(prefers-reduced-motion:reduce){
+  .grok-waveform-bars span{animation:none;transform:scaleY(0.65)}
+  .grok-waveform-bars span:nth-child(2),.grok-waveform-bars span:nth-child(3){transform:scaleY(0.9)}
+}
+.grok-phone-panel{margin-bottom:14px}
+.grok-voice-settings{margin-top:14px}
 
 .brand-mark{background-image:url('./assets/brand/logo-icon-192.png');background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#074251;border-radius:8px;box-shadow:0 6px 16px rgba(7,66,81,.25)}
 .brand-mark svg{display:none}
 .brand-name{text-transform:none;letter-spacing:.02em}
+

@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   INTAKE_DISCLAIMER,
+  acceptAllAiFields,
+  applyAiAutofill,
   applyVinDecode,
   canConvertIntake,
   customerDisplayName,
   emptyIntakeDraft,
   findIntakeCustomer,
   intakeOrderPayload,
+  intakeWizardHtml,
   localDiagnosticChecklist,
   missingRequiredPhotos,
   priceIntakeEstimate,
@@ -89,4 +92,35 @@ test('local analysis does not pretend to be the cloud assistant', () => {
   assert.match(result.notice, /not a remote diagnosis/);
   const priced = priceIntakeEstimate(draft, { laborRate: 100, taxRate: 8.25 });
   assert.equal(priced.disclaimer, INTAKE_DISCLAIMER);
+});
+
+test('applyAiAutofill populates 3 Cs and estimate lines with Filled by AI review badges and acceptAllAiFields clears them', () => {
+  let draft = emptyIntakeDraft();
+  draft.step = 4; // Diagnosis step
+  draft = applyAiAutofill(draft, 'diagnostic_3c', {
+    complaint: 'Customer states chirping noise on cold start.',
+    cause: 'Serpentine belt glazed and tensioner worn.',
+    correction: 'Replace serpentine belt and tensioner assembly.',
+    severity: 'RECOMMENDED',
+    dtc_codes: ['P0300'],
+    suggested_line_items: [
+      { item_type: 'PART', description: 'Serpentine Belt', quantity: 1 },
+      { item_type: 'LABOR', description: 'Serpentine Belt & Tensioner Replacement', quantity: 1, estimated_hours: 1.2 },
+    ],
+  });
+
+  assert.equal(draft.concern.description, 'Customer states chirping noise on cold start.');
+  assert.equal(draft.diagnosis.cause, 'Serpentine belt glazed and tensioner worn.');
+  assert.equal(draft.diagnosis.correction, 'Replace serpentine belt and tensioner assembly.');
+  assert.equal(draft.diagnosis.codes, 'P0300');
+  assert.equal(draft.estimate.lines.length, 2);
+  assert.equal(draft.estimate.lines[1].quantity, 1.2);
+  assert.equal(draft.aiFilledFields['diagnosis.cause'], true);
+
+  const html = intakeWizardHtml(draft);
+  assert.match(html, /Filled by AI/);
+  assert.match(html, /Accept All/);
+
+  const accepted = acceptAllAiFields(draft);
+  assert.deepEqual(accepted.aiFilledFields, {});
 });

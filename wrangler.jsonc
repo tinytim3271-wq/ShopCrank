@@ -18,11 +18,15 @@
     "WORKERS_AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     // Default Claude model for shops that bring their own Anthropic key.
     "SHOP_ANTHROPIC_MODEL": "claude-sonnet-5",
+    "SHOP_GEMINI_MODEL": "gemini-3.8-flash",
+    "GEMINI_MODEL": "gemini-3.8-flash",
+    "GEMINI_TTS_MODEL": "gemini-3.8-flash-tts",
     "ANTHROPIC_SONNET_MODEL": "claude-sonnet-5",
     "ANTHROPIC_OPUS_MODEL": "claude-opus-5",
     "DEEPGRAM_LISTEN_MODEL": "nova-3",
     "DEEPGRAM_SPEAK_MODEL": "flux-kit-en",
-    "ALLOWED_ORIGINS": "https://www.shopcrank.com,https://shopcrank.com,https://shopcrank-dispatch.pages.dev",
+    "ALLOWED_ORIGINS": "https://www.shopcrank.com,https://shopcrank.com,https://shopcrank-dispatch.pages.dev,https://www.yourcarguy806.com",
+    "GOOGLE_REDIRECT_ORIGIN": "https://www.yourcarguy806.com",
     "PAGES_ORIGIN": "https://shopcrank-dispatch.pages.dev",
     "AUTH_EMAIL_FROM": "noreply@shopcrank.com"
   },
@@ -72,12 +76,6 @@
       "new_sqlite_classes": ["AiChatSession"]
     }
   ],
-  "triggers": {
-    "crons": [
-      // Daily UTC export of Stripe Revenue Recognition general-import CSVs to S3.
-      "0 6 * * *"
-    ]
-  },
   "observability": {
     "enabled": true,
     "logs": {

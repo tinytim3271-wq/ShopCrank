@@ -22,9 +22,11 @@ AI_ENABLED=1
 # ANTHROPIC_API_KEY=replace-with-your-anthropic-api-key
 # SHOP_ANTHROPIC_MODEL=claude-sonnet-5
 # GEMINI_API_KEY=replace-with-your-gemini-api-key
-# SHOP_GEMINI_MODEL=gemini-2.5-flash
+# SHOP_GEMINI_MODEL=gemini-3.8-flash
+# GEMINI_TTS_MODEL=gemini-3.8-flash-tts
 # AI_TEXT_PROVIDER=anthropic
 # DEEPGRAM_API_KEY=replace-with-your-deepgram-api-key
+# XAI_API_KEY=replace-with-your-xai-api-key
 
 # Configure current contracted provider rates before enabling pass-through billing.
 # ANTHROPIC_SONNET_INPUT_USD_PER_MTOK=

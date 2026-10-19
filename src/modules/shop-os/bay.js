@@ -28,14 +28,31 @@ export const ELM_SNAPSHOT_PIDS = [
   { pid: 0x42, code: '0x42', command: '0142', name: 'Control module voltage', unit: 'V' },
 ];
 
-export function signedEstimateForOrder(order, estimates = []) {
+/**
+ * Live/simulator key work is gated by the order's Worker-validated
+ * estimateApproval (signature with signedAt). The separate estimates register
+ * is not trusted — those fields are client-writable without server checks.
+ */
+export function signedEstimateForOrder(order, _estimates = []) {
   if (!order?.id) return null;
-  return estimates.find((estimate) => (
-    estimate.workOrderId === order.id
-    && estimate.status === "approved"
-    && estimate.signedAt
-    && String(estimate.authorizationName || "").trim()
-  )) || null;
+  const approval = order.estimateApproval;
+  if (
+    approval
+    && approval.status === "approved"
+    && approval.signedAt
+    && String(approval.authorizationName || "").trim()
+  ) {
+    return {
+      id: order.id,
+      workOrderId: order.id,
+      status: "approved",
+      signedAt: approval.signedAt,
+      authorizationName: approval.authorizationName,
+      signatureKey: approval.signatureKey || null,
+      type: approval.type || "signature",
+    };
+  }
+  return null;
 }
 
 export function isRoAuthorizedForKeys(order, estimates = []) {
@@ -138,15 +155,16 @@ export function elmFrameBytes(line, command = '') {
   if (!value || value.replace(/\s/g, '') === String(command).toUpperCase().replace(/\s/g, '') || /^(SEARCHING|BUS INIT|STOPPED|OK\b|ELM327|AT\b)/.test(value)) {
     return [];
   }
+  const numbered = /^\s*\d+\s*:\s*/.test(value);
   value = value.replace(/^\s*\d+\s*:\s*/, '');
   let header = false;
-  if (/^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value.replace(/\s/g, ''))) {
+  if (!numbered && /^(?:[67][0-9A-F]{2}|18[0-9A-F]{6})[0-9A-F]{4,}$/.test(value.replace(/\s/g, ''))) {
     const compact = value.replace(/\s/g, '');
     value = compact.slice(compact.startsWith('18') ? 8 : 3);
     header = true;
   }
   let parts = value.match(/[0-9A-F]+/g) || [];
-  if (!header && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
+  if (!numbered && !header && parts.length > 1 && (parts[0]?.length === 3 || parts[0]?.length === 8)) {
     parts.shift();
     header = true;
   }
@@ -156,6 +174,7 @@ export function elmFrameBytes(line, command = '') {
     parts = parts.flatMap(part => (part.length === 2 ? [part] : part.length % 2 === 0 ? (part.match(/../g) || []) : []));
   }
   let bytes = parts.map(part => parseInt(part, 16)).filter(Number.isFinite);
+  if (numbered) return bytes;
   if (header && bytes.length && bytes[0] <= 0x0f) bytes.shift();
   if (bytes[0] >= 0x10 && bytes[0] <= 0x1f) bytes = bytes.slice(2);
   else if (bytes[0] >= 0x20 && bytes[0] <= 0x2f) bytes = bytes.slice(1);
@@ -218,6 +237,21 @@ export function parseElmModeDtcs(raw, mode = 0x03) {
     }
   }
   return [...new Set(codes)];
+}
+
+export function parseElmClearDtcs(raw) {
+  const parsed = parseElmPayload(raw, '04');
+  if (parsed.adapterError) throw new Error(`Adapter reported ${parsed.adapterError}`);
+  if (parsed.noData) throw new Error('Vehicle ECU returned NO DATA for Mode 04 clear codes');
+  const rejected = parsed.frames.find(frame => frame[0] === 0x7f && frame[1] === 0x04);
+  if (rejected) {
+    const nrc = (rejected[2] ?? 0).toString(16).padStart(2, '0').toUpperCase();
+    throw new Error(`Vehicle ECU rejected Mode 04 clear codes (NRC 0x${nrc})`);
+  }
+  if (!parsed.frames.some(frame => frame[0] === 0x44)) {
+    throw new Error('Vehicle ECU did not confirm Mode 04 code clear');
+  }
+  return { ok: true };
 }
 
 export function parseElmVin(raw) {

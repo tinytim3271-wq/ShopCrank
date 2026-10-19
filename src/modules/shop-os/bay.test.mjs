@@ -9,6 +9,7 @@ import {
   liveKeyProcedureFor,
   isRoAuthorizedForKeys,
   normalizeVin,
+  parseElmClearDtcs,
   parseElmModeDtcs,
   parseElmMonitorStatus,
   parseElmVin,
@@ -17,23 +18,35 @@ import {
   simulateObdScan,
 } from "./bay.js";
 
-const order = { id: "RO-1048", vehicle: "2018 Ford F-150 XLT", vin: "DEMOVIN000000001" };
-const signed = [{
+const order = {
+  id: "RO-1048",
+  vehicle: "2018 Ford F-150 XLT",
+  vin: "DEMOVIN000000001",
+  estimateApproval: {
+    status: "approved",
+    type: "signature",
+    signedAt: "2026-09-28T12:00:00.000Z",
+    authorizationName: "Demo Customer A",
+  },
+};
+const unsignedOrder = { id: "RO-1048", vehicle: "2018 Ford F-150 XLT", vin: "DEMOVIN000000001" };
+const forgedEstimates = [{
   workOrderId: "RO-1048",
   status: "approved",
   signedAt: "2026-09-28T12:00:00.000Z",
-  authorizationName: "Demo Customer A",
+  authorizationName: "Forged Customer",
 }];
 
-test("key programming requires a signed repair order", () => {
-  assert.equal(isRoAuthorizedForKeys(order, []), false);
+test("key programming requires a signed repair order estimateApproval", () => {
+  assert.equal(isRoAuthorizedForKeys(unsignedOrder, []), false);
+  assert.equal(isRoAuthorizedForKeys(unsignedOrder, forgedEstimates), false);
   assert.throws(
-    () => assertKeyJobAllowed({ order, estimates: [], operation: "identify" }),
+    () => assertKeyJobAllowed({ order: unsignedOrder, estimates: forgedEstimates, operation: "identify" }),
     /signed repair order/i,
   );
   assert.doesNotThrow(() => assertKeyJobAllowed({
     order,
-    estimates: signed,
+    estimates: [],
     operation: "add",
     notes: "Customer is present with the RO",
   }));
@@ -43,7 +56,7 @@ test("key programming rejects bypass and cloning requests", () => {
   assert.throws(
     () => assertKeyJobAllowed({
       order,
-      estimates: signed,
+      estimates: [],
       operation: "identify",
       notes: "immobilizer bypass for a stolen car",
     }),
@@ -52,7 +65,7 @@ test("key programming rejects bypass and cloning requests", () => {
   assert.throws(
     () => assertKeyJobAllowed({
       order,
-      estimates: signed,
+      estimates: [],
       operation: "clone",
       notes: "",
     }),
@@ -63,7 +76,7 @@ test("key programming rejects bypass and cloning requests", () => {
 test("all keys lost is an allowed operation on a signed repair order", () => {
   assert.doesNotThrow(() => assertKeyJobAllowed({
     order,
-    estimates: signed,
+    estimates: [],
     operation: "all_keys_lost",
     notes: "Customer lost every key",
   }));
@@ -81,22 +94,29 @@ test("simulator results are labeled and do not claim a live tool", () => {
   assert.match(job.message, /not a live programmer/i);
 });
 
-test("live key sessions require an authorized order, connected adapter, and matching VIN", () => {
-  const liveOrder = { ...order, vin: "1HGCM82633A004352" };
+const liveOrder = {
+  id: "RO-2001",
+  vehicle: "2021 Ram 1500",
+  customer: "Demo Customer",
+  vin: "1C6SRFHT0LN123456",
+  estimateApproval: {
+    id: "EST-9",
+    status: "approved",
+    type: "signature",
+    signedAt: "2026-10-01T15:00:00.000Z",
+    authorizationName: "Demo Customer",
+  },
+};
+
+test("live key sessions need a signed RO, a connected adapter, and a matching VIN", () => {
+  const base = { order: liveOrder, estimates: [], operation: "add", vehicleVin: liveOrder.vin, deviceConnected: true };
+  assert.equal(assertLiveKeySession(base).authorizationName, "Demo Customer");
   assert.equal(liveKeyProcedureFor("add"), "add_key");
   assert.equal(liveKeyProcedureFor("identify"), null);
-  assert.throws(
-    () => assertLiveKeySession({ order: liveOrder, estimates: signed, operation: "add", vehicleVin: liveOrder.vin, deviceConnected: false }),
-    /Connect the J2534 adapter/,
-  );
-  assert.throws(
-    () => assertLiveKeySession({ order: liveOrder, estimates: signed, operation: "add", vehicleVin: "1HGCM82633A004353", deviceConnected: true }),
-    /does not match/,
-  );
-  assert.equal(
-    assertLiveKeySession({ order: liveOrder, estimates: signed, operation: "add", vehicleVin: liveOrder.vin, deviceConnected: true }),
-    signed[0],
-  );
+  assert.throws(() => assertLiveKeySession({ ...base, order: { ...liveOrder, estimateApproval: null } }), /signed repair order/i);
+  assert.throws(() => assertLiveKeySession({ ...base, deviceConnected: false }), /Connect the J2534 adapter/);
+  assert.throws(() => assertLiveKeySession({ ...base, vehicleVin: "1C6SRFHT0LN999999" }), /does not match/);
+  assert.throws(() => assertLiveKeySession({ ...base, vehicleVin: "" }), /Could not read the VIN/);
 });
 
 test("VIN confirmation and live key audit records normalize sensitive identifiers", () => {
@@ -137,8 +157,22 @@ test("live ELM327 OBD-II parser decodes VIN, monitor status, PIDs, and mode 03/0
   assert.equal(rpm.value, 780);
   assert.equal(rpm.unit, "rpm");
 
+  const compactRpm = decodeElmPidReading(0x0C, "410C0C30");
+  assert.equal(compactRpm?.value, 780);
+  assert.equal(compactRpm?.unit, "rpm");
+
   assert.deepEqual(parseElmModeDtcs("43 02 04 20 03 00", 0x03), ["P0420", "P0300"]);
+  assert.deepEqual(parseElmModeDtcs("43010420", 0x03), ["P0420"]);
+  assert.deepEqual(parseElmModeDtcs("00C\r0:430501000200\r1:10001100120000", 0x03), ["P0100", "P0200", "P1000", "P1100", "P1200"]);
   assert.deepEqual(parseElmModeDtcs("47 01 01 71", 0x07), ["P0171"]);
+  assert.deepEqual(parseElmModeDtcs("47010171", 0x07), ["P0171"]);
+
+  assert.deepEqual(parseElmClearDtcs("44"), { ok: true });
+  assert.deepEqual(parseElmClearDtcs("7E8 01 44"), { ok: true });
+  assert.throws(() => parseElmClearDtcs("NO DATA"), /NO DATA/i);
+  assert.throws(() => parseElmClearDtcs("UNABLE TO CONNECT"), /UNABLE TO CONNECT/i);
+  assert.throws(() => parseElmClearDtcs("7F 04 22"), /rejected Mode 04/i);
+  assert.throws(() => parseElmClearDtcs(""), /did not confirm Mode 04/i);
 
   const responses = {
     "0902": `49 02 01 ${vinHex}`,
