@@ -75,7 +75,13 @@ test('device proofs signed by the key app verify in the Worker', async () => {
   assert.ok(await verifyDeviceProof(device.publicKey, { purpose: 'redeem', subject: await sha256Hex(token), signedAt: redeem.signedAt, signature: redeem.signature }));
   const authorize = await authorizeUnlock(device, token, 'add_key', '1c6srfht0ln123456');
   const purpose = authorizePurpose('add_key', '1C6SRFHT0LN123456');
-  assert.ok(await verifyDeviceProof(device.publicKey, { purpose, subject: await sha256Hex(token), signedAt: authorize.signedAt, signature: authorize.signature }));
+  assert.ok(authorize.nonce);
+  assert.ok(await verifyDeviceProof(device.publicKey, {
+    purpose, subject: await sha256Hex(token), signedAt: authorize.signedAt, signature: authorize.signature, nonce: authorize.nonce,
+  }));
+  assert.equal(await verifyDeviceProof(device.publicKey, {
+    purpose, subject: await sha256Hex(token), signedAt: authorize.signedAt, signature: authorize.signature,
+  }), false);
   assert.equal(await verifyDeviceProof(device.publicKey, { purpose: 'redeem', subject: await sha256Hex(token), signedAt: authorize.signedAt, signature: authorize.signature }), false);
 });
 
@@ -88,6 +94,7 @@ test('key app panel covers request, review, unlock, and locked states', () => {
   const pending = keyLicensePanelHtml({ status: { license: null, requests: [{ status: 'pending', businessName: '<b>HPA</b>', createdAt: '2026-10-19T00:00:00Z' }] } }, helpers);
   assert.match(pending, /Request under review/);
   assert.match(pending, /&lt;b&gt;HPA&lt;\/b&gt;/);
+  assert.match(pending, /id="key-license-refresh"/);
   const denied = keyLicensePanelHtml({ status: { license: null, canRequest: true, requests: [{ status: 'denied', decisionNote: 'Expired proof' }] } }, helpers);
   assert.match(denied, /Expired proof/);
   assert.match(keyLicensePanelHtml({ status: { license }, unlockState: 'none' }, helpers), /id="key-license-issue"/);
@@ -95,6 +102,7 @@ test('key app panel covers request, review, unlock, and locked states', () => {
   assert.match(issued, /id="key-license-redeem"/);
   assert.match(issued, /Opening the link does nothing by itself/);
   assert.match(keyLicensePanelHtml({ status: { license }, unlockState: 'unlocked' }, helpers), /This device is unlocked/);
+  assert.match(keyLicensePanelHtml({ status: { license }, unlockState: 'unlocked' }, helpers), /id="key-license-refresh"/);
   assert.match(keyLicensePanelHtml({ status: { license: { ...license, status: 'suspended' } } }, helpers), /locked/);
   assert.match(keyLicensePanelHtml({ status: { license: { ...license, status: 'revoked' }, requests: [], canRequest: true } }, helpers), /License revoked/);
 });

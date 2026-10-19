@@ -31,11 +31,14 @@ export function procedureSpec(procedure) {
  * The token is scoped to a single procedure, VIN, shop, and mode, is single-use
  * (jti), and expires. Clients hold only the public key and cannot forge these.
  */
-export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, actor }) {
+export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, actor, expiresAt }) {
   const spec = procedureSpec(procedure);
   if (!spec) throw new Error(`Unknown diagnostic procedure: ${procedure}`);
   const privateKey = await importEcdsaPrivateKey(env.DIAGNOSTICS_SIGNING_PRIVATE_KEY);
   const now = Date.now();
+  const expiryLimit = expiresAt === undefined ? Infinity : Date.parse(expiresAt);
+  if (!Number.isFinite(expiryLimit) && expiryLimit !== Infinity) throw new Error('Invalid authorization expiry');
+  if (expiryLimit <= now) throw new Error('Authorization has expired');
   const payload = {
     v: 2,
     procedure,
@@ -45,7 +48,7 @@ export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, a
     mode,
     actor: actor || null,
     iat: now,
-    exp: now + spec.ttlMs,
+    exp: Math.min(now + spec.ttlMs, expiryLimit),
     jti: crypto.randomUUID().replaceAll('-', ''),
   };
   const payloadB64 = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
