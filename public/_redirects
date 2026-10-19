@@ -9,5 +9,10 @@ https://shopcrank.com/* https://www.shopcrank.com/:splat 301
 http://shopcrank.com/* https://www.shopcrank.com/:splat 301
 http://www.shopcrank.com/* https://www.shopcrank.com/:splat 301
 
+# Windows installers live in R2 and only the Worker (/api/*) can read them;
+# without these, old /downloads/*.exe links fall through to the SPA shell.
+/downloads/ShopCrank-Setup-*          /api/downloads/ShopCrank-Setup-:splat          302
+/downloads/ShopCrank-Offline-Setup-*  /api/downloads/ShopCrank-Offline-Setup-:splat  302
+
 # Optional explicit entry for the SPA shell.
 /app            /index.html       200

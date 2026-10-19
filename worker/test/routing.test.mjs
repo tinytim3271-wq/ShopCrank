@@ -33,3 +33,13 @@ test('public download paths map to R2 object keys', () => {
   assert.equal(publicDownloadObjectKey('/downloads/../secret.exe'), null);
   assert.equal(publicDownloadObjectKey('/app/MechPro.apk'), null);
 });
+
+test('/api/downloads paths map to the same R2 keys so the /api/* Worker route can serve installers', () => {
+  assert.equal(publicDownloadObjectKey('/api/downloads/ShopCrank-Setup-1.1.0.exe'), 'downloads/ShopCrank-Setup-1.1.0.exe');
+  assert.equal(publicDownloadObjectKey('/api/downloads/ShopCrank-Setup-1.1.0.zip'), 'downloads/ShopCrank-Setup-1.1.0.zip');
+  assert.equal(publicDownloadObjectKey('/api/downloads/ShopCrank-Offline-Setup-1.1.0.exe'), 'downloads/ShopCrank-Offline-Setup-1.1.0.exe');
+  assert.equal(publicDownloadObjectKey('/api/downloads/'), null);
+  assert.equal(publicDownloadObjectKey('/api/downloads/%2e%2e%2fsecret.exe'), null);
+  assert.equal(publicDownloadObjectKey('/api/downloads/%E0%A4%A.exe'), null);
+  assert.equal(publicDownloadObjectKey('/api/downloads/secret.txt'), null);
+});

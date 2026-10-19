@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shopcrank-shell-v32';
+const CACHE_NAME = 'shopcrank-shell-v33';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -21,6 +21,13 @@ const SHELL_FILES = [
   './assets/fonts/jetbrains-mono-latin-500-normal.woff2',
   './assets/fonts/jetbrains-mono-latin-600-normal.woff2',
 ];
+
+// Installers and API calls must reach the network untouched: a navigation to
+// an installer would otherwise be cloned into the cache as the app shell.
+function bypassesServiceWorker(pathname) {
+  return pathname.startsWith('/api/')
+    || /^\/downloads\/[^/]+\.(exe|zip|apk)$/i.test(pathname);
+}
 
 function isImmutableAsset(pathname) {
   return /^\/assets\/.+-[A-Za-z0-9_-]{6,}\.(js|css)$/.test(pathname)
@@ -49,6 +56,7 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (bypassesServiceWorker(url.pathname)) return;
 
   // Always network-first for the main app bundle — never long-cache app.js.
   if (url.pathname.endsWith('/app.js') || url.pathname.endsWith('app.js')) {
@@ -64,8 +72,10 @@ self.addEventListener('fetch', event => {
     event.respondWith(
       fetch(request)
         .then(response => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put('./index.html', copy));
+          if (response.ok && (response.headers.get('Content-Type') || '').includes('text/html')) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put('./index.html', copy));
+          }
           return response;
         })
         .catch(() => caches.match('./index.html')),
