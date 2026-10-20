@@ -11,6 +11,10 @@ export function normalizeTaxPolicy(policy) {
   return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
 }
 
+export function taxPolicyForStoredEstimate(estimate = {}) {
+  return estimate.taxPolicy ?? DEFAULT_TAX_POLICY;
+}
+
 /**
  * Browser only: the shop's policy for estimates that don't carry one yet, as an
  * object or a function returning one. The Worker never sets this, so it re-prices
