@@ -2508,6 +2508,9 @@
     const source = policy && typeof policy === "object" ? policy : fallback || DEFAULT_TAX_POLICY;
     return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
   }
+  function taxPolicyForStoredEstimate(estimate = {}) {
+    return estimate.taxPolicy ?? DEFAULT_TAX_POLICY;
+  }
   function setDefaultTaxPolicy(policy) {
     defaultTaxPolicy = policy || DEFAULT_TAX_POLICY;
   }
@@ -12867,7 +12870,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       taxRate: estimate.taxRate ?? state.taxSettings.rate,
       discountPercent: estimate.discountPercent,
       discountReason: estimate.discountReason,
-      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+      taxPolicy: taxPolicyForStoredEstimate(estimate)
     });
     return { ...estimate, ...totals };
   }
@@ -16278,7 +16282,8 @@ ${line}`.trim();
           taxRate: source.taxRate ?? state.taxSettings.rate,
           discountPercent: source.discountPercent,
           discountReason: source.discountReason,
-          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+          taxPolicy: taxPolicyForStoredEstimate(source)
         });
         return {
           ...estimate,
