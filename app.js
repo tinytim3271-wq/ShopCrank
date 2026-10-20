@@ -5787,7 +5787,14 @@ button{margin-top:12px;padding:8px 14px}
     const storage = portable ? "ShopCrank Demo Data folder beside the executable on this drive" : "ShopCrank Offline folder on this computer";
     const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="displayName" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
     const confirmField = hasAccount ? "" : `<label for="offline-confirm">Confirm password</label><input id="offline-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8"/>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "ShopCrank Demo" : "ShopCrank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. ShopCrank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
+    const brandName = portable ? "ShopCrank Demo" : "ShopCrank";
+    const heading2 = hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`;
+    const copy = hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. ShopCrank stores the sign-in check here and does not send the password to the cloud.`;
+    const emailAttrs = hasAccount ? `value="${safeEmail}"` : "autofocus";
+    const passwordAutocomplete = hasAccount ? "current-password" : "new-password";
+    const passwordAutofocus = hasAccount ? "autofocus" : "";
+    const submitLabel = hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${brandName}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${heading2}</h1><p>${copy}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${emailAttrs} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${passwordAutocomplete}" required minlength="8" ${passwordAutofocus}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${submitLabel}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
   }
   function stripOfflineSecrets(value2) {
     if (Array.isArray(value2)) return value2.map(stripOfflineSecrets);
@@ -10258,13 +10265,25 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       bind();
       return;
     }
-    if (!canAccess(state.route)) state.route = (routesForRole(currentUser().role) || ["home"])[0];
+    if (!canAccess(state.route)) {
+      state.route = (routesForRole(currentUser().role) || ["home"])[0];
+    }
     const views = { superadmin: superAdmin, home: homeDashboard, dispatch, orders, schedule, customers, chat: teamChat, invoices, pos: cardTerminal, ai: aiWorkbench, messaging, payments, integrations, support, reports, settings };
-    if (typeof accounting === "function") views.accounting = accounting;
-    if (typeof payroll === "function") views.payroll = payroll;
-    if (typeof imports === "function") views.imports = imports;
-    if (typeof employees === "function") views.employees = employees;
-    if (typeof oemDiagnosticsView === "function") views["oem-diagnostics"] = oemDiagnosticsView;
+    if (typeof accounting === "function") {
+      views.accounting = accounting;
+    }
+    if (typeof payroll === "function") {
+      views.payroll = payroll;
+    }
+    if (typeof imports === "function") {
+      views.imports = imports;
+    }
+    if (typeof employees === "function") {
+      views.employees = employees;
+    }
+    if (typeof oemDiagnosticsView === "function") {
+      views["oem-diagnostics"] = oemDiagnosticsView;
+    }
     root.innerHTML = DOMPurify.sanitize((views[state.route] || views.home || views.dispatch)(), { USE_PROFILES: { html: true } });
     const unread = state.conversations.reduce((sum, item) => sum + chatUnread(item), 0);
     if (currentUser().role !== "super_admin" && !root.querySelector('[data-route="chat"]') && canAccess("chat")) {
@@ -10283,9 +10302,13 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     bindEstimateActions();
     bindMessagingService();
     bindPaymentService();
-    if (state.route === "payments") void loadStripePaymentStatus();
+    if (state.route === "payments") {
+      void loadStripePaymentStatus();
+    }
     bindTeamChat();
-    if (typeof bindOemDiagnostics === "function") bindOemDiagnostics();
+    if (typeof bindOemDiagnostics === "function") {
+      bindOemDiagnostics();
+    }
     root.querySelector('[data-route="chat"]')?.addEventListener("click", async () => {
       await loadChatFromApi();
       render();
