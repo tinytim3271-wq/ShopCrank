@@ -146,3 +146,8 @@ AI_ENABLED=1
 # LABOR_WEB_SEARCH_PROVIDER=brave
 # LABOR_WEB_SEARCH_API_KEY=replace-with-brave-search-api-key
 # (alias also accepted: BRAVE_SEARCH_API_KEY)
+
+# Optional: Cloudflare Turnstile on sign-up/sign-in (leave unset to keep it off).
+# Test keys that always pass: https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+# TURNSTILE_SITE_KEY=1x00000000000000000000AA
+# TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

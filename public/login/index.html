@@ -16,6 +16,7 @@
       <p>We will open a one-time link for this browser. ShopCrank never receives your password.</p>
       <form id="login-form">
         <label for="email">Work email<input id="email" type="email" name="email" placeholder="you@yourshop.com" autocomplete="username" required /></label>
+        <div class="turnstile-slot" id="login-turnstile"></div>
         <button class="btn primary" type="submit">Continue securely</button>
       </form>
       <p id="error" class="error" hidden></p>
@@ -24,8 +25,11 @@
         <a href="/downloads">Install the apps</a>
       </div>
     </main>
+    <script src="/assets/turnstile-client.js"></script>
     <script>
       const form = document.querySelector('#login-form');
+      let turnstile = null;
+      window.ShopCrankTurnstile?.mount(document.querySelector('#login-turnstile')).then((widget) => { turnstile = widget; });
       const errorEl = document.querySelector('#error');
       const plan = new URLSearchParams(window.location.search).get('plan');
       const returnTo = ['starter', 'shop', 'pro'].includes(plan)
@@ -42,7 +46,7 @@
             method: 'POST',
             credentials: 'include',
             headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, returnTo }),
+            body: JSON.stringify({ email, returnTo, turnstileToken: turnstile?.token() || '' }),
           });
           const payload = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(payload.message || 'Could not start sign-in');
@@ -65,6 +69,7 @@
             ? 'Could not reach ShopCrank sign-in. Use the latest Windows installer from Downloads, or open the site in a browser.'
             : (raw || 'Sign-in failed.');
           button.disabled = false;
+          turnstile?.reset();
         }
       });
     </script>

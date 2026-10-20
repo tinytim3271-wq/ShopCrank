@@ -27,11 +27,15 @@
         <label for="ownerName">Owner name<input id="ownerName" type="text" name="ownerName" autocomplete="name" required /></label>
         <label for="email">Owner email<input id="email" type="email" name="email" autocomplete="email" placeholder="owner@yourshop.com" required /></label>
         <input type="hidden" name="returnTo" value="/app" />
+        <div class="turnstile-slot" id="signup-turnstile"></div>
         <p id="signup-error" class="error" hidden></p>
         <p id="signup-sent" class="success" hidden></p>
         <button class="btn primary" type="submit">Start trial</button>
       </form>
+      <script src="/assets/turnstile-client.js"></script>
       <script>
+        let turnstile = null;
+        window.ShopCrankTurnstile?.mount(document.querySelector("#signup-turnstile")).then((widget) => { turnstile = widget; });
         const params = new URLSearchParams(location.search);
         const plan = params.get("plan") || "shop";
         const invite = params.get("invite") || "";
@@ -100,6 +104,7 @@
                 shopName,
                 ownerName,
                 returnTo,
+                turnstileToken: turnstile?.token() || "",
               }),
             });
             const payload = await response.json().catch(() => ({}));
@@ -113,6 +118,7 @@
           } catch (error) {
             errorEl.hidden = false;
             errorEl.textContent = error.message;
+            turnstile?.reset();
           } finally {
             button.disabled = false;
           }

@@ -2893,6 +2893,28 @@ async function enforceSignInRateLimit(request, env) {
   }
 }
 
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+
+// Bot check for sign-in/sign-up emails. Off until TURNSTILE_SECRET_KEY is set
+// (and TURNSTILE_SITE_KEY, which /api/auth/config hands to the forms).
+export async function verifyTurnstile(request, env, token, fetchImpl = fetch) {
+  const secret = String(env.TURNSTILE_SECRET_KEY || '').trim();
+  if (!secret) return;
+  const response = String(token || '').trim();
+  if (!response) throw new HttpError(403, 'Complete the security check, then try again.');
+  const form = new URLSearchParams({ secret, response });
+  const ip = String(request.headers.get('CF-Connecting-IP') || '').trim();
+  if (ip) form.set('remoteip', ip);
+  let result;
+  try {
+    const verify = await fetchImpl(TURNSTILE_VERIFY_URL, { method: 'POST', body: form });
+    result = await verify.json();
+  } catch {
+    throw new HttpError(503, 'The security check is unavailable right now. Try again in a minute.');
+  }
+  if (!result?.success) throw new HttpError(403, 'The security check failed or expired. Try again.');
+}
+
 async function handleMagicLink(request, env) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   const contentType = request.headers.get('Content-Type') || '';
@@ -2907,6 +2929,7 @@ async function handleMagicLink(request, env) {
   const email = String(body.email || '').trim().toLowerCase();
   const returnTo = safeReturnPath(body.returnTo || body.return_to || body.redirectTo);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email address');
+  await verifyTurnstile(request, env, body.turnstileToken || body['cf-turnstile-response']);
   const requestedPlan = String(body.plan || body.planId || body.plan_id || '').trim();
   // Only persist public catalog plans. Founding plans attach after /api/founding/claim.
   const signupPlanId = isPublicPlan(requestedPlan) ? requestedPlan : null;
@@ -3091,6 +3114,10 @@ async function handleLogout(request, env) {
 
 async function handleAuth(request, env, segments, analytics) {
   const action = segments[1] || '';
+  if (action === 'config' && request.method === 'GET') {
+    // Public: what the sign-in forms need to render (no secrets).
+    return json({ turnstileSiteKey: String(env.TURNSTILE_SITE_KEY || '').trim() || null });
+  }
   if (action === 'magic-link') return handleMagicLink(request, env);
   if (action === 'send-login') return handleSendLogin(request, env);
   if (action === 'callback') return handleAuthCallback(request, env);

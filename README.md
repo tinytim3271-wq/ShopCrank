@@ -92,6 +92,7 @@ Source lives in `src/`; `npm run build:web` refreshes committed `app.js`.
 | `DIAGNOSTICS_SIGNING_PRIVATE_KEY` | Required ECDSA signing key for `/api/diagnostics/authorize` | Worker secret (`wrangler secret put`) |
 | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_ADMIN_EMAILS` | Cloudflare Access/admin bootstrap for internal surfaces | Worker secrets / `.dev.vars` for local development |
 | `DEV_AUTH_BYPASS` | Local-only auth bypass for `wrangler dev`; never production | `.dev.vars` local only |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Optional Cloudflare Turnstile bot check on sign-up and email sign-in. Off until both are set; the forms read the site key from `/api/auth/config` | Worker secrets (`wrangler secret put`) |
 
 ## Shop integrations (PartsTech, MOTOR labor, QuickBooks)
 
