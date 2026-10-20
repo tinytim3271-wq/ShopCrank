@@ -4942,9 +4942,9 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
     const nonce = crypto.randomUUID();
     return { token, deviceId: identity.deviceId, nonce, ...await signDeviceProof(identity, authorizePurpose(procedure, vin), await sha256Hex(token), Date.now(), nonce) };
   }
-  async function uploadProof(file, apiFetch2) {
+  async function uploadProof(file, { apiFetch: apiFetch2, fetchImpl }) {
     if (!PROOF_TYPES.has(file.type)) throw new Error("Upload the proof as a PDF, PNG, JPEG, or WebP file");
-    return uploadFileToStorage(file, "license-proof", file.type, { apiFetch: apiFetch2 });
+    return uploadFileToStorage(file, "license-proof", file.type, { apiFetch: apiFetch2, fetchImpl });
   }
   function parseUnlockInput(value2) {
     const text = String(value2 || "").trim();
@@ -4980,7 +4980,7 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
     return `<span class="badge ${STATUS_BADGE[status] || ""}">${escapeHtml4(label2)}</span>`;
   }
   function requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, previous) {
-    return `<form class="form-grid" id="key-license-request-form"><label>Contact name *<input name="contactName" required maxlength="120" value="${escapeHtml4(previous?.contactName || "")}"></label><label>Business name *<input name="businessName" required maxlength="160" value="${escapeHtml4(previous?.businessName || "")}"></label><label>License or registration number<input name="licenseNumber" maxlength="120" placeholder="e.g. NASTF VSP LSID or state locksmith license"></label><label>Computers to license<input name="requestedDevices" type="number" min="1" max="100" value="1"></label><label class="full">Proof of licensing *<textarea name="proofDetails" rows="3" required minlength="10" maxlength="4000" placeholder="Issuing body, license number, expiry, and anything ShopCrank should verify"></textarea></label><label class="full">Proof document (PDF or image, optional)<input name="proofFile" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><div class="full"><button class="primary" type="submit">${icon2("send", 14)} Submit license request</button></div></form>`;
+    return `<form class="form-grid" id="key-license-request-form"><label>Contact name *<input name="contactName" required maxlength="120" value="${escapeHtml4(previous?.contactName || "")}"></label><label>Business name *<input name="businessName" required maxlength="160" value="${escapeHtml4(previous?.businessName || "")}"></label><label>License or registration number<input name="licenseNumber" maxlength="120" placeholder="e.g. NASTF VSP LSID or state locksmith license" value="${escapeHtml4(previous?.licenseNumber || "")}"></label><label>Computers to license<input name="requestedDevices" type="number" min="1" max="100" value="${escapeHtml4(previous?.requestedDevices || 1)}"></label><label class="full">Proof of licensing *<textarea name="proofDetails" rows="3" required minlength="10" maxlength="4000" placeholder="Issuing body, license number, expiry, and anything ShopCrank should verify">${escapeHtml4(previous?.proofDetails || "")}</textarea></label><label class="full">Proof document (PDF or image, optional)<input name="proofFile" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><div class="full"><button class="primary" type="submit">${icon2("send", 14)} Submit license request</button></div></form>`;
   }
   function keyLicensePanelHtml(view, { escapeHtml: escapeHtml4, icon: icon2 }) {
     const head = `<div class="eyebrow">Vehicle key license</div>`;
@@ -4997,7 +4997,7 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
         body = `${revoked}<div class="messaging-status idle">${icon2("hourglass", 17)}<div><strong>Request under review</strong><span>Submitted ${escapeHtml4(formatDate(latest.createdAt))} for ${escapeHtml4(latest.businessName)}. ShopCrank reviews your proof and sets the license expiry.</span></div></div>`;
       } else {
         const denied = latest?.status === "denied" ? `<div class="messaging-status idle">${icon2("circle-x", 17)}<div><strong>Last request denied</strong><span>${escapeHtml4(latest.decisionNote || "No reason given")}</span></div></div>` : "";
-        body = `${revoked}${denied}<p>Live key programming on this shop needs a vehicle key license from ShopCrank. Send proof that your shop is licensed for key and immobilizer work.</p>${canRequest ? requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, latest) : '<p class="ledger-note">Ask your shop owner or admin to submit the license request.</p>'}`;
+        body = `${revoked}${denied}<p>Live key programming on this shop needs a vehicle key license from ShopCrank. Send proof that your shop is licensed for key and immobilizer work.</p>${canRequest ? requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, view.draft || latest) : '<p class="ledger-note">Ask your shop owner or admin to submit the license request.</p>'}`;
       }
     } else {
       const stateLabel = license.status === "suspended" ? "Suspended" : license.expired ? "Expired" : "Active";
@@ -5017,7 +5017,8 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
       }
     }
     const busy = view.busy ? `<p class="ledger-note">${escapeHtml4(view.busy)}</p>` : "";
-    return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}${refresh}${body}${deviceLine}${busy}</section>`;
+    const failure = view.lastError ? `<p class="login-error" role="alert">${escapeHtml4(view.lastError)}</p>` : "";
+    return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}${refresh}${failure}${body}${deviceLine}${busy}</section>`;
   }
   function shortId(value2) {
     return value2 ? `${String(value2).slice(0, 10)}\u2026` : "";
@@ -14424,11 +14425,13 @@ ${line}`.trim();
   }
   async function withKeyLicenseBusy(message, task) {
     keyLicenseView.busy = message;
+    keyLicenseView.lastError = "";
     render();
     try {
       await task();
     } catch (error) {
-      toast(error.message || "Vehicle key license request failed");
+      keyLicenseView.lastError = error.message || "Vehicle key license request failed";
+      toast(keyLicenseView.lastError);
     }
     keyLicenseView.busy = "";
     await loadKeyLicense(true);
@@ -14448,9 +14451,12 @@ ${line}`.trim();
     document.querySelector("#key-license-request-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const form = new FormData(event.target), file = form.get("proofFile");
+      const draft = { contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1) };
+      keyLicenseView.draft = draft;
       void withKeyLicenseBusy("Sending your license request\u2026", async () => {
-        const proofFileKey = file && file.size ? await uploadProof(file, apiFetch) : "";
-        await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1), proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
+        const proofFileKey = file && file.size ? await uploadProof(file, { apiFetch, fetchImpl: (url, init) => authorizedApiRequest(url.replace(/^\/api(?=\/)/, ""), init) }) : "";
+        await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ ...draft, proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
+        keyLicenseView.draft = null;
         toast("License request sent to ShopCrank for review");
       });
     });
@@ -14528,7 +14534,8 @@ ${line}`.trim();
   }
   function licenseExpiryField(value2 = "") {
     const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-    return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" value="${escapeHtml(value2)}"/></label>`;
+    const latest = new Date(Date.now() + 3650 * 864e5).toISOString().slice(0, 10);
+    return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" max="${latest}" value="${escapeHtml(value2)}"/></label>`;
   }
   function openLicenseApprove(requestId, business, devices) {
     licenseFormModal({
