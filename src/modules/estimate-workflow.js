@@ -381,7 +381,7 @@ export function invoiceWithEditedWorkOrder(invoice = {}, order = {}, editedAt = 
     taxPolicy: estimate.taxPolicy,
     tax: estimate.tax,
     taxRate: estimate.taxRate,
-    fees: estimate.fees,
+    fees: estimate.fees.map(fee => ({ ...fee, taxable: normalizeTaxPolicy(estimate.taxPolicy).feesTaxable })),
     lines: billableEstimateLines(estimate.lines).map((line, index) => {
       const normalized = normalizeEstimateLine(line, index);
       return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
