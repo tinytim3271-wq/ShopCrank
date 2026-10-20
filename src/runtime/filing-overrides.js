@@ -70,7 +70,7 @@ taxReport = function (fromDate, toDate) {
     const bd = invoiceTaxBreakdown(invoice);
     const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
     const gross = Number(payment.amount);
-    const taxable = Math.round(bd.subtotal * ratio * 100) / 100;
+    const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100;
     const tax = Math.round(bd.tax * ratio * 100) / 100;
     const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
     return {

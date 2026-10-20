@@ -658,8 +658,13 @@ export function mountIntakeWizard(host, {
       host.querySelector('#intake-add-labor')?.addEventListener('click', () => addLine('labor'));
       host.querySelector('#intake-add-part')?.addEventListener('click', () => addLine('part'));
       host.querySelectorAll('[data-remove-line]').forEach(button => button.addEventListener('click', () => {
+        const lineIndex = form
+          ? [...form.querySelectorAll('tbody tr')]
+            .filter(row => row.querySelector('[name="line-description"]')?.value.trim())
+            .indexOf(button.closest('tr'))
+          : Number(button.dataset.removeLine);
         if (form) current = readForm(current, form);
-        current.estimate.lines = current.estimate.lines.filter((_, index) => index !== Number(button.dataset.removeLine));
+        current.estimate.lines = current.estimate.lines.filter((_, index) => index !== lineIndex);
         persist('line');
         paint();
       }));

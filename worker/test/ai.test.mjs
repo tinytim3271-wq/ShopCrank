@@ -93,6 +93,7 @@ test('assistant pricing prompt uses rates from tenant-scoped shop settings', asy
     },
   });
   assert.match(payload.system, /\$175\.00 per labor hour, 6\.50% tax/);
+  assert.match(payload.system, /parts are always taxable; labor is not taxable; shop supplies and other fees are taxable/i);
 });
 
 test('estimate and work-order tool creates a bounded review draft without persistence', () => {

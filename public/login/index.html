@@ -69,6 +69,7 @@
             ? 'Could not reach ShopCrank sign-in. Use the latest Windows installer from Downloads, or open the site in a browser.'
             : (raw || 'Sign-in failed.');
           button.disabled = false;
+        } finally {
           turnstile?.reset();
         }
       });

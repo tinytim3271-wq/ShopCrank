@@ -79,9 +79,7 @@ export function buildAssistantSystemPrompt(pricing = DEFAULT_SHOP_PRICING, {
 } = {}) {
   const laborRate = nonnegativeRate(pricing.laborRate, DEFAULT_SHOP_PRICING.laborRate);
   const taxRate = nonnegativeRate(pricing.taxRate, DEFAULT_SHOP_PRICING.taxRate);
-  const taxBase = pricing.taxPolicy?.laborTaxable === false
-    ? ' (charged on parts only; labor is not taxed)'
-    : '';
+  const taxBase = ` (parts are always taxable; labor is ${pricing.taxPolicy?.laborTaxable === false ? 'not taxable' : 'taxable'}; shop supplies and other fees are ${pricing.taxPolicy?.feesTaxable === false ? 'not taxable' : 'taxable'})`;
   const capabilities = allowEstimatePreparation
     ? 'You may prepare a reviewable estimate and work-order draft with the prepare_estimate_work_order tool when the user asks to create them, but the user must explicitly save the estimate and submit the work order in ShopCrank.'
     : 'Do not prepare or claim to create an estimate or work-order draft; this interaction cannot return structured drafts for review or saving.';
@@ -1384,7 +1382,6 @@ export async function extractStructuredShopForm(env, {
 
   throw new HttpError(503, 'Gemini structured autofill requires a configured Gemini API key');
 }
-
 
 
 
