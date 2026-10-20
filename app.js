@@ -8133,7 +8133,7 @@ button{margin-top:12px;padding:8px 14px}
     estimate.lastSentAt = now();
     estimate.lastSentChannel = channel;
     estimate.deliveryMode = result.mode;
-    updateEstimateInApi(estimate);
+    void updateEstimateInApi(estimate);
     save();
     toast(result.mode === "service" ? `${estimate.number} sent through the shop messaging service` : `${estimate.number} opened in your device ${channel === "email" ? "email" : "messaging"} app`);
   }
@@ -9911,7 +9911,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelectorAll("[data-receive-stock]").forEach((button) => button.onclick = () => receiveStock(button.dataset.receiveStock));
     document.querySelectorAll("[data-send-reminder]").forEach((button) => button.onclick = (event) => {
       event.stopPropagation();
-      sendReminder(button.dataset.sendReminder);
+      void sendReminder(button.dataset.sendReminder);
     });
     document.querySelector("#elm-connect")?.addEventListener("click", connectElm);
     document.querySelectorAll("[data-elm-command]").forEach((button) => button.onclick = () => runElm(button.dataset.elmCommand));
@@ -9989,7 +9989,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       invoice.taxRate = taxRate;
       invoice.tax = tax;
       invoice.amount = Math.round((subtotal + tax) * 100) / 100;
-      updateInvoiceInApi(invoice);
+      void updateInvoiceInApi(invoice);
       save();
       closeModal();
       toast(`${invoice.number} tax updated`);
@@ -10030,13 +10030,13 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       }
       const paymentRecord = { id: `payment-${Date.now()}`, invoiceNumber, customer: invoice.customer, amount, method, receivedAt: data.receivedAt, reference: data.reference.trim(), note: data.note.trim(), status: "completed", recordedBy: currentUser().id };
       state.payments.push(paymentRecord);
-      pushPaymentToApi(paymentRecord);
+      void pushPaymentToApi(paymentRecord);
       const newBalance = invoiceBalance(invoice);
       if (newBalance === 0) {
         invoice.status = "paid";
         invoice.due = `Paid ${data.receivedAt}`;
       } else invoice.status = "sent";
-      updateInvoiceInApi(invoice);
+      void updateInvoiceInApi(invoice);
       save();
       closeModal();
       toast(`${money4(amount)} ${method} payment recorded for ${invoice.number}`);
@@ -10619,7 +10619,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       applyAiWorkflowEstimate(order, aiResult.estimate, { rate: shopMileageRate(), taxRate: state.taxSettings.rate });
       order.notes = `${order.notes || ""}
 AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.trim();
-      updateOrderInApi(order);
+      void updateOrderInApi(order);
       save();
       toast(`${order.id} updated with AI workflow`);
       render();
@@ -11425,7 +11425,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       e.preventDefault();
       const d = readFormValues(e.target), record = { date: d.date, vendor: d.vendor, category: d.category, memo: d.memo, amount: Number(d.amount), account: expenseAccount(d.category) };
       state.expenses.push(record);
-      pushExpenseToApi(record);
+      void pushExpenseToApi(record);
       save();
       closeModal();
       toast("Expense recorded in the general ledger");
@@ -11930,7 +11930,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     bindPhoneOrder();
     if (posReaders === null) {
       posReaders = [];
-      loadPosReaders();
+      void loadPosReaders();
     }
     document.querySelector("#pos-order")?.addEventListener("change", (event) => {
       posSelectedId = event.target.value;
@@ -11971,7 +11971,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         button.disabled = false;
       }
     });
-    if (posCharge?.phase === "waiting") pollPosCharge();
+    if (posCharge?.phase === "waiting") void pollPosCharge();
   }
   function openAssignmentEditor(order) {
     const assignments = order.assignments?.length ? order.assignments : order.tech && order.tech !== "Unassigned" ? [{ name: order.tech, role: "primary", sharePercent: 100 }] : [];

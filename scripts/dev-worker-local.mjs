@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const LOCAL_WRANGLER_CONFIG = 'wrangler.local.json';
+// Run wrangler's own script with this Node binary: no PATH lookup (npx/shell) involved.
+export const WRANGLER_BIN = join(root, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
 
 /** Parse wrangler.jsonc (strip comments and trailing commas). */
 export function readWranglerConfig(path = join(root, 'wrangler.jsonc')) {
@@ -46,10 +48,9 @@ export function writeLocalWranglerConfig() {
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('dev-worker-local.mjs')) {
   const config = writeLocalWranglerConfig();
-  const child = spawn('npx', ['wrangler', 'dev', '-c', config, ...process.argv.slice(2)], {
+  const child = spawn(process.execPath, [WRANGLER_BIN, 'dev', '-c', config, ...process.argv.slice(2)], {
     cwd: root,
     stdio: 'inherit',
-    shell: process.platform === 'win32',
   });
   child.on('exit', code => process.exit(code ?? 0));
 }
