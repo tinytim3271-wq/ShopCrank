@@ -118,9 +118,9 @@
           } catch (error) {
             errorEl.hidden = false;
             errorEl.textContent = error.message;
-            turnstile?.reset();
           } finally {
             button.disabled = false;
+            turnstile?.reset();
           }
         });
       </script>
