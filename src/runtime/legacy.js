@@ -90,6 +90,7 @@ import {
   isLineTaxable,
   setDefaultTaxPolicy,
   shopTaxPolicy,
+  taxPolicyForStoredEstimate,
   invoiceWithEditedWorkOrder,
   laborLinePrintRows,
   normalizeEstimateLine,
@@ -3250,6 +3251,7 @@ function normalizedEstimateSource(estimate) {
     discountPercent: estimate.discountPercent,
     discountReason: estimate.discountReason,
     shopSupplies: estimate.fees?.find(fee => /shop supplies/i.test(fee.description))?.amount,
+    taxPolicy: taxPolicyForStoredEstimate(estimate),
   });
   return { ...estimate, ...totals };
 }
@@ -3353,6 +3355,7 @@ coherentOrderEstimate = function (order) {
     discountPercent: source.discountPercent,
     discountReason: source.discountReason,
     shopSupplies: source.fees?.find(fee => /shop supplies/i.test(fee.description))?.amount,
+    taxPolicy: taxPolicyForStoredEstimate(source),
   });
   return {
     ...estimate,

@@ -7,6 +7,7 @@ import {
   isLineTaxable,
   setDefaultTaxPolicy,
   shopTaxPolicy,
+  taxPolicyForStoredEstimate,
 } from './estimate-workflow.js';
 import { calculateShopEstimate } from './estimate-templates.js';
 
@@ -82,6 +83,29 @@ test('the browser can supply the shop default as a function; stored policies sti
     shop = { state: 'TX', laborTaxable: true };
     assert.equal(calculateEstimate(lines, 8.25).taxableSubtotal, 341.99);
     assert.equal(calculateEstimate(lines, 8.25, [], { laborTaxable: false }).taxableSubtotal, 89.99);
+  } finally {
+    setDefaultTaxPolicy(null);
+  }
+});
+
+test('saved-estimate recalculation preserves policy and uses legacy policy when absent', () => {
+  setDefaultTaxPolicy(() => TEXAS);
+  try {
+    const saved = calculateShopEstimate(lines, {
+      taxRate: 8.25,
+      shopSupplies: 7.56,
+      taxPolicy: taxPolicyForStoredEstimate({ taxPolicy: TEXAS }),
+    });
+    const legacy = calculateShopEstimate(lines, {
+      taxRate: 8.25,
+      shopSupplies: 7.56,
+      taxPolicy: taxPolicyForStoredEstimate({}),
+    });
+
+    assert.equal(saved.taxableSubtotal, 97.55);
+    assert.equal(saved.tax, 8.05);
+    assert.equal(legacy.taxableSubtotal, 349.55);
+    assert.equal(legacy.tax, 28.84);
   } finally {
     setDefaultTaxPolicy(null);
   }
