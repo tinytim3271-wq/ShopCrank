@@ -50,7 +50,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -58,6 +58,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run lint
+      - run: npm run test
       - run: npm run build:web
       - run: npm run test:config
       - run: npm run test:worker
@@ -68,6 +70,9 @@ jobs:
           test -f .pages-dist/index.html
           grep -q '<div id="root"></div>' .pages-dist/index.html
           grep -q 'app.js' .pages-dist/index.html
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:smoke
       - run: npx --no-install wrangler deploy --dry-run
 
   publish:
@@ -237,21 +242,38 @@ jobs:
           API_ORIGIN: ${{ vars.CLOUDFLARE_API_ORIGIN || 'https://www.shopcrank.com' }}
         run: |
           set -euo pipefail
-          # Cloudflare bot protection can answer GitHub-runner IPs with 403, and
-          # a freshly deployed alias can 403 during propagation. Retry with a
-          # browser-ish user agent, but never fail an otherwise-successful
-          # publish: warn so operators can verify manually instead of red CI.
+          # Cloudflare bot protection can answer GitHub-runner IPs with 403.
+          # A 403 only warns. Timeouts and HTTP 5xx fail the run.
           UA='Mozilla/5.0 (compatible; ShopCrank-deploy-smoke; +https://www.shopcrank.com)'
+          failed=0
           check() {
             local name="$1" url="$2" pattern="$3"
-            if curl -fsS --retry 3 --retry-all-errors -m 30 -A "$UA" "$url" | grep -Eiq "$pattern"; then
+            local body status
+            body="$(mktemp)"
+            status="$(curl -sS --retry 3 --retry-all-errors -m 30 -A "$UA" -o "$body" -w '%{http_code}' "$url" || true)"
+            status="${status:-000}"
+            if [[ "$status" == "403" ]]; then
+              echo "::warning title=Smoke check blocked ($name)::$url returned 403. Deploy completed; likely Cloudflare bot protection. Verify $url manually."
+              rm -f "$body"
+              return
+            fi
+            if [[ "$status" == "000" || "$status" =~ ^5 ]]; then
+              echo "::error title=Smoke check failed ($name)::$url returned HTTP $status (timeout or server error)."
+              failed=1
+              rm -f "$body"
+              return
+            fi
+            if [[ "$status" =~ ^2 ]] && grep -Eiq "$pattern" "$body"; then
               echo "OK: $name at $url"
             else
-              echo "::warning title=Smoke check inconclusive ($name)::$url returned non-2xx or did not match '$pattern'. Deploy completed; likely Cloudflare bot protection or propagation delay. Verify $url manually."
+              echo "::error title=Smoke check failed ($name)::$url returned HTTP $status and did not match '$pattern'."
+              failed=1
             fi
+            rm -f "$body"
           }
           check "API healthz" "$API_ORIGIN/api/healthz" '"ok":true'
           check "Pages shell" "$APP_ORIGIN/" 'Shop Crank|Dispatch'
+          exit "$failed"
       - name: Require Google sign-in secrets
         if: steps.verify-creds.outputs.valid == 'true' && steps.google-secrets.outputs.present != 'true'
         run: |
