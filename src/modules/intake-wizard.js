@@ -106,7 +106,8 @@ export function vehicleLabel(draft = {}) {
 
 export function missingCustomerFields(draft = {}) {
   const customer = draft.customer || {};
-  return ['firstName', 'lastName', 'phone', 'email'].filter(field => !String(customer[field] || '').trim());
+  // Email is optional at the counter; name and a phone number are enough to open the job.
+  return ['firstName', 'lastName', 'phone'].filter(field => !String(customer[field] || '').trim());
 }
 
 export function missingVehicleFields(draft = {}) {
@@ -348,6 +349,13 @@ export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, us
     total: priced.total,
     estimate: {
       lines: priced.lines,
+      fees: priced.fees,
+      taxRate: priced.taxRate,
+      taxPolicy: priced.taxPolicy,
+      subtotal: priced.subtotal,
+      taxableSubtotal: priced.taxableSubtotal,
+      tax: priced.tax,
+      total: priced.total,
       disclaimer: INTAKE_DISCLAIMER,
       approvalStatus: approval,
     },
@@ -357,6 +365,7 @@ export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, us
       customer: draft.customer,
       vehicle: draft.vehicle,
       photos: draft.photos || [],
+      photosWaived: Boolean(draft.photosWaived && missingRequiredPhotos(draft).length),
       damage: draft.damage || [],
       concern: draft.concern,
       diagnosis: draft.diagnosis,
@@ -379,9 +388,11 @@ export function serializableIntake(draft = {}) {
 
 export function canConvertIntake(draft = {}) {
   const problems = [];
-  if (missingCustomerFields(draft).length) problems.push('Customer name, phone, and email are required.');
+  if (missingCustomerFields(draft).length) problems.push('Customer name and phone are required.');
   if (missingVehicleFields(draft).length) problems.push('Enter a VIN or the year, make, and model.');
-  if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(', ')}.`);
+  if (!draft.photosWaived && missingRequiredPhotos(draft).length) {
+    problems.push(`Required photos: ${missingRequiredPhotos(draft).join(', ')}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
+  }
   if (draft.estimate?.approval === 'denied') problems.push('This estimate was denied. Update the approval before creating the work order.');
   return { ok: problems.length === 0, problems };
 }
@@ -412,7 +423,7 @@ function savedStamp(draft) {
 function customerStep(draft) {
   const customer = draft.customer;
   const contact = customer.contact || {};
-  return `<div class="form-grid">${field('firstName', 'First name', customer.firstName, { required: true })}${field('lastName', 'Last name', customer.lastName, { required: true })}${field('phone', 'Phone number', customer.phone, { required: true, type: 'tel' })}${field('email', 'Email address', customer.email, { required: true, type: 'email' })}${field('company', 'Company name', customer.company)}${field('secondaryPhone', 'Secondary phone', customer.secondaryPhone, { type: 'tel' })}${field('address', 'Address', customer.address, { full: true })}${field('city', 'City', customer.city)}${field('state', 'State', customer.state)}${field('zip', 'Zip code', customer.zip)}</div>
+  return `<div class="form-grid">${field('firstName', 'First name', customer.firstName, { required: true })}${field('lastName', 'Last name', customer.lastName, { required: true })}${field('phone', 'Phone number', customer.phone, { required: true, type: 'tel' })}${field('email', 'Email address', customer.email, { type: 'email' })}${field('company', 'Company name', customer.company)}${field('secondaryPhone', 'Secondary phone', customer.secondaryPhone, { type: 'tel' })}${field('address', 'Address', customer.address, { full: true })}${field('city', 'City', customer.city)}${field('state', 'State', customer.state)}${field('zip', 'Zip code', customer.zip)}</div>
 <fieldset class="intake-choices"><legend>Communication preferences</legend>${['phone', 'text', 'email'].map(key => `<label><input type="checkbox" name="contact-${key}" ${contact[key] ? 'checked' : ''}/> ${key[0].toUpperCase()}${key.slice(1)}</label>`).join('')}</fieldset>`;
 }
 
@@ -458,15 +469,26 @@ function diagnosisStep(draft) {
 ${analysis ? `<section class="ai-notice"><span>${escapeHtml(analysis.notice || '')}</span></section><ul class="intake-causes">${causes}</ul>` : ''}`;
 }
 
+const dollars = value => `$${(Number(value) || 0).toFixed(2)}`;
+
+function estimateSummaryHtml(priced) {
+  const supplies = priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0;
+  return `<span>Labor ${dollars(priced.labor)} · Parts ${dollars(priced.parts)} · Supplies ${dollars(supplies)} · Tax ${dollars(priced.tax)}</span><strong>${dollars(priced.total)}</strong>`;
+}
+
 function estimateStep(draft, profile) {
   const priced = priceIntakeEstimate(draft, profile);
-  const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr(line.description || '')}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml(line.source || 'Shop')}</td></tr>`).join('');
+  const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => {
+    const part = line.type === 'part';
+    return `<tr data-line="${index}"><td><select name="line-type" aria-label="Line type"><option value="labor" ${part ? '' : 'selected'}>Labor</option><option value="part" ${part ? 'selected' : ''}>Part</option></select></td><td><input name="line-description" value="${escapeAttr(line.description || '')}" aria-label="Description"/></td><td><input name="line-hours" type="number" min="0" step="${part ? '1' : '0.1'}" value="${Number(line.quantity || 0)}" aria-label="${part ? 'Quantity' : 'Hours'}"/></td><td><input name="line-price" type="number" min="0" step="0.01" value="${Number(line.unitPrice) > 0 ? Number(line.unitPrice) : ''}" placeholder="${part ? 'Price' : 'Shop rate'}" aria-label="${part ? 'Unit price' : 'Labor rate'}"/></td><td>${escapeHtml(line.source || 'Shop')}</td><td><button type="button" class="icon-button" data-remove-line="${index}" aria-label="Remove line">×</button></td></tr>`;
+  }).join('');
   return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
 <p class="form-help">Lookup uses the ShopCrank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
 <div id="labor-results"></div>
-<table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
+<table><thead><tr><th>Type</th><th>Description</th><th>Hours / qty</th><th>Rate / price</th><th>Source</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-add-labor">Add labor line</button><button class="secondary" type="button" id="intake-add-part">Add part line</button></div>
 <label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
-<div class="estimate-sign-summary"><span>Labor ${escapeHtml(String(priced.labor))} · Parts ${escapeHtml(String(priced.parts))} · Supplies ${escapeHtml(String(priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0))} · Tax ${escapeHtml(String(priced.tax))}</span><strong>${escapeHtml(String(priced.total))}</strong></div>
+<div class="estimate-sign-summary" id="intake-estimate-summary" aria-live="polite">${estimateSummaryHtml(priced)}</div>
 <pre class="intake-disclaimer">${escapeHtml(INTAKE_DISCLAIMER)}</pre>
 <label>Customer approval<select name="approval">${['pending', 'viewed', 'approved', 'denied'].map(status => `<option value="${status}" ${draft.estimate.approval === status ? 'selected' : ''}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join('')}</select></label>
 <p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
@@ -481,7 +503,8 @@ function reviewStep(draft, users) {
   }).join('')}`;
   return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml(customerDisplayName(draft) || 'Missing')}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml(vehicleLabel(draft) || draft.vehicle.vin || 'Missing')}</dd></div><div><dt>Concern</dt><dd>${escapeHtml(draft.concern.description || 'Missing')}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options('primary')}</select></label><label>Secondary technician<select name="assign-secondary">${options('secondary')}</select></label><label>Apprentice<select name="assign-apprentice">${options('apprentice')}</select></label></div>
-${check.ok ? '' : `<div class="import-errors">${check.problems.map(problem => `<span>${escapeHtml(problem)}</span>`).join('')}</div>`}
+${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? 'checked' : ''}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ''}
+${check.ok ? '' : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check.problems.map(problem => `<span>${escapeHtml(problem)}</span>`).join('')}</div>`}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
 }
 
@@ -540,16 +563,22 @@ function readForm(draft, form) {
   if (step === 'estimate') {
     const descriptions = [...form.querySelectorAll('[name="line-description"]')];
     const hourInputs = [...form.querySelectorAll('[name="line-hours"]')];
+    const typeInputs = [...form.querySelectorAll('[name="line-type"]')];
+    const priceInputs = [...form.querySelectorAll('[name="line-price"]')];
+    const previous = draft.estimate?.lines || [];
     next.estimate.lines = descriptions.map((input, index) => ({
-      type: 'labor',
+      ...(previous[index] || {}),
+      type: typeInputs[index]?.value === 'part' ? 'part' : 'labor',
       description: input.value.trim(),
       quantity: Math.max(0, Number(hourInputs[index]?.value) || 0),
-      source: 'Shop',
+      unitPrice: Math.max(0, Number(priceInputs[index]?.value) || 0),
+      source: previous[index]?.source || 'Shop',
     })).filter(line => line.description);
     next.estimate.diagnosticCharge = Math.max(0, Number(data.diagnosticCharge) || 0);
     next.estimate.approval = data.approval || 'pending';
   }
   if (step === 'review') {
+    next.photosWaived = Boolean(form.querySelector('[name="photosWaived"]')?.checked);
     next.assignments = ['primary', 'secondary', 'apprentice'].flatMap(role => {
       const employeeId = data[`assign-${role}`];
       if (!employeeId) return [];
@@ -612,12 +641,41 @@ export function mountIntakeWizard(host, {
       persist('step');
       paint();
     });
+    if (INTAKE_STEPS[current.step]?.id === 'estimate') {
+      const refreshTotal = () => {
+        const summary = host.querySelector('#intake-estimate-summary');
+        if (summary && form) summary.innerHTML = estimateSummaryHtml(priceIntakeEstimate(readForm(current, form), { laborRate, taxRate }));
+      };
+      form?.addEventListener('input', refreshTotal);
+      form?.addEventListener('change', refreshTotal);
+      const addLine = type => {
+        if (form) current = readForm(current, form);
+        current.estimate.lines = [...(current.estimate.lines || []), { type, description: type === 'part' ? 'Part' : 'Labor', quantity: 1, unitPrice: 0, source: 'Shop' }];
+        persist('line');
+        paint();
+        host.querySelectorAll('[name="line-description"]').item(current.estimate.lines.length - 1)?.select();
+      };
+      host.querySelector('#intake-add-labor')?.addEventListener('click', () => addLine('labor'));
+      host.querySelector('#intake-add-part')?.addEventListener('click', () => addLine('part'));
+      host.querySelectorAll('[data-remove-line]').forEach(button => button.addEventListener('click', () => {
+        const descriptions = [...(form?.querySelectorAll('[name="line-description"]') || [])];
+        const target = button.closest('tr')?.querySelector('[name="line-description"]');
+        const removeIndex = descriptions.filter(input => input.value.trim()).indexOf(target);
+        if (form) current = readForm(current, form);
+        current.estimate.lines = current.estimate.lines.filter((_, index) => index !== removeIndex);
+        persist('line');
+        paint();
+      }));
+    }
     host.querySelector('#intake-convert')?.addEventListener('click', async () => {
       if (form) current = readForm(current, form);
       const check = canConvertIntake(current);
       if (!check.ok) {
         persist('blocked');
         paint();
+        const problems = host.querySelector('#intake-problems');
+        problems?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        problems?.focus();
         return;
       }
       await onConvert?.(current);

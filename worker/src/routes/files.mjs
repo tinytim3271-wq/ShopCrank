@@ -78,7 +78,8 @@ export async function storeUploadedFile(files, key, body, metadata, maxBytes = M
   return received;
 }
 
-export async function handleFiles(request, env, context, segments) {
+/** Single file handler for /api/files/* (the Worker routes here). */
+export async function handleFiles(request, env, context, segments, { onUploaded = () => {} } = {}) {
   const action = segments[1];
   if (action === 'presign-upload' && request.method === 'POST') {
     const body = await requestJson(request);
@@ -96,12 +97,17 @@ export async function handleFiles(request, env, context, segments) {
     throw new HttpError(403, 'File key is outside this shop');
   }
   if (action === 'upload' && request.method === 'PUT') {
+    if (!request.body) throw new HttpError(400, 'Request body is required');
+    // Only the types presign-upload allows; anything else could be served back as a page.
+    const contentType = String(request.headers.get('Content-Type') || '').toLowerCase().split(';')[0].trim();
+    if (!ALLOWED_CONTENT_TYPES.has(contentType)) throw new HttpError(415, 'Unsupported file type');
     const contentLength = Number(request.headers.get('Content-Length') || 0);
     if (contentLength > MAX_UPLOAD_BYTES) throw new HttpError(413, 'File exceeds 15 MB');
-    await storeUploadedFile(env.FILES, key, request.body, {
-      httpMetadata: { contentType: request.headers.get('Content-Type') || 'application/octet-stream' },
+    const received = await storeUploadedFile(env.FILES, key, request.body, {
+      httpMetadata: { contentType },
       customMetadata: { shopId: context.shopId, uploadedBy: context.userId },
     });
+    onUploaded({ file_kind: key.split('/')[2], content_type: contentType, size_bytes: received });
     return new Response(null, { status: 204 });
   }
   if (action === 'presign-download' && request.method === 'GET') {
@@ -114,6 +120,15 @@ export async function handleFiles(request, env, context, segments) {
     if (!object) throw new HttpError(404, 'File not found');
     const headers = new Headers();
     object.writeHttpMetadata(headers);
+    // Files stored before the upload allowlist may carry any type: anything that
+    // isn't an accepted image/PDF downloads instead of rendering, and nothing runs script.
+    const storedType = String(headers.get('Content-Type') || '').toLowerCase().split(';')[0].trim();
+    if (!ALLOWED_CONTENT_TYPES.has(storedType)) {
+      headers.set('Content-Type', 'application/octet-stream');
+      headers.set('Content-Disposition', 'attachment');
+    }
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
     headers.set('ETag', object.httpEtag);
     headers.set('Cache-Control', 'private, max-age=300');
     return new Response(object.body, { headers });

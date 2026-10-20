@@ -52,10 +52,16 @@ npm run dev --if-present
 npm run build --if-present
 npm run test --if-present
 npm run lint --if-present
-npm run dev:worker --if-present
+npm run dev:worker --if-present      # offline: local D1/R2, no Cloudflare login
+npm run dev:worker:remote            # original config with remote AI + email (needs wrangler login)
+npm run test:smoke                   # browser smoke test (after build:web + stage:pages)
 ```
 
-`lint` runs ESLint across the modular `src/` entry/shared/runtime seams while intentionally excluding generated `app.js` and the current legacy runtime monolith file.
+`lint` runs ESLint across the modular `src/` entry/shared/runtime seams. The legacy runtime (`legacy.js`, `filing-overrides.js`) is linted only for a few targeted rules, including a guard against shadowing the global `state`; generated `app.js` is excluded.
+
+`test:smoke` starts the Worker on local D1/R2, serves the staged Pages build over HTTPS on a non-loopback hostname (so the production sign-in path runs), and drives Chromium as a brand-new shop: signup, customers, employees, payroll, intake to work order to invoice to payment, Texas sales tax, and every module on desktop and phone. It needs a Playwright Chromium (`npx playwright install chromium`, or set `SMOKE_CHROMIUM_PATH`) and `openssl`. The deploy workflow runs it before publishing.
+
+`npm start` intentionally fails: `server.mjs` is a local mock API that hands every caller an admin session, so it must never be what a host runs. Use `npm run dev` or `npm run dev:mock` locally.
 
 ### Serve the local frontend shell
 
@@ -86,6 +92,7 @@ Source lives in `src/`; `npm run build:web` refreshes committed `app.js`.
 | `DIAGNOSTICS_SIGNING_PRIVATE_KEY` | Required ECDSA signing key for `/api/diagnostics/authorize` | Worker secret (`wrangler secret put`) |
 | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_ADMIN_EMAILS` | Cloudflare Access/admin bootstrap for internal surfaces | Worker secrets / `.dev.vars` for local development |
 | `DEV_AUTH_BYPASS` | Local-only auth bypass for `wrangler dev`; never production | `.dev.vars` local only |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Optional Cloudflare Turnstile bot check on sign-up and email sign-in. Off until both are set; the forms read the site key from `/api/auth/config` | Worker secrets (`wrangler secret put`) |
 
 ## Shop integrations (PartsTech, MOTOR labor, QuickBooks)
 

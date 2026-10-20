@@ -1,5 +1,42 @@
 const roundMoney = value => Math.round((Number(value) || 0) * 100) / 100;
 
+// Sales-tax taxability (ADR-003). Parts are always taxed; labor and fees follow
+// the policy stored on the estimate. An explicit line.taxable overrides both.
+export const DEFAULT_TAX_POLICY = Object.freeze({ laborTaxable: true, feesTaxable: true });
+let defaultTaxPolicy = DEFAULT_TAX_POLICY;
+
+export function normalizeTaxPolicy(policy) {
+  const fallback = typeof defaultTaxPolicy === 'function' ? defaultTaxPolicy() : defaultTaxPolicy;
+  const source = policy && typeof policy === 'object' ? policy : (fallback || DEFAULT_TAX_POLICY);
+  return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
+}
+
+/**
+ * Browser only: the shop's policy for estimates that don't carry one yet, as an
+ * object or a function returning one. The Worker never sets this, so it re-prices
+ * stored estimates with their own policy (or the pre-ADR-003 default).
+ */
+export function setDefaultTaxPolicy(policy) {
+  defaultTaxPolicy = policy || DEFAULT_TAX_POLICY;
+}
+
+/** A shop's policy from its tax settings. Unset labor taxability: untaxed in Texas, taxed elsewhere. */
+export function shopTaxPolicy(taxSettings = {}) {
+  const state = String(taxSettings?.state || '').trim().toUpperCase();
+  return {
+    laborTaxable: typeof taxSettings?.laborTaxable === 'boolean' ? taxSettings.laborTaxable : state !== 'TX',
+    feesTaxable: typeof taxSettings?.feesTaxable === 'boolean' ? taxSettings.feesTaxable : true,
+  };
+}
+
+export function isLineTaxable(line = {}, policy) {
+  if (typeof line.taxable === 'boolean') return line.taxable;
+  const resolved = normalizeTaxPolicy(policy);
+  if (line.type === 'part') return true;
+  if (line.type === 'fee') return resolved.feesTaxable;
+  return resolved.laborTaxable;
+}
+
 export const SHOP_SUPPLIES_RULES = Object.freeze({
   shopSuppliesRate: 3,
   shopSuppliesCap: 20,
@@ -101,7 +138,8 @@ export function laborLinePrintRows(lines = [], technicians = []) {
     });
 }
 
-export function calculateEstimate(lines = [], taxRate = 0, fees = []) {
+export function calculateEstimate(lines = [], taxRate = 0, fees = [], taxPolicy) {
+  const policy = normalizeTaxPolicy(taxPolicy);
   const normalizedLines = lines.map((line, index) => normalizeEstimateLine(line, index));
   // Declined lines stay visible for audit, but must not affect money totals.
   const billableLines = billableEstimateLines(normalizedLines);
@@ -121,8 +159,12 @@ export function calculateEstimate(lines = [], taxRate = 0, fees = []) {
     .reduce((sum, line) => sum + line.total, 0));
   const feeTotal = roundMoney(lineFees + normalizedFees.reduce((sum, fee) => sum + fee.amount, 0));
   const subtotal = roundMoney(labor + parts + feeTotal);
+  const taxableSubtotal = roundMoney(
+    billableLines.filter(line => isLineTaxable(line, policy)).reduce((sum, line) => sum + line.total, 0)
+    + (policy.feesTaxable ? normalizedFees.reduce((sum, fee) => sum + fee.amount, 0) : 0),
+  );
   const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-  const tax = roundMoney(subtotal * safeTaxRate / 100);
+  const tax = roundMoney(taxableSubtotal * safeTaxRate / 100);
   return {
     lines: normalizedLines,
     fees: normalizedFees,
@@ -132,16 +174,28 @@ export function calculateEstimate(lines = [], taxRate = 0, fees = []) {
     lineFees,
     feeTotal,
     subtotal,
+    taxableSubtotal,
+    taxPolicy: policy,
     taxRate: safeTaxRate,
     tax,
     total: roundMoney(subtotal + tax),
   };
 }
 
+/** Applies a percentage discount to subtotal and taxable subtotal in proportion. */
+export function discountedTaxTotals(totals, discountPercent = 0, taxRate = totals.taxRate) {
+  const percent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+  const discountAmount = roundMoney(totals.subtotal * percent / 100);
+  const subtotal = roundMoney(totals.subtotal - discountAmount);
+  const taxableSubtotal = roundMoney((totals.taxableSubtotal ?? totals.subtotal) * (100 - percent) / 100);
+  const tax = roundMoney(taxableSubtotal * Math.max(0, Number(taxRate) || 0) / 100);
+  return { discountPercent: percent, discountAmount, subtotal, taxableSubtotal, tax, total: roundMoney(subtotal + tax) };
+}
+
 function calculateShopTotals(lines, estimate, { repriceSupplies = false } = {}) {
   const taxRate = Math.max(0, Number(estimate.taxRate) || 0);
   let fees = estimate.fees || [];
-  let totals = calculateEstimate(lines, taxRate, fees);
+  let totals = calculateEstimate(lines, taxRate, fees, estimate.taxPolicy);
   const hasSuppliesFee = fees.some(fee => /shop supplies/i.test(fee.description));
 
   if (repriceSupplies && hasSuppliesFee) {
@@ -153,22 +207,15 @@ function calculateShopTotals(lines, estimate, { repriceSupplies = false } = {}) 
       : 0;
     fees = fees.map(fee => /shop supplies/i.test(fee.description) ? { ...fee, amount: supplies } : fee)
       .filter(fee => !/shop supplies/i.test(fee.description) || fee.amount > 0);
-    totals = calculateEstimate(lines, taxRate, fees);
+    totals = calculateEstimate(lines, taxRate, fees, estimate.taxPolicy);
   }
 
-  const discountPercent = Math.min(100, Math.max(0, Number(estimate.discountPercent) || 0));
-  const discountAmount = roundMoney(totals.subtotal * discountPercent / 100);
-  const subtotal = roundMoney(totals.subtotal - discountAmount);
-  const tax = roundMoney(subtotal * taxRate / 100);
+  const discounted = discountedTaxTotals(totals, estimate.discountPercent, taxRate);
   return {
     ...totals,
     grossSubtotal: totals.subtotal,
-    discountPercent,
+    ...discounted,
     discountReason: String(estimate.discountReason || ''),
-    discountAmount,
-    subtotal,
-    tax,
-    total: roundMoney(subtotal + tax),
   };
 }
 
@@ -214,6 +261,7 @@ export function declinedEstimate(estimate = {}) {
       laborHours: 0,
       parts: 0,
       subtotal: 0,
+      taxableSubtotal: 0,
       tax: 0,
       total: 0,
       approvedLineCount: 0,
@@ -242,20 +290,25 @@ export function invoiceRecordForOrder(order, issuedAt = new Date()) {
     discountPercent: estimate.discountPercent,
     discountAmount: estimate.discountAmount,
     discountReason: estimate.discountReason,
-    fees: estimate.fees,
+    fees: (estimate.fees || []).map(fee => ({ ...fee, taxable: normalizeTaxPolicy(estimate.taxPolicy).feesTaxable })),
+    taxableSubtotal: estimate.taxableSubtotal,
+    taxPolicy: estimate.taxPolicy,
     tax: estimate.tax,
     taxRate: Math.max(0, Number(estimate.taxRate) || 0),
     status: 'sent',
     date: issuedAt.toISOString().slice(0, 10),
     due: due.toISOString().slice(0, 10),
-    lines: billableEstimateLines(estimate.lines).map((line, index) => normalizeEstimateLine(line, index)),
+    lines: billableEstimateLines(estimate.lines).map((line, index) => {
+      const normalized = normalizeEstimateLine(line, index);
+      return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
+    }),
     sourceEstimateApproval: order.estimateApproval || null,
     createdAt: issuedAt.toISOString(),
   };
 }
 
 export function workOrderWithEditedEstimate(order = {}, estimate = {}, editedAt = new Date().toISOString()) {
-  const recalculated = calculateEstimate(estimate.lines || [], estimate.taxRate, estimate.fees || []);
+  const recalculated = calculateEstimate(estimate.lines || [], estimate.taxRate, estimate.fees || [], estimate.taxPolicy);
   const hadApproval = Boolean(
     order.linesLockedAt
     || order.estimateApproval?.status === 'approved'
@@ -319,15 +372,20 @@ export function appendEstimateLinesToOrder(order = {}, newLines = [], { editedAt
 
 export function invoiceWithEditedWorkOrder(invoice = {}, order = {}, editedAt = new Date().toISOString()) {
   const source = order.estimate || {};
-  const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || []);
+  const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || [], source.taxPolicy);
   return {
     ...invoice,
     amount: estimate.total,
     subtotal: estimate.subtotal,
+    taxableSubtotal: estimate.taxableSubtotal,
+    taxPolicy: estimate.taxPolicy,
     tax: estimate.tax,
     taxRate: estimate.taxRate,
-    fees: estimate.fees,
-    lines: billableEstimateLines(estimate.lines).map((line, index) => normalizeEstimateLine(line, index)),
+    fees: estimate.fees.map(fee => ({ ...fee, taxable: normalizeTaxPolicy(estimate.taxPolicy).feesTaxable })),
+    lines: billableEstimateLines(estimate.lines).map((line, index) => {
+      const normalized = normalizeEstimateLine(line, index);
+      return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
+    }),
     signature: null,
     sourceEstimateApproval: null,
     revisedAt: editedAt,

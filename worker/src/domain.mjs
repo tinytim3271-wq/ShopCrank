@@ -200,7 +200,13 @@ export function validShopId(value) {
 export function invoiceTaxBreakdown(invoice, fallbackRate) {
   if (!invoice) return { subtotal: 0, tax: 0, taxRate: fallbackRate };
   if (typeof invoice.tax === 'number' && typeof invoice.subtotal === 'number') {
-    return { subtotal: invoice.subtotal, tax: invoice.tax, taxRate: invoice.taxRate ?? fallbackRate };
+    return {
+      subtotal: invoice.subtotal,
+      // Taxable sales exclude untaxed labor/fees (ADR-003); older invoices taxed the whole subtotal.
+      taxableSubtotal: typeof invoice.taxableSubtotal === 'number' ? invoice.taxableSubtotal : invoice.subtotal,
+      tax: invoice.tax,
+      taxRate: invoice.taxRate ?? fallbackRate,
+    };
   }
   const subtotal = Math.round((Number(invoice.amount || 0) / (1 + fallbackRate / 100)) * 100) / 100;
   return { subtotal, tax: Math.round((Number(invoice.amount || 0) - subtotal) * 100) / 100, taxRate: fallbackRate };
@@ -228,7 +234,7 @@ export function buildTaxReport(payments, invoices, fallbackRate, from, to) {
       const breakdown = invoiceTaxBreakdown(invoice, fallbackRate);
       const ratio = invoice ? Number(payment.amount) / (Number(invoice.amount) || Number(payment.amount)) : 0;
       const gross = Number(payment.amount);
-      const taxable = Math.round(breakdown.subtotal * ratio * 100) / 100;
+      const taxable = Math.round((breakdown.taxableSubtotal ?? breakdown.subtotal) * ratio * 100) / 100;
       const tax = Math.round(breakdown.tax * ratio * 100) / 100;
       const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
       return {

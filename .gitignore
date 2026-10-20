@@ -26,3 +26,7 @@ secon.code-workspace
 
 .firecrawl/
 
+# Local-only Worker config written by scripts/dev-worker-local.mjs
+wrangler.local.json
+# Browser smoke test screenshots
+smoke-artifacts/

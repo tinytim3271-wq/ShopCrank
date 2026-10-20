@@ -1,6 +1,7 @@
 import {
   afterMidnightFeeLine,
   calculateEstimate,
+  discountedTaxTotals,
   normalizeEstimateLine,
   SHOP_SUPPLIES_RULES,
 } from './estimate-workflow.js';
@@ -14,6 +15,7 @@ export function calculateShopEstimate(lines = [], {
   discountPercent = 0,
   discountReason = '',
   shopSupplies,
+  taxPolicy,
 } = {}) {
   const normalizedLines = lines.map((line, index) => normalizeEstimateLine(
     line.type === 'labor' && line.laborRate == null ? { ...line, laborRate } : line,
@@ -33,22 +35,15 @@ export function calculateShopEstimate(lines = [], {
     normalizedLines,
     0,
     supplies ? [{ description: 'Shop supplies', amount: supplies }] : [],
+    taxPolicy,
   );
-  const safeDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
-  const discountAmount = money(base.subtotal * safeDiscountPercent / 100);
-  const subtotal = money(base.subtotal - discountAmount);
   const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-  const tax = money(subtotal * safeTaxRate / 100);
   return {
     ...base,
     grossSubtotal: base.subtotal,
-    discountPercent: safeDiscountPercent,
+    ...discountedTaxTotals(base, discountPercent, safeTaxRate),
     discountReason: String(discountReason || ''),
-    discountAmount,
-    subtotal,
     taxRate: safeTaxRate,
-    tax,
-    total: money(subtotal + tax),
   };
 }
 
@@ -210,6 +205,7 @@ export function workOrderDraftFromEstimate(estimate = REFERENCE_ESTIMATE) {
       discountPercent: estimate.discountPercent,
       discountReason: estimate.discountReason,
       shopSupplies: estimate.fees?.find(fee => fee.description === 'Shop supplies')?.amount,
+      taxPolicy: estimate.taxPolicy,
     }),
     exclusions: estimate.exclusions || [],
     insurance,

@@ -231,13 +231,22 @@ test('magic-link callback refuses to mint a session for a disabled user', async 
     },
   };
   const response = await worker.fetch(
-    new Request(`https://app.example.test/api/auth/callback?token=${token}`),
+    confirmSignIn(`${token}`),
     env,
   );
   assert.equal(response.status, 403);
   assert.match((await response.json()).message, /disabled/i);
   assert.equal(insertedSession, false);
 });
+
+// The emailed link opens a confirm page; its button POSTs the token from our origin.
+function confirmSignIn(token) {
+  return new Request('https://app.example.test/api/auth/callback', {
+    method: 'POST',
+    headers: { Origin: 'https://app.example.test', 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `token=${token}`,
+  });
+}
 
 function callbackDb({ sessionError = null } = {}) {
   let batchCalls = 0;
@@ -294,7 +303,7 @@ test('magic-link callback creates a session when optional founding tables are ab
   t.mock.method(console, 'warn', () => {});
   const DB = callbackDb();
   const response = await worker.fetch(
-    new Request(`https://app.example.test/api/auth/callback?token=${'c'.repeat(32)}`),
+    confirmSignIn(`${'c'.repeat(32)}`),
     { DB },
   );
 
@@ -311,7 +320,7 @@ test('auth callback reports schema failures safely and does not issue a session 
     sessionError: new Error('D1_ERROR: no such table: sessions: SQLITE_ERROR'),
   });
   const response = await worker.fetch(
-    new Request(`https://app.example.test/api/auth/callback?token=${'d'.repeat(32)}`),
+    confirmSignIn(`${'d'.repeat(32)}`),
     { DB },
   );
   const payload = await response.json();
@@ -722,7 +731,7 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
     },
   };
   const response = await worker.fetch(
-    new Request(`https://app.example.test/api/auth/callback?token=${token}`),
+    confirmSignIn(`${token}`),
     env,
   );
   assert.equal(response.status, 302);
@@ -731,6 +740,8 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
   assert.match(batches[0][0].sql, /INSERT INTO shops/);
   assert.equal(batches[0][0].args[1], 'Trial Shop');
   assert.equal(batches[0][2].args[3], 'Trial Owner');
+  assert.match(batches[0][3].sql, /INSERT INTO entities/);
+  assert.equal(JSON.parse(batches[0][3].args[1]).shopName, 'Trial Shop');
   assert.match(batches[1][0].sql, /INSERT INTO accounts/);
   assert.match(batches[1][1].sql, /INSERT INTO subscriptions/);
   assert.equal(batches[1][1].args[1], 'shop_pro');

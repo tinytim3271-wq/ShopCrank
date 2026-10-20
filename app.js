@@ -549,6 +549,33 @@
     }
   });
 
+  // src/shared/form-fields.js
+  function canonicalFormValues(input) {
+    const values = { ...input };
+    for (const [alias, canonical] of Object.entries(FORM_FIELD_ALIASES)) {
+      if (Object.prototype.hasOwnProperty.call(values, alias)) {
+        if (!Object.prototype.hasOwnProperty.call(values, canonical)) values[canonical] = values[alias];
+        delete values[alias];
+      }
+    }
+    return values;
+  }
+  function readFormValues(form) {
+    return canonicalFormValues(Object.fromEntries(new FormData(form)));
+  }
+  var FORM_FIELD_ALIASES;
+  var init_form_fields = __esm({
+    "src/shared/form-fields.js"() {
+      FORM_FIELD_ALIASES = Object.freeze({
+        displayName: "name",
+        jobTitle: "title",
+        accessRole: "role",
+        paymentMethod: "method",
+        messageBody: "body"
+      });
+    }
+  });
+
   // src/modules/chat/utils.js
   function cleanEmail(value2) {
     return String(value2 || "").trim().toLowerCase();
@@ -2476,6 +2503,28 @@
   });
 
   // src/modules/estimate-workflow.js
+  function normalizeTaxPolicy(policy) {
+    const fallback = typeof defaultTaxPolicy === "function" ? defaultTaxPolicy() : defaultTaxPolicy;
+    const source = policy && typeof policy === "object" ? policy : fallback || DEFAULT_TAX_POLICY;
+    return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
+  }
+  function setDefaultTaxPolicy(policy) {
+    defaultTaxPolicy = policy || DEFAULT_TAX_POLICY;
+  }
+  function shopTaxPolicy(taxSettings = {}) {
+    const state2 = String(taxSettings?.state || "").trim().toUpperCase();
+    return {
+      laborTaxable: typeof taxSettings?.laborTaxable === "boolean" ? taxSettings.laborTaxable : state2 !== "TX",
+      feesTaxable: typeof taxSettings?.feesTaxable === "boolean" ? taxSettings.feesTaxable : true
+    };
+  }
+  function isLineTaxable(line = {}, policy) {
+    if (typeof line.taxable === "boolean") return line.taxable;
+    const resolved = normalizeTaxPolicy(policy);
+    if (line.type === "part") return true;
+    if (line.type === "fee") return resolved.feesTaxable;
+    return resolved.laborTaxable;
+  }
   function afterMidnightFeeLine(id = "fee-after-midnight") {
     return { ...AFTER_MIDNIGHT_FEE_PRESET, id };
   }
@@ -2531,7 +2580,8 @@
       }));
     });
   }
-  function calculateEstimate(lines = [], taxRate = 0, fees = []) {
+  function calculateEstimate(lines = [], taxRate = 0, fees = [], taxPolicy) {
+    const policy = normalizeTaxPolicy(taxPolicy);
     const normalizedLines = lines.map((line, index) => normalizeEstimateLine(line, index));
     const billableLines = billableEstimateLines(normalizedLines);
     const normalizedFees = fees.map((fee) => ({
@@ -2544,8 +2594,11 @@
     const lineFees = roundMoney3(billableLines.filter((line) => line.type === "fee").reduce((sum, line) => sum + line.total, 0));
     const feeTotal = roundMoney3(lineFees + normalizedFees.reduce((sum, fee) => sum + fee.amount, 0));
     const subtotal = roundMoney3(labor + parts + feeTotal);
+    const taxableSubtotal = roundMoney3(
+      billableLines.filter((line) => isLineTaxable(line, policy)).reduce((sum, line) => sum + line.total, 0) + (policy.feesTaxable ? normalizedFees.reduce((sum, fee) => sum + fee.amount, 0) : 0)
+    );
     const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-    const tax = roundMoney3(subtotal * safeTaxRate / 100);
+    const tax = roundMoney3(taxableSubtotal * safeTaxRate / 100);
     return {
       lines: normalizedLines,
       fees: normalizedFees,
@@ -2555,15 +2608,25 @@
       lineFees,
       feeTotal,
       subtotal,
+      taxableSubtotal,
+      taxPolicy: policy,
       taxRate: safeTaxRate,
       tax,
       total: roundMoney3(subtotal + tax)
     };
   }
+  function discountedTaxTotals(totals, discountPercent = 0, taxRate = totals.taxRate) {
+    const percent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    const discountAmount = roundMoney3(totals.subtotal * percent / 100);
+    const subtotal = roundMoney3(totals.subtotal - discountAmount);
+    const taxableSubtotal = roundMoney3((totals.taxableSubtotal ?? totals.subtotal) * (100 - percent) / 100);
+    const tax = roundMoney3(taxableSubtotal * Math.max(0, Number(taxRate) || 0) / 100);
+    return { discountPercent: percent, discountAmount, subtotal, taxableSubtotal, tax, total: roundMoney3(subtotal + tax) };
+  }
   function calculateShopTotals(lines, estimate, { repriceSupplies = false } = {}) {
     const taxRate = Math.max(0, Number(estimate.taxRate) || 0);
     let fees = estimate.fees || [];
-    let totals = calculateEstimate(lines, taxRate, fees);
+    let totals = calculateEstimate(lines, taxRate, fees, estimate.taxPolicy);
     const hasSuppliesFee = fees.some((fee) => /shop supplies/i.test(fee.description));
     if (repriceSupplies && hasSuppliesFee) {
       const supplies = totals.labor > 0 ? roundMoney3(Math.min(
@@ -2571,21 +2634,14 @@
         totals.labor * SHOP_SUPPLIES_RULES.shopSuppliesRate / 100
       )) : 0;
       fees = fees.map((fee) => /shop supplies/i.test(fee.description) ? { ...fee, amount: supplies } : fee).filter((fee) => !/shop supplies/i.test(fee.description) || fee.amount > 0);
-      totals = calculateEstimate(lines, taxRate, fees);
+      totals = calculateEstimate(lines, taxRate, fees, estimate.taxPolicy);
     }
-    const discountPercent = Math.min(100, Math.max(0, Number(estimate.discountPercent) || 0));
-    const discountAmount = roundMoney3(totals.subtotal * discountPercent / 100);
-    const subtotal = roundMoney3(totals.subtotal - discountAmount);
-    const tax = roundMoney3(subtotal * taxRate / 100);
+    const discounted = discountedTaxTotals(totals, estimate.discountPercent, taxRate);
     return {
       ...totals,
       grossSubtotal: totals.subtotal,
-      discountPercent,
-      discountReason: String(estimate.discountReason || ""),
-      discountAmount,
-      subtotal,
-      tax,
-      total: roundMoney3(subtotal + tax)
+      ...discounted,
+      discountReason: String(estimate.discountReason || "")
     };
   }
   function approvedEstimate(estimate = {}, decisions = {}) {
@@ -2625,19 +2681,24 @@
       discountPercent: estimate.discountPercent,
       discountAmount: estimate.discountAmount,
       discountReason: estimate.discountReason,
-      fees: estimate.fees,
+      fees: (estimate.fees || []).map((fee) => ({ ...fee, taxable: normalizeTaxPolicy(estimate.taxPolicy).feesTaxable })),
+      taxableSubtotal: estimate.taxableSubtotal,
+      taxPolicy: estimate.taxPolicy,
       tax: estimate.tax,
       taxRate: Math.max(0, Number(estimate.taxRate) || 0),
       status: "sent",
       date: issuedAt.toISOString().slice(0, 10),
       due: due.toISOString().slice(0, 10),
-      lines: billableEstimateLines(estimate.lines).map((line, index) => normalizeEstimateLine(line, index)),
+      lines: billableEstimateLines(estimate.lines).map((line, index) => {
+        const normalized = normalizeEstimateLine(line, index);
+        return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
+      }),
       sourceEstimateApproval: order.estimateApproval || null,
       createdAt: issuedAt.toISOString()
     };
   }
   function workOrderWithEditedEstimate(order = {}, estimate = {}, editedAt = (/* @__PURE__ */ new Date()).toISOString()) {
-    const recalculated = calculateEstimate(estimate.lines || [], estimate.taxRate, estimate.fees || []);
+    const recalculated = calculateEstimate(estimate.lines || [], estimate.taxRate, estimate.fees || [], estimate.taxPolicy);
     const hadApproval = Boolean(
       order.linesLockedAt || order.estimateApproval?.status === "approved" || ["approved", "in_progress", "waiting_parts", "completed", "invoiced"].includes(order.status)
     );
@@ -2689,24 +2750,31 @@
   }
   function invoiceWithEditedWorkOrder(invoice = {}, order = {}, editedAt = (/* @__PURE__ */ new Date()).toISOString()) {
     const source = order.estimate || {};
-    const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || []);
+    const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || [], source.taxPolicy);
     return {
       ...invoice,
       amount: estimate.total,
       subtotal: estimate.subtotal,
+      taxableSubtotal: estimate.taxableSubtotal,
+      taxPolicy: estimate.taxPolicy,
       tax: estimate.tax,
       taxRate: estimate.taxRate,
       fees: estimate.fees,
-      lines: billableEstimateLines(estimate.lines).map((line, index) => normalizeEstimateLine(line, index)),
+      lines: billableEstimateLines(estimate.lines).map((line, index) => {
+        const normalized = normalizeEstimateLine(line, index);
+        return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
+      }),
       signature: null,
       sourceEstimateApproval: null,
       revisedAt: editedAt
     };
   }
-  var roundMoney3, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET, CLOSED_ORDER_STATUSES;
+  var roundMoney3, DEFAULT_TAX_POLICY, defaultTaxPolicy, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET, CLOSED_ORDER_STATUSES;
   var init_estimate_workflow = __esm({
     "src/modules/estimate-workflow.js"() {
       roundMoney3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      DEFAULT_TAX_POLICY = Object.freeze({ laborTaxable: true, feesTaxable: true });
+      defaultTaxPolicy = DEFAULT_TAX_POLICY;
       SHOP_SUPPLIES_RULES = Object.freeze({
         shopSuppliesRate: 3,
         shopSuppliesCap: 20
@@ -2729,7 +2797,8 @@
     laborRate = 0,
     discountPercent = 0,
     discountReason = "",
-    shopSupplies
+    shopSupplies,
+    taxPolicy
   } = {}) {
     const normalizedLines = lines.map((line, index) => normalizeEstimateLine(
       line.type === "labor" && line.laborRate == null ? { ...line, laborRate } : line,
@@ -2744,23 +2813,16 @@
     const base = calculateEstimate(
       normalizedLines,
       0,
-      supplies ? [{ description: "Shop supplies", amount: supplies }] : []
+      supplies ? [{ description: "Shop supplies", amount: supplies }] : [],
+      taxPolicy
     );
-    const safeDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
-    const discountAmount = money(base.subtotal * safeDiscountPercent / 100);
-    const subtotal = money(base.subtotal - discountAmount);
     const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-    const tax = money(subtotal * safeTaxRate / 100);
     return {
       ...base,
       grossSubtotal: base.subtotal,
-      discountPercent: safeDiscountPercent,
+      ...discountedTaxTotals(base, discountPercent, safeTaxRate),
       discountReason: String(discountReason || ""),
-      discountAmount,
-      subtotal,
-      taxRate: safeTaxRate,
-      tax,
-      total: money(subtotal + tax)
+      taxRate: safeTaxRate
     };
   }
   function workOrderDraftFromEstimate(estimate = REFERENCE_ESTIMATE) {
@@ -2789,7 +2851,8 @@
         laborRate: estimate.laborRate,
         discountPercent: estimate.discountPercent,
         discountReason: estimate.discountReason,
-        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount
+        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount,
+        taxPolicy: estimate.taxPolicy
       }),
       exclusions: estimate.exclusions || [],
       insurance,
@@ -3285,7 +3348,7 @@
   }
   function missingCustomerFields(draft = {}) {
     const customer = draft.customer || {};
-    return ["firstName", "lastName", "phone", "email"].filter((field2) => !String(customer[field2] || "").trim());
+    return ["firstName", "lastName", "phone"].filter((field2) => !String(customer[field2] || "").trim());
   }
   function missingVehicleFields(draft = {}) {
     const vehicle = draft.vehicle || {};
@@ -3493,6 +3556,13 @@
       total: priced.total,
       estimate: {
         lines: priced.lines,
+        fees: priced.fees,
+        taxRate: priced.taxRate,
+        taxPolicy: priced.taxPolicy,
+        subtotal: priced.subtotal,
+        taxableSubtotal: priced.taxableSubtotal,
+        tax: priced.tax,
+        total: priced.total,
         disclaimer: INTAKE_DISCLAIMER,
         approvalStatus: approval
       },
@@ -3502,6 +3572,7 @@
         customer: draft.customer,
         vehicle: draft.vehicle,
         photos: draft.photos || [],
+        photosWaived: Boolean(draft.photosWaived && missingRequiredPhotos(draft).length),
         damage: draft.damage || [],
         concern: draft.concern,
         diagnosis: draft.diagnosis,
@@ -3522,9 +3593,11 @@
   }
   function canConvertIntake(draft = {}) {
     const problems = [];
-    if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
+    if (missingCustomerFields(draft).length) problems.push("Customer name and phone are required.");
     if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
+    if (!draft.photosWaived && missingRequiredPhotos(draft).length) {
+      problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
+    }
     if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
     return { ok: problems.length === 0, problems };
   }
@@ -3550,7 +3623,7 @@
   function customerStep(draft) {
     const customer = draft.customer;
     const contact = customer.contact || {};
-    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { required: true, type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
+    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
 <fieldset class="intake-choices"><legend>Communication preferences</legend>${["phone", "text", "email"].map((key) => `<label><input type="checkbox" name="contact-${key}" ${contact[key] ? "checked" : ""}/> ${key[0].toUpperCase()}${key.slice(1)}</label>`).join("")}</fieldset>`;
   }
   function vehicleStep(draft) {
@@ -3591,15 +3664,23 @@
 <div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
 ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || "")}</span></section><ul class="intake-causes">${causes}</ul>` : ""}`;
   }
+  function estimateSummaryHtml(priced) {
+    const supplies = priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0;
+    return `<span>Labor ${dollars(priced.labor)} \xB7 Parts ${dollars(priced.parts)} \xB7 Supplies ${dollars(supplies)} \xB7 Tax ${dollars(priced.tax)}</span><strong>${dollars(priced.total)}</strong>`;
+  }
   function estimateStep(draft, profile) {
     const priced = priceIntakeEstimate(draft, profile);
-    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
+    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => {
+      const part = line.type === "part";
+      return `<tr data-line="${index}"><td><select name="line-type" aria-label="Line type"><option value="labor" ${part ? "" : "selected"}>Labor</option><option value="part" ${part ? "selected" : ""}>Part</option></select></td><td><input name="line-description" value="${escapeAttr3(line.description || "")}" aria-label="Description"/></td><td><input name="line-hours" type="number" min="0" step="${part ? "1" : "0.1"}" value="${Number(line.quantity || 0)}" aria-label="${part ? "Quantity" : "Hours"}"/></td><td><input name="line-price" type="number" min="0" step="0.01" value="${Number(line.unitPrice) > 0 ? Number(line.unitPrice) : ""}" placeholder="${part ? "Price" : "Shop rate"}" aria-label="${part ? "Unit price" : "Labor rate"}"/></td><td>${escapeHtml3(line.source || "Shop")}</td><td><button type="button" class="icon-button" data-remove-line="${index}" aria-label="Remove line">\xD7</button></td></tr>`;
+    }).join("");
     return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
 <p class="form-help">Lookup uses the ShopCrank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
 <div id="labor-results"></div>
-<table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
+<table><thead><tr><th>Type</th><th>Description</th><th>Hours / qty</th><th>Rate / price</th><th>Source</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-add-labor">Add labor line</button><button class="secondary" type="button" id="intake-add-part">Add part line</button></div>
 <label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
-<div class="estimate-sign-summary"><span>Labor ${escapeHtml3(String(priced.labor))} \xB7 Parts ${escapeHtml3(String(priced.parts))} \xB7 Supplies ${escapeHtml3(String(priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0))} \xB7 Tax ${escapeHtml3(String(priced.tax))}</span><strong>${escapeHtml3(String(priced.total))}</strong></div>
+<div class="estimate-sign-summary" id="intake-estimate-summary" aria-live="polite">${estimateSummaryHtml(priced)}</div>
 <pre class="intake-disclaimer">${escapeHtml3(INTAKE_DISCLAIMER)}</pre>
 <label>Customer approval<select name="approval">${["pending", "viewed", "approved", "denied"].map((status) => `<option value="${status}" ${draft.estimate.approval === status ? "selected" : ""}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}</select></label>
 <p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
@@ -3613,7 +3694,8 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
     }).join("")}`;
     return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
-${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ""}
+${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
   }
   function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
@@ -3669,16 +3751,22 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     if (step === "estimate") {
       const descriptions = [...form.querySelectorAll('[name="line-description"]')];
       const hourInputs = [...form.querySelectorAll('[name="line-hours"]')];
+      const typeInputs = [...form.querySelectorAll('[name="line-type"]')];
+      const priceInputs = [...form.querySelectorAll('[name="line-price"]')];
+      const previous = draft.estimate?.lines || [];
       next.estimate.lines = descriptions.map((input, index) => ({
-        type: "labor",
+        ...previous[index] || {},
+        type: typeInputs[index]?.value === "part" ? "part" : "labor",
         description: input.value.trim(),
         quantity: Math.max(0, Number(hourInputs[index]?.value) || 0),
-        source: "Shop"
+        unitPrice: Math.max(0, Number(priceInputs[index]?.value) || 0),
+        source: previous[index]?.source || "Shop"
       })).filter((line) => line.description);
       next.estimate.diagnosticCharge = Math.max(0, Number(data.diagnosticCharge) || 0);
       next.estimate.approval = data.approval || "pending";
     }
     if (step === "review") {
+      next.photosWaived = Boolean(form.querySelector('[name="photosWaived"]')?.checked);
       next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
         const employeeId = data[`assign-${role}`];
         if (!employeeId) return [];
@@ -3740,12 +3828,38 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         persist("step");
         paint();
       });
+      if (INTAKE_STEPS[current.step]?.id === "estimate") {
+        const refreshTotal = () => {
+          const summary = host.querySelector("#intake-estimate-summary");
+          if (summary && form) summary.innerHTML = estimateSummaryHtml(priceIntakeEstimate(readForm(current, form), { laborRate, taxRate }));
+        };
+        form?.addEventListener("input", refreshTotal);
+        form?.addEventListener("change", refreshTotal);
+        const addLine = (type) => {
+          if (form) current = readForm(current, form);
+          current.estimate.lines = [...current.estimate.lines || [], { type, description: type === "part" ? "Part" : "Labor", quantity: 1, unitPrice: 0, source: "Shop" }];
+          persist("line");
+          paint();
+          host.querySelectorAll('[name="line-description"]').item(current.estimate.lines.length - 1)?.select();
+        };
+        host.querySelector("#intake-add-labor")?.addEventListener("click", () => addLine("labor"));
+        host.querySelector("#intake-add-part")?.addEventListener("click", () => addLine("part"));
+        host.querySelectorAll("[data-remove-line]").forEach((button) => button.addEventListener("click", () => {
+          if (form) current = readForm(current, form);
+          current.estimate.lines = current.estimate.lines.filter((_, index) => index !== Number(button.dataset.removeLine));
+          persist("line");
+          paint();
+        }));
+      }
       host.querySelector("#intake-convert")?.addEventListener("click", async () => {
         if (form) current = readForm(current, form);
         const check2 = canConvertIntake(current);
         if (!check2.ok) {
           persist("blocked");
           paint();
+          const problems = host.querySelector("#intake-problems");
+          problems?.scrollIntoView({ block: "center", behavior: "smooth" });
+          problems?.focus();
           return;
         }
         await onConvert?.(current);
@@ -3844,7 +3958,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       current: () => current
     };
   }
-  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR;
+  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR, dollars;
   var init_intake_wizard = __esm({
     "src/modules/intake-wizard.js"() {
       init_estimate_templates();
@@ -3883,6 +3997,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         { name: "Alternator", hours: 1.2, notes: "Replacement only. Programming or a stretch belt may add time." },
         { name: "Starter", hours: 1.2, notes: "Starting point. Confirm access for this vehicle." }
       ];
+      dollars = (value2) => `$${(Number(value2) || 0).toFixed(2)}`;
     }
   });
 
@@ -5660,7 +5775,7 @@ button{margin-top:12px;padding:8px 14px}
     const device = portable ? "drive" : "computer";
     const shortDevice = portable ? "drive" : "PC";
     const storage = portable ? "ShopCrank Demo Data folder beside the executable on this drive" : "ShopCrank Offline folder on this computer";
-    const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="name" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
+    const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="displayName" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
     const confirmField = hasAccount ? "" : `<label for="offline-confirm">Confirm password</label><input id="offline-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8"/>`;
     return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "ShopCrank Demo" : "ShopCrank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. ShopCrank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
   }
@@ -7468,7 +7583,7 @@ button{margin-top:12px;padding:8px 14px}
       const sender = chatUser(message.senderEmail), mine = cleanEmail(message.senderEmail) === cleanEmail(currentUser().email);
       return `<article class="chat-message ${mine ? "mine" : ""}"><div><strong>${mine ? "You" : escapeHtml(sender?.name || message.senderEmail)}</strong><time>${chatTime(message.createdAt)}</time></div><p>${escapeHtml(message.body)}</p></article>`;
     }).join("");
-    return shell(`${heading("Internal communications", "Team chat", "Private employee messages and owner-managed group conversations.", false)}<section class="chat-workspace"><aside class="chat-threads"><div class="chat-actions"><button class="secondary" id="new-direct-chat">${icon("message-square-plus", 14)} New message</button>${currentUser().role === "admin" ? `<button class="icon-button" id="new-group-chat" title="Create group chat">${icon("users-round", 15)}</button>` : ""}<button class="icon-button" id="refresh-chat" title="Refresh messages">${icon("refresh-cw", 15)}</button></div><div class="chat-thread-list">${list || `<div class="chat-empty-small">No conversations yet.</div>`}</div></aside><div class="chat-room">${active ? `<header class="chat-room-head"><div><span>${active.kind === "group" ? "Group conversation" : "Direct message"}</span><h2>${escapeHtml(chatTitle(active))}</h2><small>${active.memberEmails.map((email) => chatUser(email)?.name || email).map(escapeHtml).join(" \xB7 ")}</small></div>${active.kind === "group" && currentUser().role === "admin" ? `<button class="secondary" id="manage-chat-group">${icon("user-cog", 14)} Members</button>` : ""}</header><div class="chat-messages">${messageList || `<div class="chat-empty">${icon("messages-square", 30)}<h3>No messages yet</h3><p>Send the first message to start this conversation.</p></div>`}</div><form class="chat-composer" id="chat-message-form"><textarea name="body" maxlength="4000" required placeholder="Message ${escapeHtml(chatTitle(active))}"></textarea><button class="primary" type="submit" title="Send message">${icon("send", 16)} Send</button></form>` : `<div class="chat-empty">${icon("message-circle", 34)}<h2>Start a team conversation</h2><p>Message an employee directly or create an owner-managed group.</p><button class="primary" id="empty-new-direct">${icon("message-square-plus", 14)} New message</button></div>`}</div></section>`);
+    return shell(`${heading("Internal communications", "Team chat", "Private employee messages and owner-managed group conversations.", false)}<section class="chat-workspace"><aside class="chat-threads"><div class="chat-actions"><button class="secondary" id="new-direct-chat">${icon("message-square-plus", 14)} New message</button>${currentUser().role === "admin" ? `<button class="icon-button" id="new-group-chat" title="Create group chat">${icon("users-round", 15)}</button>` : ""}<button class="icon-button" id="refresh-chat" title="Refresh messages">${icon("refresh-cw", 15)}</button></div><div class="chat-thread-list">${list || `<div class="chat-empty-small">No conversations yet.</div>`}</div></aside><div class="chat-room">${active ? `<header class="chat-room-head"><div><span>${active.kind === "group" ? "Group conversation" : "Direct message"}</span><h2>${escapeHtml(chatTitle(active))}</h2><small>${active.memberEmails.map((email) => chatUser(email)?.name || email).map(escapeHtml).join(" \xB7 ")}</small></div>${active.kind === "group" && currentUser().role === "admin" ? `<button class="secondary" id="manage-chat-group">${icon("user-cog", 14)} Members</button>` : ""}</header><div class="chat-messages">${messageList || `<div class="chat-empty">${icon("messages-square", 30)}<h3>No messages yet</h3><p>Send the first message to start this conversation.</p></div>`}</div><form class="chat-composer" id="chat-message-form"><textarea name="messageBody" maxlength="4000" required placeholder="Message ${escapeHtml(chatTitle(active))}"></textarea><button class="primary" type="submit" title="Send message">${icon("send", 16)} Send</button></form>` : `<div class="chat-empty">${icon("message-circle", 34)}<h2>Start a team conversation</h2><p>Message an employee directly or create an owner-managed group.</p><button class="primary" id="empty-new-direct">${icon("message-square-plus", 14)} New message</button></div>`}</div></section>`);
   }
   function openDirectChat() {
     const people = state.users.filter((user) => user.active && user.id !== currentUser().id);
@@ -7497,7 +7612,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function openGroupChat(conversation = null) {
     const selected = new Set(conversation?.memberEmails || [cleanEmail(currentUser().email)]), people = state.users.filter((user) => user.active);
-    showModal(`<form class="modal" id="group-chat-form"><div class="modal-head"><h2>${conversation ? "Manage group" : "New group chat"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Group name<input name="name" maxlength="80" required value="${escapeHtml(conversation?.name || "")}" placeholder="e.g. Service team"/></label><fieldset class="chat-member-picker"><legend>Members</legend>${people.map((user) => `<label><input type="checkbox" name="members" value="${escapeHtml(user.email)}" ${selected.has(cleanEmail(user.email)) ? "checked" : ""} ${user.id === currentUser().id ? "disabled" : ""}/><span class="avatar">${initials(user.name)}</span><span><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.title || roleLabel[user.role])}</small></span></label>`).join("")}</fieldset></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("users", 14)} ${conversation ? "Save members" : "Create group"}</button></div></form>`);
+    showModal(`<form class="modal" id="group-chat-form"><div class="modal-head"><h2>${conversation ? "Manage group" : "New group chat"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Group name<input name="displayName" maxlength="80" required value="${escapeHtml(conversation?.name || "")}" placeholder="e.g. Service team"/></label><fieldset class="chat-member-picker"><legend>Members</legend>${people.map((user) => `<label><input type="checkbox" name="members" value="${escapeHtml(user.email)}" ${selected.has(cleanEmail(user.email)) ? "checked" : ""} ${user.id === currentUser().id ? "disabled" : ""}/><span class="avatar">${initials(user.name)}</span><span><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.title || roleLabel[user.role])}</small></span></label>`).join("")}</fieldset></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("users", 14)} ${conversation ? "Save members" : "Create group"}</button></div></form>`);
     document.querySelector("#group-chat-form").onsubmit = async (event) => {
       event.preventDefault();
       const form = new FormData(event.target), members = [cleanEmail(currentUser().email), ...form.getAll("members").map(cleanEmail)].filter((email, index, list) => email && list.indexOf(email) === index);
@@ -7505,7 +7620,7 @@ button{margin-top:12px;padding:8px 14px}
         toast("Add at least one employee to the group");
         return;
       }
-      const record = { ...conversation || {}, id: conversation?.id || `conversation-${Date.now()}`, kind: "group", name: String(form.get("name")).trim(), memberEmails: members, createdAt: conversation?.createdAt || now() };
+      const record = { ...conversation || {}, id: conversation?.id || `conversation-${Date.now()}`, kind: "group", name: String(form.get("displayName")).trim(), memberEmails: members, createdAt: conversation?.createdAt || now() };
       try {
         const saved = await apiFetch(`/entities/conversations${conversation ? `/${encodeURIComponent(conversation.id)}` : ""}`, { method: conversation ? "PUT" : "POST", body: JSON.stringify(record) });
         if (conversation) Object.assign(conversation, saved);
@@ -7566,7 +7681,7 @@ button{margin-top:12px;padding:8px 14px}
     });
     document.querySelector("#chat-message-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const body = String(new FormData(event.target).get("body") || "").trim(), button = event.target.querySelector("button");
+      const body = String(new FormData(event.target).get("messageBody") || "").trim(), button = event.target.querySelector("button");
       if (!body) return;
       button.disabled = true;
       try {
@@ -7585,7 +7700,7 @@ button{margin-top:12px;padding:8px 14px}
     const shopId = status?.shopId || sessionClaimShopId(authSession()?.claims) || "";
     const webhookUrl = status?.webhookUrl || (shopId ? `${location.origin}${cloudflareConfig2.apiUrl}/payments/webhook/${encodeURIComponent(shopId)}` : "");
     const statusLabel3 = configured ? `Connected${config.accountLabel ? ` \xB7 ${escapeHtml(config.accountLabel)}` : ""}` : "Stripe keys not saved yet";
-    return shell(`${heading("Online payments", "Payment service", "Connect this shop's Stripe account so customers can pay invoices online with a hosted Checkout link.", false)}<section class="messaging-panel"><div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "credit-card", 17)}<div><strong>${configured ? "Online card payments ready" : "Online card payments not connected"}</strong><span>${statusLabel3}. Secrets stay encrypted on the Worker \u2014 the browser never stores them.</span></div></div><div class="service-contract"><h2>Stripe Checkout for invoices</h2><p>Paste your Stripe secret key and webhook signing secret. ShopCrank creates Checkout Sessions through <code>POST /payments/checkout-session</code> and records payments when Stripe posts <code>checkout.session.completed</code> to your shop webhook.</p><label class="full">Webhook endpoint (Stripe Dashboard \u2192 Developers \u2192 Webhooks)<input id="stripe-webhook-url" readonly value="${escapeAttr(webhookUrl)}" placeholder="Sign in to load the shop webhook URL"/><div class="messaging-actions"><button class="secondary" type="button" id="copy-stripe-webhook" ${webhookUrl ? "" : "disabled"}>${icon("copy", 14)} Copy webhook URL</button></div></label><p class="ai-disclaimer">Subscribe the webhook to event <b>checkout.session.completed</b> only. Use test keys (<code>sk_test_</code>) until you are ready for live cards.</p></div><form class="form-grid" id="billing-form"><label class="full">Stripe secret key *<input name="secretKey" type="password" autocomplete="off" placeholder="sk_test_\u2026 or sk_live_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved key. Enter a new key only to replace it." : "Required. Starts with sk_test_ or sk_live_."}</small></label><label class="full">Webhook signing secret *<input name="webhookSecret" type="password" autocomplete="off" placeholder="whsec_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved signing secret." : "From the Stripe webhook endpoint details."}</small></label><label class="full">Stripe publishable key<input name="publishableKey" autocomplete="off" placeholder="pk_test_\u2026 or pk_live_\u2026"/><small>${status?.hasPublishableKey ? "Saved. Enter a new key only to replace it. Required for phone orders." : "Starts with pk_test_ or pk_live_. Required before the office can type a card for a phone order."}</small></label><label>Account label<input name="accountLabel" value="${escapeAttr(config.accountLabel || "")}" placeholder="e.g. Main shop Stripe"/></label><label>Shop name on receipts<input name="shopName" value="${escapeAttr(config.shopName || "Your Car Guy")}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled || configured ? "checked" : ""}/><span>Enable Pay online on open invoices</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="refresh-stripe-status">${icon("refresh-cw", 14)} Refresh status</button><button class="primary" type="submit">${icon("save", 14)} Save Stripe keys</button></div></form></section>`);
+    return shell(`${heading("Online payments", "Payment service", "Connect this shop's Stripe account so customers can pay invoices online with a hosted Checkout link.", false)}<section class="messaging-panel"><div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "credit-card", 17)}<div><strong>${configured ? "Online card payments ready" : "Online card payments not connected"}</strong><span>${statusLabel3}. Secrets stay encrypted on the Worker \u2014 the browser never stores them.</span></div></div><div class="service-contract"><h2>Stripe Checkout for invoices</h2><p>Paste your Stripe secret key and webhook signing secret. ShopCrank creates Checkout Sessions through <code>POST /payments/checkout-session</code> and records payments when Stripe posts <code>checkout.session.completed</code> to your shop webhook.</p><label class="full">Webhook endpoint (Stripe Dashboard \u2192 Developers \u2192 Webhooks)<input id="stripe-webhook-url" readonly value="${escapeAttr(webhookUrl)}" placeholder="Sign in to load the shop webhook URL"/><div class="messaging-actions"><button class="secondary" type="button" id="copy-stripe-webhook" ${webhookUrl ? "" : "disabled"}>${icon("copy", 14)} Copy webhook URL</button></div></label><p class="ai-disclaimer">Subscribe the webhook to event <b>checkout.session.completed</b> only. Use test keys (<code>sk_test_</code>) until you are ready for live cards.</p></div><form class="form-grid" id="billing-form"><label class="full">Stripe secret key *<input name="secretKey" type="password" autocomplete="off" placeholder="sk_test_\u2026 or sk_live_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved key. Enter a new key only to replace it." : "Required. Starts with sk_test_ or sk_live_."}</small></label><label class="full">Webhook signing secret *<input name="webhookSecret" type="password" autocomplete="off" placeholder="whsec_\u2026" ${configured ? "" : "required"}/><small>${configured ? "Leave blank to keep the saved signing secret." : "From the Stripe webhook endpoint details."}</small></label><label class="full">Stripe publishable key<input name="publishableKey" autocomplete="off" placeholder="pk_test_\u2026 or pk_live_\u2026"/><small>${status?.hasPublishableKey ? "Saved. Enter a new key only to replace it. Required for phone orders." : "Starts with pk_test_ or pk_live_. Required before the office can type a card for a phone order."}</small></label><label>Account label<input name="accountLabel" value="${escapeAttr(config.accountLabel || "")}" placeholder="e.g. Main shop Stripe"/></label><label>Shop name on receipts<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled || configured ? "checked" : ""}/><span>Enable Pay online on open invoices</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="refresh-stripe-status">${icon("refresh-cw", 14)} Refresh status</button><button class="primary" type="submit">${icon("save", 14)} Save Stripe keys</button></div></form></section>`);
   }
   function cardTerminal() {
     const model = cardTerminalModel({
@@ -7652,7 +7767,7 @@ button{margin-top:12px;padding:8px 14px}
       event.preventDefault();
       const form = event.target;
       const button = form.querySelector("button[type=submit]");
-      const data = Object.fromEntries(new FormData(form));
+      const data = readFormValues(form);
       const sid = String(data.twilioAccountSid || "").trim();
       const token = String(data.twilioAuthToken || "").trim();
       const from = String(data.twilioFromNumber || "").trim();
@@ -7708,7 +7823,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function messaging() {
     const config = state.messagingSettings;
-    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${config.shopName || "Your Car Guy"}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
+    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
   }
   async function loadIntegrationStatus() {
     try {
@@ -7749,7 +7864,7 @@ button{margin-top:12px;padding:8px 14px}
   function bindIntegrations() {
     document.querySelector("#labor-lookup-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       try {
         const result = await apiFetch("/labor-times/search", { method: "POST", body: JSON.stringify(data) });
         laborLookupResults = result.results || [];
@@ -7760,7 +7875,7 @@ button{margin-top:12px;padding:8px 14px}
     });
     document.querySelector("#parts-search-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       if (data.operation === "order" && !confirm(`Place this ${data.provider} order? The supplier may charge the connected account.`)) return;
       try {
         partsLookupResult = await apiFetch(`/parts/${encodeURIComponent(data.provider)}/${encodeURIComponent(data.operation)}`, { method: "POST", body: JSON.stringify({ query: data.query, quoteId: data.query, vin: data.vin }) });
@@ -7788,7 +7903,7 @@ button{margin-top:12px;padding:8px 14px}
     });
     document.querySelector("#quickbooks-sync-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       try {
         const result = await apiFetch("/quickbooks/sync", { method: "POST", body: JSON.stringify(data) });
         toast(result.tax?.mismatch ? `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId}. QuickBooks calculated tax ${money4(result.tax.quickBooks)} vs ShopCrank ${money4(result.tax.expected)} \u2014 review the invoice in QuickBooks.` : `Synced as QuickBooks ID ${result.syncMetadata?.quickBooksId || "created"}`);
@@ -7806,7 +7921,7 @@ button{margin-top:12px;padding:8px 14px}
       panel.querySelector("#quickbooks-tax-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
         try {
-          const saved = await apiFetch("/quickbooks/tax-settings", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(event.target))) });
+          const saved = await apiFetch("/quickbooks/tax-settings", { method: "PUT", body: JSON.stringify(readFormValues(event.target)) });
           renderQuickbooksTax(saved);
           toast("QuickBooks tax settings saved");
         } catch (error) {
@@ -7823,7 +7938,7 @@ button{margin-top:12px;padding:8px 14px}
     });
     document.querySelector("#support-ticket-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const button = event.target.querySelector("button[type=submit]"), data = Object.fromEntries(new FormData(event.target));
+      const button = event.target.querySelector("button[type=submit]"), data = readFormValues(event.target);
       button.disabled = true;
       try {
         const result = await apiFetch("/support", { method: "POST", body: JSON.stringify(data) });
@@ -7943,7 +8058,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function estimateMessage(estimate) {
     const lines = estimate.lines.map((line) => `${line.service}: ${money4(line.total)}`).join("; ");
-    return `Your Car Guy estimate ${estimate.number} for ${estimate.vehicle}. ${lines}. Total ${money4(estimate.total)}. Please contact us to approve or sign in person.`;
+    return `${shopDisplayName()} estimate ${estimate.number} for ${estimate.vehicle}. ${lines}. Total ${money4(estimate.total)}. Please contact us to approve or sign in person.`;
   }
   async function deliverShopMessage({ channel, to, subject, body, metadata }) {
     const config = state.messagingSettings;
@@ -7973,7 +8088,7 @@ button{margin-top:12px;padding:8px 14px}
   async function sendEstimate(id, channel) {
     const estimate = state.estimates.find((item) => item.id === id);
     if (!estimate) return;
-    const subject = `Estimate ${estimate.number} \u2014 ${state.messagingSettings.shopName || "Your Car Guy"}`, body = estimateMessage(estimate), result = await deliverShopMessage({ channel, to: channel === "email" ? estimate.email : estimate.phone, subject, body, metadata: { type: "estimate", estimateId: estimate.id, estimateNumber: estimate.number, workOrderId: estimate.workOrderId } });
+    const subject = `Estimate ${estimate.number} \u2014 ${state.messagingSettings.shopName || shopDisplayName()}`, body = estimateMessage(estimate), result = await deliverShopMessage({ channel, to: channel === "email" ? estimate.email : estimate.phone, subject, body, metadata: { type: "estimate", estimateId: estimate.id, estimateNumber: estimate.number, workOrderId: estimate.workOrderId } });
     estimate.lastSentAt = now();
     estimate.lastSentChannel = channel;
     estimate.deliveryMode = result.mode;
@@ -8074,18 +8189,26 @@ button{margin-top:12px;padding:8px 14px}
   function sanitizeUsers(users) {
     return users.map(({ password, ...user }) => user);
   }
+  function isDemoShell() {
+    return isOfflineDesktop() || location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(location.hostname);
+  }
+  function initialState() {
+    const base = structuredClone(seed);
+    if (!isDemoShell()) for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = [];
+    return base;
+  }
   function load() {
     try {
       const value2 = JSON.parse(localStorage.getItem(STORE2));
       if (value2?.version !== LOCAL_PREFERENCES_VERSION) {
         localStorage.removeItem(STORE2);
-        return structuredClone(seed);
+        return initialState();
       }
       const route = typeof value2.route === "string" && /^[a-z-]+$/.test(value2.route) ? value2.route : seed.route;
-      return { ...structuredClone(seed), route };
+      return { ...initialState(), route };
     } catch {
       localStorage.removeItem(STORE2);
-      return structuredClone(seed);
+      return initialState();
     }
   }
   function invalidateDerivedCaches() {
@@ -8134,10 +8257,10 @@ button{margin-top:12px;padding:8px 14px}
     sessionStorage.setItem(storageKeys.session, JSON.stringify(session));
     return session;
   }
-  async function requestMagicLinkSignIn(email) {
+  async function requestMagicLinkSignIn(email, turnstileToken = "") {
     let response;
     try {
-      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/" }) });
+      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken }) });
     } catch (error) {
       if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again.");
       throw error;
@@ -8698,7 +8821,7 @@ button{margin-top:12px;padding:8px 14px}
     if (conflicts) return `<span class="sync-pill conflict" title="Offline edits conflict with newer server data">${icon("triangle-alert", 14)} ${conflicts} conflict${conflicts === 1 ? "" : "s"}</span>`;
     if (!online) return `<span class="sync-pill offline" title="Working offline">${icon("wifi-off", 14)} Offline${pending ? ` \xB7 ${pending} queued` : ""}</span>`;
     if (pending) return `<span class="sync-pill pending" title="Waiting to sync offline changes">${icon("refresh-cw", 14)} Syncing ${pending}</span>`;
-    return `<span class="sync-pill online" title="Connected">${icon("cloud-check", 14)} Online</span>`;
+    return `<span class="sync-pill online" title="Connected">${icon("cloud", 14)} Online</span>`;
   }
   function shell(content) {
     const user = currentUser(), profile = shopProfile(), shift = openShift(user.id);
@@ -8710,6 +8833,10 @@ button{margin-top:12px;padding:8px 14px}
   function filtered() {
     const q = query.trim().toLowerCase();
     return visibleOrders().filter((x) => (filter === "all" || (filter === "active" ? !["completed", "invoiced"].includes(x.status) : ["completed", "invoiced"].includes(x.status))) && (!q || [x.id, x.customer, x.vehicle, x.vin, x.complaint, x.tech].some((v) => String(v).toLowerCase().includes(q))));
+  }
+  function receivableStats() {
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), rows = state.invoices.map((invoice) => ({ invoice, balance: Number(invoiceBalance(invoice)) || 0, paid: Number(invoicePaid(invoice)) || 0 })), open = rows.filter((row) => row.balance > 4e-3), outstanding = open.reduce((sum, row) => sum + row.balance, 0), overdue = open.filter(({ invoice }) => invoice.status === "overdue" || /^\d{4}-\d{2}-\d{2}$/.test(String(invoice.due || "")) && invoice.due < today), overdueTotal = overdue.reduce((sum, row) => sum + row.balance, 0), collected = rows.reduce((sum, row) => sum + row.paid, 0), cells = [["file-text", "Open invoices", open.length, open.length ? `${open.length} with a balance` : "Nothing open", "good"], ["wallet", "Outstanding", money4(outstanding), "Unpaid balance across open invoices", ""], ["clock-alert", "Overdue", overdue.length, overdue.length ? `${money4(overdueTotal)} past due` : "None overdue", "warn"], ["badge-dollar-sign", "Collected", money4(collected), "Payments recorded on invoices", "good"]];
+    return `<div class="stats">${cells.map((x) => `<div class="stat"><div class="stat-top"><span>${x[1]}</span>${icon(x[0])}</div><div class="stat-value">${x[2]}</div><div class="stat-note ${x[4]}">${x[3]}</div></div>`).join("")}</div>`;
   }
   function stats() {
     const tech = currentUser()?.role === "technician", orders2 = visibleOrders(), openCount = orders2.filter((x) => !["completed", "invoiced"].includes(x.status)).length, inProgress = orders2.filter((x) => x.status === "in_progress").length, waiting = orders2.filter((x) => x.status === "waiting_parts").length, paid = state.invoices.filter((x) => x.status === "paid").reduce((s, x) => s + x.amount, 0), overdue = state.invoices.filter((x) => x.status === "overdue"), overdueTotal = overdue.reduce((s, x) => s + Number(x.amount || 0), 0), baysInUse = new Set(orders2.filter((x) => x.status === "in_progress" && x.bay && x.bay !== "Unassigned" && x.bay !== "Mobile").map((x) => x.bay)).size, cells = tech ? [["clipboard-check", "My open orders", openCount, "Assigned to you", "good"], ["circle-play", "In progress", inProgress, "Active repairs", ""], ["triangle-alert", "Waiting on parts", waiting, "Parts follow-up needed", "warn"]] : [["clipboard-check", "Open work orders", openCount, `${openCount} active in shop`, "good"], ["circle-play", "In progress", inProgress, `${baysInUse} bay${baysInUse === 1 ? "" : "s"} in use`, ""], ["triangle-alert", "Waiting on parts", waiting, waiting ? `${waiting} need parts follow-up` : "No parts holds", "warn"], ["badge-dollar-sign", "Collected (paid invoices)", money4(paid), "From paid invoice register", "good"], ["clock-alert", "Overdue invoices", overdue.length, overdue.length ? `${money4(overdueTotal)} outstanding` : "None overdue", "warn"]];
@@ -8987,7 +9114,7 @@ button{margin-top:12px;padding:8px 14px}
     toast(autozoneAccount.connected ? `AutoZone Pro opened. Sign in with your own AutoZone Pro user (shop account ${autozoneAccount.username}).` : "AutoZone Pro opened. Sign in with your AutoZone Pro user.");
   }
   async function saveAutozoneLogin(form) {
-    const data = Object.fromEntries(new FormData(form));
+    const data = readFormValues(form);
     const account = await apiFetch("/ordering/autozone", { method: "POST", body: JSON.stringify({ username: data.username, password: data.password }) });
     autozoneAccount = { connected: true, username: account.username, connectedAt: account.connectedAt, loaded: true };
     toast("AutoZone Pro login saved");
@@ -9013,7 +9140,7 @@ button{margin-top:12px;padding:8px 14px}
     };
     form.onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(form)), files = form.elements.photos.files, photoKeys = [...existing?.photoKeys || []];
+      const data = readFormValues(form), files = form.elements.photos.files, photoKeys = [...existing?.photoKeys || []];
       const button = form.querySelector("button[type=submit]");
       button.disabled = true;
       try {
@@ -9033,7 +9160,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function openInspectionTemplateForm(existing = null) {
     const items = existing?.items || inspectionPoints.map((name) => ({ name }));
-    showModal(`<form class="modal wide" id="template-form"><div class="modal-head"><h2>${existing ? "Edit" : "New"} inspection template</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label class="full">Template name<input name="name" required value="${escapeHtml(existing?.name || "")}" placeholder="e.g. Pre-purchase inspection"/></label></div><h3>Checklist items</h3><div id="template-items">${items.map((item, i) => `<div class="template-item-row"><input name="item-${i}" value="${escapeHtml(item.name)}" required/><button type="button" class="icon-button remove-template-item" title="Remove">${icon("trash-2", 13)}</button></div>`).join("")}</div><div class="ops-actions"><button type="button" class="secondary" id="add-template-item">${icon("plus", 14)} Add item</button></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("save", 14)} Save template</button></div></form>`);
+    showModal(`<form class="modal wide" id="template-form"><div class="modal-head"><h2>${existing ? "Edit" : "New"} inspection template</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label class="full">Template name<input name="displayName" required value="${escapeHtml(existing?.name || "")}" placeholder="e.g. Pre-purchase inspection"/></label></div><h3>Checklist items</h3><div id="template-items">${items.map((item, i) => `<div class="template-item-row"><input name="item-${i}" value="${escapeHtml(item.name)}" required/><button type="button" class="icon-button remove-template-item" title="Remove">${icon("trash-2", 13)}</button></div>`).join("")}</div><div class="ops-actions"><button type="button" class="secondary" id="add-template-item">${icon("plus", 14)} Add item</button></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("save", 14)} Save template</button></div></form>`);
     let itemCount = items.length;
     const bindTemplateRows = () => {
       document.querySelectorAll(".remove-template-item").forEach((btn) => btn.onclick = () => {
@@ -9048,7 +9175,7 @@ button{margin-top:12px;padding:8px 14px}
     };
     document.querySelector("#template-form").onsubmit = async (event) => {
       event.preventDefault();
-      const form = event.target, name = form.elements.name.value.trim(), templateItems = [...form.querySelectorAll("#template-items input")].map((input) => ({ name: input.value.trim() })).filter((item) => item.name);
+      const form = event.target, name = form.elements.displayName.value.trim(), templateItems = [...form.querySelectorAll("#template-items input")].map((input) => ({ name: input.value.trim() })).filter((item) => item.name);
       if (!templateItems.length) {
         toast("Add at least one inspection point");
         return;
@@ -9096,7 +9223,7 @@ ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
     showModal(`<form class="modal" id="approval-form"><div class="modal-head"><h2>Inspection approval</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(inspection.number)} \xB7 ${escapeHtml(inspection.vehicle)}</span><strong>${escapeHtml(inspection.customer)}</strong></div><label>Decision<select name="status" required><option value="approved">Approve</option><option value="rejected">Reject</option></select></label><label>Note<textarea name="note" placeholder="Optional approval note"></textarea></label>${inspectionApprovalHistory(inspection) ? `<h3>History</h3>${inspectionApprovalHistory(inspection)}` : ""}</div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("check", 14)} Submit decision</button></div></form>`);
     document.querySelector("#approval-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       inspection.approvalStatus = data.status;
       inspection.approvalHistory ?? (inspection.approvalHistory = []);
       inspection.approvalHistory.push({ status: data.status, actorId: currentUser().id, actorName: currentUser().name, timestamp: now(), note: data.note.trim() });
@@ -9160,7 +9287,7 @@ ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
     showModal(`<form class="modal" id="simple-record-form"><div class="modal-head"><h2>${title}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid">${fields}</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save</button></div></form>`);
     document.querySelector("#simple-record-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), record = build(data);
+      const data = readFormValues(event.target), record = build(data);
       await saveShopEntity(kind, record);
       closeModal();
       toast(`${title} saved`);
@@ -9168,17 +9295,17 @@ ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
     };
   }
   function addInventory() {
-    simpleRecordModal("inventory", "Inventory item", `<label>Name<input name="name" required/></label><label>SKU<input name="sku" required/></label><label>Type<select name="kind"><option>Part</option><option>Tire</option><option>Supply</option><option>Asset</option></select></label><label>Vendor<select name="vendor"><option value="">Unassigned</option>${state.vendors.map((v) => `<option>${escapeHtml(v.name)}</option>`).join("")}</select></label><label>Quantity<input name="quantity" type="number" min="0" value="0"/></label><label>Reorder level<input name="reorderLevel" type="number" min="0" value="0"/></label><label>Unit cost<input name="cost" type="number" min="0" step=".01"/></label><label>Selling price<input name="price" type="number" min="0" step=".01"/></label>`, (data) => ({ id: `inventory-${Date.now()}`, ...data, quantity: Number(data.quantity), reorderLevel: Number(data.reorderLevel), cost: Number(data.cost), price: Number(data.price), unit: "ea", createdAt: now() }));
+    simpleRecordModal("inventory", "Inventory item", `<label>Name<input name="displayName" required/></label><label>SKU<input name="sku" required/></label><label>Type<select name="kind"><option>Part</option><option>Tire</option><option>Supply</option><option>Asset</option></select></label><label>Vendor<select name="vendor"><option value="">Unassigned</option>${state.vendors.map((v) => `<option>${escapeHtml(v.name)}</option>`).join("")}</select></label><label>Quantity<input name="quantity" type="number" min="0" value="0"/></label><label>Reorder level<input name="reorderLevel" type="number" min="0" value="0"/></label><label>Unit cost<input name="cost" type="number" min="0" step=".01"/></label><label>Selling price<input name="price" type="number" min="0" step=".01"/></label>`, (data) => ({ id: `inventory-${Date.now()}`, ...data, quantity: Number(data.quantity), reorderLevel: Number(data.reorderLevel), cost: Number(data.cost), price: Number(data.price), unit: "ea", createdAt: now() }));
   }
   function addVendor() {
-    simpleRecordModal("vendors", "Vendor", `<label>Name<input name="name" required/></label><label>Phone<input name="phone"/></label><label>Email<input name="email" type="email"/></label><label>Account number<input name="accountNumber"/></label><label class="full">Address<input name="address"/></label>`, (data) => ({ id: `vendor-${Date.now()}`, ...data, createdAt: now() }));
+    simpleRecordModal("vendors", "Vendor", `<label>Name<input name="displayName" required/></label><label>Phone<input name="phone"/></label><label>Email<input name="email" type="email"/></label><label>Account number<input name="accountNumber"/></label><label class="full">Address<input name="address"/></label>`, (data) => ({ id: `vendor-${Date.now()}`, ...data, createdAt: now() }));
   }
   function openServiceForm(existing = null) {
     const price = existing ? Number(existing.menuPrice ?? existing.partsPrice ?? 0).toFixed(2) : "", channel = existing?.channel === "van" ? "van" : "shop";
-    showModal(`<form class="modal" id="service-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add"} canned service</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label class="full">Name *<input name="name" required value="${escapeAttr(existing?.name || "")}"/></label><label>Where<select name="channel"><option value="van" ${channel === "van" ? "selected" : ""}>Van</option><option value="shop" ${channel === "shop" ? "selected" : ""}>Shop</option></select></label><label>Menu price *<input name="menuPrice" type="number" min="0" step=".01" required value="${price}"/></label><label>Default discount %<input name="discount" type="number" min="0" max="100" step=".1" value="${Number(existing?.discount || 0)}"/></label><label class="full">What the customer gets<textarea name="description">${escapeHtml(existing?.description || "")}</textarea></label><label class="full">Shop note<textarea name="marginNote" placeholder="Internal only. This does not print on the estimate.">${escapeHtml(existing?.marginNote || "")}</textarea></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save service</button></div></form>`);
+    showModal(`<form class="modal" id="service-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add"} canned service</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label class="full">Name *<input name="displayName" required value="${escapeAttr(existing?.name || "")}"/></label><label>Where<select name="channel"><option value="van" ${channel === "van" ? "selected" : ""}>Van</option><option value="shop" ${channel === "shop" ? "selected" : ""}>Shop</option></select></label><label>Menu price *<input name="menuPrice" type="number" min="0" step=".01" required value="${price}"/></label><label>Default discount %<input name="discount" type="number" min="0" max="100" step=".1" value="${Number(existing?.discount || 0)}"/></label><label class="full">What the customer gets<textarea name="description">${escapeHtml(existing?.description || "")}</textarea></label><label class="full">Shop note<textarea name="marginNote" placeholder="Internal only. This does not print on the estimate.">${escapeHtml(existing?.marginNote || "")}</textarea></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save service</button></div></form>`);
     document.querySelector("#service-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), menuPrice = Math.round(Math.max(0, Number(data.menuPrice) || 0) * 100) / 100, record = { ...existing || {}, id: existing?.id || `service-${Date.now()}`, name: String(data.name || "").trim(), channel: data.channel === "van" ? "van" : "shop", menuPrice, partsPrice: menuPrice, laborHours: 0, discount: Math.min(100, Math.max(0, Number(data.discount) || 0)), description: String(data.description || "").trim(), marginNote: String(data.marginNote || "").trim(), catalog: existing?.catalog === true, sort: existing?.sort ?? 1e3, createdAt: existing?.createdAt || now(), updatedAt: existing ? existing.updatedAt || now() : void 0 };
+      const data = readFormValues(event.target), menuPrice = Math.round(Math.max(0, Number(data.menuPrice) || 0) * 100) / 100, record = { ...existing || {}, id: existing?.id || `service-${Date.now()}`, name: String(data.name || "").trim(), channel: data.channel === "van" ? "van" : "shop", menuPrice, partsPrice: menuPrice, laborHours: 0, discount: Math.min(100, Math.max(0, Number(data.discount) || 0)), description: String(data.description || "").trim(), marginNote: String(data.marginNote || "").trim(), catalog: existing?.catalog === true, sort: existing?.sort ?? 1e3, createdAt: existing?.createdAt || now(), updatedAt: existing ? existing.updatedAt || now() : void 0 };
       try {
         await saveShopEntity("services", record);
         closeModal();
@@ -9236,7 +9363,7 @@ ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
     showModal(`<form class="modal" id="reminder-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add"} service reminder</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Customer<select name="customer">${customerOptions(source?.customer)}</select></label><label>Vehicle<input name="vehicle" required value="${escapeHtml(source?.vehicle || "")}"/></label><label>Service<input name="service" required value="${escapeHtml(source?.service || "")}"/></label><label>Due date<input name="dueDate" type="date" required value="${existing?.dueDate || defaultDate}"/></label><label>Due mileage<input name="dueMileage" type="number" min="0" value="${existing?.dueMileage || ""}"/></label><label>Channel<select name="channel"><option value="sms" ${source?.channel !== "email" ? "selected" : ""}>Text</option><option value="email" ${source?.channel === "email" ? "selected" : ""}>Email</option></select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save reminder</button></div></form>`);
     document.querySelector("#reminder-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), record = { ...existing || {}, id: existing?.id || `reminder-${Date.now()}`, ...data, dueMileage: Number(data.dueMileage) || null, createdAt: existing?.createdAt || now(), parentReminderId: existing?.parentReminderId || parent?.id || void 0, updatedAt: existing ? now() : void 0 };
+      const data = readFormValues(event.target), record = { ...existing || {}, id: existing?.id || `reminder-${Date.now()}`, ...data, dueMileage: Number(data.dueMileage) || null, createdAt: existing?.createdAt || now(), parentReminderId: existing?.parentReminderId || parent?.id || void 0, updatedAt: existing ? now() : void 0 };
       await saveShopEntity("reminders", record);
       closeModal();
       toast(parent ? "Follow-up reminder saved" : "Service reminder saved");
@@ -9259,7 +9386,7 @@ ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
   async function sendReminder(id) {
     const reminder = state.reminders.find((item) => item.id === id), customer = state.customers.find((item) => item.name === reminder.customer);
     if (!customer) return toast("Customer contact information is missing");
-    const body = `${state.messagingSettings.shopName || "Your Car Guy"}: ${reminder.service} is due for ${reminder.vehicle}${reminder.dueDate ? ` on ${reminder.dueDate}` : ""}. Contact us to schedule service.`, channel = reminder.channel || "sms";
+    const body = `${state.messagingSettings.shopName || shopDisplayName()}: ${reminder.service} is due for ${reminder.vehicle}${reminder.dueDate ? ` on ${reminder.dueDate}` : ""}. Contact us to schedule service.`, channel = reminder.channel || "sms";
     await deliverShopMessage({ channel, to: channel === "email" ? customer.email : customer.phone, subject: "Vehicle service reminder", body, metadata: { type: "service-reminder", reminderId: id } });
     reminder.sentAt = now();
     reminder.updatedAt = now();
@@ -9498,7 +9625,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelector("#partstech-connect-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       try {
-        const data = Object.fromEntries(new FormData(event.target));
+        const data = readFormValues(event.target);
         partstechAccount = { ...await apiFetch("/integrations/partstech", { method: "POST", body: JSON.stringify(data) }), loaded: true };
         toast("PartsTech connected");
         render();
@@ -9527,7 +9654,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#partstech-search-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       const panel = document.querySelector("#partstech-results");
       if (panel) panel.innerHTML = "<p>Quoting\u2026</p>";
       try {
@@ -9550,7 +9677,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelector("#labor-guide-connect-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       try {
-        const data = Object.fromEntries(new FormData(event.target));
+        const data = readFormValues(event.target);
         laborGuideAccount = { ...await apiFetch("/integrations/labor-guide", {
           method: "POST",
           body: JSON.stringify({ provider: data.provider, viaPartstech: data.viaPartstech === "on" })
@@ -9573,7 +9700,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#labor-guide-search-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       const panel = document.querySelector("#labor-guide-results");
       if (panel) panel.innerHTML = "<p>Looking up\u2026</p>";
       try {
@@ -9606,7 +9733,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#manual-labor-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       const line = createManualLaborEntry({
         description: data.description,
         hours: data.hours,
@@ -9644,7 +9771,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#revrec-config-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       try {
         const status = await apiFetch("/revenue-recognition/configure", {
           method: "POST",
@@ -9719,8 +9846,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelectorAll("[data-edit-template]").forEach((button) => button.onclick = () => openInspectionTemplateForm(state.inspectionTemplates.find((t) => t.id === button.dataset.editTemplate)));
     document.querySelectorAll("[data-edit-vehicle]").forEach((row) => row.onclick = () => openVehicleDetail(row.dataset.editVehicle));
-    document.querySelector("#add-inventory")?.addEventListener("click", addInventory);
-    document.querySelector("#add-vendor")?.addEventListener("click", addVendor);
+    document.querySelector("#add-inventory")?.addEventListener("click", () => addInventory());
+    document.querySelector("#add-vendor")?.addEventListener("click", () => addVendor());
     document.querySelector("#add-service")?.addEventListener("click", addService);
     document.querySelectorAll("[data-edit-service]").forEach((button) => button.onclick = (event) => {
       event.stopPropagation();
@@ -9749,10 +9876,10 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelectorAll("[data-elm-command]").forEach((button) => button.onclick = () => runElm(button.dataset.elmCommand));
   }
   function openCustomerMessage(name, phone, email) {
-    showModal(`<form class="modal" id="customer-message-form"><div class="modal-head"><h2>Message ${name}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${phone || "No phone"} \xB7 ${email || "No email"}</span><strong>Your Car Guy</strong></div><label>Delivery method<select name="channel"><option value="sms" ${phone ? "" : "disabled"}>Text message</option><option value="email" ${email ? "" : "disabled"}>Email</option></select></label><label>Subject<input name="subject" value="Update from Your Car Guy"/></label><label>Message *<textarea name="message" required>Hello ${name}, this is Your Car Guy with an update regarding your vehicle.</textarea></label><p class="ai-disclaimer">This opens the device's configured messaging or email app. The app does not transmit messages through an outside service.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("send", 14)} Open device app</button></div></form>`);
+    showModal(`<form class="modal" id="customer-message-form"><div class="modal-head"><h2>Message ${name}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${phone || "No phone"} \xB7 ${email || "No email"}</span><strong>${escapeHtml(shopDisplayName())}</strong></div><label>Delivery method<select name="channel"><option value="sms" ${phone ? "" : "disabled"}>Text message</option><option value="email" ${email ? "" : "disabled"}>Email</option></select></label><label>Subject<input name="subject" value="Update from ${escapeAttr(shopDisplayName())}"/></label><label>Message *<textarea name="message" required>Hello ${name}, this is ${escapeHtml(shopDisplayName())} with an update regarding your vehicle.</textarea></label><p class="ai-disclaimer">This opens the device's configured messaging or email app. The app does not transmit messages through an outside service.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("send", 14)} Open device app</button></div></form>`);
     document.querySelector("#customer-message-form").onsubmit = (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), body = encodeURIComponent(data.message);
+      const data = readFormValues(event.target), body = encodeURIComponent(data.message);
       if (data.channel === "email") {
         window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(data.subject)}&body=${body}`;
       } else {
@@ -9796,7 +9923,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   }
   function invoiceTaxBreakdown(invoice) {
     if (!invoice) return { subtotal: 0, tax: 0, taxRate: state.taxSettings.rate };
-    if (typeof invoice.tax === "number" && typeof invoice.subtotal === "number") return { subtotal: invoice.subtotal, tax: invoice.tax, taxRate: invoice.taxRate ?? state.taxSettings.rate };
+    if (typeof invoice.tax === "number" && typeof invoice.subtotal === "number") return { subtotal: invoice.subtotal, taxableSubtotal: typeof invoice.taxableSubtotal === "number" ? invoice.taxableSubtotal : invoice.subtotal, tax: invoice.tax, taxRate: invoice.taxRate ?? state.taxSettings.rate };
     const rate = state.taxSettings.rate, subtotal = Math.round(invoice.amount / (1 + rate / 100) * 100) / 100, tax = Math.round((invoice.amount - subtotal) * 100) / 100;
     return { subtotal, tax, taxRate: rate };
   }
@@ -9811,7 +9938,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     showModal(`<form class="modal" id="tax-form"><div class="modal-head"><h2>Invoice tax</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${invoice.number} \xB7 ${escapeHtml(invoice.customer)}</span><strong>${money4(invoice.amount)}</strong></div><div class="form-grid"><label>Taxable subtotal *<input name="subtotal" type="number" step=".01" min="0" value="${bd.subtotal}" required/></label><label>Tax rate % *<input name="taxRate" type="number" step=".01" min="0" value="${bd.taxRate}" required/></label></div><div class="ledger-note">${icon("landmark", 15)} Tax is calculated on the taxable subtotal at the entered rate and posted to Sales Tax Payable when collected.</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("check", 14)} Save tax</button></div></form>`);
     document.querySelector("#tax-form").onsubmit = (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), subtotal = Number(data.subtotal), taxRate = Number(data.taxRate);
+      const data = readFormValues(event.target), subtotal = Number(data.subtotal), taxRate = Number(data.taxRate);
       if (!Number.isFinite(subtotal) || subtotal < 0 || !Number.isFinite(taxRate) || taxRate < 0) {
         toast("Enter a valid subtotal and tax rate");
         return;
@@ -9836,7 +9963,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       return d >= from && d <= to;
     }).map((payment) => {
       const invoice = invoices2.get(payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round(bd.subtotal * ratio * 100) / 100, tax: Math.round(bd.tax * ratio * 100) / 100 };
+      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100, tax: Math.round(bd.tax * ratio * 100) / 100 };
     }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const totals = rows.reduce((acc, row) => ({ gross: acc.gross + row.gross, taxable: acc.taxable + row.taxable, tax: acc.tax + row.tax }), { gross: 0, taxable: 0, tax: 0 });
     return { from: fromDate, to: toDate, rows, totals };
@@ -9855,7 +9982,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     showModal(`<form class="modal" id="payment-form"><div class="modal-head"><h2>Record ${method === "cash" ? "cash" : "processor"} payment</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${invoice.number} \xB7 ${escapeHtml(invoice.customer)}</span><strong>Balance ${money4(balance)}</strong></div><div class="form-grid"><label>Amount received *<input name="amount" type="number" min="0.01" max="${balance}" step=".01" value="${balance}" required/></label><label>Received date<input name="receivedAt" type="date" value="2026-08-14" required/></label><label class="full">Reference / receipt<input name="reference" placeholder="${method === "cash" ? "Cash drawer receipt or check number" : "Stripe payment ID or processor receipt"}"/></label><label class="full">Note<textarea name="note" placeholder="Optional payment note"></textarea></label></div><div class="ledger-note">${icon("landmark", 15)} This posts a payment receipt to Accounts Receivable and cash/processor clearing in accounting.</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("check", 14)} Record payment</button></div></form>`);
     document.querySelector("#payment-form").onsubmit = (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), amount = Number(data.amount);
+      const data = readFormValues(event.target), amount = Number(data.amount);
       if (!Number.isFinite(amount) || amount <= 0 || amount > balance) {
         toast("Enter a payment amount within the open balance");
         return;
@@ -9939,19 +10066,19 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   }
   function settings() {
     const t = state.taxSettings, stateOptions = usStates.map((s) => `<option value="${s.code}" ${t.state === s.code ? "selected" : ""}>${s.name}</option>`).join("");
-    return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout ShopCrank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="Your Car Guy"/></label><label>Phone<input value="555-0100"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`);
+    return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout ShopCrank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="${escapeAttr(shopDisplayName())}"/></label><label>Phone<input value="${escapeAttr(shopProfile().phone)}"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`);
   }
   function loginScreen() {
     if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon });
     const googleUrl = `${cloudflareConfig2.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
   }
   async function upgradeShopPlan() {
     const plans = [["shop", "Shop \xB7 $139/mo"], ["solo", "Solo \xB7 $69/mo"], ["shop_pro", "Shop Pro \xB7 $279/mo"], ["enterprise", "Enterprise \xB7 $559/mo"]];
     showModal(`<form class="modal" id="upgrade-plan-form"><div class="modal-head"><h2>Choose a plan</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Plan<select name="planId">${plans.map(([id, name]) => `<option value="${id}">${name}</option>`).join("")}</select></label><label>Billing<select name="interval"><option value="monthly">Monthly</option><option value="annual">Annual \xB7 2 months free</option></select></label><p>Unlimited users on every plan. Live OEM programming is Shop Pro and Enterprise.</p><p class="login-error" id="upgrade-plan-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Continue</button></div></form>`);
     document.querySelector("#upgrade-plan-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), error = document.querySelector("#upgrade-plan-error");
+      const data = readFormValues(event.target), error = document.querySelector("#upgrade-plan-error");
       try {
         const result = await platformApi("/billing/checkout", { method: "POST", body: JSON.stringify({ planId: data.planId, interval: data.interval, successUrl: `${location.origin}/?billing=success`, cancelUrl: `${location.origin}/?billing=cancelled` }) });
         toast("Opening secure subscription checkout");
@@ -10013,7 +10140,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     syncMode();
     form.onsubmit = async (event) => {
       event.preventDefault();
-      const button = form.querySelector("button[type=submit]"), error = document.querySelector("#customer-account-error"), data = Object.fromEntries(new FormData(form));
+      const button = form.querySelector("button[type=submit]"), error = document.querySelector("#customer-account-error"), data = readFormValues(form);
       button.disabled = true;
       error.hidden = true;
       try {
@@ -10033,7 +10160,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     showModal(`<form class="modal" id="account-credit-form"><div class="modal-head"><h2>Give account credit</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(shopName)}</span><strong>${escapeHtml(shopId)}</strong></div><div class="form-grid"><label>Credit amount *<input name="amount" type="number" min="0.01" step="0.01" required/></label><label>Reason *<input name="reason" required placeholder="Service adjustment"/></label></div><p class="login-error" id="account-credit-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("badge-dollar-sign", 14)} Apply credit</button></div></form>`);
     document.querySelector("#account-credit-form").onsubmit = async (event) => {
       event.preventDefault();
-      const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#account-credit-error"), data = Object.fromEntries(new FormData(event.target));
+      const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#account-credit-error"), data = readFormValues(event.target);
       button.disabled = true;
       error.hidden = true;
       try {
@@ -10053,7 +10180,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     showModal(`<form class="modal" id="convert-paid-form"><div class="modal-head"><h2>Convert to paid</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(shopName)}</span><strong>${escapeHtml(shopId)}</strong></div><div class="form-grid"><label>Plan<select name="planId"><option value="solo">Solo \xB7 $69/mo</option><option value="shop">Shop \xB7 $139/mo</option><option value="shop_pro">Shop Pro \xB7 $279/mo</option><option value="enterprise">Enterprise \xB7 $559/mo</option><option value="founding_solo">Founding Solo \xB7 $49/mo</option><option value="founding_shop">Founding Shop \xB7 $99/mo</option><option value="founding_pro">Founding Pro \xB7 $199/mo</option></select></label></div><div class="ledger-note">${icon("sparkles", 15)} Marks this shop as a paid account with no free-term expiry. Stripe card checkout can be connected later with live SaaS price IDs.</div><p class="login-error" id="convert-paid-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("badge-check", 14)} Make paid</button></div></form>`);
     document.querySelector("#convert-paid-form").onsubmit = async (event) => {
       event.preventDefault();
-      const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#convert-paid-error"), data = Object.fromEntries(new FormData(event.target));
+      const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#convert-paid-error"), data = readFormValues(event.target);
       button.disabled = true;
       error.hidden = true;
       try {
@@ -10073,7 +10200,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     showModal(`<form class="modal" id="free-term-form"><div class="modal-head"><h2>Set free / tester term</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(shopName)}</span><strong>${escapeHtml(shopId)}</strong></div><div class="form-grid"><label>Mode<select name="mode"><option value="trialing">Replace term from today</option><option value="extend">Extend from current end</option><option value="comped">Comped (no expiry)</option></select></label><label>Days<input name="trialDays" type="number" min="0" max="3650" value="30"/></label></div><div class="ledger-note">${icon("timer", 15)} Use this for tester shops. Zero days with Comped means unlimited free access until you convert them to paid.</div><p class="login-error" id="free-term-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save term</button></div></form>`);
     document.querySelector("#free-term-form").onsubmit = async (event) => {
       event.preventDefault();
-      const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#free-term-error"), data = Object.fromEntries(new FormData(event.target));
+      const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#free-term-error"), data = readFormValues(event.target);
       button.disabled = true;
       error.hidden = true;
       try {
@@ -10159,8 +10286,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelector("#open-twilio-phone-credentials")?.addEventListener("click", () => openTwilioPhoneCredentialsDialog());
     document.querySelector("#messaging-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
-      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your Car Guy" };
+      const data = readFormValues(event.target);
+      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || shopDisplayName() };
       if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) {
         toast("A secure service endpoint is required before enabling delivery");
         return;
@@ -10200,7 +10327,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelector("#billing-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.target;
-      const data = Object.fromEntries(new FormData(form));
+      const data = readFormValues(form);
       const secretKey = String(data.secretKey || "").trim();
       const webhookSecret = String(data.webhookSecret || "").trim();
       const publishableKey = String(data.publishableKey || "").trim();
@@ -10236,7 +10363,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
           enabled: data.enabled === "on" || Boolean(stripePaymentStatus?.configured),
           provider: "stripe",
           accountLabel: String(data.accountLabel || "").trim(),
-          shopName: String(data.shopName || "").trim() || "Your Car Guy",
+          shopName: String(data.shopName || "").trim() || shopDisplayName(),
           shopId: stripePaymentStatus?.shopId || state.billingSettings.shopId || "",
           webhookUrl: stripePaymentStatus?.webhookUrl || state.billingSettings.webhookUrl || "",
           checkoutEndpoint: "",
@@ -10416,7 +10543,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#ai-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       if (aiTab === "workflow") {
         const order = state.orders.find((item) => item.id === data.workOrderId);
         if (!order) return;
@@ -10493,7 +10620,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     document.querySelector("#journal-entry")?.addEventListener("click", openJournal);
     document.querySelector("#tax-settings-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       state.taxSettings = { state: data.state, taxId: data.taxId.trim(), rate: Number(data.rate) || 0, filingFrequency: data.filingFrequency };
       save();
       toast("Tax settings saved");
@@ -10501,7 +10628,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     });
     document.querySelector("#tax-report-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       taxReportResult = taxReport(data.from, data.to);
       render();
     });
@@ -10725,7 +10852,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     bindNewOrderCustomerPickers();
     document.querySelector("#new-form").onsubmit = async (e) => {
       e.preventDefault();
-      const submitButton = e.target.querySelector("button.primary"), data = Object.fromEntries(new FormData(e.target)), customerName = String(data.customerSelect === "__new__" ? data.customer : data.customerSelect || data.customer).trim();
+      const submitButton = e.target.querySelector("button.primary"), data = readFormValues(e.target), customerName = String(data.customerSelect === "__new__" ? data.customer : data.customerSelect || data.customer).trim();
       if (!customerName) {
         toast("Select or enter a customer name");
         return;
@@ -10867,7 +10994,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     showModal(`<form class="modal" id="appointment-form"><div class="modal-head"><h2>${existing ? "Edit" : "New"} appointment</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Customer<select name="customer">${customerOptions(existing?.customer)}</select></label><label>Vehicle<input name="vehicle" required value="${escapeHtml(existing?.vehicle || "")}"/></label><label>Date<input name="date" type="date" required value="${existing?.date || ""}"/></label><label>Time<input name="time" type="time" required value="${existing?.time || ""}"/></label><label>Service<input name="service" required value="${escapeHtml(existing?.service || "")}"/></label><label>Technician<input name="tech" value="${escapeHtml(existing?.tech || "")}"/></label><label>Bay / mobile<input name="bay" value="${escapeHtml(existing?.bay || "")}"/></label><label>Status<select name="status">${statuses.map((status) => `<option ${existing?.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save appointment</button></div></form>`);
     document.querySelector("#appointment-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), record = { ...existing || {}, id: existing?.id || `appointment-${Date.now()}`, ...data, createdAt: existing?.createdAt || now(), updatedAt: existing ? now() : void 0 };
+      const data = readFormValues(event.target), record = { ...existing || {}, id: existing?.id || `appointment-${Date.now()}`, ...data, createdAt: existing?.createdAt || now(), updatedAt: existing ? now() : void 0 };
       await saveShopEntity("appointments", record);
       closeModal();
       toast("Appointment saved");
@@ -10886,13 +11013,16 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     showModal(`<form class="modal" id="estimate-discount-form"><div class="modal-head"><h2>Estimate discount</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Discount percent<input name="discount" type="number" min="0" max="100" step=".1" value="${Number(estimate.discountPercent || 0)}" required/></label><label>Reason<input name="discountReason" value="${escapeHtml(estimate.discountReason || "")}"/></label></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Apply discount</button></div></form>`);
     document.querySelector("#estimate-discount-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), percent = Math.min(100, Math.max(0, Number(data.discount))), base = Number(estimate.originalSubtotal ?? estimate.subtotal);
+      const data = readFormValues(event.target), percent = Math.min(100, Math.max(0, Number(data.discount))), base = Number(estimate.originalSubtotal ?? estimate.subtotal);
       estimate.originalSubtotal = base;
       estimate.discountPercent = percent;
       estimate.discountReason = data.discountReason.trim();
       estimate.discountAmount = Math.round(base * percent) / 100;
       estimate.subtotal = Math.round((base - estimate.discountAmount) * 100) / 100;
-      estimate.tax = Math.round(estimate.subtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
+      const taxableBase = Number(estimate.originalTaxableSubtotal ?? estimate.taxableSubtotal ?? base);
+      estimate.originalTaxableSubtotal = taxableBase;
+      estimate.taxableSubtotal = Math.round(taxableBase * (100 - percent)) / 100;
+      estimate.tax = Math.round(estimate.taxableSubtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
       estimate.total = Math.round((estimate.subtotal + estimate.tax) * 100) / 100;
       await updateEstimateInApi(estimate);
       save();
@@ -10922,7 +11052,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     });
     document.querySelector("#shop-profile-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), profile = { ...shopProfile(), ...data, laborRate: Number(data.laborRate) };
+      const data = readFormValues(event.target), profile = { ...shopProfile(), ...data, laborRate: Number(data.laborRate) };
       await saveShopEntity("shopsettings", profile);
       toast("Business profile saved");
       render();
@@ -11060,6 +11190,13 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const stored = state.shopSettingsRecords.find((item) => item.id === "profile") || {}, themeMode = ["device", "light", "dark"].includes(stored.themeMode) ? stored.themeMode : "device";
     return { ...shopProfileDefaults, ...stored, logoUrl: safeHttpUrl(stored.logoUrl) || shopProfileDefaults.logoUrl, brandColor: safeHexColor(stored.brandColor, shopProfileDefaults.brandColor), accentColor: safeHexColor(stored.accentColor, shopProfileDefaults.accentColor), themeMode, coupons: normalizedCoupons(stored.coupons), defaultVendor: String(stored.defaultVendor || ""), defaultVendorByKind: stored.defaultVendorByKind && typeof stored.defaultVendorByKind === "object" ? stored.defaultVendorByKind : {} };
   }
+  function shopDisplayName(profile = shopProfile()) {
+    return String(profile?.shopName || "").trim() || "Your shop";
+  }
+  function taxBaseNote(totals = {}) {
+    const taxable = Number(totals.taxableSubtotal), subtotal = Number(totals.subtotal);
+    return Number.isFinite(taxable) && Number.isFinite(subtotal) && taxable < subtotal - 4e-3 ? ` on ${money4(taxable)}` : "";
+  }
   function shopMileageRate() {
     return normalizeMileageRate(shopProfile().mileageRate);
   }
@@ -11125,7 +11262,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return state.vendors.some((vendor) => vendor.name === specific) ? specific : state.vendors.some((vendor) => vendor.name === profile.defaultVendor) ? profile.defaultVendor : "";
   }
   async function saveProfilePatch(patch) {
-    const current = shopProfile(), record = { ...current, ...patch, id: "profile", updatedAt: now() };
+    const stored = state.shopSettingsRecords.find((item) => item.id === "profile") || {}, record = { ...stored, ...patch, id: "profile", updatedAt: now() };
     return saveShopEntity("shopsettings", record);
   }
   function employees() {
@@ -11146,10 +11283,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return `<section class="pay-stub"><div class="pay-stub-head"><div><div class="eyebrow">${escapeHtml(user.employeeId || "Employee")} \xB7 ${escapeHtml(user.department || "Department")}</div><h2>${escapeHtml(user.name)}</h2><p>${escapeHtml(user.title)} \xB7 ${escapeHtml(user.employmentType || "Employment type")} \xB7 ${user.payRate ? user.employmentType === "Salary" ? money4(user.payRate) + " / year" : money4(user.payRate) + " / hr" : "Rate pending"}</p></div><div class="net-pay"><span>Net pay</span><strong>${money4(stub.net)}</strong></div></div><div class="pay-stub-totals"><div><span>Job labor hours</span><b>${stub.hours.toFixed(2)}</b></div><div><span>Shift hours</span><b>${stub.shiftHours.toFixed(2)}</b></div><div><span>Gross pay</span><b>${money4(stub.gross)}</b></div><div><span>Federal + FICA est.</span><b>(${money4(stub.federal + stub.fica)})</b></div></div>${stub.salaryPay ? `<div class="salary-line">Weekly salary base: <b>${money4(stub.salaryPay)}</b></div>` : ""}<table><thead><tr><th>Work order</th><th>Job</th><th>Hours</th><th>Rate</th><th>Pay</th></tr></thead><tbody>${lines || `<tr><td colspan="5">No completed job labor has been posted this week.</td></tr>`}</tbody></table><div class="pay-stub-foot"><span>Tax status: ${escapeHtml(user.taxStatus || "Not set")}</span><span>Global shift clock is tracked separately to prevent duplicate pay.</span></div></section>`;
   }
   function openEmployee() {
-    showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>Create employee profile</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="name" required/></label><label>Employee ID *<input name="employeeId" placeholder="EMP-005" required/></label><label>Job title<input name="title" placeholder="e.g. Service Writer"/></label><label>Department<input name="department" placeholder="e.g. Service"/></label><label class="full">Email address *<input type="email" name="email" required/></label><label>Role<select name="role"><option value="technician">Technician</option><option value="office">Office</option><option value="service_writer">Service Writer</option><option value="admin">Admin</option></select></label><label class="full">Technician dispatch name <input name="techName" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType"><option>Hourly</option><option>Salary</option><option>Contractor</option></select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required/></label><label>Pay frequency<select name="payFrequency"><option>Weekly</option><option>Biweekly</option><option>Monthly</option></select></label><label>Start date<input name="startDate" type="date" value="2026-08-14"/></label><label>Tax status<select name="taxStatus"><option>W-2</option><option>1099 Contractor</option></select></label><label>Phone<input name="phone" type="tel"/></label><label class="full">Home address<input name="address"/></label><label class="full">Emergency contact<input name="emergencyContact" placeholder="Name \xB7 phone number"/></label></div><div class="ledger-note">${icon("info", 15)} Save the employee profile here. They sign in with a work-email magic link. Passwords are never stored in employee records.</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("user-plus", 14)} Create profile</button></div></form>`);
+    showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>Create employee profile</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="displayName" required/></label><label>Employee ID *<input name="employeeId" placeholder="EMP-005" required/></label><label>Job title<input name="jobTitle" placeholder="e.g. Service Writer"/></label><label>Department<input name="department" placeholder="e.g. Service"/></label><label class="full">Email address *<input type="email" name="email" required/></label><label>Role<select name="accessRole"><option value="technician">Technician</option><option value="office">Office</option><option value="service_writer">Service Writer</option><option value="admin">Admin</option></select></label><label class="full">Technician dispatch name <input name="techName" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType"><option>Hourly</option><option>Salary</option><option>Contractor</option></select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required/></label><label>Pay frequency<select name="payFrequency"><option>Weekly</option><option>Biweekly</option><option>Monthly</option></select></label><label>Start date<input name="startDate" type="date" value="2026-08-14"/></label><label>Tax status<select name="taxStatus"><option>W-2</option><option>1099 Contractor</option></select></label><label>Phone<input name="phone" type="tel"/></label><label class="full">Home address<input name="address"/></label><label class="full">Emergency contact<input name="emergencyContact" placeholder="Name \xB7 phone number"/></label></div><div class="ledger-note">${icon("info", 15)} Save the employee profile here. They sign in with a work-email magic link. Passwords are never stored in employee records.</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("user-plus", 14)} Create profile</button></div></form>`);
     document.querySelector("#employee-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), email = data.email.trim().toLowerCase();
+      const data = readFormValues(event.target), email = data.email.trim().toLowerCase();
       if (state.users.some((user) => user.email.toLowerCase() === email)) {
         toast("An employee profile already uses that email");
         return;
@@ -11200,7 +11337,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function accounting() {
     const data = finance(), tabs = [["overview", "Overview"], ["receivables", "Receivables"], ["expenses", "Expenses"], ["ledger", "General ledger"], ["accounts", "Chart of accounts"]], views = { overview: profitLoss(data), receivables: arView(data), expenses: expenseView(), ledger: ledgerView(), accounts: accountView() };
-    return shell(`${heading("Financial operations", "Accounting", "Income, expenses, receivables, and books for Your Car Guy.", false)}<div class="accounting-actions"><button class="secondary" id="accounting-export">${icon("download", 14)} Export ledger</button><button class="secondary" id="journal-entry">${icon("book-open-check", 14)} Journal entry</button><button class="primary" id="record-expense">${icon("plus", 14)} Record expense</button></div><div class="accounting-tabs">${tabs.map((x) => `<button class="tab ${accountingTab === x[0] ? "active" : ""}" data-accounting-tab="${x[0]}">${x[1]}</button>`).join("")}</div>${views[accountingTab]}`);
+    return shell(`${heading("Financial operations", "Accounting", `Income, expenses, receivables, and books for ${escapeHtml(shopDisplayName())}.`, false)}<div class="accounting-actions"><button class="secondary" id="accounting-export">${icon("download", 14)} Export ledger</button><button class="secondary" id="journal-entry">${icon("book-open-check", 14)} Journal entry</button><button class="primary" id="record-expense">${icon("plus", 14)} Record expense</button></div><div class="accounting-tabs">${tabs.map((x) => `<button class="tab ${accountingTab === x[0] ? "active" : ""}" data-accounting-tab="${x[0]}">${x[1]}</button>`).join("")}</div>${views[accountingTab]}`);
   }
   function profitLoss(data) {
     return `<div class="finance-kpis"><article><span>Cash received</span><strong>${money4(data.income)}</strong><small>Paid invoices and posted income</small></article><article><span>Operating expenses</span><strong>${money4(data.expenses)}</strong><small>${state.expenses.length} recorded expenses</small></article><article class="${data.net >= 0 ? "positive" : "negative"}"><span>Net income</span><strong>${money4(data.net)}</strong><small>Cash-basis operating result</small></article><article><span>Accounts receivable</span><strong>${money4(data.receivable)}</strong><small>${money4(data.overdue)} overdue</small></article><article><span>Sales tax payable</span><strong>${money4(data.tax)}</strong><small>From paid work orders</small></article></div><div class="accounting-grid"><section class="statement"><div class="statement-head"><div><div class="eyebrow">Profit & loss</div><h2>Current activity</h2></div><span class="badge paid">Cash basis</span></div><div class="statement-line"><span>Service revenue</span><b>${money4(data.income)}</b></div><div class="statement-line"><span>Operating expenses</span><b>(${money4(data.expenses)})</b></div><div class="statement-line total"><span>Net income</span><b>${money4(data.net)}</b></div></section><section class="statement"><div class="statement-head"><div><div class="eyebrow">Controls</div><h2>Month-end checklist</h2></div>${icon("list-checks", 18)}</div><p>Review overdue receivables, reconcile the operating account, and set aside sales tax before filing.</p><small>Financial reporting is generated from records stored in this application.</small></section></div>`;
@@ -11229,7 +11366,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     showModal(`<form class="modal" id="expense-form"><div class="modal-head"><h2>Record expense</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Date<input type="date" name="date" value="2026-08-14" required/></label><label>Amount *<input name="amount" type="number" step=".01" min=".01" required/></label><label>Vendor *<input name="vendor" required/></label><label>Category<select name="category"><option>Parts & supplies</option><option>Shop supplies</option><option>Utilities</option><option>Tools & equipment</option><option>Insurance</option><option>Marketing</option><option>Other</option></select></label><label class="full">Memo<textarea name="memo" placeholder="What was this business expense for?"></textarea></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("save", 14)} Record expense</button></div></form>`);
     document.querySelector("#expense-form").onsubmit = (e) => {
       e.preventDefault();
-      const d = Object.fromEntries(new FormData(e.target)), record = { date: d.date, vendor: d.vendor, category: d.category, memo: d.memo, amount: Number(d.amount), account: expenseAccount(d.category) };
+      const d = readFormValues(e.target), record = { date: d.date, vendor: d.vendor, category: d.category, memo: d.memo, amount: Number(d.amount), account: expenseAccount(d.category) };
       state.expenses.push(record);
       pushExpenseToApi(record);
       save();
@@ -11243,7 +11380,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     showModal(`<form class="modal" id="journal-form"><div class="modal-head"><h2>Journal entry</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="ledger-note">${icon("scale", 15)} Post equal debit and credit amounts for an adjustment.</div><div class="form-grid" style="margin-top:14px"><label>Date<input type="date" name="date" value="2026-08-14" required/></label><label>Amount *<input name="amount" type="number" step=".01" min=".01" required/></label><label class="full">Description *<input name="description" required placeholder="e.g. Owner contribution"/></label><label>Debit account<select name="debitAccount">${options}</select></label><label>Credit account<select name="creditAccount">${options}</select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("book-open-check", 14)} Post entry</button></div></form>`);
     document.querySelector("#journal-form").onsubmit = (e) => {
       e.preventDefault();
-      const d = Object.fromEntries(new FormData(e.target));
+      const d = readFormValues(e.target);
       if (d.debitAccount === d.creditAccount) {
         toast("Choose different debit and credit accounts");
         return;
@@ -11341,7 +11478,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     showModal(`<form class="modal" id="coupon-form"><div class="modal-head"><h2>${coupon ? "Edit" : "Add"} coupon</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Code<input name="code" maxlength="24" pattern="[A-Za-z0-9_-]+" value="${escapeHtml(coupon?.code || "")}" required/></label><label>Discount percent<input name="percent" type="number" min=".1" max="100" step=".1" value="${coupon?.percent || ""}" required/></label><label class="toggle-field full"><input name="active" type="checkbox" ${coupon?.active !== false ? "checked" : ""}/><span>Coupon is active</span></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save coupon</button></div></form>`);
     document.querySelector("#coupon-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), code = String(data.code).trim().toUpperCase(), percent = Number(data.percent);
+      const data = readFormValues(event.target), code = String(data.code).trim().toUpperCase(), percent = Number(data.percent);
       if (!/^[A-Z0-9_-]{1,24}$/.test(code) || !Number.isFinite(percent) || percent <= 0 || percent > 100) {
         toast("Enter a valid coupon code and percent");
         return;
@@ -11368,7 +11505,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       toast("Allow pop-ups to print the invoice");
       return;
     }
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span{color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice summary</h2><table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody><tr><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money4(breakdown.subtotal)}</td></tr><tr><td>Sales tax (${Number(breakdown.taxRate || 0)}%)</td><td>${money4(breakdown.tax)}</td></tr></tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span{color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice summary</h2><table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody><tr><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money4(breakdown.subtotal)}</td></tr><tr><td>Sales tax (${Number(breakdown.taxRate || 0)}%${taxBaseNote(breakdown)})</td><td>${money4(breakdown.tax)}</td></tr></tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
     win.document.close();
   }
   function printableLineType(type) {
@@ -11451,10 +11588,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function openCustomerEditor(key) {
     const customer = state.customers.find((item) => customerRecordKey(item) === key);
     if (!customer) return;
-    showModal(`<form class="modal" id="customer-edit-form"><div class="modal-head"><h2>Edit customer</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Name *<input name="name" value="${escapeHtml(customer.name || "")}" required/></label><label>Phone<input name="phone" value="${escapeHtml(customer.phone || "")}"/></label><label class="full">Email<input name="email" type="email" value="${escapeHtml(customer.email || "")}"/></label><label>Billing address<textarea name="billingAddress">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes">${escapeHtml(customer.billingNotes || "")}</textarea></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save customer</button></div></form>`);
+    showModal(`<form class="modal" id="customer-edit-form"><div class="modal-head"><h2>Edit customer</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Name *<input name="displayName" value="${escapeHtml(customer.name || "")}" required/></label><label>Phone<input name="phone" value="${escapeHtml(customer.phone || "")}"/></label><label class="full">Email<input name="email" type="email" value="${escapeHtml(customer.email || "")}"/></label><label>Billing address<textarea name="billingAddress">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes">${escapeHtml(customer.billingNotes || "")}</textarea></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save customer</button></div></form>`);
     document.querySelector("#customer-edit-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), oldName = customer.name, button = event.target.querySelector("button[type=submit]");
+      const data = readFormValues(event.target), oldName = customer.name, button = event.target.querySelector("button[type=submit]");
       button.disabled = true;
       try {
         await saveCustomerChanges(customer, { name: data.name.trim(), phone: data.phone.trim(), email: data.email.trim(), billingAddress: data.billingAddress.trim(), billingNotes: data.billingNotes.trim() });
@@ -11501,7 +11638,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     showModal(`<form class="modal" id="invoice-edit-form"><div class="modal-head"><h2>Edit ${escapeHtml(invoice.number)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Customer *<select name="customer" required>${customerOptions(invoice.customer)}</select></label><label>Work order<input name="ro" value="${escapeHtml(invoice.ro || "")}"/></label><label>Issued<input name="date" type="date" value="${invoiceDateValue(invoice.date)}"/></label><label>Due<input name="due" type="date" value="${invoiceDateValue(invoice.due)}"/></label><label>Subtotal *<input name="subtotal" type="number" min="0" step=".01" value="${Number(bd.subtotal).toFixed(2)}" required/></label><label>Tax rate % *<input name="taxRate" type="number" min="0" step=".01" value="${Number(bd.taxRate)}" required/></label><label>Status<select name="status">${["sent", "overdue", "paid"].map((status) => `<option value="${status}" ${invoice.status === status ? "selected" : ""}>${label(status)}</option>`).join("")}</select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save invoice</button></div></form>`);
     document.querySelector("#invoice-edit-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target)), subtotal = Number(data.subtotal), taxRate = Number(data.taxRate), tax = Math.round(subtotal * taxRate) / 100, record = { ...invoice, customer: data.customer, ro: data.ro.trim(), date: data.date, due: data.due, subtotal, taxRate, tax, amount: Math.round((subtotal + tax) * 100) / 100, status: data.status }, button = event.target.querySelector("button[type=submit]");
+      const data = readFormValues(event.target), subtotal = Number(data.subtotal), taxRate = Number(data.taxRate), tax = Math.round(subtotal * taxRate) / 100, record = { ...invoice, customer: data.customer, ro: data.ro.trim(), date: data.date, due: data.due, subtotal, taxRate, tax, amount: Math.round((subtotal + tax) * 100) / 100, status: data.status }, button = event.target.querySelector("button[type=submit]");
       button.disabled = true;
       try {
         const saved = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "PUT", body: JSON.stringify(record) });
@@ -11579,7 +11716,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const activity = model.activity.map((item) => `<button class="home-row" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : 'data-route="invoices"'}><span class="home-row-icon muted">${icon("activity", 15)}</span><span><strong>${escapeHtml(item.title)} \xB7 ${escapeHtml(item.customer || "")}</strong><small>${escapeHtml(item.vehicle || item.meta || "")} \xB7 ${escapeHtml(label(item.status))}</small></span></button>`).join("");
     const start = model.isEmpty ? `<section class="home-start"><div><div class="eyebrow">Get started</div><h2>Your shop dashboard is ready</h2><p>Create a work order, book a visit, or open the dispatch board. Metrics, today's jobs, and recent activity fill in as soon as records land.</p></div><div class="home-start-actions"><button class="primary" type="button" data-open-new>${icon("plus", 15)} New work order</button>${canAccess("dispatch") ? `<button class="secondary" type="button" data-route="dispatch">${icon("layout-dashboard", 15)} Open dispatch</button>` : ""}</div></section>` : "";
     const quick = `<div class="home-command"><button class="primary home-intake" type="button" id="home-intake">${icon("plus", 18)} New Customer Intake</button><div class="home-actions">${homeQuickAction("orders", "clipboard-list", "View Work Orders")}${homeQuickAction("dispatch", "layout-dashboard", "Dispatch Board")}${homeQuickAction("shopops", "package", "Parts Requests", 'data-ops-tab="ordering"')}${homeQuickAction("customers", "users", "Customers")}${homeQuickAction("pos", "credit-card", "Card terminal")}${homeQuickAction("reports", "pie-chart", "Reports")}${homeQuickAction("payroll", "landmark", "Payroll")}</div></div>`;
-    return shell(`<div class="home-hero"><div><div class="eyebrow">${shopDayLabel()}</div><h1>${greetingForNow()}, ${escapeHtml(firstName)}</h1><p>Start with a customer intake. Work orders, dispatch, parts, and payroll stay one click away.</p></div><div class="head-actions"><button class="primary" type="button" id="home-intake-top">${icon("plus", 15)} New Customer Intake</button><button class="secondary" type="button" id="home-new-ro">New work order</button></div></div>${quick}${stats()}${start}<div class="home-grid"><section class="home-panel"><div class="home-panel-head"><div><h2>Needs attention</h2><p>Unassigned jobs, parts holds, and overdue invoices.</p></div><span>${model.attention.length}</span></div><div class="home-list">${attention || `<div class="home-empty">${icon("circle-check", 20)}<p>Nothing waiting on you right now.</p></div>`}</div></section><section class="home-panel"><div class="home-panel-head"><div><h2>Today's work</h2><p>Promise times and active repairs for this shop day.</p></div>${canAccess("dispatch") ? `<button class="mini-action" type="button" data-route="dispatch">View board</button>` : ""}</div><div class="home-jobs">${todayJobs || `<div class="home-empty">${icon("wrench", 20)}<p>No jobs promised for today. Create a work order to populate this list.</p></div>`}</div>${appointments ? `<div class="home-appointments"><h3>Appointments</h3>${appointments}</div>` : ""}</section><section class="home-panel home-panel-wide"><div class="home-panel-head"><div><h2>Recent activity</h2><p>Open work orders and the latest invoice movement.</p></div></div><div class="home-list">${activity || `<div class="home-empty">${icon("clipboard-list", 20)}<p>Activity shows here after the first repair order or invoice.</p></div>`}</div></section></div>`);
+    return shell(`<div class="home-hero"><div><div class="eyebrow">${shopDayLabel()}</div><h1>${greetingForNow()}, ${escapeHtml(firstName)}</h1><p>Start with a customer intake. Work orders, dispatch, parts, and payroll stay one click away.</p></div><div class="head-actions"><button class="secondary" type="button" id="home-new-ro">New work order</button></div></div>${quick}${stats()}${start}<div class="home-grid"><section class="home-panel"><div class="home-panel-head"><div><h2>Needs attention</h2><p>Unassigned jobs, parts holds, and overdue invoices.</p></div><span>${model.attention.length}</span></div><div class="home-list">${attention || `<div class="home-empty">${icon("circle-check", 20)}<p>Nothing waiting on you right now.</p></div>`}</div></section><section class="home-panel"><div class="home-panel-head"><div><h2>Today's work</h2><p>Promise times and active repairs for this shop day.</p></div>${canAccess("dispatch") ? `<button class="mini-action" type="button" data-route="dispatch">View board</button>` : ""}</div><div class="home-jobs">${todayJobs || `<div class="home-empty">${icon("wrench", 20)}<p>No jobs promised for today. Create a work order to populate this list.</p></div>`}</div>${appointments ? `<div class="home-appointments"><h3>Appointments</h3>${appointments}</div>` : ""}</section><section class="home-panel home-panel-wide"><div class="home-panel-head"><div><h2>Recent activity</h2><p>Open work orders and the latest invoice movement.</p></div></div><div class="home-list">${activity || `<div class="home-empty">${icon("clipboard-list", 20)}<p>Activity shows here after the first repair order or invoice.</p></div>`}</div></section></div>`);
   }
   function bindHomeDashboard() {
     document.querySelector("#home-new-ro")?.addEventListener("click", openNew);
@@ -11648,7 +11785,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   async function startPhoneEntry(event) {
     event.preventDefault();
     const form = event.target;
-    const data = Object.fromEntries(new FormData(form));
+    const data = readFormValues(form);
     const button = form.querySelector("#pos-phone-prepare");
     button.disabled = true;
     try {
@@ -11764,7 +11901,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(form));
+      const data = readFormValues(form);
       const button = form.querySelector("#pos-charge");
       button.disabled = true;
       const reuse = posCharge?.targetId === data.orderId && posCharge?.phase === "declined" ? posCharge.paymentIntentId : "";
@@ -11787,7 +11924,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     showModal(`<form class="modal" id="assignment-form"><div class="modal-head"><h2>Assigned technicians</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Primary technician<select name="primary">${options("primary")}</select></label><label>Primary share %<input name="primaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "primary")?.sharePercent ?? 100}"/></label><label>Secondary technician<select name="secondary">${options("secondary")}</select></label><label>Secondary share %<input name="secondaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "secondary")?.sharePercent ?? 0}"/></label><label>Apprentice<select name="apprentice">${options("apprentice")}</select></label><label>Apprentice share %<input name="apprenticeShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "apprentice")?.sharePercent ?? 0}"/></label><label class="full">Temporary technician name<input name="writeIn" value="${escapeAttr(writeIn)}" placeholder="Subcontractor or temp"/></label></div><p class="form-help">Only technicians appear in the lists. A temporary name is stored on this work order without a payroll rate.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Save assignments</button></div></form>`);
     document.querySelector("#assignment-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       const nextAssignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
         if (!data[role]) return [];
         const user = state.users.find((item) => item.id === data[role]);
@@ -12063,10 +12200,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return saved;
   }
   function openCustomerForm(existing = null) {
-    showModal(`<form class="modal" id="customer-edit-form"><div class="modal-head"><h2>${existing ? "Edit customer" : "Add customer"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Name *<input name="name" value="${escapeAttr(existing?.name || "")}" required/></label><label>Phone<input name="phone" value="${escapeAttr(existing?.phone || "")}"/></label><label class="full">Email<input name="email" type="email" value="${escapeAttr(existing?.email === "Not provided" ? "" : existing?.email || "")}"/></label><label>Billing address<textarea name="billingAddress">${escapeHtml(existing?.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes">${escapeHtml(existing?.billingNotes || "")}</textarea></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save customer</button></div></form>`);
+    showModal(`<form class="modal" id="customer-edit-form"><div class="modal-head"><h2>${existing ? "Edit customer" : "Add customer"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Name *<input name="displayName" value="${escapeAttr(existing?.name || "")}" required/></label><label>Phone<input name="phone" value="${escapeAttr(existing?.phone || "")}"/></label><label class="full">Email<input name="email" type="email" value="${escapeAttr(existing?.email === "Not provided" ? "" : existing?.email || "")}"/></label><label>Billing address<textarea name="billingAddress">${escapeHtml(existing?.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes">${escapeHtml(existing?.billingNotes || "")}</textarea></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save customer</button></div></form>`);
     document.querySelector("#customer-edit-form").onsubmit = async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       if (state.customers.some((customer) => customer !== existing && customer.name.toLowerCase() === data.name.trim().toLowerCase())) return toast("A customer already uses that name");
       const button = event.target.querySelector("button[type=submit]");
       button.disabled = true;
@@ -12708,7 +12845,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       ${feeLines.length ? `<div><span>Fees</span><b>${money4(estimate.lineFees || 0)}</b></div>` : ""}
       <div><span>Shop supplies</span><b>${money4(supply?.amount || 0)}</b></div>
       <div><span>${escapeHtml(estimate.discountReason || "Discount")}${estimate.discountPercent ? ` \xB7 ${estimate.discountPercent}%` : ""}</span><b>${estimate.discountAmount ? `-${money4(estimate.discountAmount)}` : money4(0)}</b></div>
-      <div><span>Tax \xB7 ${Number(estimate.taxRate || 0).toFixed(2)}%</span><b>${money4(estimate.tax)}</b></div>
+      <div><span>Tax \xB7 ${Number(estimate.taxRate || 0).toFixed(2)}%${taxBaseNote(estimate)}</span><b>${money4(estimate.tax)}</b></div>
       <div class="total"><span>Estimate total</span><b>${money4(estimate.total)}</b></div>
     </section>
     <aside class="reference-exclusions"><strong>Not included / still pending</strong><ul>${exclusions.length ? exclusions.map((item) => `<li>${escapeHtml(item)}</li>`).join("") : "<li>Additional or hidden work is not included without a revised estimate and authorization.</li>"}</ul></aside>
@@ -13004,10 +13141,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const summary = targetType === "invoice" ? invoicePaymentSummary(target) : workOrderPaymentSummary(target);
     if (summary.balance <= 0) return toast("This record has no remaining balance");
     const labelText = targetType === "invoice" ? target.number : target.id;
-    showModal(`<form class="modal" id="payment-form"><div class="modal-head"><h2>Record payment</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(labelText)} \xB7 ${escapeHtml(target.customer || "")}</span><strong>${money4(summary.balance)} remaining</strong></div><div class="form-grid"><label>Amount received *<input name="amount" type="number" min="0.01" max="${summary.balance}" step=".01" placeholder="Enter partial or full amount" required/></label><label>Method<select name="method">${["cash", "card", "check", "bank", "other"].map((method) => `<option value="${method}" ${method === initialMethod || initialMethod === "processor" && method === "card" ? "selected" : ""}>${paymentMethodLabel(method)}</option>`).join("")}</select></label><label>Received date / time<input name="receivedAt" type="datetime-local" value="${localDateTimeValue()}" required/></label><label>Reference / receipt<input name="reference" maxlength="160" placeholder="Receipt, check, or transaction ID"/></label><label class="full">Notes<textarea name="note" maxlength="500" placeholder="Optional payment note"></textarea></label></div><div class="payment-preview"><span>Paid to date <b>${money4(summary.paid)}</b></span><span>Current balance <b>${money4(summary.balance)}</b></span></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("check", 14)} Record payment</button></div></form>`);
+    showModal(`<form class="modal" id="payment-form"><div class="modal-head"><h2>Record payment</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(labelText)} \xB7 ${escapeHtml(target.customer || "")}</span><strong>${money4(summary.balance)} remaining</strong></div><div class="form-grid"><label>Amount received *<input name="amount" type="number" min="0.01" max="${summary.balance}" step=".01" placeholder="Enter partial or full amount" required/></label><label>Method<select name="paymentMethod">${["cash", "card", "check", "bank", "other"].map((method) => `<option value="${method}" ${method === initialMethod || initialMethod === "processor" && method === "card" ? "selected" : ""}>${paymentMethodLabel(method)}</option>`).join("")}</select></label><label>Received date / time<input name="receivedAt" type="datetime-local" value="${localDateTimeValue()}" required/></label><label>Reference / receipt<input name="reference" maxlength="160" placeholder="Receipt, check, or transaction ID"/></label><label class="full">Notes<textarea name="note" maxlength="500" placeholder="Optional payment note"></textarea></label></div><div class="payment-preview"><span>Paid to date <b>${money4(summary.paid)}</b></span><span>Current balance <b>${money4(summary.balance)}</b></span></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("check", 14)} Record payment</button></div></form>`);
     document.querySelector("#payment-form").onsubmit = (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       const amount = Number(data.amount);
       if (!Number.isFinite(amount) || amount <= 0 || amount > summary.balance) {
         toast("Enter a payment amount within the remaining balance");
@@ -13092,7 +13229,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const t = state.taxSettings || {};
     const jurisdictions = normalizeJurisdictions(t.jurisdictions, Number(t.rate) || 8.25);
     return {
-      shopName: profile.shopName || "Your Car Guy",
+      shopName: shopDisplayName(profile),
       address: profile.address || "",
       phone: profile.phone || "",
       ein: t.ein || "",
@@ -13278,7 +13415,7 @@ ${catRows}
   }
   function ytdPayForUser(user, throughPeriodKey) {
     const year = String(throughPeriodKey || filingIsoDate()).slice(0, 4);
-    const periods = new Set(state2.payrollEntries.filter((e) => e.employeeId === user.id && String(e.periodKey || "").startsWith(year)).map((e) => e.periodKey));
+    const periods = new Set(state.payrollEntries.filter((e) => e.employeeId === user.id && String(e.periodKey || "").startsWith(year)).map((e) => e.periodKey));
     if (user.employmentType === "Salary") {
       const start = /* @__PURE__ */ new Date(`${year}-01-01T12:00:00`);
       const end = /* @__PURE__ */ new Date(`${throughPeriodKey}T12:00:00`);
@@ -13288,7 +13425,7 @@ ${catRows}
     let federal = 0;
     let socialSecurity = 0;
     let medicare = 0;
-    let state2 = 0;
+    let stateTax = 0;
     let ssWages = 0;
     const sorted = [...periods].sort();
     for (const key of sorted) {
@@ -13297,7 +13434,7 @@ ${catRows}
       federal += stub.federal;
       socialSecurity += stub.socialSecurity;
       medicare += stub.medicare;
-      state2 += stub.state;
+      stateTax += stub.state;
       ssWages += stub.socialSecurityWages || 0;
     }
     return {
@@ -13305,9 +13442,9 @@ ${catRows}
       federal: Math.round(federal * 100) / 100,
       socialSecurity: Math.round(socialSecurity * 100) / 100,
       medicare: Math.round(medicare * 100) / 100,
-      state: Math.round(state2 * 100) / 100,
+      state: Math.round(stateTax * 100) / 100,
       socialSecurityWages: Math.round(ssWages * 100) / 100,
-      net: Math.round((gross - federal - socialSecurity - medicare - state2) * 100) / 100
+      net: Math.round((gross - federal - socialSecurity - medicare - stateTax) * 100) / 100
     };
   }
   function exportPayrollDetail() {
@@ -13438,7 +13575,7 @@ ${catRows}
     return state.orders.map((order) => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} \xB7 ${escapeHtml(order.vehicle)} \xB7 ${escapeHtml(order.customer)}</option>`).join("");
   }
   function ensureBrowserDiagnosticsClient() {
-    if (typeof window === "undefined" || window.shopcrankDiagnostics) return;
+    if (typeof window === "undefined" || window.shopcrankDiagnostics || !isLocalShell()) return;
     const invokeHttp = async (method, payload = {}) => {
       const response = await fetch(`${cloudflareConfig2.apiUrl}/diagnostics/j2534/${encodeURIComponent(method)}`, {
         method: "POST",
@@ -14180,7 +14317,7 @@ ${line}`.trim();
     });
     document.querySelector("#key-job-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       if (data.mode === "live") {
         await startLiveKeyJob(data);
         return;
@@ -14345,7 +14482,7 @@ ${line}`.trim();
       button.disabled = true;
       error.hidden = true;
       try {
-        await onSubmit(Object.fromEntries(new FormData(form)));
+        await onSubmit(readFormValues(form));
         closeModal();
         reloadLicenseAdmin();
       } catch (requestError) {
@@ -14659,6 +14796,7 @@ ${line}`.trim();
     "src/runtime/legacy.js"() {
       init_config();
       init_html();
+      init_form_fields();
       init_detect();
       init_utils();
       init_prepare_entity_mutation();
@@ -14765,9 +14903,9 @@ ${line}`.trim();
         shiftEntries: [],
         jobClockEntries: [],
         estimates: [],
-        // Default messaging settings – replace with your real service endpoint to enable email/SMS delivery.
-        messagingSettings: { enabled: true, endpoint: "https://httpbin.org/post", senderEmail: "no-reply@example.com", senderPhone: "", shopName: "Your Car Guy" },
-        billingSettings: { enabled: false, provider: "stripe", checkoutEndpoint: "", onboardingUrl: "", accountLabel: "", shopName: "Your Car Guy", shopId: "", webhookUrl: "" },
+        // Messaging stays off (device apps) until a shop connects its own delivery service.
+        messagingSettings: { enabled: false, endpoint: "", senderEmail: "", senderPhone: "", shopName: "" },
+        billingSettings: { enabled: false, provider: "stripe", checkoutEndpoint: "", onboardingUrl: "", accountLabel: "", shopName: "", shopId: "", webhookUrl: "" },
         payments: [],
         taxSettings: { state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
         chartOfAccounts: [
@@ -14837,6 +14975,12 @@ ${line}`.trim();
       mutationQueueStore = createMutationQueueStore({ storage: localStorage, storeKey: MUTATION_QUEUE_STORE });
       flushingMutationQueue = false;
       window.addEventListener("online", flushMutationQueue);
+      ["online", "offline"].forEach((eventName) => window.addEventListener(eventName, () => {
+        const pill = document.querySelector(".sync-pill");
+        if (!pill) return;
+        pill.outerHTML = safeHtml(syncStatusBadge());
+        lucide.createIcons();
+      }));
       shopEntityCollections = { vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
       shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
       roleLabel = { super_admin: "Super Admin", admin: "Admin", technician: "Technician", office: "Office", service_writer: "Service Writer" };
@@ -14948,6 +15092,10 @@ ${line}`.trim();
         }
         const form = original.cloneNode(true);
         original.replaceWith(form);
+        let turnstile = null;
+        if (!isOfflineDesktop() && window.ShopCrankTurnstile) window.ShopCrankTurnstile.mount(form.querySelector("#login-turnstile")).then((widget) => {
+          turnstile = widget;
+        });
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           const errorEl = form.querySelector("#login-error"), sentEl = form.querySelector("#login-sent"), submitButton = form.querySelector("button[type=submit]"), emailInput = form.querySelector("#login-email");
@@ -14957,7 +15105,7 @@ ${line}`.trim();
           desktopEntitlementVerified = !isDesktopApp;
           try {
             if (isOfflineDesktop()) {
-              const data = Object.fromEntries(new FormData(form));
+              const data = readFormValues(form);
               if (!offlineAccountReady && data.password !== data.confirm) throw new Error("Those passwords do not match.");
               const account = offlineAccountReady ? await window.shopcrankDesktop.localAuth.signIn({ email: data.email, password: data.password }) : await window.shopcrankDesktop.localAuth.create({ name: data.name, email: data.email, password: data.password });
               const session = offlineSession(account);
@@ -14996,7 +15144,7 @@ ${line}`.trim();
             }
             const email = String(emailInput?.value || "").trim().toLowerCase();
             if (!email) throw new Error("Enter your work email to continue.");
-            const result = await requestMagicLinkSignIn(email);
+            const result = await requestMagicLinkSignIn(email, turnstile?.token() || "");
             if (result?.redirecting) return;
             if (result?.sent) {
               if (sentEl) {
@@ -15016,10 +15164,12 @@ ${line}`.trim();
             errorEl.textContent = error.message || "Sign-in failed.";
             errorEl.hidden = false;
             submitButton.disabled = false;
+            turnstile?.reset();
           }
         });
       };
-      shopProfileDefaults = { id: "profile", shopName: "Your Car Guy", phone: "555-0100", address: "100 Demo Street, Example City, TX 00000", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "/assets/reliable-logo.jpg", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
+      shopProfileDefaults = { id: "profile", shopName: "", phone: "", address: "", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
+      setDefaultTaxPolicy(() => shopTaxPolicy(state.taxSettings));
       appearanceMedia = matchMedia("(prefers-color-scheme: dark)");
       appearanceMedia.addEventListener?.("change", () => {
         if (document.documentElement.dataset.themeMode === "device") applyAppearance("device");
@@ -15051,7 +15201,7 @@ ${line}`.trim();
         profileForm?.addEventListener("submit", async (event) => {
           event.preventDefault();
           event.stopImmediatePropagation();
-          const data = Object.fromEntries(new FormData(event.target)), logoUrl = safeHttpUrl(data.logoUrl), themeMode = ["device", "light", "dark"].includes(data.themeMode) ? data.themeMode : "device";
+          const data = readFormValues(event.target), logoUrl = safeHttpUrl(data.logoUrl), themeMode = ["device", "light", "dark"].includes(data.themeMode) ? data.themeMode : "device";
           if (data.logoUrl.trim() && !logoUrl) {
             toast("Logo URL must use http or https");
             return;
@@ -15071,7 +15221,7 @@ ${line}`.trim();
         }, { capture: true });
         document.querySelector("#vendor-defaults-form")?.addEventListener("submit", async (event) => {
           event.preventDefault();
-          const data = Object.fromEntries(new FormData(event.target)), defaultVendorByKind = { Part: data.vendorPart, Tire: data.vendorTire, Supply: data.vendorSupply, Asset: data.vendorAsset };
+          const data = readFormValues(event.target), defaultVendorByKind = { Part: data.vendorPart, Tire: data.vendorTire, Supply: data.vendorSupply, Asset: data.vendorAsset };
           await saveProfilePatch({ defaultVendor: data.defaultVendor, defaultVendorByKind });
           toast("Vendor defaults saved");
           render();
@@ -15093,7 +15243,7 @@ ${line}`.trim();
       };
       addInventory = function() {
         const profile = shopProfile(), initialKind = "Part", initialVendor = defaultVendorForKind(initialKind, profile);
-        simpleRecordModal("inventory", "Inventory item", `<label>Name<input name="name" required/></label><label>SKU<input name="sku" required/></label><label>Type<select name="kind" id="inventory-kind"><option>Part</option><option>Tire</option><option>Supply</option><option>Asset</option></select></label><label>Vendor<select name="vendor" id="inventory-vendor">${vendorOptions(initialVendor)}</select></label><label>Quantity<input name="quantity" type="number" min="0" value="0"/></label><label>Reorder level<input name="reorderLevel" type="number" min="0" value="0"/></label><label>Unit cost<input name="cost" type="number" min="0" step=".01"/></label><label>Selling price<input name="price" type="number" min="0" step=".01"/></label>`, (data) => ({ id: `inventory-${Date.now()}`, ...data, quantity: Number(data.quantity), reorderLevel: Number(data.reorderLevel), cost: Number(data.cost), price: Number(data.price), unit: "ea", createdAt: now() }));
+        simpleRecordModal("inventory", "Inventory item", `<label>Name<input name="displayName" required/></label><label>SKU<input name="sku" required/></label><label>Type<select name="kind" id="inventory-kind"><option>Part</option><option>Tire</option><option>Supply</option><option>Asset</option></select></label><label>Vendor<select name="vendor" id="inventory-vendor">${vendorOptions(initialVendor)}</select></label><label>Quantity<input name="quantity" type="number" min="0" value="0"/></label><label>Reorder level<input name="reorderLevel" type="number" min="0" value="0"/></label><label>Unit cost<input name="cost" type="number" min="0" step=".01"/></label><label>Selling price<input name="price" type="number" min="0" step=".01"/></label>`, (data) => ({ id: `inventory-${Date.now()}`, ...data, quantity: Number(data.quantity), reorderLevel: Number(data.reorderLevel), cost: Number(data.cost), price: Number(data.price), unit: "ea", createdAt: now() }));
         document.querySelector("#inventory-kind")?.addEventListener("change", (event) => {
           document.querySelector("#inventory-vendor").value = defaultVendorForKind(event.target.value, profile);
         });
@@ -15113,7 +15263,7 @@ ${line}`.trim();
         };
         form.onsubmit = async (event) => {
           event.preventDefault();
-          const data = Object.fromEntries(new FormData(event.target)), percent = Math.min(100, Math.max(0, Number(data.discount))), base = Number(estimate.originalSubtotal ?? estimate.subtotal);
+          const data = readFormValues(event.target), percent = Math.min(100, Math.max(0, Number(data.discount))), base = Number(estimate.originalSubtotal ?? estimate.subtotal);
           if (!Number.isFinite(percent) || !Number.isFinite(base)) {
             toast("Enter a valid discount");
             return;
@@ -15124,7 +15274,10 @@ ${line}`.trim();
           estimate.couponCode = data.couponCode || "";
           estimate.discountAmount = Math.round(base * percent) / 100;
           estimate.subtotal = Math.round((base - estimate.discountAmount) * 100) / 100;
-          estimate.tax = Math.round(estimate.subtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
+          const taxableBase = Number(estimate.originalTaxableSubtotal ?? estimate.taxableSubtotal ?? base);
+          estimate.originalTaxableSubtotal = taxableBase;
+          estimate.taxableSubtotal = Math.round(taxableBase * (100 - percent)) / 100;
+          estimate.tax = Math.round(estimate.taxableSubtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
           estimate.total = Math.round((estimate.subtotal + estimate.tax) * 100) / 100;
           await updateEstimateInApi(estimate);
           save();
@@ -15148,7 +15301,7 @@ ${line}`.trim();
         const paymentRows = paymentRecords().filter((payment) => payment.invoiceNumber === invoice.number).map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${escapeHtml(payment.reference || "")}</td><td>${money4(Number(payment.amount || 0))}</td></tr>`).join("");
         const billingAddressHtml = customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : "";
         const paymentSectionHtml = paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : "";
-        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${billingAddressHtml}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentSectionHtml}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print invoice</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the invoice", autoPrint: true });
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${billingAddressHtml}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentSectionHtml}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%${taxBaseNote(breakdown)})</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print invoice</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the invoice", autoPrint: true });
       };
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
@@ -15269,10 +15422,10 @@ ${line}`.trim();
         return `${inventory}<div class="ops-actions vendor-register-head"><span class="ops-note">${state.vendors.length} vendor${state.vendors.length === 1 ? "" : "s"}</span><button class="secondary" id="add-vendor-register">${icon("truck", 14)} Add vendor</button></div><div class="data-panel"><table><thead><tr><th>Vendor</th><th>Phone</th><th>Email</th><th>Address</th><th></th></tr></thead><tbody>${vendorRows || `<tr><td colspan="5">No vendors yet. Add one to assign it to inventory and purchasing defaults.</td></tr>`}</tbody></table></div>`;
       };
       addVendor = function(existing = null) {
-        showModal(`<form class="modal" id="vendor-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add"} vendor</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Name *<input name="name" value="${escapeHtml(existing?.name || "")}" required/></label><label>Phone<input name="phone" value="${escapeHtml(existing?.phone || "")}"/></label><label>Email<input name="email" type="email" value="${escapeHtml(existing?.email || "")}"/></label><label>Account number<input name="accountNumber" value="${escapeHtml(existing?.accountNumber || "")}"/></label><label class="full">Address<input name="address" value="${escapeHtml(existing?.address || "")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save vendor</button></div></form>`);
+        showModal(`<form class="modal" id="vendor-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add"} vendor</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Name *<input name="displayName" value="${escapeHtml(existing?.name || "")}" required/></label><label>Phone<input name="phone" value="${escapeHtml(existing?.phone || "")}"/></label><label>Email<input name="email" type="email" value="${escapeHtml(existing?.email || "")}"/></label><label>Account number<input name="accountNumber" value="${escapeHtml(existing?.accountNumber || "")}"/></label><label class="full">Address<input name="address" value="${escapeHtml(existing?.address || "")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save vendor</button></div></form>`);
         document.querySelector("#vendor-form").onsubmit = async (event) => {
           event.preventDefault();
-          const data = Object.fromEntries(new FormData(event.target)), name = data.name.trim(), duplicate = state.vendors.find((vendor) => vendor.id !== existing?.id && vendor.name.toLowerCase() === name.toLowerCase()), button = event.target.querySelector("button[type=submit]");
+          const data = readFormValues(event.target), name = data.name.trim(), duplicate = state.vendors.find((vendor) => vendor.id !== existing?.id && vendor.name.toLowerCase() === name.toLowerCase()), button = event.target.querySelector("button[type=submit]");
           if (duplicate) {
             toast("A vendor with this name already exists");
             return;
@@ -15334,7 +15487,7 @@ ${line}`.trim();
         bindAgentPhoneSettingsCore();
         document.querySelector("#agentphone-config-form")?.addEventListener("submit", async (event) => {
           event.preventDefault();
-          const form = event.target, data = Object.fromEntries(new FormData(form)), button = form.querySelector("button[type=submit]");
+          const form = event.target, data = readFormValues(form), button = form.querySelector("button[type=submit]");
           button.disabled = true;
           try {
             const result = await apiFetch("/agentphone/configure", { method: "POST", body: JSON.stringify({ apiKey: data.apiKey, agentId: data.agentId, contextLimit: Number(data.contextLimit), timeout: Number(data.timeout) }) });
@@ -15356,7 +15509,7 @@ ${line}`.trim();
           return;
         }
         if (existing) return;
-        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
+        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
         document.querySelector("#global-assistant").onclick = openGlobalAssistant;
         document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
         lucide.createIcons();
@@ -15444,7 +15597,9 @@ ${line}`.trim();
               ein: String(tax.ein || ""),
               texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
               webfileNumber: String(tax.webfileNumber || ""),
-              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+              ...typeof tax.laborTaxable === "boolean" ? { laborTaxable: tax.laborTaxable } : {},
+              ...typeof tax.feesTaxable === "boolean" ? { feesTaxable: tax.feesTaxable } : {}
             };
           }
         } catch (error) {
@@ -15459,10 +15614,10 @@ ${line}`.trim();
         return shell(`${heading("Team access", "Employees", "Employee records, employment details, payroll rates, and login access.", false)}<div class="employee-actions"><div class="access-note">${icon("shield-check", 15)} Employee profiles are saved to this shop and remain available after sign-in or refresh.</div><button class="primary" id="new-employee">${icon("user-plus", 15)} Add employee</button></div><div class="data-panel"><table><thead><tr><th>Employee record</th><th>Role & department</th><th>Employment & pay</th><th>Contact & start</th><th>Access</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No employee profiles yet.</td></tr>`}</tbody></table></div>`);
       };
       openEmployee = function(existing = null) {
-        showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="name" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="title" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="role">${["technician", "office", "service_writer", "admin"].map((role) => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map((value2) => `<option ${existing?.employmentType === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map((value2) => `<option ${existing?.payFrequency === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10))}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map((value2) => `<option ${existing?.taxStatus === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
+        showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="displayName" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="jobTitle" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="accessRole">${["technician", "office", "service_writer", "admin"].map((role) => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map((value2) => `<option ${existing?.employmentType === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map((value2) => `<option ${existing?.payFrequency === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10))}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map((value2) => `<option ${existing?.taxStatus === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
         document.querySelector("#employee-form").onsubmit = async (event) => {
           event.preventDefault();
-          const data = Object.fromEntries(new FormData(event.target));
+          const data = readFormValues(event.target);
           const email = String(existing?.email || data.email).trim().toLowerCase();
           if (!existing && state.users.some((user) => user.email.toLowerCase() === email)) return toast("An employee profile already uses that email");
           if (state.users.some((user) => user.id !== existing?.id && user.employeeId === data.employeeId.trim())) return toast("An employee already uses that employee ID");
@@ -15504,7 +15659,7 @@ ${line}`.trim();
         const customerPicker = bindCustomerIntakeSearch(form);
         form.onsubmit = async (event) => {
           event.preventDefault();
-          const data = Object.fromEntries(new FormData(form));
+          const data = readFormValues(form);
           const customerName = String(data.customer || "").trim();
           if (!customerName) return toast("Select or enter a customer name");
           const button = form.querySelector("button[type=submit], button:not([type])");
@@ -15600,7 +15755,7 @@ ${line}`.trim();
         const form = document.querySelector("#work-order-edit-form");
         form.onsubmit = async (event) => {
           event.preventDefault();
-          const data = Object.fromEntries(new FormData(form));
+          const data = readFormValues(form);
           const next = {
             ...order,
             customer: data.customer,
@@ -15700,6 +15855,7 @@ ${line}`.trim();
         const saved = await apiFetch("/entities/invoices", { method: "POST", body: JSON.stringify(invoice) });
         const value2 = saved?.queued ? invoice : saved;
         state.invoices.push(value2);
+        toast(`${order.id} completed \xB7 invoice ${value2.number || invoice.number} created`);
         return value2;
       };
       openOrder = function(id) {
@@ -15958,7 +16114,9 @@ ${line}`.trim();
               ein: String(tax.ein || ""),
               texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
               webfileNumber: String(tax.webfileNumber || ""),
-              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+              ...typeof tax.laborTaxable === "boolean" ? { laborTaxable: tax.laborTaxable } : {},
+              ...typeof tax.feesTaxable === "boolean" ? { feesTaxable: tax.feesTaxable } : {}
             };
           }
         } catch (error) {
@@ -15973,7 +16131,7 @@ ${line}`.trim();
         document.querySelector("#tax-settings-form")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           event.stopImmediatePropagation();
-          const data = Object.fromEntries(new FormData(event.target));
+          const data = readFormValues(event.target);
           const existing = state.shopSettingsRecords.find((item) => item.id === "tax");
           const record = {
             ...state.taxSettings,
@@ -16264,9 +16422,9 @@ ${line}`.trim();
         const rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const summary = invoicePaymentSummary(invoice);
           const bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt || "")}</td><td>${badge2(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge2(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
         }).join("");
-        return shell(`${heading("Accounts receivable", "Invoices", "Record partial or full payments, monitor remaining balances, and review collection history.", false)}${stats()}<div class="data-panel invoice-register"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Closeout</th><th>Status</th><th>Total</th><th>Payments</th></tr></thead><tbody>${rows || `<tr><td colspan="8">No invoices yet.</td></tr>`}</tbody></table></div>`);
+        return shell(`${heading("Accounts receivable", "Invoices", "Record partial or full payments, monitor remaining balances, and review collection history.", false)}${receivableStats()}<div class="data-panel invoice-register"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Closeout</th><th>Status</th><th>Total</th><th>Payments</th></tr></thead><tbody>${rows || `<tr><td colspan="8">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
       openOrderPaymentCore = openOrder;
       openOrder = function(id) {
@@ -16414,7 +16572,7 @@ ${filingCenterMarkup()}`);
           ledger: ledgerView(),
           accounts: accountView()
         };
-        return shell(`${heading("Financial operations", "Accounting", "Income, expenses, receivables, and filing packages for Your Car Guy.", false)}<div class="accounting-actions"><button class="secondary" id="accounting-export">${icon("download", 14)} Export ledger</button><button class="secondary" id="journal-entry">${icon("book-open-check", 14)} Journal entry</button><button class="primary" id="record-expense">${icon("plus", 14)} Record expense</button></div><div class="accounting-tabs">${tabs.map((x) => `<button class="tab ${accountingTab === x[0] ? "active" : ""}" data-accounting-tab="${x[0]}">${x[1]}</button>`).join("")}</div>${views[accountingTab] || views.overview}`);
+        return shell(`${heading("Financial operations", "Accounting", `Income, expenses, receivables, and filing packages for ${escapeHtml(shopDisplayName())}.`, false)}<div class="accounting-actions"><button class="secondary" id="accounting-export">${icon("download", 14)} Export ledger</button><button class="secondary" id="journal-entry">${icon("book-open-check", 14)} Journal entry</button><button class="primary" id="record-expense">${icon("plus", 14)} Record expense</button></div><div class="accounting-tabs">${tabs.map((x) => `<button class="tab ${accountingTab === x[0] ? "active" : ""}" data-accounting-tab="${x[0]}">${x[1]}</button>`).join("")}</div>${views[accountingTab] || views.overview}`);
       };
       payStub = function(user, period, opts = {}) {
         const lines = state.payrollEntries.filter((entry) => entry.employeeId === user.id && entry.periodKey === period.key);
@@ -16537,12 +16695,12 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         const step2 = Boolean(existing?.w4Step2Checkbox);
         showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">
 <h3>Identity & access</h3><div class="form-grid">
-<label>Employee name *<input name="name" required value="${employeeFormValue(existing, "name")}"/></label>
+<label>Employee name *<input name="displayName" required value="${employeeFormValue(existing, "name")}"/></label>
 <label>Employee ID *<input name="employeeId" placeholder="EMP-005" required value="${employeeFormValue(existing, "employeeId")}"/></label>
-<label>Job title<input name="title" value="${employeeFormValue(existing, "title")}"/></label>
+<label>Job title<input name="jobTitle" value="${employeeFormValue(existing, "title")}"/></label>
 <label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label>
 <label class="full" for="employee-email"><span class="field-label">Email address *</span><input id="employee-email" name="workEmail" type="text" inputmode="email" autocomplete="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label>
-<label>Role<select name="role">${roleOptions}</select></label>
+<label>Role<select name="accessRole">${roleOptions}</select></label>
 <label>Classification<select name="classification">${EMPLOYEE_CLASSIFICATIONS.map((item) => `<option value="${item.id}" ${classificationFor(existing || { role: "technician" }) === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
 <label class="full">Technician dispatch name <input name="techName" value="${employeeFormValue(existing, "techName")}"/></label>
 </div>
@@ -16575,7 +16733,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         document.querySelector("#employee-form").onsubmit = async (event) => {
           event.preventDefault();
           const form = event.target;
-          const data = Object.fromEntries(new FormData(form));
+          const data = readFormValues(form);
           const email = String(existing?.email || data.workEmail || "").trim().toLowerCase();
           const button = form.querySelector("button.primary");
           if (!email || !email.includes("@")) {
@@ -16631,7 +16789,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           taxReportForm.addEventListener("submit", async (event) => {
             event.preventDefault();
             event.stopImmediatePropagation();
-            const data = Object.fromEntries(new FormData(event.target));
+            const data = readFormValues(event.target);
             await generateTaxReportFromForm(data.from, data.to);
             render();
           }, { capture: true });
@@ -16697,12 +16855,14 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
 <label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
 <label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
 <label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>`);
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
           }
           taxSettingsForm.addEventListener("submit", async (event) => {
             event.preventDefault();
             event.stopImmediatePropagation();
-            const data = Object.fromEntries(new FormData(event.target));
+            const data = readFormValues(event.target);
             let jurisdictions = null;
             try {
               jurisdictions = JSON.parse(data.jurisdictionsJson || "null");
@@ -16719,7 +16879,9 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
               ein: String(data.ein || "").trim(),
               texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
               webfileNumber: String(data.webfileNumber || "").trim(),
-              jurisdictions
+              jurisdictions,
+              laborTaxable: data.laborTaxable === "on",
+              feesTaxable: data.feesTaxable === "on"
             };
             try {
               await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });
@@ -16996,7 +17158,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           event.preventDefault();
           const form = event.target;
           const button = form.querySelector("button[type=submit]");
-          const data = Object.fromEntries(new FormData(form));
+          const data = readFormValues(form);
           button.disabled = true;
           try {
             const result = await apiFetch("/voice/grok/configure", {

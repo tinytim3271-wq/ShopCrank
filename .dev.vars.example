@@ -2,6 +2,8 @@
 # Never enable DEV_AUTH_BYPASS in production.
 
 DEV_AUTH_BYPASS=1
+# Return the sign-in link in the API response instead of emailing it (local only).
+AUTH_EXPOSE_LOGIN_LINK=1
 ACCESS_ADMIN_EMAILS=admin@example.com
 INTEGRATION_ENCRYPTION_KEY=replace-with-a-long-random-value
 DIAGNOSTICS_CAPABILITY_SECRET=replace-with-a-different-random-value
@@ -144,3 +146,8 @@ AI_ENABLED=1
 # LABOR_WEB_SEARCH_PROVIDER=brave
 # LABOR_WEB_SEARCH_API_KEY=replace-with-brave-search-api-key
 # (alias also accepted: BRAVE_SEARCH_API_KEY)
+
+# Optional: Cloudflare Turnstile on sign-up/sign-in (leave unset to keep it off).
+# Test keys that always pass: https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+# TURNSTILE_SITE_KEY=1x00000000000000000000AA
+# TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

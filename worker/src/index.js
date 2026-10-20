@@ -48,7 +48,7 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
-import { storeUploadedFile } from './routes/files.mjs';
+import { handleFiles as handleFileRoute } from './routes/files.mjs';
 import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, signedRepairOrderForKeys } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
@@ -1821,53 +1821,10 @@ async function handleAgentPhoneWebhook(request, env, shopId) {
   }));
 }
 
-async function handleFiles(request, env, context, segments, analytics) {
-  const action = segments[1];
-  if (action === 'presign-upload' && request.method === 'POST') {
-    const body = await requestJson(request);
-    const kind = String(body.kind || 'file').replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'file';
-    const contentType = String(body.contentType || 'application/octet-stream').toLowerCase().split(';')[0].trim();
-    const contentLength = Number(body.contentLength || 0);
-    if (!Number.isFinite(contentLength) || contentLength <= 0 || contentLength > 15 * 1024 * 1024) throw new HttpError(400, 'File size must be between 1 byte and 15 MB');
-    if (!['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(contentType)) throw new HttpError(400, 'Unsupported file type');
-    const key = `shops/${context.shopId}/${kind}/${crypto.randomUUID()}`;
-    // Return a same-origin relative URL so browser/desktop sessions keep Access cookies.
-    const uploadUrl = `/api/files/upload?key=${encodeURIComponent(key)}`;
-    return json({ uploadUrl, key, expiresIn: 300 });
-  }
-  const key = new URL(request.url).searchParams.get('key') || (action === 'object' ? '' : decodeURIComponent(segments.slice(1).join('/')));
-  if (!key || !key.startsWith(`shops/${context.shopId}/`)) throw new HttpError(403, 'File key is outside this shop');
-  if (action === 'upload' && request.method === 'PUT') {
-    if (!request.body) throw new HttpError(400, 'Request body is required');
-    const maxBytes = 15 * 1024 * 1024;
-    const declaredLength = Number(request.headers.get('Content-Length') || 0);
-    if (declaredLength > maxBytes) throw new HttpError(413, 'File exceeds 15 MB');
-    const received = await storeUploadedFile(env.FILES, key, request.body, {
-      httpMetadata: { contentType: request.headers.get('Content-Type') || 'application/octet-stream' },
-      customMetadata: { shopId: context.shopId, uploadedBy: context.userId },
-    }, maxBytes);
-    captureForContext(analytics, context, 'file_uploaded', {
-      file_kind: key.split('/')[2],
-      content_type: request.headers.get('Content-Type') || 'application/octet-stream',
-      size_bytes: received,
-    });
-    return new Response(null, { status: 204 });
-  }
-  if (action === 'presign-download' && request.method === 'GET') {
-    const downloadUrl = new URL('/api/files/object', request.url);
-    downloadUrl.searchParams.set('key', key);
-    return json({ url: downloadUrl.href, key, expiresIn: 300 });
-  }
-  if ((action === 'object' || action !== 'upload') && request.method === 'GET') {
-    const object = await env.FILES.get(key);
-    if (!object) throw new HttpError(404, 'File not found');
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('ETag', object.httpEtag);
-    headers.set('Cache-Control', 'private, max-age=300');
-    return new Response(object.body, { headers });
-  }
-  throw new HttpError(405, 'Method not allowed');
+function handleFiles(request, env, context, segments, analytics) {
+  return handleFileRoute(request, env, context, segments, {
+    onUploaded: properties => captureForContext(analytics, context, 'file_uploaded', properties),
+  });
 }
 
 async function handleCheckout(request, env, context, analytics) {
@@ -2577,6 +2534,20 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
       VALUES (?, ?, ?, 'admin', ?, 1, ?, ?)
     `).bind(userId, normalized, shopId, intent.ownerName, now, now),
+    // Seed the shop profile with the name the owner typed at signup, so screens,
+    // estimates and invoices carry this shop's identity from the first load.
+    env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, 'shopsettings', 'profile', ?, ?, ?, ?)
+      ON CONFLICT(shop_id, entity_type, entity_id) DO NOTHING
+    `).bind(shopId, JSON.stringify({
+      id: 'profile',
+      shopId,
+      shopName: intent.shopName,
+      createdBy: userId,
+      createdAt: now,
+      updatedAt: now,
+    }), userId, now, now),
   ]);
   const founding = await applyPendingFoundingClaim(env, {
     email: normalized,
@@ -2635,6 +2606,41 @@ function desktopHandoffPage(token) {
   </main>
 </body>
 </html>`;
+}
+
+// Email link scanners (e.g. Microsoft Safe Links) open sign-in links before the
+// person does. A GET only shows this page; the token is spent by the POST its
+// button sends, so a scanner can't burn the link.
+function signInConfirmPage(token) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Sign in to ShopCrank</title>
+  <style>
+    body { font-family: "Segoe UI", system-ui, sans-serif; background: #18252b; color: #f4f7f8; margin: 0; min-height: 100vh; display: grid; place-items: center; }
+    main { max-width: 28rem; padding: 2rem; }
+    button { margin-top: 1rem; background: #e8a317; color: #18252b; border: 0; font: inherit; font-weight: 700; padding: 0.8rem 1.1rem; border-radius: 0.4rem; cursor: pointer; }
+    p { line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Sign in to ShopCrank</h1>
+    <p>Continue to finish signing in on this device. The link works once and expires 15 minutes after it was sent.</p>
+    <form method="post" action="/api/auth/callback">
+      <input type="hidden" name="token" value="${escapeHtmlText(token)}">
+      <button type="submit">Continue to ShopCrank</button>
+    </form>
+  </main>
+</body>
+</html>`;
+}
+
+function escapeHtmlText(value) {
+  return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
 
 const GOOGLE_AUTH_COOKIES = Object.freeze([
@@ -2860,6 +2866,55 @@ function signInResendRetryAfter(recent, now = Date.now()) {
   return Math.max(1, Math.min(60, Math.ceil(remaining / 1000)));
 }
 
+const SIGN_IN_RATE_LIMIT = Object.freeze({ windowMs: 15 * 60 * 1000, maxPerClient: 10 });
+
+// Caps sign-in emails per client IP so the endpoint can't be used to mail
+// arbitrary addresses at volume. Fails open if the table is missing.
+async function enforceSignInRateLimit(request, env) {
+  const ip = String(request.headers.get('CF-Connecting-IP') || '').trim();
+  if (!ip) return;
+  const windowStart = Math.floor(Date.now() / SIGN_IN_RATE_LIMIT.windowMs) * SIGN_IN_RATE_LIMIT.windowMs;
+  const bucket = `magic-link:${await hashValue(ip)}`;
+  let count = 0;
+  try {
+    const row = await env.DB.prepare(`
+      INSERT INTO auth_rate_limits (bucket, window_start, request_count) VALUES (?, ?, 1)
+      ON CONFLICT(bucket, window_start) DO UPDATE SET request_count = request_count + 1
+      RETURNING request_count
+    `).bind(bucket, windowStart).first();
+    count = Number(row?.request_count || 0);
+  } catch (error) {
+    if (isDatabaseOperationalError(error)) return;
+    throw error;
+  }
+  if (count > SIGN_IN_RATE_LIMIT.maxPerClient) {
+    const retryAfter = Math.max(1, Math.ceil((windowStart + SIGN_IN_RATE_LIMIT.windowMs - Date.now()) / 1000));
+    throw new HttpError(429, 'Too many sign-in requests from this network. Wait a few minutes and try again.', { 'Retry-After': String(retryAfter) });
+  }
+}
+
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+
+// Bot check for sign-in/sign-up emails. Off until TURNSTILE_SECRET_KEY is set
+// (and TURNSTILE_SITE_KEY, which /api/auth/config hands to the forms).
+export async function verifyTurnstile(request, env, token, fetchImpl = fetch) {
+  const secret = String(env.TURNSTILE_SECRET_KEY || '').trim();
+  if (!secret) return;
+  const response = String(token || '').trim();
+  if (!response) throw new HttpError(403, 'Complete the security check, then try again.');
+  const form = new URLSearchParams({ secret, response });
+  const ip = String(request.headers.get('CF-Connecting-IP') || '').trim();
+  if (ip) form.set('remoteip', ip);
+  let result;
+  try {
+    const verify = await fetchImpl(TURNSTILE_VERIFY_URL, { method: 'POST', body: form });
+    result = await verify.json();
+  } catch {
+    throw new HttpError(503, 'The security check is unavailable right now. Try again in a minute.');
+  }
+  if (!result?.success) throw new HttpError(403, 'The security check failed or expired. Try again.');
+}
+
 async function handleMagicLink(request, env) {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   const contentType = request.headers.get('Content-Type') || '';
@@ -2874,6 +2929,7 @@ async function handleMagicLink(request, env) {
   const email = String(body.email || '').trim().toLowerCase();
   const returnTo = safeReturnPath(body.returnTo || body.return_to || body.redirectTo);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email address');
+  await verifyTurnstile(request, env, body.turnstileToken || body['cf-turnstile-response']);
   const requestedPlan = String(body.plan || body.planId || body.plan_id || '').trim();
   // Only persist public catalog plans. Founding plans attach after /api/founding/claim.
   const signupPlanId = isPublicPlan(requestedPlan) ? requestedPlan : null;
@@ -2889,6 +2945,7 @@ async function handleMagicLink(request, env) {
   if (!env.AUTH_EMAIL_WEBHOOK && !exposeLoginLink && !sendDirectly) {
     throw new HttpError(503, 'Email sign-in is unavailable. Ask an administrator to configure email delivery (AUTH_EMAIL_WEBHOOK).');
   }
+  await enforceSignInRateLimit(request, env);
   const recent = await env.DB.prepare(
     'SELECT created_at, used_at, expires_at FROM login_tokens WHERE email = ? COLLATE NOCASE LIMIT 1',
   ).bind(email).first();
@@ -2950,7 +3007,18 @@ async function handleMagicLink(request, env) {
 
 async function handleAuthCallback(request, env) {
   const url = new URL(request.url);
-  const token = String(url.searchParams.get('token') || '').trim();
+  let token = String(url.searchParams.get('token') || '').trim();
+  if (request.method === 'POST') {
+    // Only our own confirm page may submit a token (prevents login CSRF).
+    const origin = request.headers.get('Origin');
+    if (!origin || (origin !== url.origin && !allowedWebOrigins(env).has(origin))) {
+      throw new HttpError(403, 'Sign-in must be confirmed from ShopCrank');
+    }
+    const form = new URLSearchParams(await request.text());
+    token = String(form.get('token') || token).trim();
+  } else if (request.method !== 'GET') {
+    throw new HttpError(405, 'Method not allowed');
+  }
   if (!token) throw new HttpError(400, 'Missing login token');
   const tokenHash = await hashValue(token);
   const loginToken = await env.DB.prepare(
@@ -2959,6 +3027,22 @@ async function handleAuthCallback(request, env) {
   if (!loginToken) throw new HttpError(401, 'The sign-in link is invalid or expired');
   if (loginToken.used_at || new Date(loginToken.expires_at).getTime() <= Date.now()) {
     throw new HttpError(401, 'The sign-in link has expired');
+  }
+  // Emailed links need a click on our confirm page; Google handoffs are server
+  // redirects (and desktop deep links) that no scanner sees, so they go straight through.
+  if (request.method === 'GET' && (loginToken.auth_method || 'magic_link') === 'magic_link') {
+    return new Response(signInConfirmPage(token), {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        // Never no-referrer: browsers then send "Origin: null" on the confirm POST,
+        // which the login-CSRF check rejects. (The global security headers set
+        // strict-origin-when-cross-origin.)
+        'X-Robots-Tag': 'noindex',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      },
+    });
   }
   const email = String(loginToken.email || '').trim().toLowerCase();
   const signup = extractSignupIntent(loginToken.return_to);
@@ -3030,6 +3114,10 @@ async function handleLogout(request, env) {
 
 async function handleAuth(request, env, segments, analytics) {
   const action = segments[1] || '';
+  if (action === 'config' && request.method === 'GET') {
+    // Public: what the sign-in forms need to render (no secrets).
+    return json({ turnstileSiteKey: String(env.TURNSTILE_SITE_KEY || '').trim() || null });
+  }
   if (action === 'magic-link') return handleMagicLink(request, env);
   if (action === 'send-login') return handleSendLogin(request, env);
   if (action === 'callback') return handleAuthCallback(request, env);

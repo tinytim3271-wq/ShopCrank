@@ -174,3 +174,11 @@ test('integration secrets round-trip through AES-GCM', async () => {
   assert.equal(constantTimeEqual(await hmacHex('key', 'payload'), await hmacHex('key', 'payload')), true);
   assert.equal(constantTimeEqual('abc', 'abd'), false);
 });
+
+test('tax report counts only the taxable subtotal as taxable sales (labor untaxed, ADR-003)', () => {
+  const invoice = { number: 'INV-9', amount: 357.6, subtotal: 349.55, taxableSubtotal: 97.55, tax: 8.05, taxRate: 8.25, status: 'paid', paidAt: '2026-10-05T12:00:00Z', customer: 'Maria' };
+  const report = buildTaxReport([], [invoice], 8.25, '2026-10-01', '2026-10-07');
+  assert.equal(report.rows[0].taxable, 97.55);
+  assert.equal(report.rows[0].tax, 8.05);
+  assert.equal(report.rows[0].nontaxable, 252);
+});

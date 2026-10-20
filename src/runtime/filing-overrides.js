@@ -42,7 +42,7 @@ function shopFilingProfile() {
   const t = state.taxSettings || {};
   const jurisdictions = Filing.normalizeJurisdictions(t.jurisdictions, Number(t.rate) || 8.25);
   return {
-    shopName: profile.shopName || 'Your Car Guy',
+    shopName: shopDisplayName(profile),
     address: profile.address || '',
     phone: profile.phone || '',
     ein: t.ein || '',
@@ -300,7 +300,7 @@ accounting = function () {
     ledger: ledgerView(),
     accounts: accountView(),
   };
-  return shell(`${heading('Financial operations', 'Accounting', 'Income, expenses, receivables, and filing packages for Your Car Guy.', false)}<div class="accounting-actions"><button class="secondary" id="accounting-export">${icon('download', 14)} Export ledger</button><button class="secondary" id="journal-entry">${icon('book-open-check', 14)} Journal entry</button><button class="primary" id="record-expense">${icon('plus', 14)} Record expense</button></div><div class="accounting-tabs">${tabs.map(x => `<button class="tab ${accountingTab === x[0] ? 'active' : ''}" data-accounting-tab="${x[0]}">${x[1]}</button>`).join('')}</div>${views[accountingTab] || views.overview}`);
+  return shell(`${heading('Financial operations', 'Accounting', `Income, expenses, receivables, and filing packages for ${escapeHtml(shopDisplayName())}.`, false)}<div class="accounting-actions"><button class="secondary" id="accounting-export">${icon('download', 14)} Export ledger</button><button class="secondary" id="journal-entry">${icon('book-open-check', 14)} Journal entry</button><button class="primary" id="record-expense">${icon('plus', 14)} Record expense</button></div><div class="accounting-tabs">${tabs.map(x => `<button class="tab ${accountingTab === x[0] ? 'active' : ''}" data-accounting-tab="${x[0]}">${x[1]}</button>`).join('')}</div>${views[accountingTab] || views.overview}`);
 };
 
 function activePayrollPeriod(date = new Date()) {
@@ -319,7 +319,7 @@ function ytdPayForUser(user, throughPeriodKey) {
     const end = new Date(`${throughPeriodKey}T12:00:00`);
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 7)) periods.add(weekPeriod(d).key);
   }
-  let gross = 0; let federal = 0; let socialSecurity = 0; let medicare = 0; let state = 0; let ssWages = 0;
+  let gross = 0; let federal = 0; let socialSecurity = 0; let medicare = 0; let stateTax = 0; let ssWages = 0;
   const sorted = [...periods].sort();
   for (const key of sorted) {
     const stub = payStub(user, weekPeriod(new Date(`${key}T12:00:00`)), { ytdSocialSecurityWages: ssWages });
@@ -327,7 +327,7 @@ function ytdPayForUser(user, throughPeriodKey) {
     federal += stub.federal;
     socialSecurity += stub.socialSecurity;
     medicare += stub.medicare;
-    state += stub.state;
+    stateTax += stub.state;
     ssWages += stub.socialSecurityWages || 0;
   }
   return {
@@ -335,9 +335,9 @@ function ytdPayForUser(user, throughPeriodKey) {
     federal: Math.round(federal * 100) / 100,
     socialSecurity: Math.round(socialSecurity * 100) / 100,
     medicare: Math.round(medicare * 100) / 100,
-    state: Math.round(state * 100) / 100,
+    state: Math.round(stateTax * 100) / 100,
     socialSecurityWages: Math.round(ssWages * 100) / 100,
-    net: Math.round((gross - federal - socialSecurity - medicare - state) * 100) / 100,
+    net: Math.round((gross - federal - socialSecurity - medicare - stateTax) * 100) / 100,
   };
 }
 
@@ -580,12 +580,12 @@ openEmployee = function (existing = null) {
   const step2 = Boolean(existing?.w4Step2Checkbox);
   showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">
 <h3>Identity & access</h3><div class="form-grid">
-<label>Employee name *<input name="name" required value="${employeeFormValue(existing, "name")}"/></label>
+<label>Employee name *<input name="displayName" required value="${employeeFormValue(existing, "name")}"/></label>
 <label>Employee ID *<input name="employeeId" placeholder="EMP-005" required value="${employeeFormValue(existing, "employeeId")}"/></label>
-<label>Job title<input name="title" value="${employeeFormValue(existing, "title")}"/></label>
+<label>Job title<input name="jobTitle" value="${employeeFormValue(existing, "title")}"/></label>
 <label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label>
 <label class="full" for="employee-email"><span class="field-label">Email address *</span><input id="employee-email" name="workEmail" type="text" inputmode="email" autocomplete="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label>
-<label>Role<select name="role">${roleOptions}</select></label>
+<label>Role<select name="accessRole">${roleOptions}</select></label>
 <label class="full">Technician dispatch name <input name="techName" value="${employeeFormValue(existing, "techName")}"/></label>
 </div>
 <h3>Employment & pay</h3><div class="form-grid">
@@ -615,7 +615,7 @@ openEmployee = function (existing = null) {
   document.querySelector("#employee-form").onsubmit = async event => {
     event.preventDefault();
     const form = event.target;
-    const data = Object.fromEntries(new FormData(form));
+    const data = readFormValues(form);
     const email = String(existing?.email || data.workEmail || "").trim().toLowerCase();
     const button = form.querySelector("button.primary");
     if (!email || !email.includes("@")) { toast("Enter a valid work email address"); return; }
@@ -666,7 +666,7 @@ bindExpandedFeatures = function () {
     taxReportForm.addEventListener('submit', async event => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       await generateTaxReportFromForm(data.from, data.to);
       render();
     }, { capture: true });
@@ -727,12 +727,14 @@ bindExpandedFeatures = function () {
 <label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || '')}" placeholder="1-xxxxxxxxxx-x"/></label>
 <label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || '')}" placeholder="RTxxxxxx"/></label>
 <label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} — city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || Filing.DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>`);
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || Filing.DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? 'checked' : ''}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? 'checked' : ''}/> Charge sales tax on shop supplies and fees</label>`);
     }
     taxSettingsForm.addEventListener('submit', async event => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const data = Object.fromEntries(new FormData(event.target));
+      const data = readFormValues(event.target);
       let jurisdictions = null;
       try { jurisdictions = JSON.parse(data.jurisdictionsJson || 'null'); } catch { toast('Jurisdiction JSON is invalid'); return; }
       const rate = jurisdictions ? Filing.combinedSalesTaxRate(jurisdictions) : (Number(data.rate) || 0);
@@ -745,6 +747,8 @@ bindExpandedFeatures = function () {
         texasTaxpayerNumber: String(data.texasTaxpayerNumber || '').trim(),
         webfileNumber: String(data.webfileNumber || '').trim(),
         jurisdictions,
+        laborTaxable: data.laborTaxable === 'on',
+        feesTaxable: data.feesTaxable === 'on',
       };
       try {
         await saveShopEntity('shopsettings', { ...taxSettings, id: 'tax', updatedAt: now() });

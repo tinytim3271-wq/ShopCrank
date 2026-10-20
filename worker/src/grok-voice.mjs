@@ -480,7 +480,12 @@ export async function calculateGrokServiceEstimate(env, shopId, input = {}, pric
   const shopSupplies = laborTotal > 0 ? Math.min(20, Math.round(laborTotal * 0.03 * 100) / 100) : 0;
   const fees = shopSupplies > 0 ? [{ id: 'shop-supplies', description: 'Shop supplies (3% of labor, max $20)', amount: shopSupplies }] : [];
   const subtotal = Math.round((laborTotal + partsTotal + shopSupplies) * 100) / 100;
-  const tax = Math.round(subtotal * (taxRate / 100) * 100) / 100;
+  // Parts are always taxed; labor and supplies follow the shop's policy (ADR-003).
+  const taxPolicy = { laborTaxable: pricing.taxPolicy?.laborTaxable !== false, feesTaxable: pricing.taxPolicy?.feesTaxable !== false };
+  const taxableSubtotal = Math.round(
+    (partsTotal + (taxPolicy.laborTaxable ? laborTotal : 0) + (taxPolicy.feesTaxable ? shopSupplies : 0)) * 100,
+  ) / 100;
+  const tax = Math.round(taxableSubtotal * (taxRate / 100) * 100) / 100;
   const total = Math.round((subtotal + tax) * 100) / 100;
 
   return {
@@ -493,6 +498,8 @@ export async function calculateGrokServiceEstimate(env, shopId, input = {}, pric
     shopSupplies,
     fees,
     subtotal,
+    taxableSubtotal,
+    taxPolicy,
     tax,
     total,
     lines,

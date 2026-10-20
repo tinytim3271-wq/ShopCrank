@@ -1,5 +1,0 @@
-482: function render() { const root = document.querySelector("#root"); if (!currentUser()) { root.innerHTML = pendingAuthProfile ? pendingProfileScreen() : loginScreen(); lucide.createIcons(); bind(); retu
-484: function bindPaymentService() { document.querySelector("#billing-form")?.addEventListener("submit", event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); stat
-p-end "primary" type="submit">${icon("save", 14)} Save payment service</button></div></form></section>`) }
-s-end ow?.close(); toast(error.message || "The shop payment service could not create a checkout link") } }
-b-end nter the Stripe Connect onboarding URL first"); return } window.open(url, "_blank", "noopener") }) }
