@@ -50,15 +50,19 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild esbuild
       - run: npm run build:web
+      - run: npm run lint
+      - run: npm run test:modules
+      - run: npm run test:licenses
       - run: npm run test:config
       - run: npm run test:worker
       - run: npm run stage:pages
@@ -68,6 +72,10 @@ jobs:
           test -f .pages-dist/index.html
           grep -q '<div id="root"></div>' .pages-dist/index.html
           grep -q 'app.js' .pages-dist/index.html
+      - name: Install Chromium for the browser smoke test
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Browser smoke test (signup, work order, invoice, payment, every module)
+        run: npm run test:smoke
       - run: npx --no-install wrangler deploy --dry-run
 
   publish:
@@ -82,7 +90,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild esbuild
       - name: Check Cloudflare credentials
         id: creds
         env:
@@ -202,6 +211,13 @@ jobs:
       - name: Build and stage Pages
         if: steps.verify-creds.outputs.valid == 'true'
         run: npm run build:web && npm run stage:pages
+      - name: Ensure Pages project exists
+        if: steps.verify-creds.outputs.valid == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.YOUR_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          ./node_modules/.bin/wrangler pages project create "${{ vars.CLOUDFLARE_PAGES_PROJECT || 'shopcrank-dispatch' }}" --production-branch=main 2>/dev/null || true
       - name: Deploy Pages
         if: steps.verify-creds.outputs.valid == 'true'
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
@@ -237,21 +253,29 @@ jobs:
           API_ORIGIN: ${{ vars.CLOUDFLARE_API_ORIGIN || 'https://www.shopcrank.com' }}
         run: |
           set -euo pipefail
-          # Cloudflare bot protection can answer GitHub-runner IPs with 403, and
-          # a freshly deployed alias can 403 during propagation. Retry with a
-          # browser-ish user agent, but never fail an otherwise-successful
-          # publish: warn so operators can verify manually instead of red CI.
+          # Cloudflare bot protection can answer GitHub-runner IPs with 403, and a
+          # fresh alias can 403 during propagation: those only warn. Any other
+          # failure (5xx, timeouts, wrong content) means production is broken and
+          # turns the run red so it gets rolled back.
           UA='Mozilla/5.0 (compatible; ShopCrank-deploy-smoke; +https://www.shopcrank.com)'
+          failed=0
           check() {
-            local name="$1" url="$2" pattern="$3"
-            if curl -fsS --retry 3 --retry-all-errors -m 30 -A "$UA" "$url" | grep -Eiq "$pattern"; then
-              echo "OK: $name at $url"
+            local name="$1" url="$2" pattern="$3" code=""
+            for attempt in 1 2 3 4; do
+              code="$(curl -sS -o /tmp/smoke-body -w '%{http_code}' -m 30 -A "$UA" "$url" || true)"
+              if [ "$code" = "200" ] && grep -Eiq "$pattern" /tmp/smoke-body; then echo "OK: $name at $url"; return; fi
+              sleep 10
+            done
+            if [ "$code" = "403" ]; then
+              echo "::warning title=Smoke check blocked ($name)::$url answered 403 (likely Cloudflare bot protection). Verify $url manually."
             else
-              echo "::warning title=Smoke check inconclusive ($name)::$url returned non-2xx or did not match '$pattern'. Deploy completed; likely Cloudflare bot protection or propagation delay. Verify $url manually."
+              echo "::error title=Smoke check failed ($name)::$url answered HTTP $code or did not match '$pattern'. Production may be down; roll back or fix forward."
+              failed=1
             fi
           }
           check "API healthz" "$API_ORIGIN/api/healthz" '"ok":true'
           check "Pages shell" "$APP_ORIGIN/" 'Shop Crank|Dispatch'
+          exit "$failed"
       - name: Require Google sign-in secrets
         if: steps.verify-creds.outputs.valid == 'true' && steps.google-secrets.outputs.present != 'true'
         run: |
