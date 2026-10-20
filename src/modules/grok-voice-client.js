@@ -290,22 +290,54 @@ export function createGrokVoiceSession({
         await audioCtx.resume();
       }
 
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This browser cannot open the microphone. Use Chrome or Edge on HTTPS (www.shopcrank.com).');
+      }
+
+      // Do not hard-require sampleRate: 24000 — many devices reject it (OverconstrainedError).
+      // Capture at the device rate; float32ToPcm16Base64 resamples to 24 kHz for Grok.
+      const micConstraints = {
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      };
+
       // Start mic and token fetch in parallel
-      const [stream, secretPayload] = await Promise.all([
-        navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: GROK_TARGET_SAMPLE_RATE,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        }),
-        apiFetch('/ai/voice/client-secret', {
-          method: 'POST',
-          body: JSON.stringify({ voice: voice || undefined, callerPhone: callerPhone || undefined }),
-        }),
-      ]);
+      let stream;
+      let secretPayload;
+      try {
+        [stream, secretPayload] = await Promise.all([
+          navigator.mediaDevices.getUserMedia(micConstraints),
+          apiFetch('/ai/voice/client-secret', {
+            method: 'POST',
+            body: JSON.stringify({ voice: voice || undefined, callerPhone: callerPhone || undefined }),
+          }),
+        ]);
+      } catch (parallelErr) {
+        const name = String(parallelErr?.name || '');
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          throw new Error('Microphone permission was blocked. Click the lock/camera icon in the address bar, allow Microphone, then try again.');
+        }
+        if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          throw new Error('No microphone was found on this device.');
+        }
+        if (name === 'NotReadableError' || name === 'TrackStartError') {
+          throw new Error('The microphone is in use by another app. Close it and try again.');
+        }
+        if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+          // Extremely defensive fallback — unconstrained audio
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          secretPayload = await apiFetch('/ai/voice/client-secret', {
+            method: 'POST',
+            body: JSON.stringify({ voice: voice || undefined, callerPhone: callerPhone || undefined }),
+          });
+        } else {
+          throw parallelErr;
+        }
+      }
 
       if (!active) {
         stream.getTracks().forEach((track) => track.stop());
@@ -353,8 +385,14 @@ export function createGrokVoiceSession({
       sourceNode.connect(processorNode);
       processorNode.connect(audioCtx.destination);
 
+      // xAI browser auth: only the xai-client-secret.* subprotocol (no OpenAI "realtime" protocol).
+      // Docs: new WebSocket(url, [`xai-client-secret.${token}`])
       const wsUrl = secretPayload.url || 'wss://api.x.ai/v1/realtime?model=grok-voice-latest';
-      ws = new globalThis.WebSocket(wsUrl, ['realtime', `xai-client-secret.${secretPayload.token}`]);
+      const token = String(secretPayload.token || '').trim();
+      if (!token) {
+        throw new Error('Grok Voice token was empty. Check the xAI API key in Settings → Shop phone (Twilio).');
+      }
+      ws = new globalThis.WebSocket(wsUrl, [`xai-client-secret.${token}`]);
 
       ws.addEventListener('open', () => {
         if (!active || !ws) return;
@@ -506,13 +544,27 @@ export function createGrokVoiceSession({
         }
       });
 
-      ws.addEventListener('close', () => {
-        if (active) stop();
+      ws.addEventListener('close', (ev) => {
+        if (!active) return;
+        const code = Number(ev?.code || 0);
+        const reason = String(ev?.reason || '').trim();
+        // 1000 = normal close; anything else during an active session is a failed handshake/session
+        if (code && code !== 1000) {
+          onError(new Error(
+            reason
+              ? `Grok Voice disconnected (${code}): ${reason}`
+              : `Grok Voice disconnected (code ${code}). Check mic permission and your xAI API key.`,
+          ));
+        }
+        stop();
       });
 
       ws.addEventListener('error', () => {
-        onError(new Error('Grok Realtime WebSocket connection interrupted'));
-        if (active) stop();
+        // Browsers often fire error then close without a useful message; close handler reports detail.
+        if (active) {
+          onError(new Error('Grok Voice realtime connection failed. Confirm your xAI API key, then hard-refresh and try again.'));
+          stop();
+        }
       });
     } catch (err) {
       onError(err instanceof Error ? err : new Error(String(err)));
