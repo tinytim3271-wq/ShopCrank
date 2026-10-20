@@ -819,6 +819,7 @@ export async function executeGrokShopTool(env, shopId, name, args = {}, { caller
       laborRate: estimateCalc.laborRate,
       taxRate: estimateCalc.taxRate,
       taxPolicy: estimateCalc.taxPolicy,
+      shopSupplies: estimateCalc.shopSupplies,
       lines: estimateCalc.lines.map((line) => ({
         service: line.description,
         description: line.description,
@@ -868,6 +869,7 @@ export async function executeGrokShopTool(env, shopId, name, args = {}, { caller
       estimate: {
         lines: estimateCalc.lines,
         fees: estimateCalc.fees,
+        shopSupplies: estimateCalc.shopSupplies,
         laborRate: estimateCalc.laborRate,
         taxRate: estimateCalc.taxRate,
         taxPolicy: estimateCalc.taxPolicy,

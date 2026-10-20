@@ -148,6 +148,13 @@ test('executeGrokShopTool save_call_intake_and_estimate saves Customer, Vehicle,
   assert.equal(savedOrder.intake.aiFilledFields['vehicle.vin'], true);
   assert.equal(savedOrder.intake.aiFilledFields['concern.description'], true);
   const savedEstimate = savedEntities.find((e) => e.entityType === 'estimates').record;
+  for (const record of [savedEstimate, savedOrder.estimate]) {
+    assert.equal(record.laborRate, 160);
+    assert.equal(record.taxRate, 8);
+    assert.deepEqual(record.taxPolicy, { laborTaxable: false, feesTaxable: true });
+    assert.ok(record.fees.length > 0);
+    assert.equal(record.shopSupplies, savedEstimate.shopSupplies);
+  }
   assert.equal(savedEstimate.taxRate, 8);
   assert.deepEqual(savedEstimate.taxPolicy, { laborTaxable: false, feesTaxable: true });
   assert.equal(savedEstimate.taxableSubtotal, savedOrder.estimate.taxableSubtotal);
