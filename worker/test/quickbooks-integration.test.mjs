@@ -376,6 +376,14 @@ test("US manual sales tax sends TaxCodeRef per line and TxnTaxDetail (error 6000
   assert.deepEqual(payload.TxnTaxDetail, { TxnTaxCodeRef: { value: "3" }, TotalTax: 35.43 });
 });
 
+test("US manual sales tax preserves fee taxability", () => {
+  const payload = normalizeQuickBooksInvoice(
+    { ...shopInvoice, fees: [{ ...shopInvoice.fees[0], taxable: false }] },
+    { tax: { mode: "manual", taxCodeId: "3" } },
+  );
+  assert.deepEqual(payload.Line.map((line) => line.SalesItemLineDetail.TaxCodeRef.value), ["TAX", "TAX", "NON"]);
+});
+
 test("US automated sales tax marks lines and lets QBO compute tax", () => {
   const payload = normalizeQuickBooksInvoice(shopInvoice, { tax: { mode: "ast" } });
   assert.ok(payload.Line.every((line) => line.SalesItemLineDetail.TaxCodeRef.value === "TAX"));

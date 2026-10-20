@@ -281,7 +281,7 @@ export function normalizeQuickBooksInvoice(invoice, { tax = null, defaultItemId 
   }
   const fees = (Array.isArray(invoice.fees) ? invoice.fees : [])
     .filter((fee) => Number(fee?.amount) > 0)
-    .map((fee) => ({ description: fee.description || "Fee", quantity: 1, unitPrice: fee.amount, amount: fee.amount, quickBooksItemId: fee.quickBooksItemId || defaultItemId || undefined }));
+    .map((fee) => ({ description: fee.description || "Fee", quantity: 1, unitPrice: fee.amount, amount: fee.amount, taxable: fee.taxable, quickBooksItemId: fee.quickBooksItemId || defaultItemId || undefined }));
   const sourceLines = [...billable, ...fees];
   const lines = sourceLines.map((line, index) => salesLine(line, index));
   const totalTax = Number(invoice.tax) || 0;
