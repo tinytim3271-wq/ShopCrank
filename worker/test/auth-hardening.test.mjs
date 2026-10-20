@@ -47,6 +47,9 @@ test('opening an emailed sign-in link shows a confirm page and does not spend th
   assert.match(html, /<form method="post" action="\/api\/auth\/callback">/);
   assert.match(html, new RegExp(`name="token" value="${'a'.repeat(32)}"`));
   assert.equal(batches, 0, 'a GET (e.g. a link scanner) must not create a session');
+  // no-referrer would make the browser send Origin: null and fail the CSRF check.
+  assert.notEqual(response.headers.get('Referrer-Policy'), 'no-referrer');
+  assert.doesNotMatch(html, /no-referrer/);
 });
 
 test('the confirm POST must come from ShopCrank (no login CSRF)', async () => {

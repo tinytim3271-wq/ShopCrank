@@ -2617,7 +2617,6 @@ function signInConfirmPage(token) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex">
   <title>Sign in to ShopCrank</title>
   <style>
@@ -3014,7 +3013,9 @@ async function handleAuthCallback(request, env) {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
-        'Referrer-Policy': 'no-referrer',
+        // Never no-referrer: browsers then send "Origin: null" on the confirm POST,
+        // which the login-CSRF check rejects. (The global security headers set
+        // strict-origin-when-cross-origin.)
         'X-Robots-Tag': 'noindex',
         'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       },

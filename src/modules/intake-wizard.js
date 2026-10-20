@@ -348,6 +348,13 @@ export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, us
     total: priced.total,
     estimate: {
       lines: priced.lines,
+      fees: priced.fees,
+      taxRate: priced.taxRate,
+      taxPolicy: priced.taxPolicy,
+      subtotal: priced.subtotal,
+      taxableSubtotal: priced.taxableSubtotal,
+      tax: priced.tax,
+      total: priced.total,
       disclaimer: INTAKE_DISCLAIMER,
       approvalStatus: approval,
     },

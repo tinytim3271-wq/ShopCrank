@@ -2681,7 +2681,7 @@
       discountPercent: estimate.discountPercent,
       discountAmount: estimate.discountAmount,
       discountReason: estimate.discountReason,
-      fees: estimate.fees,
+      fees: (estimate.fees || []).map((fee) => ({ ...fee, taxable: normalizeTaxPolicy(estimate.taxPolicy).feesTaxable })),
       taxableSubtotal: estimate.taxableSubtotal,
       taxPolicy: estimate.taxPolicy,
       tax: estimate.tax,
@@ -3556,6 +3556,13 @@
       total: priced.total,
       estimate: {
         lines: priced.lines,
+        fees: priced.fees,
+        taxRate: priced.taxRate,
+        taxPolicy: priced.taxPolicy,
+        subtotal: priced.subtotal,
+        taxableSubtotal: priced.taxableSubtotal,
+        tax: priced.tax,
+        total: priced.total,
         disclaimer: INTAKE_DISCLAIMER,
         approvalStatus: approval
       },

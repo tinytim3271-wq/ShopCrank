@@ -7,9 +7,10 @@
   "license": "UNLICENSED",
   "scripts": {
     "dev": "node server.mjs",
-    "start": "node server.mjs",
+    "dev:mock": "node server.mjs",
+    "start": "node -e \"console.error('server.mjs is a local mock API with a built-in admin session. Use npm run dev or npm run dev:mock locally; production runs on Cloudflare Pages + Workers.'); process.exit(1)\"",
     "build": "npm run build:web",
-    "lint": "eslint \"src/main.js\" \"src/shared/**/*.js\" \"src/modules/**/*.js\" \"src/runtime/home.js\" \"src/**/*.test.mjs\"",
+    "lint": "eslint \"src/main.js\" \"src/shared/**/*.js\" \"src/modules/**/*.js\" \"src/runtime/home.js\" \"src/runtime/legacy.js\" \"src/runtime/filing-overrides.js\" \"src/**/*.test.mjs\"",
     "test": "npm run test:modules && npm run test:licenses",
     "sync:config": "node scripts/sync-frontend-config.mjs",
     "test:config": "node scripts/sync-frontend-config.test.mjs && node scripts/resolve-r2-upload-env.test.mjs && node --test scripts/setup-email-signin.test.mjs && node --test scripts/provision-shopcrank-com.test.mjs",
@@ -18,7 +19,9 @@
     "build:web": "node scripts/sync-frontend-config.mjs && node scripts/build-web.mjs",
     "dev:web": "node scripts/build-web.mjs --watch",
     "copy:web": "node scripts/copy-web.mjs",
-    "dev:worker": "wrangler dev",
+    "dev:worker": "node scripts/dev-worker-local.mjs",
+    "dev:worker:remote": "wrangler dev",
+    "test:smoke": "node scripts/smoke/browser-smoke.mjs",
     "test:worker": "node --test worker/test/*.test.mjs",
     "test:home": "node --test src/runtime/home.test.mjs",
     "typegen:worker": "wrangler types worker-configuration.d.ts",
@@ -77,6 +80,7 @@
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
+    "playwright": "1.63.0",
     "wrangler": "^4.151.0"
   },
   "build": {

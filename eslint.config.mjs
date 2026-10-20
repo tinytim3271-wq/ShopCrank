@@ -1,6 +1,20 @@
 export default [
   {
-    ignores: ['app.js', 'src/runtime/legacy.js', 'worker/**', 'android/**', 'www/**', 'dist/**'],
+    ignores: ['app.js', 'worker/**', 'android/**', 'www/**', 'dist/**'],
+  },
+  {
+    // The legacy runtime isn't fully lint-clean yet; guard the bug class that
+    // crashed Payroll: a local `state` shadowing the app's global state.
+    files: ['src/runtime/legacy.js', 'src/runtime/filing-overrides.js'],
+    languageOptions: { ecmaVersion: 2024, sourceType: 'module' },
+    rules: {
+      'no-restricted-syntax': ['error', {
+        selector: ":function VariableDeclarator[id.name='state'], :function > Identifier.params[name='state'], CatchClause > Identifier.param[name='state']",
+        message: "Don't declare a local `state`: it shadows the app's global state (this crashed Payroll). Use a specific name such as stateTax.",
+      }],
+      'no-dupe-keys': 'error',
+      'no-unreachable': 'error',
+    },
   },
   {
     files: ['src/main.js', 'src/shared/**/*.js', 'src/modules/**/*.js', 'src/runtime/home.js'],

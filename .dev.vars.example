@@ -2,6 +2,8 @@
 # Never enable DEV_AUTH_BYPASS in production.
 
 DEV_AUTH_BYPASS=1
+# Return the sign-in link in the API response instead of emailing it (local only).
+AUTH_EXPOSE_LOGIN_LINK=1
 ACCESS_ADMIN_EMAILS=admin@example.com
 INTEGRATION_ENCRYPTION_KEY=replace-with-a-long-random-value
 DIAGNOSTICS_CAPABILITY_SECRET=replace-with-a-different-random-value
