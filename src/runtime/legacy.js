@@ -1340,7 +1340,6 @@ function shopProfile() { const stored = state.shopSettingsRecords.find(item => i
 function shopDisplayName(profile = shopProfile()) { return String(profile?.shopName || "").trim() || "Your shop" }
 // New estimates use this shop's labor/fee taxability (ADR-003); stored estimates keep their own.
 setDefaultTaxPolicy(() => shopTaxPolicy(state.taxSettings));
-const LEGACY_ESTIMATE_TAX_POLICY = Object.freeze({ laborTaxable: true, feesTaxable: true });
 // " on $97.55" when only part of the subtotal is taxed (e.g. labor untaxed in Texas).
 function taxBaseNote(totals = {}) { const taxable = Number(totals.taxableSubtotal), subtotal = Number(totals.subtotal); return Number.isFinite(taxable) && Number.isFinite(subtotal) && taxable < subtotal - 0.004 ? ` on ${money(taxable)}` : "" }
 function shopMileageRate() { return Mileage.normalizeMileageRate(shopProfile().mileageRate) }
@@ -3249,7 +3248,6 @@ function normalizedEstimateSource(estimate) {
   if (!estimate) return null;
   const totals = calculateShopEstimate(expandedEstimateLines(estimate), {
     taxRate: estimate.taxRate ?? state.taxSettings.rate,
-    taxPolicy: estimate.taxPolicy || LEGACY_ESTIMATE_TAX_POLICY,
     discountPercent: estimate.discountPercent,
     discountReason: estimate.discountReason,
     shopSupplies: estimate.fees?.find(fee => /shop supplies/i.test(fee.description))?.amount,
@@ -3354,7 +3352,6 @@ coherentOrderEstimate = function (order) {
   const source = order.estimate || {};
   const estimate = calculateShopEstimate(expandedEstimateLines(source), {
     taxRate: source.taxRate ?? state.taxSettings.rate,
-    taxPolicy: source.taxPolicy || LEGACY_ESTIMATE_TAX_POLICY,
     discountPercent: source.discountPercent,
     discountReason: source.discountReason,
     shopSupplies: source.fees?.find(fee => /shop supplies/i.test(fee.description))?.amount,
