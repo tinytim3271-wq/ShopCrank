@@ -84,6 +84,27 @@ export function normalizeXaiApiKey(value) {
   return key;
 }
 
+/** xAI returns `{ value, expires_at }`. Older/OpenAI-shaped payloads nest `client_secret.value`. */
+export function extractGrokClientSecret(payload = {}) {
+  if (typeof payload?.client_secret === 'string') return payload.client_secret.trim();
+  const nested = payload?.client_secret && typeof payload.client_secret === 'object'
+    ? payload.client_secret.value
+    : '';
+  return String(nested || payload?.value || payload?.token || payload?.secret || '').trim();
+}
+
+export function grokClientSecretRejectionMessage(payload = {}, status = 0) {
+  const nested = payload?.error && typeof payload.error === 'object' ? payload.error.message : '';
+  const message = String(nested || payload?.error || payload?.message || '').trim();
+  if (status === 401 || status === 403) {
+    return message || 'xAI rejected this API key. Confirm it is active at console.x.ai and that Voice / Realtime is enabled for the team.';
+  }
+  if (status === 429) {
+    return message || 'xAI is rate-limiting this key right now. Wait a moment and try Grok Voice again.';
+  }
+  return message || 'xAI rejected the Grok Voice token request. Check the xAI API key in Settings → Grok Voice.';
+}
+
 function parseEntityRow(row) {
   if (!row?.data_json) return null;
   try {
@@ -1152,9 +1173,9 @@ export async function handleGrokClientSecret(request, env, context, { getSecret 
   }
 
   const payload = await response.json().catch(() => ({}));
-  const token = String(payload?.client_secret?.value || payload?.value || payload?.token || '').trim();
+  const token = extractGrokClientSecret(payload);
   if (!response.ok || !token) {
-    throw new HttpError(502, payload?.error?.message || payload?.message || 'xAI rejected the Grok Voice token request');
+    throw new HttpError(502, grokClientSecretRejectionMessage(payload, response.status));
   }
 
   const [shopSettings, pricing, callerContext] = await Promise.all([

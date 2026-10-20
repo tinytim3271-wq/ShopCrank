@@ -7,6 +7,8 @@ import {
   buildGrokSessionUpdate,
   calculateGrokServiceEstimate,
   executeGrokShopTool,
+  extractGrokClientSecret,
+  grokClientSecretRejectionMessage,
   handleGrokClientSecret,
   handleTwilioVoiceIncoming,
   mulawByteToPcm16,
@@ -234,4 +236,31 @@ test('handleGrokClientSecret mints an ephemeral token from xAI without exposing 
   assert.equal(payload.url, GROK_REALTIME_URL);
   assert.equal(payload.voice, 'eve');
   assert.doesNotMatch(JSON.stringify(payload), new RegExp(longLivedKey));
+});
+
+test('extractGrokClientSecret reads the documented xAI { value } payload', () => {
+  assert.equal(extractGrokClientSecret({ value: 'xai-realtime-client-secret-abc', expires_at: 1774274445 }), 'xai-realtime-client-secret-abc');
+  assert.equal(extractGrokClientSecret({ client_secret: { value: 'nested-secret' } }), 'nested-secret');
+  assert.equal(extractGrokClientSecret({ client_secret: 'string-secret' }), 'string-secret');
+  assert.equal(extractGrokClientSecret({}), '');
+  assert.match(grokClientSecretRejectionMessage({}, 401), /rejected this API key/i);
+  assert.match(grokClientSecretRejectionMessage({ error: { message: 'insufficient credits' } }, 402), /insufficient credits/);
+});
+
+test('handleGrokClientSecret mints from the official xAI client_secrets response shape', async () => {
+  const req = new Request('https://www.shopcrank.com/api/ai/voice/client-secret', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ voice: 'ara' }),
+  });
+  const res = await handleGrokClientSecret(req, { XAI_API_KEY: 'xai-live-key-1234567890abcd' }, { shopId: 'shop-a', role: 'admin' }, {
+    fetcher: async () => Response.json({
+      value: 'xai-realtime-client-secret-live',
+      expires_at: 1774274445,
+    }),
+  });
+  assert.equal(res.status, 200);
+  const payload = await res.json();
+  assert.equal(payload.token, 'xai-realtime-client-secret-live');
+  assert.equal(payload.voice, 'ara');
 });
