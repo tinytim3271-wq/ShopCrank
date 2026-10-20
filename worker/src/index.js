@@ -2577,6 +2577,20 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
       VALUES (?, ?, ?, 'admin', ?, 1, ?, ?)
     `).bind(userId, normalized, shopId, intent.ownerName, now, now),
+    // Seed the shop profile with the name the owner typed at signup, so screens,
+    // estimates and invoices carry this shop's identity from the first load.
+    env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, 'shopsettings', 'profile', ?, ?, ?, ?)
+      ON CONFLICT(shop_id, entity_type, entity_id) DO NOTHING
+    `).bind(shopId, JSON.stringify({
+      id: 'profile',
+      shopId,
+      shopName: intent.shopName,
+      createdBy: userId,
+      createdAt: now,
+      updatedAt: now,
+    }), userId, now, now),
   ]);
   const founding = await applyPendingFoundingClaim(env, {
     email: normalized,
