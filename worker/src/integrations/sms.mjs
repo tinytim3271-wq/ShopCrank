@@ -20,23 +20,80 @@ function value(env, name) {
   return String(env?.[name] || '').trim();
 }
 
-function twilioConfig(env) {
-  const accountSid = value(env, 'TWILIO_ACCOUNT_SID');
-  const authToken = value(env, 'TWILIO_AUTH_TOKEN');
-  const messagingServiceSid = value(env, 'TWILIO_MESSAGING_SERVICE_SID');
-  const fromNumber = value(env, 'TWILIO_FROM_NUMBER');
+export const TWILIO_SECRET_NAMES = Object.freeze({
+  accountSid: 'twilio-account-sid',
+  authToken: 'twilio-auth-token',
+  fromNumber: 'twilio-from-number',
+  messagingServiceSid: 'twilio-messaging-service-sid',
+});
+
+/** Merge optional shop overrides with platform env Twilio credentials. */
+export function twilioConfig(env, overrides = null) {
+  const accountSid = String(overrides?.accountSid || value(env, 'TWILIO_ACCOUNT_SID')).trim();
+  const authToken = String(overrides?.authToken || value(env, 'TWILIO_AUTH_TOKEN')).trim();
+  const messagingServiceSid = String(
+    overrides?.messagingServiceSid || value(env, 'TWILIO_MESSAGING_SERVICE_SID'),
+  ).trim();
+  const fromNumber = String(overrides?.fromNumber || value(env, 'TWILIO_FROM_NUMBER')).trim();
   if (!accountSid || !authToken || (!messagingServiceSid && !fromNumber)) return null;
   return { accountSid, authToken, messagingServiceSid, fromNumber };
 }
 
-export function smsIntegrationStatus(env) {
-  const config = twilioConfig(env);
-  if (!config) return null;
+/**
+ * Resolve Twilio credentials for a shop: encrypted shop secrets first, then platform env.
+ * getSecret(env, shopId, name) matches getIntegrationSecret.
+ */
+export async function resolveTwilioShopConfig(env, shopId, getSecret = null) {
+  let shopAccountSid = '';
+  let shopAuthToken = '';
+  let shopFromNumber = '';
+  let shopMessagingServiceSid = '';
+  if (shopId && typeof getSecret === 'function') {
+    try {
+      [shopAccountSid, shopAuthToken, shopFromNumber, shopMessagingServiceSid] = await Promise.all([
+        getSecret(env, shopId, TWILIO_SECRET_NAMES.accountSid),
+        getSecret(env, shopId, TWILIO_SECRET_NAMES.authToken),
+        getSecret(env, shopId, TWILIO_SECRET_NAMES.fromNumber),
+        getSecret(env, shopId, TWILIO_SECRET_NAMES.messagingServiceSid),
+      ]);
+    } catch {
+      // Fall through to platform env.
+    }
+  }
+  const hasShopCreds = Boolean(String(shopAccountSid || '').trim() && String(shopAuthToken || '').trim());
+  const config = twilioConfig(env, {
+    accountSid: shopAccountSid,
+    authToken: shopAuthToken,
+    fromNumber: shopFromNumber,
+    messagingServiceSid: shopMessagingServiceSid,
+  });
+  if (!config) {
+    return {
+      configured: false,
+      accountSid: '',
+      authToken: '',
+      fromNumber: '',
+      messagingServiceSid: '',
+      keySource: null,
+    };
+  }
   return {
+    configured: true,
+    ...config,
+    keySource: hasShopCreds ? 'shop' : 'platform',
+  };
+}
+
+export function smsIntegrationStatus(env, overrides = null) {
+  const config = twilioConfig(env, overrides);
+  if (!config) return null;
+  const status = {
     enabled: true,
     provider: 'twilio',
     senderType: config.messagingServiceSid ? 'messaging_service' : 'phone_number',
   };
+  if (overrides?.keySource) status.keySource = overrides.keySource;
+  return status;
 }
 
 export function isE164(valueToCheck) {
@@ -84,8 +141,8 @@ async function safeTwilioResponse(response) {
   }
 }
 
-export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch } = {}) {
-  const config = twilioConfig(env);
+export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch, config: configOverride = null } = {}) {
+  const config = configOverride || twilioConfig(env);
   if (!config) {
     throw new SmsIntegrationError('SMS delivery is not configured', {
       code: 'sms_not_configured',
@@ -141,8 +198,9 @@ export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch } = {}
   });
 }
 
-export function createSmsProvider(env, options) {
-  return twilioConfig(env) ? createTwilioSmsProvider(env, options) : null;
+export function createSmsProvider(env, options = {}) {
+  const config = options.config || twilioConfig(env);
+  return config ? createTwilioSmsProvider(env, { ...options, config }) : null;
 }
 
 export async function sendSms(env, message, options) {
@@ -207,8 +265,8 @@ export function classifySmsKeyword(body) {
   return null;
 }
 
-export async function parseTwilioInboundWebhook(request, env) {
-  const authToken = value(env, 'TWILIO_AUTH_TOKEN');
+export async function parseTwilioInboundWebhook(request, env, { authToken: authTokenOverride = '' } = {}) {
+  const authToken = String(authTokenOverride || value(env, 'TWILIO_AUTH_TOKEN')).trim();
   if (!authToken) {
     throw new SmsIntegrationError('SMS webhook verification is not configured', {
       code: 'sms_not_configured',
