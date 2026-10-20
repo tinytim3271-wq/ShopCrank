@@ -118,6 +118,10 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .pos-status[data-phase="declined"]{color:#9b2c2c}
 #pos-card-element{min-height:48px}
 #help-root{position:fixed;left:18px;bottom:18px;z-index:41}
+/* Leave room under the last menu item so the floating Help button never covers it. */
+.sidebar{padding-bottom:76px}
+.login-security{display:flex;gap:8px;align-items:flex-start;margin-top:14px;font-size:12px;line-height:1.45;color:var(--muted)}
+.login-security svg{flex:none;margin-top:1px}
 .help-float{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 13px;border:1px solid var(--deep);border-radius:5px;color:#fff;background:var(--deep);font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(24,37,43,.2)}
 .help-float:hover{background:#24343b}
 .help-panel{position:absolute;left:0;bottom:48px;display:grid;gap:10px;width:min(380px,calc(100vw - 24px));max-height:min(70vh,640px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:var(--shadow)}

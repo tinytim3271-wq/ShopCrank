@@ -124,3 +124,35 @@ test('applyAiAutofill populates 3 Cs and estimate lines with Filled by AI review
   const accepted = acceptAllAiFields(draft);
   assert.deepEqual(accepted.aiFilledFields, {});
 });
+
+test('email is optional at intake; name and phone are required', () => {
+  const draft = emptyIntakeDraft();
+  draft.customer = { firstName: 'Ada', lastName: 'Lopez', phone: '806-555-0100', email: '' };
+  draft.vehicle = { ...draft.vehicle, year: '2019', make: 'Toyota', model: 'Camry' };
+  draft.photos = ['front', 'rear', 'driver', 'passenger'].map(slot => ({ slot, name: `${slot}.jpg` }));
+  assert.equal(canConvertIntake(draft).ok, true);
+  draft.customer.phone = '';
+  assert.match(canConvertIntake(draft).problems.join(' '), /name and phone/);
+});
+
+test('a quick job can convert without walk-around photos, and the work order records the waiver', () => {
+  const draft = emptyIntakeDraft();
+  draft.customer = { firstName: 'Ada', lastName: 'Lopez', phone: '806-555-0100' };
+  draft.vehicle = { ...draft.vehicle, year: '2019', make: 'Toyota', model: 'Camry' };
+  draft.concern = { ...draft.concern, description: 'Oil change' };
+  assert.equal(canConvertIntake(draft).ok, false);
+  draft.photosWaived = true;
+  assert.equal(canConvertIntake(draft).ok, true);
+  assert.equal(intakeOrderPayload(draft, { id: 'RO-1', laborRate: 140, taxRate: 8.25 }).intake.photosWaived, true);
+});
+
+test('intake estimates price part lines alongside labor', () => {
+  const draft = emptyIntakeDraft();
+  draft.estimate.lines = [
+    { type: 'labor', description: 'Brake job', quantity: 1.8, unitPrice: 0 },
+    { type: 'part', description: 'Pads', quantity: 2, unitPrice: 45 },
+  ];
+  const priced = priceIntakeEstimate(draft, { laborRate: 140, taxRate: 0 });
+  assert.equal(priced.labor, 252);
+  assert.equal(priced.parts, 90);
+});

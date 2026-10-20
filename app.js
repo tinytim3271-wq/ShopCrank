@@ -3348,7 +3348,7 @@
   }
   function missingCustomerFields(draft = {}) {
     const customer = draft.customer || {};
-    return ["firstName", "lastName", "phone", "email"].filter((field2) => !String(customer[field2] || "").trim());
+    return ["firstName", "lastName", "phone"].filter((field2) => !String(customer[field2] || "").trim());
   }
   function missingVehicleFields(draft = {}) {
     const vehicle = draft.vehicle || {};
@@ -3572,6 +3572,7 @@
         customer: draft.customer,
         vehicle: draft.vehicle,
         photos: draft.photos || [],
+        photosWaived: Boolean(draft.photosWaived && missingRequiredPhotos(draft).length),
         damage: draft.damage || [],
         concern: draft.concern,
         diagnosis: draft.diagnosis,
@@ -3592,9 +3593,11 @@
   }
   function canConvertIntake(draft = {}) {
     const problems = [];
-    if (missingCustomerFields(draft).length) problems.push("Customer name, phone, and email are required.");
+    if (missingCustomerFields(draft).length) problems.push("Customer name and phone are required.");
     if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    if (missingRequiredPhotos(draft).length) problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}.`);
+    if (!draft.photosWaived && missingRequiredPhotos(draft).length) {
+      problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
+    }
     if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
     return { ok: problems.length === 0, problems };
   }
@@ -3620,7 +3623,7 @@
   function customerStep(draft) {
     const customer = draft.customer;
     const contact = customer.contact || {};
-    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { required: true, type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
+    return `<div class="form-grid">${field("firstName", "First name", customer.firstName, { required: true })}${field("lastName", "Last name", customer.lastName, { required: true })}${field("phone", "Phone number", customer.phone, { required: true, type: "tel" })}${field("email", "Email address", customer.email, { type: "email" })}${field("company", "Company name", customer.company)}${field("secondaryPhone", "Secondary phone", customer.secondaryPhone, { type: "tel" })}${field("address", "Address", customer.address, { full: true })}${field("city", "City", customer.city)}${field("state", "State", customer.state)}${field("zip", "Zip code", customer.zip)}</div>
 <fieldset class="intake-choices"><legend>Communication preferences</legend>${["phone", "text", "email"].map((key) => `<label><input type="checkbox" name="contact-${key}" ${contact[key] ? "checked" : ""}/> ${key[0].toUpperCase()}${key.slice(1)}</label>`).join("")}</fieldset>`;
   }
   function vehicleStep(draft) {
@@ -3661,15 +3664,23 @@
 <div class="intake-actions-inline"><button class="secondary" type="button" id="intake-analyze">Review diagnostic notes</button><button class="secondary" type="button" id="intake-autofill-3c">Extract 3 C's &amp; Line Items (AI)</button><label class="secondary">Scan DTC / Inspection photo (AI)<input id="intake-autofill-diag-photo" type="file" accept="image/png,image/jpeg,image/webp" hidden/></label></div>
 ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || "")}</span></section><ul class="intake-causes">${causes}</ul>` : ""}`;
   }
+  function estimateSummaryHtml(priced) {
+    const supplies = priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0;
+    return `<span>Labor ${dollars(priced.labor)} \xB7 Parts ${dollars(priced.parts)} \xB7 Supplies ${dollars(supplies)} \xB7 Tax ${dollars(priced.tax)}</span><strong>${dollars(priced.total)}</strong>`;
+  }
   function estimateStep(draft, profile) {
     const priced = priceIntakeEstimate(draft, profile);
-    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => `<tr data-line="${index}"><td><input name="line-description" value="${escapeAttr3(line.description || "")}"/></td><td><input name="line-hours" type="number" min="0" step="0.1" value="${Number(line.quantity || 0)}"/></td><td>${escapeHtml3(line.source || "Shop")}</td></tr>`).join("");
+    const rows = (draft.estimate.lines?.length ? draft.estimate.lines : seedEstimateLines(draft)).map((line, index) => {
+      const part = line.type === "part";
+      return `<tr data-line="${index}"><td><select name="line-type" aria-label="Line type"><option value="labor" ${part ? "" : "selected"}>Labor</option><option value="part" ${part ? "selected" : ""}>Part</option></select></td><td><input name="line-description" value="${escapeAttr3(line.description || "")}" aria-label="Description"/></td><td><input name="line-hours" type="number" min="0" step="${part ? "1" : "0.1"}" value="${Number(line.quantity || 0)}" aria-label="${part ? "Quantity" : "Hours"}"/></td><td><input name="line-price" type="number" min="0" step="0.01" value="${Number(line.unitPrice) > 0 ? Number(line.unitPrice) : ""}" placeholder="${part ? "Price" : "Shop rate"}" aria-label="${part ? "Unit price" : "Labor rate"}"/></td><td>${escapeHtml3(line.source || "Shop")}</td><td><button type="button" class="icon-button" data-remove-line="${index}" aria-label="Remove line">\xD7</button></td></tr>`;
+    }).join("");
     return `<div class="intake-actions-inline"><input id="labor-query" placeholder="Brake pads, water pump, alternator, starter"/><button class="secondary" type="button" id="lookup-labor">Lookup labor</button></div>
 <p class="form-help">Lookup uses the ShopCrank guide and this shop's canned jobs. Mitchell, ALLDATA, Motor, and ShopKey are not connected.</p>
 <div id="labor-results"></div>
-<table><thead><tr><th>Labor</th><th>Hours</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>
+<table><thead><tr><th>Type</th><th>Description</th><th>Hours / qty</th><th>Rate / price</th><th>Source</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<div class="intake-actions-inline"><button class="secondary" type="button" id="intake-add-labor">Add labor line</button><button class="secondary" type="button" id="intake-add-part">Add part line</button></div>
 <label>Diagnostic charge<input name="diagnosticCharge" type="number" min="0" step="0.01" value="${Number(draft.estimate.diagnosticCharge || 0)}"/></label>
-<div class="estimate-sign-summary"><span>Labor ${escapeHtml3(String(priced.labor))} \xB7 Parts ${escapeHtml3(String(priced.parts))} \xB7 Supplies ${escapeHtml3(String(priced.fees?.reduce((sum, fee) => sum + fee.amount, 0) || 0))} \xB7 Tax ${escapeHtml3(String(priced.tax))}</span><strong>${escapeHtml3(String(priced.total))}</strong></div>
+<div class="estimate-sign-summary" id="intake-estimate-summary" aria-live="polite">${estimateSummaryHtml(priced)}</div>
 <pre class="intake-disclaimer">${escapeHtml3(INTAKE_DISCLAIMER)}</pre>
 <label>Customer approval<select name="approval">${["pending", "viewed", "approved", "denied"].map((status) => `<option value="${status}" ${draft.estimate.approval === status ? "selected" : ""}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}</select></label>
 <p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
@@ -3683,7 +3694,8 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
     }).join("")}`;
     return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
-${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ""}
+${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
   }
   function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
@@ -3739,16 +3751,22 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
     if (step === "estimate") {
       const descriptions = [...form.querySelectorAll('[name="line-description"]')];
       const hourInputs = [...form.querySelectorAll('[name="line-hours"]')];
+      const typeInputs = [...form.querySelectorAll('[name="line-type"]')];
+      const priceInputs = [...form.querySelectorAll('[name="line-price"]')];
+      const previous = draft.estimate?.lines || [];
       next.estimate.lines = descriptions.map((input, index) => ({
-        type: "labor",
+        ...previous[index] || {},
+        type: typeInputs[index]?.value === "part" ? "part" : "labor",
         description: input.value.trim(),
         quantity: Math.max(0, Number(hourInputs[index]?.value) || 0),
-        source: "Shop"
+        unitPrice: Math.max(0, Number(priceInputs[index]?.value) || 0),
+        source: previous[index]?.source || "Shop"
       })).filter((line) => line.description);
       next.estimate.diagnosticCharge = Math.max(0, Number(data.diagnosticCharge) || 0);
       next.estimate.approval = data.approval || "pending";
     }
     if (step === "review") {
+      next.photosWaived = Boolean(form.querySelector('[name="photosWaived"]')?.checked);
       next.assignments = ["primary", "secondary", "apprentice"].flatMap((role) => {
         const employeeId = data[`assign-${role}`];
         if (!employeeId) return [];
@@ -3810,12 +3828,38 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         persist("step");
         paint();
       });
+      if (INTAKE_STEPS[current.step]?.id === "estimate") {
+        const refreshTotal = () => {
+          const summary = host.querySelector("#intake-estimate-summary");
+          if (summary && form) summary.innerHTML = estimateSummaryHtml(priceIntakeEstimate(readForm(current, form), { laborRate, taxRate }));
+        };
+        form?.addEventListener("input", refreshTotal);
+        form?.addEventListener("change", refreshTotal);
+        const addLine = (type) => {
+          if (form) current = readForm(current, form);
+          current.estimate.lines = [...current.estimate.lines || [], { type, description: type === "part" ? "Part" : "Labor", quantity: 1, unitPrice: 0, source: "Shop" }];
+          persist("line");
+          paint();
+          host.querySelectorAll('[name="line-description"]').item(current.estimate.lines.length - 1)?.select();
+        };
+        host.querySelector("#intake-add-labor")?.addEventListener("click", () => addLine("labor"));
+        host.querySelector("#intake-add-part")?.addEventListener("click", () => addLine("part"));
+        host.querySelectorAll("[data-remove-line]").forEach((button) => button.addEventListener("click", () => {
+          if (form) current = readForm(current, form);
+          current.estimate.lines = current.estimate.lines.filter((_, index) => index !== Number(button.dataset.removeLine));
+          persist("line");
+          paint();
+        }));
+      }
       host.querySelector("#intake-convert")?.addEventListener("click", async () => {
         if (form) current = readForm(current, form);
         const check2 = canConvertIntake(current);
         if (!check2.ok) {
           persist("blocked");
           paint();
+          const problems = host.querySelector("#intake-problems");
+          problems?.scrollIntoView({ block: "center", behavior: "smooth" });
+          problems?.focus();
           return;
         }
         await onConvert?.(current);
@@ -3914,7 +3958,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
       current: () => current
     };
   }
-  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR;
+  var INTAKE_STORAGE_KEY, INTAKE_DISCLAIMER, INTAKE_STEPS, REQUIRED_PHOTO_SLOTS, EXTRA_PHOTO_SLOTS, DAMAGE_AREAS, SHOP_CRANK_LABOR, dollars;
   var init_intake_wizard = __esm({
     "src/modules/intake-wizard.js"() {
       init_estimate_templates();
@@ -3953,6 +3997,7 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
         { name: "Alternator", hours: 1.2, notes: "Replacement only. Programming or a stretch belt may add time." },
         { name: "Starter", hours: 1.2, notes: "Starting point. Confirm access for this vehicle." }
       ];
+      dollars = (value2) => `$${(Number(value2) || 0).toFixed(2)}`;
     }
   });
 
@@ -8776,7 +8821,7 @@ button{margin-top:12px;padding:8px 14px}
     if (conflicts) return `<span class="sync-pill conflict" title="Offline edits conflict with newer server data">${icon("triangle-alert", 14)} ${conflicts} conflict${conflicts === 1 ? "" : "s"}</span>`;
     if (!online) return `<span class="sync-pill offline" title="Working offline">${icon("wifi-off", 14)} Offline${pending ? ` \xB7 ${pending} queued` : ""}</span>`;
     if (pending) return `<span class="sync-pill pending" title="Waiting to sync offline changes">${icon("refresh-cw", 14)} Syncing ${pending}</span>`;
-    return `<span class="sync-pill online" title="Connected">${icon("cloud-check", 14)} Online</span>`;
+    return `<span class="sync-pill online" title="Connected">${icon("cloud", 14)} Online</span>`;
   }
   function shell(content) {
     const user = currentUser(), profile = shopProfile(), shift = openShift(user.id);
@@ -8788,6 +8833,10 @@ button{margin-top:12px;padding:8px 14px}
   function filtered() {
     const q = query.trim().toLowerCase();
     return visibleOrders().filter((x) => (filter === "all" || (filter === "active" ? !["completed", "invoiced"].includes(x.status) : ["completed", "invoiced"].includes(x.status))) && (!q || [x.id, x.customer, x.vehicle, x.vin, x.complaint, x.tech].some((v) => String(v).toLowerCase().includes(q))));
+  }
+  function receivableStats() {
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), rows = state.invoices.map((invoice) => ({ invoice, balance: Number(invoiceBalance(invoice)) || 0, paid: Number(invoicePaid(invoice)) || 0 })), open = rows.filter((row) => row.balance > 4e-3), outstanding = open.reduce((sum, row) => sum + row.balance, 0), overdue = open.filter(({ invoice }) => invoice.status === "overdue" || /^\d{4}-\d{2}-\d{2}$/.test(String(invoice.due || "")) && invoice.due < today), overdueTotal = overdue.reduce((sum, row) => sum + row.balance, 0), collected = rows.reduce((sum, row) => sum + row.paid, 0), cells = [["file-text", "Open invoices", open.length, open.length ? `${open.length} with a balance` : "Nothing open", "good"], ["wallet", "Outstanding", money4(outstanding), "Unpaid balance across open invoices", ""], ["clock-alert", "Overdue", overdue.length, overdue.length ? `${money4(overdueTotal)} past due` : "None overdue", "warn"], ["badge-dollar-sign", "Collected", money4(collected), "Payments recorded on invoices", "good"]];
+    return `<div class="stats">${cells.map((x) => `<div class="stat"><div class="stat-top"><span>${x[1]}</span>${icon(x[0])}</div><div class="stat-value">${x[2]}</div><div class="stat-note ${x[4]}">${x[3]}</div></div>`).join("")}</div>`;
   }
   function stats() {
     const tech = currentUser()?.role === "technician", orders2 = visibleOrders(), openCount = orders2.filter((x) => !["completed", "invoiced"].includes(x.status)).length, inProgress = orders2.filter((x) => x.status === "in_progress").length, waiting = orders2.filter((x) => x.status === "waiting_parts").length, paid = state.invoices.filter((x) => x.status === "paid").reduce((s, x) => s + x.amount, 0), overdue = state.invoices.filter((x) => x.status === "overdue"), overdueTotal = overdue.reduce((s, x) => s + Number(x.amount || 0), 0), baysInUse = new Set(orders2.filter((x) => x.status === "in_progress" && x.bay && x.bay !== "Unassigned" && x.bay !== "Mobile").map((x) => x.bay)).size, cells = tech ? [["clipboard-check", "My open orders", openCount, "Assigned to you", "good"], ["circle-play", "In progress", inProgress, "Active repairs", ""], ["triangle-alert", "Waiting on parts", waiting, "Parts follow-up needed", "warn"]] : [["clipboard-check", "Open work orders", openCount, `${openCount} active in shop`, "good"], ["circle-play", "In progress", inProgress, `${baysInUse} bay${baysInUse === 1 ? "" : "s"} in use`, ""], ["triangle-alert", "Waiting on parts", waiting, waiting ? `${waiting} need parts follow-up` : "No parts holds", "warn"], ["badge-dollar-sign", "Collected (paid invoices)", money4(paid), "From paid invoice register", "good"], ["clock-alert", "Overdue invoices", overdue.length, overdue.length ? `${money4(overdueTotal)} outstanding` : "None overdue", "warn"]];
@@ -9797,8 +9846,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelectorAll("[data-edit-template]").forEach((button) => button.onclick = () => openInspectionTemplateForm(state.inspectionTemplates.find((t) => t.id === button.dataset.editTemplate)));
     document.querySelectorAll("[data-edit-vehicle]").forEach((row) => row.onclick = () => openVehicleDetail(row.dataset.editVehicle));
-    document.querySelector("#add-inventory")?.addEventListener("click", addInventory);
-    document.querySelector("#add-vendor")?.addEventListener("click", addVendor);
+    document.querySelector("#add-inventory")?.addEventListener("click", () => addInventory());
+    document.querySelector("#add-vendor")?.addEventListener("click", () => addVendor());
     document.querySelector("#add-service")?.addEventListener("click", addService);
     document.querySelectorAll("[data-edit-service]").forEach((button) => button.onclick = (event) => {
       event.stopPropagation();
@@ -11667,7 +11716,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const activity = model.activity.map((item) => `<button class="home-row" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : 'data-route="invoices"'}><span class="home-row-icon muted">${icon("activity", 15)}</span><span><strong>${escapeHtml(item.title)} \xB7 ${escapeHtml(item.customer || "")}</strong><small>${escapeHtml(item.vehicle || item.meta || "")} \xB7 ${escapeHtml(label(item.status))}</small></span></button>`).join("");
     const start = model.isEmpty ? `<section class="home-start"><div><div class="eyebrow">Get started</div><h2>Your shop dashboard is ready</h2><p>Create a work order, book a visit, or open the dispatch board. Metrics, today's jobs, and recent activity fill in as soon as records land.</p></div><div class="home-start-actions"><button class="primary" type="button" data-open-new>${icon("plus", 15)} New work order</button>${canAccess("dispatch") ? `<button class="secondary" type="button" data-route="dispatch">${icon("layout-dashboard", 15)} Open dispatch</button>` : ""}</div></section>` : "";
     const quick = `<div class="home-command"><button class="primary home-intake" type="button" id="home-intake">${icon("plus", 18)} New Customer Intake</button><div class="home-actions">${homeQuickAction("orders", "clipboard-list", "View Work Orders")}${homeQuickAction("dispatch", "layout-dashboard", "Dispatch Board")}${homeQuickAction("shopops", "package", "Parts Requests", 'data-ops-tab="ordering"')}${homeQuickAction("customers", "users", "Customers")}${homeQuickAction("pos", "credit-card", "Card terminal")}${homeQuickAction("reports", "pie-chart", "Reports")}${homeQuickAction("payroll", "landmark", "Payroll")}</div></div>`;
-    return shell(`<div class="home-hero"><div><div class="eyebrow">${shopDayLabel()}</div><h1>${greetingForNow()}, ${escapeHtml(firstName)}</h1><p>Start with a customer intake. Work orders, dispatch, parts, and payroll stay one click away.</p></div><div class="head-actions"><button class="primary" type="button" id="home-intake-top">${icon("plus", 15)} New Customer Intake</button><button class="secondary" type="button" id="home-new-ro">New work order</button></div></div>${quick}${stats()}${start}<div class="home-grid"><section class="home-panel"><div class="home-panel-head"><div><h2>Needs attention</h2><p>Unassigned jobs, parts holds, and overdue invoices.</p></div><span>${model.attention.length}</span></div><div class="home-list">${attention || `<div class="home-empty">${icon("circle-check", 20)}<p>Nothing waiting on you right now.</p></div>`}</div></section><section class="home-panel"><div class="home-panel-head"><div><h2>Today's work</h2><p>Promise times and active repairs for this shop day.</p></div>${canAccess("dispatch") ? `<button class="mini-action" type="button" data-route="dispatch">View board</button>` : ""}</div><div class="home-jobs">${todayJobs || `<div class="home-empty">${icon("wrench", 20)}<p>No jobs promised for today. Create a work order to populate this list.</p></div>`}</div>${appointments ? `<div class="home-appointments"><h3>Appointments</h3>${appointments}</div>` : ""}</section><section class="home-panel home-panel-wide"><div class="home-panel-head"><div><h2>Recent activity</h2><p>Open work orders and the latest invoice movement.</p></div></div><div class="home-list">${activity || `<div class="home-empty">${icon("clipboard-list", 20)}<p>Activity shows here after the first repair order or invoice.</p></div>`}</div></section></div>`);
+    return shell(`<div class="home-hero"><div><div class="eyebrow">${shopDayLabel()}</div><h1>${greetingForNow()}, ${escapeHtml(firstName)}</h1><p>Start with a customer intake. Work orders, dispatch, parts, and payroll stay one click away.</p></div><div class="head-actions"><button class="secondary" type="button" id="home-new-ro">New work order</button></div></div>${quick}${stats()}${start}<div class="home-grid"><section class="home-panel"><div class="home-panel-head"><div><h2>Needs attention</h2><p>Unassigned jobs, parts holds, and overdue invoices.</p></div><span>${model.attention.length}</span></div><div class="home-list">${attention || `<div class="home-empty">${icon("circle-check", 20)}<p>Nothing waiting on you right now.</p></div>`}</div></section><section class="home-panel"><div class="home-panel-head"><div><h2>Today's work</h2><p>Promise times and active repairs for this shop day.</p></div>${canAccess("dispatch") ? `<button class="mini-action" type="button" data-route="dispatch">View board</button>` : ""}</div><div class="home-jobs">${todayJobs || `<div class="home-empty">${icon("wrench", 20)}<p>No jobs promised for today. Create a work order to populate this list.</p></div>`}</div>${appointments ? `<div class="home-appointments"><h3>Appointments</h3>${appointments}</div>` : ""}</section><section class="home-panel home-panel-wide"><div class="home-panel-head"><div><h2>Recent activity</h2><p>Open work orders and the latest invoice movement.</p></div></div><div class="home-list">${activity || `<div class="home-empty">${icon("clipboard-list", 20)}<p>Activity shows here after the first repair order or invoice.</p></div>`}</div></section></div>`);
   }
   function bindHomeDashboard() {
     document.querySelector("#home-new-ro")?.addEventListener("click", openNew);
@@ -13526,7 +13575,7 @@ ${catRows}
     return state.orders.map((order) => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} \xB7 ${escapeHtml(order.vehicle)} \xB7 ${escapeHtml(order.customer)}</option>`).join("");
   }
   function ensureBrowserDiagnosticsClient() {
-    if (typeof window === "undefined" || window.shopcrankDiagnostics) return;
+    if (typeof window === "undefined" || window.shopcrankDiagnostics || !isLocalShell()) return;
     const invokeHttp = async (method, payload = {}) => {
       const response = await fetch(`${cloudflareConfig2.apiUrl}/diagnostics/j2534/${encodeURIComponent(method)}`, {
         method: "POST",
@@ -14926,6 +14975,12 @@ ${line}`.trim();
       mutationQueueStore = createMutationQueueStore({ storage: localStorage, storeKey: MUTATION_QUEUE_STORE });
       flushingMutationQueue = false;
       window.addEventListener("online", flushMutationQueue);
+      ["online", "offline"].forEach((eventName) => window.addEventListener(eventName, () => {
+        const pill = document.querySelector(".sync-pill");
+        if (!pill) return;
+        pill.outerHTML = safeHtml(syncStatusBadge());
+        lucide.createIcons();
+      }));
       shopEntityCollections = { vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
       shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
       roleLabel = { super_admin: "Super Admin", admin: "Admin", technician: "Technician", office: "Office", service_writer: "Service Writer" };
@@ -15449,7 +15504,7 @@ ${line}`.trim();
           return;
         }
         if (existing) return;
-        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}>${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
+        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
         document.querySelector("#global-assistant").onclick = openGlobalAssistant;
         document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
         lucide.createIcons();
@@ -15795,6 +15850,7 @@ ${line}`.trim();
         const saved = await apiFetch("/entities/invoices", { method: "POST", body: JSON.stringify(invoice) });
         const value2 = saved?.queued ? invoice : saved;
         state.invoices.push(value2);
+        toast(`${order.id} completed \xB7 invoice ${value2.number || invoice.number} created`);
         return value2;
       };
       openOrder = function(id) {
@@ -16361,9 +16417,9 @@ ${line}`.trim();
         const rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const summary = invoicePaymentSummary(invoice);
           const bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt || "")}</td><td>${badge2(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge2(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
         }).join("");
-        return shell(`${heading("Accounts receivable", "Invoices", "Record partial or full payments, monitor remaining balances, and review collection history.", false)}${stats()}<div class="data-panel invoice-register"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Closeout</th><th>Status</th><th>Total</th><th>Payments</th></tr></thead><tbody>${rows || `<tr><td colspan="8">No invoices yet.</td></tr>`}</tbody></table></div>`);
+        return shell(`${heading("Accounts receivable", "Invoices", "Record partial or full payments, monitor remaining balances, and review collection history.", false)}${receivableStats()}<div class="data-panel invoice-register"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Closeout</th><th>Status</th><th>Total</th><th>Payments</th></tr></thead><tbody>${rows || `<tr><td colspan="8">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
       openOrderPaymentCore = openOrder;
       openOrder = function(id) {
