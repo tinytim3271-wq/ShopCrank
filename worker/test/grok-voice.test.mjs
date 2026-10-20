@@ -145,6 +145,16 @@ test('executeGrokShopTool save_call_intake_and_estimate saves Customer, Vehicle,
   assert.equal(savedOrder.intake.vehicle.vin, '4T1G11AK5MU123456');
   assert.equal(savedOrder.intake.aiFilledFields['vehicle.vin'], true);
   assert.equal(savedOrder.intake.aiFilledFields['concern.description'], true);
+  const savedEstimate = savedEntities.find((e) => e.entityType === 'estimates').record;
+  for (const record of [savedEstimate, savedOrder.estimate]) {
+    assert.equal(record.laborRate, 160);
+    assert.equal(record.taxRate, 8);
+    assert.deepEqual(record.taxPolicy, { laborTaxable: false, feesTaxable: true });
+    assert.equal(record.taxableSubtotal, savedEstimate.taxableSubtotal);
+    assert.ok(record.fees.length > 0);
+    assert.equal(record.shopSupplies, savedEstimate.shopSupplies);
+  }
+  assert.deepEqual(savedOrder.estimate.fees, savedEstimate.fees);
 });
 
 test('Twilio 8kHz mu-law and Grok 24kHz PCM16 transcode cleanly', () => {
