@@ -2759,7 +2759,7 @@
       taxPolicy: estimate.taxPolicy,
       tax: estimate.tax,
       taxRate: estimate.taxRate,
-      fees: estimate.fees,
+      fees: estimate.fees.map((fee) => ({ ...fee, taxable: normalizeTaxPolicy(estimate.taxPolicy).feesTaxable })),
       lines: billableEstimateLines(estimate.lines).map((line, index) => {
         const normalized = normalizeEstimateLine(line, index);
         return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
@@ -3845,8 +3845,11 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
         host.querySelector("#intake-add-labor")?.addEventListener("click", () => addLine("labor"));
         host.querySelector("#intake-add-part")?.addEventListener("click", () => addLine("part"));
         host.querySelectorAll("[data-remove-line]").forEach((button) => button.addEventListener("click", () => {
+          const descriptions = [...form?.querySelectorAll('[name="line-description"]') || []];
+          const target = button.closest("tr")?.querySelector('[name="line-description"]');
+          const removeIndex = descriptions.filter((input) => input.value.trim()).indexOf(target);
           if (form) current = readForm(current, form);
-          current.estimate.lines = current.estimate.lines.filter((_, index) => index !== Number(button.dataset.removeLine));
+          current.estimate.lines = current.estimate.lines.filter((_, index) => index !== removeIndex);
           persist("line");
           paint();
         }));
@@ -12867,7 +12870,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       taxRate: estimate.taxRate ?? state.taxSettings.rate,
       discountPercent: estimate.discountPercent,
       discountReason: estimate.discountReason,
-      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+      taxPolicy: estimate.taxPolicy ?? DEFAULT_TAX_POLICY
     });
     return { ...estimate, ...totals };
   }
@@ -16278,7 +16282,8 @@ ${line}`.trim();
           taxRate: source.taxRate ?? state.taxSettings.rate,
           discountPercent: source.discountPercent,
           discountReason: source.discountReason,
-          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+          taxPolicy: source.taxPolicy ?? DEFAULT_TAX_POLICY
         });
         return {
           ...estimate,
@@ -16506,7 +16511,7 @@ ${line}`.trim();
           const bd = invoiceTaxBreakdown(invoice);
           const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
           const gross = Number(payment.amount);
-          const taxable = Math.round(bd.subtotal * ratio * 100) / 100;
+          const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100;
           const tax = Math.round(bd.tax * ratio * 100) / 100;
           const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
           return {
