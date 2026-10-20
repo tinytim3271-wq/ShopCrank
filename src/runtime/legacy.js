@@ -85,6 +85,7 @@ import {
   approvedEstimate,
   billableEstimateLines,
   calculateEstimate,
+  DEFAULT_TAX_POLICY,
   estimatePartPriceStatus,
   invoiceRecordForOrder,
   isLineTaxable,
@@ -3250,6 +3251,7 @@ function normalizedEstimateSource(estimate) {
     discountPercent: estimate.discountPercent,
     discountReason: estimate.discountReason,
     shopSupplies: estimate.fees?.find(fee => /shop supplies/i.test(fee.description))?.amount,
+    taxPolicy: estimate.taxPolicy ?? DEFAULT_TAX_POLICY,
   });
   return { ...estimate, ...totals };
 }
@@ -3353,6 +3355,7 @@ coherentOrderEstimate = function (order) {
     discountPercent: source.discountPercent,
     discountReason: source.discountReason,
     shopSupplies: source.fees?.find(fee => /shop supplies/i.test(fee.description))?.amount,
+    taxPolicy: source.taxPolicy ?? DEFAULT_TAX_POLICY,
   });
   return {
     ...estimate,
@@ -3933,7 +3936,7 @@ taxReport = function (fromDate, toDate) {
     const bd = invoiceTaxBreakdown(invoice);
     const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
     const gross = Number(payment.amount);
-    const taxable = Math.round(bd.subtotal * ratio * 100) / 100;
+    const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100;
     const tax = Math.round(bd.tax * ratio * 100) / 100;
     const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
     return {
