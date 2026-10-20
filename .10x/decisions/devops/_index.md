@@ -1,3 +1,4 @@
-# DevOps — [DISCOVERED]
-- Prod deploy: .github/workflows/cloudflare-pages.yml on push to main → validate (build:web, test:config, test:worker, stage:pages, wrangler dry-run) → D1 migrate → Worker deploy → secrets → Pages deploy → smoke checks (warn-only).
-- Gaps found 2026-10-20: the deploy is not gated on frontend module tests or lint (ci.yml runs them separately, and deploy doesn't depend on it); smoke checks never fail; `npm run dev:worker` needs Cloudflare credentials (remote EMAIL + AI bindings); auto-merge.yml merges Cursor-bot PRs and dispatches deploy (verify branch protection); unreferenced assets/index-*.js/css ship to Pages; there's no .gitattributes (CRLF churn on Windows).
+# DevOps
+- Prod deploy: cloudflare-pages.yml → validate (build, lint, module/license/config/worker tests, smoke, dry-run) → D1 migrate → Worker → secrets → Pages → health checks (fail on outage, warn on 403).
+- Local: `npm run dev:worker` runs offline (scripts/dev-worker-local.mjs); `npm run dev:worker:remote` uses remote AI/email.
+- Open: confirm branch protection on main; Google OAuth cutover.

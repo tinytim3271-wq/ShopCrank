@@ -1,11 +1,11 @@
-# Handoff (QA + Security → Architect / SDE)
+# Handoff (SDE/QA → owner, DevOps)
 
-The audit is complete. No code was changed. The P0 list for the next role:
+Branch `fix/market-readiness` carries every audit recommendation; see status.md for the list and verification. A PR to `main` is open; merging deploys.
 
-1. DOMPurify strips form field names that collide with DOM props (`name`, `title`, `method`, `action`, `role`) in every modal rendered through `showModal → safeHtml`. This breaks Record payment (invoice + work order), Add/Edit customer, Create/Edit employee, vendors, inspection templates, and group chat. Regression since cc3cf13 (2026-10-08). Recommend renaming fields (e.g. `customerName`, `paymentMethod`) and adding a unit test that runs every modal template through the same sanitizer and asserts each FormData key survives. Write ADR-001 first.
-2. Payroll TDZ crash: `let state = 0` inside `ytdPayForUser` (src/runtime/filing-overrides.js:322 and legacy.js:4036) shadows the global `state`. Rename it to `stateTax`. Bring both files under ESLint (`no-shadow`).
-3. New tenants inherit the demo shop profile ("Your Car Guy", 100 Demo Street, 555-0100, /assets/reliable-logo.jpg). The client PUTs it to /entities/shopsettings/profile on first load. Seed the profile from the server's `shops.name` and the signup data, and remove the hardcoded "Your Car Guy" strings (estimateMessage, accounting heading, messaging/billing defaults).
-4. Demo data never clears. `checkOnboardingSamples` relies on a server sample count that is always 0 because samples are local-only. Don't seed demo records for cloud tenants at all, or count local samples on the client.
-5. Tax: `calculateEstimate` taxes the whole subtotal. Add a per-line `taxable` flag and a shop setting for labor taxability. Texas doesn't tax repair labor on itemized invoices.
+What DevOps should know:
+- The two workflow files are NOT on the branch yet (remote tools can't write .github/workflows). They are in `.tmp-workflows/`; copy them in and commit.
+- The deploy validate job now installs Chromium and runs `npm run test:smoke` (about 2–3 minutes). It starts the Worker on local D1/R2, serves `.pages-dist` over HTTPS on a non-loopback hostname, and drives a brand-new shop through signup, intake, work order, invoice, payments, payroll and every module at desktop and phone width.
+- Post-deploy smoke checks now fail the run on 5xx/timeouts (403 from bot protection still only warns).
+- Migrations 0015 and 0016 apply automatically on deploy.
 
-Repro harness used: wrangler dev (local D1/R2) + staged .pages-dist behind an HTTPS proxy on a non-loopback hostname + Playwright. Scripts are described in the QA report.
+Next role: PM/Architect. Candidates: Avalara/TaxJar integration for non-Texas shops, retire the filing-overrides fragment (it has drifted from legacy.js), dedupe the two canned oil-change suggestions intake adds for "Oil change".
