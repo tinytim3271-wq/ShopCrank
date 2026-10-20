@@ -79,9 +79,7 @@ export function buildAssistantSystemPrompt(pricing = DEFAULT_SHOP_PRICING, {
 } = {}) {
   const laborRate = nonnegativeRate(pricing.laborRate, DEFAULT_SHOP_PRICING.laborRate);
   const taxRate = nonnegativeRate(pricing.taxRate, DEFAULT_SHOP_PRICING.taxRate);
-  const taxBase = pricing.taxPolicy?.laborTaxable === false
-    ? ' (charged on parts only; labor is not taxed)'
-    : '';
+  const taxBase = ` (parts are taxed; labor is ${pricing.taxPolicy?.laborTaxable === false ? 'not taxed' : 'taxed'}; shop supplies and fees are ${pricing.taxPolicy?.feesTaxable === false ? 'not taxed' : 'taxed'})`;
   const capabilities = allowEstimatePreparation
     ? 'You may prepare a reviewable estimate and work-order draft with the prepare_estimate_work_order tool when the user asks to create them, but the user must explicitly save the estimate and submit the work order in ShopCrank.'
     : 'Do not prepare or claim to create an estimate or work-order draft; this interaction cannot return structured drafts for review or saving.';
