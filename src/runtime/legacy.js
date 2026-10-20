@@ -1144,7 +1144,64 @@ function openFreeTerm(shopId, shopName) { showModal(`<form class="modal" id="fre
 function bindPlatformAdmin() { document.querySelector("#refresh-platform")?.addEventListener("click", () => { platformAccounts = null; render() }); document.querySelector("#new-customer-account")?.addEventListener("click", openCustomerAccount); document.querySelectorAll("[data-credit-shop]").forEach(button => button.onclick = () => openAccountCredit(button.dataset.creditShop, button.dataset.shopName)); document.querySelectorAll("[data-convert-shop]").forEach(button => button.onclick = () => openConvertPaid(button.dataset.convertShop, button.dataset.shopName)); document.querySelectorAll("[data-trial-shop]").forEach(button => button.onclick = () => openFreeTerm(button.dataset.trialShop, button.dataset.shopName)); document.querySelectorAll("[data-account-status]").forEach(button => button.onclick = async () => { const suspended = button.dataset.suspended === "true", action = suspended ? "suspend" : "reactivate"; if (!confirm(`${action[0].toUpperCase() + action.slice(1)} ${button.dataset.shopName}?`)) return; button.disabled = true; try { await platformApi(`/admin/accounts/${encodeURIComponent(button.dataset.accountStatus)}/status`, { method: "POST", body: JSON.stringify({ suspended }) }); platformAccounts = null; toast(`${button.dataset.shopName} ${suspended ? "suspended" : "reactivated"}`); render() } catch (error) { toast(error.message); button.disabled = false } }) }
 
 function openPasswordReset() { showModal(`<div class="modal"><div class="modal-head"><h2>Password and MFA</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><p>ShopCrank authentication is managed by Cloudflare Access and your organization identity provider. Use your identity provider's account-recovery flow or contact your administrator.</p></div><div class="modal-actions"><button type="button" class="primary" data-close>Close</button></div></div>`) }
-function render() { const root = document.querySelector("#root"); if (!currentUser()) { root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } }); lucide.createIcons(); bind(); return } if (!canAccess(state.route)) state.route = (routesForRole(currentUser().role) || ["home"])[0]; const views = { superadmin: superAdmin, home: homeDashboard, dispatch, orders, schedule, customers, chat: teamChat, invoices, pos: cardTerminal, ai: aiWorkbench, messaging, payments, integrations, support, reports, settings }; if (typeof accounting === "function") views.accounting = accounting; if (typeof payroll === "function") views.payroll = payroll; if (typeof imports === "function") views.imports = imports; if (typeof employees === "function") views.employees = employees; if (typeof oemDiagnosticsView === "function") views["oem-diagnostics"] = oemDiagnosticsView; root.innerHTML = DOMPurify.sanitize((views[state.route] || views.home || views.dispatch)(), { USE_PROFILES: { html: true } }); const unread = state.conversations.reduce((sum, item) => sum + chatUnread(item), 0); if (currentUser().role !== "super_admin" && !root.querySelector('[data-route="chat"]') && canAccess("chat")) { const chatNav = root.querySelector('.sidebar [aria-label="Front counter"]') || root.querySelector(".sidebar .nav"); chatNav?.insertAdjacentHTML("beforeend", nav("chat", "messages-square", "Team chat", unread || "")) } if (typeof isOemDiagnosticsAvailable === "function" && isOemDiagnosticsAvailable() && !root.querySelector('[data-route="oem-diagnostics"]')) { const floorNav = root.querySelector('.sidebar [aria-label="Shop floor"]') || root.querySelector(".sidebar .nav"); floorNav?.insertAdjacentHTML("beforeend", nav("oem-diagnostics", "radio-tower", "OEM diagnostics")) } lucide.createIcons(); bind(); bindPlatformAdmin(); bindIntegrations(); document.querySelector("#upgrade-shop-plan")?.addEventListener("click", upgradeShopPlan); bindEstimateActions(); bindMessagingService(); bindPaymentService(); if (state.route === "payments") void loadStripePaymentStatus(); bindTeamChat(); if (typeof bindOemDiagnostics === "function") bindOemDiagnostics(); root.querySelector('[data-route="chat"]')?.addEventListener("click", async () => { await loadChatFromApi(); render() }); scheduleChatRefresh() }
+function render() {
+  const root = document.querySelector("#root");
+  if (!currentUser()) {
+    root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } });
+    lucide.createIcons();
+    bind();
+    return;
+  }
+  if (!canAccess(state.route)) {
+    state.route = (routesForRole(currentUser().role) || ["home"])[0];
+  }
+  const views = { superadmin: superAdmin, home: homeDashboard, dispatch, orders, schedule, customers, chat: teamChat, invoices, pos: cardTerminal, ai: aiWorkbench, messaging, payments, integrations, support, reports, settings };
+  if (typeof accounting === "function") {
+    views.accounting = accounting;
+  }
+  if (typeof payroll === "function") {
+    views.payroll = payroll;
+  }
+  if (typeof imports === "function") {
+    views.imports = imports;
+  }
+  if (typeof employees === "function") {
+    views.employees = employees;
+  }
+  if (typeof oemDiagnosticsView === "function") {
+    views["oem-diagnostics"] = oemDiagnosticsView;
+  }
+  root.innerHTML = DOMPurify.sanitize((views[state.route] || views.home || views.dispatch)(), { USE_PROFILES: { html: true } });
+  const unread = state.conversations.reduce((sum, item) => sum + chatUnread(item), 0);
+  if (currentUser().role !== "super_admin" && !root.querySelector('[data-route="chat"]') && canAccess("chat")) {
+    const chatNav = root.querySelector('.sidebar [aria-label="Front counter"]') || root.querySelector(".sidebar .nav");
+    chatNav?.insertAdjacentHTML("beforeend", nav("chat", "messages-square", "Team chat", unread || ""));
+  }
+  if (typeof isOemDiagnosticsAvailable === "function" && isOemDiagnosticsAvailable() && !root.querySelector('[data-route="oem-diagnostics"]')) {
+    const floorNav = root.querySelector('.sidebar [aria-label="Shop floor"]') || root.querySelector(".sidebar .nav");
+    floorNav?.insertAdjacentHTML("beforeend", nav("oem-diagnostics", "radio-tower", "OEM diagnostics"));
+  }
+  lucide.createIcons();
+  bind();
+  bindPlatformAdmin();
+  bindIntegrations();
+  document.querySelector("#upgrade-shop-plan")?.addEventListener("click", upgradeShopPlan);
+  bindEstimateActions();
+  bindMessagingService();
+  bindPaymentService();
+  if (state.route === "payments") {
+    void loadStripePaymentStatus();
+  }
+  bindTeamChat();
+  if (typeof bindOemDiagnostics === "function") {
+    bindOemDiagnostics();
+  }
+  root.querySelector('[data-route="chat"]')?.addEventListener("click", async () => {
+    await loadChatFromApi();
+    render();
+  });
+  scheduleChatRefresh();
+}
 function bindMessagingService() { document.querySelector("#open-twilio-phone-credentials")?.addEventListener("click", () => openTwilioPhoneCredentialsDialog()); document.querySelector("#messaging-form")?.addEventListener("submit", event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your Car Guy" }; if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) { toast("A secure service endpoint is required before enabling delivery"); return } save(); toast("Shop messaging service saved"); render() }); document.querySelector("#test-messaging")?.addEventListener("click", () => { const config = state.messagingSettings; if (!config.endpoint) { toast("Save a secure endpoint before testing"); return } toast("Endpoint saved. Use your shop service test endpoint to verify SMTP and SMS credentials.") }) }
 async function loadStripePaymentStatus() {
   if (!canAccess("payments")) return;
