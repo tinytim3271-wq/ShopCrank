@@ -4356,20 +4356,26 @@ ${check2.ok ? "" : `<div class="import-errors">${check2.problems.map((problem) =
             }
           }
         });
+        let reportedError = false;
+        const reportVoiceError = (err) => {
+          if (reportedError) return;
+          reportedError = true;
+          onError(err instanceof Error ? err : new Error(String(err)));
+        };
         ws.addEventListener("close", (ev) => {
           if (!active) return;
           const code = Number(ev?.code || 0);
           const reason = String(ev?.reason || "").trim();
           if (code && code !== 1e3) {
-            onError(new Error(
-              reason ? `Grok Voice disconnected (${code}): ${reason}` : `Grok Voice disconnected (code ${code}). Check mic permission and your xAI API key.`
+            reportVoiceError(new Error(
+              reason ? `Grok Voice disconnected (${code}): ${reason}` : `Grok Voice disconnected (code ${code}). The browser could not stay connected to api.x.ai \u2014 hard-refresh, then retry the live call.`
             ));
           }
           stop();
         });
         ws.addEventListener("error", () => {
           if (active) {
-            onError(new Error("Grok Voice realtime connection failed. Confirm your xAI API key, then hard-refresh and try again."));
+            reportVoiceError(new Error("Grok Voice could not open a live socket to api.x.ai. Hard-refresh this page, then try again."));
             stop();
           }
         });
