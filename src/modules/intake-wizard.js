@@ -322,15 +322,18 @@ export function findIntakeCustomer(customers = [], draft = {}) {
   )) || null;
 }
 
-export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
+export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [], customer = null } = {}) {
   const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
   const approval = draft.estimate?.approval || 'pending';
   const status = approval === 'approved' ? 'approved' : 'estimate';
   const assigned = applyAssignments({ id }, draft.assignments || [], users);
+  const missingPhotos = missingRequiredPhotos(draft);
   return {
     id,
-    customer: customerDisplayName(draft),
-    phone: String(draft.customer?.phone || '').trim(),
+    customerId: customer?.id || '',
+    customer: String(customer?.name || '').trim() || customerDisplayName(draft),
+    phone: String(customer?.phone || draft.customer?.phone || '').trim(),
+    email: String(customer?.email || draft.customer?.email || '').trim(),
     vehicle: vehicleLabel(draft) || 'Vehicle pending',
     vin: String(draft.vehicle?.vin || '').trim().toUpperCase() || 'VIN pending',
     complaint: String(draft.concern?.description || '').trim() || 'Customer concern pending',
@@ -365,12 +368,13 @@ export function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, us
       customer: draft.customer,
       vehicle: draft.vehicle,
       photos: draft.photos || [],
-      photosWaived: Boolean(draft.photosWaived && missingRequiredPhotos(draft).length),
       damage: draft.damage || [],
       concern: draft.concern,
       diagnosis: draft.diagnosis,
       disclaimer: INTAKE_DISCLAIMER,
       approval,
+      photosWaived: missingPhotos.length > 0 && draft.photosWaived === true,
+      missingPhotos,
     },
   };
 }
@@ -390,8 +394,9 @@ export function canConvertIntake(draft = {}) {
   const problems = [];
   if (missingCustomerFields(draft).length) problems.push('Customer name and phone are required.');
   if (missingVehicleFields(draft).length) problems.push('Enter a VIN or the year, make, and model.');
-  if (!draft.photosWaived && missingRequiredPhotos(draft).length) {
-    problems.push(`Required photos: ${missingRequiredPhotos(draft).join(', ')}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
+  const missingPhotos = missingRequiredPhotos(draft);
+  if (missingPhotos.length && draft.photosWaived !== true) {
+    problems.push(`Required photos: ${missingPhotos.join(', ')}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
   }
   if (draft.estimate?.approval === 'denied') problems.push('This estimate was denied. Update the approval before creating the work order.');
   return { ok: problems.length === 0, problems };
@@ -494,6 +499,7 @@ function estimateStep(draft, profile) {
 <p class="form-help">Email, text, and the customer portal send path is not connected on this step. Set the approval when the customer answers.</p>`;
 }
 
+
 function reviewStep(draft, users) {
   const check = canConvertIntake(draft);
   const techs = assignableTechnicians(users);
@@ -505,6 +511,7 @@ function reviewStep(draft, users) {
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options('primary')}</select></label><label>Secondary technician<select name="assign-secondary">${options('secondary')}</select></label><label>Apprentice<select name="assign-apprentice">${options('apprentice')}</select></label></div>
 ${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? 'checked' : ''}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ''}
 ${check.ok ? '' : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check.problems.map(problem => `<span>${escapeHtml(problem)}</span>`).join('')}</div>`}
+${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not create the work order: ${escapeHtml(draft.convertError)}</span></div>` : ''}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
 }
 
@@ -658,11 +665,13 @@ export function mountIntakeWizard(host, {
       host.querySelector('#intake-add-labor')?.addEventListener('click', () => addLine('labor'));
       host.querySelector('#intake-add-part')?.addEventListener('click', () => addLine('part'));
       host.querySelectorAll('[data-remove-line]').forEach(button => button.addEventListener('click', () => {
-        const descriptions = [...(form?.querySelectorAll('[name="line-description"]') || [])];
-        const target = button.closest('tr')?.querySelector('[name="line-description"]');
-        const removeIndex = descriptions.filter(input => input.value.trim()).indexOf(target);
+        const lineIndex = form
+          ? [...form.querySelectorAll('tbody tr')]
+            .filter(row => row.querySelector('[name="line-description"]')?.value.trim())
+            .indexOf(button.closest('tr'))
+          : Number(button.dataset.removeLine);
         if (form) current = readForm(current, form);
-        current.estimate.lines = current.estimate.lines.filter((_, index) => index !== removeIndex);
+        current.estimate.lines = current.estimate.lines.filter((_, index) => index !== lineIndex);
         persist('line');
         paint();
       }));
@@ -671,6 +680,7 @@ export function mountIntakeWizard(host, {
       if (form) current = readForm(current, form);
       const check = canConvertIntake(current);
       if (!check.ok) {
+        current.convertError = '';
         persist('blocked');
         paint();
         const problems = host.querySelector('#intake-problems');
@@ -678,7 +688,17 @@ export function mountIntakeWizard(host, {
         problems?.focus();
         return;
       }
-      await onConvert?.(current);
+      const button = host.querySelector('#intake-convert');
+      if (button) { button.disabled = true; button.textContent = 'Creating work order...'; }
+      try {
+        current.convertError = '';
+        await onConvert?.(current);
+      } catch (error) {
+        current.convertError = error?.message || 'The work order could not be saved. Your intake is still saved on this device.';
+        persist('convert-failed');
+        paint();
+        host.querySelector('.import-errors')?.scrollIntoView?.({ block: 'nearest' });
+      }
     });
     host.querySelector('#intake-decode')?.addEventListener('click', async () => {
       if (form) current = readForm(current, form);

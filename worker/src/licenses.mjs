@@ -25,6 +25,7 @@ export const RATE_LIMITS = {
   redeem: { limit: 30, windowMs: 5 * 60 * 1000 },
 };
 const MIN_SECRET_LENGTH = 32;
+const MAX_LICENSE_TERM_MS = 10 * 366 * 86400000;
 const KEY_ROLES = ['owner', 'admin', 'technician', 'service_writer'];
 const REQUEST_ROLES = ['owner', 'admin'];
 const NO_REFERRER = { 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' };
@@ -67,6 +68,8 @@ export function parseLicenseExpiry(value, nowMs = Date.now()) {
   if (!Number.isFinite(ms)) throw new HttpError(400, 'expiresAt must be a valid date');
   const wholeSeconds = Math.floor(ms / 1000) * 1000;
   if (wholeSeconds <= nowMs) throw new HttpError(400, 'The expiration date must be in the future');
+  // Also keeps expires_at a fixed-width ISO string, which the SQL comparisons rely on.
+  if (wholeSeconds > nowMs + MAX_LICENSE_TERM_MS) throw new HttpError(400, 'The expiration date must be within 10 years');
   return new Date(wholeSeconds).toISOString();
 }
 
@@ -77,7 +80,7 @@ function parseDeviceCount(value, fallback = 1) {
   return count;
 }
 
-const SENSITIVE_DETAIL_KEYS = /token|signature|secret|publickey/i;
+const SENSITIVE_DETAIL_KEYS = /^(?:token|unlockurl|signature|secret|publickey)$/i;
 
 export async function recordLicenseAudit(env, event, fields = {}, nowMs = Date.now()) {
   const detail = Object.fromEntries(Object.entries(fields.detail || {})

@@ -706,10 +706,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, { fe
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().then(({ exitCode }) => {
+  try {
+    const { exitCode } = await main();
     process.exitCode = exitCode;
-  }).catch((error) => {
+  } catch (error) {
     console.error(error.message || error);
     process.exitCode = error.exitCode || 1;
-  });
+  }
 }

@@ -70,7 +70,7 @@ taxReport = function (fromDate, toDate) {
     const bd = invoiceTaxBreakdown(invoice);
     const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
     const gross = Number(payment.amount);
-    const taxable = Math.round(bd.subtotal * ratio * 100) / 100;
+    const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100;
     const tax = Math.round(bd.tax * ratio * 100) / 100;
     const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
     return {
@@ -559,8 +559,9 @@ function printEmployeeAnnualForm(userId) {
 }
 
 openEmployee = function (existing = null) {
+  const selectedRole = existing ? existing.role : "office";
   const roleOptions = ["technician", "office", "service_writer", "admin"]
-    .map(role => `<option value="${role}" ${existing?.role === role ? "selected" : ""}>${roleLabel[role] || role}</option>`)
+    .map(role => `<option value="${role}" ${selectedRole === role ? "selected" : ""}>${roleLabel[role] || role}</option>`)
     .join("");
   const employmentOptions = ["Hourly", "Salary", "Contractor"]
     .map(value => `<option ${existing?.employmentType === value ? "selected" : ""}>${value}</option>`)
@@ -628,8 +629,11 @@ openEmployee = function (existing = null) {
       return;
     }
     if (data.role === "technician" && !String(data.techName || "").trim()) {
-      toast("Add the technician dispatch name");
-      return;
+      data.techName = String(data.name || "").trim();
+      if (!data.techName) {
+        toast("Add the technician dispatch name");
+        return;
+      }
     }
     if (button) button.disabled = true;
     try {

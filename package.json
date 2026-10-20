@@ -17,6 +17,7 @@
     "provision:shopcrank-com": "node scripts/provision-shopcrank-com.mjs",
     "verify:google-oauth": "node scripts/verify-google-oauth-cutover.mjs",
     "build:web": "node scripts/sync-frontend-config.mjs && node scripts/build-web.mjs",
+    "check:java": "node scripts/require-java21.mjs",
     "dev:web": "node scripts/build-web.mjs --watch",
     "copy:web": "node scripts/copy-web.mjs",
     "dev:worker": "node scripts/dev-worker-local.mjs",
@@ -33,9 +34,9 @@
     "deploy:pages": "npm run build:web && npm run stage:pages && wrangler pages deploy .pages-dist --project-name=shopcrank-dispatch --branch=main --commit-dirty=true",
     "validate:worker": "npm run test:worker && wrangler deploy --dry-run",
     "validate": "npm run build:web && npm run test:config && npm run test:modules && npm run validate:worker && npm run test:j2534",
-    "sync": "npm run build:web && npm run copy:web && npx cap sync android",
+    "sync": "npm run check:java && npm run build:web && npm run copy:web && npx cap sync android",
     "open:android": "npx cap open android",
-    "build:android": "npm run sync",
+    "build:android": "npm run check:java && npm run sync",
     "desktop": "electron .",
     "build:j2534": "node scripts/build-j2534.mjs",
     "build:windows": "npm run build:web && npm run build:j2534 && node scripts/bake-diagnostics-secret.mjs && electron-builder --win nsis --publish never",
@@ -178,6 +179,6 @@
     "workerd@1.20261012.1": true
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   }
 }

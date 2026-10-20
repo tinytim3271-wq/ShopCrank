@@ -544,16 +544,23 @@ export function createGrokVoiceSession({
         }
       });
 
+      let reportedError = false;
+      const reportVoiceError = (err) => {
+        if (reportedError) return;
+        reportedError = true;
+        onError(err instanceof Error ? err : new Error(String(err)));
+      };
+
       ws.addEventListener('close', (ev) => {
         if (!active) return;
         const code = Number(ev?.code || 0);
         const reason = String(ev?.reason || '').trim();
         // 1000 = normal close; anything else during an active session is a failed handshake/session
         if (code && code !== 1000) {
-          onError(new Error(
+          reportVoiceError(new Error(
             reason
               ? `Grok Voice disconnected (${code}): ${reason}`
-              : `Grok Voice disconnected (code ${code}). Check mic permission and your xAI API key.`,
+              : `Grok Voice disconnected (code ${code}). The browser could not stay connected to api.x.ai — hard-refresh, then retry the live call.`,
           ));
         }
         stop();
@@ -562,7 +569,7 @@ export function createGrokVoiceSession({
       ws.addEventListener('error', () => {
         // Browsers often fire error then close without a useful message; close handler reports detail.
         if (active) {
-          onError(new Error('Grok Voice realtime connection failed. Confirm your xAI API key, then hard-refresh and try again.'));
+          reportVoiceError(new Error('Grok Voice could not open a live socket to api.x.ai. Hard-refresh this page, then try again.'));
           stop();
         }
       });

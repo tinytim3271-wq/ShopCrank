@@ -7,6 +7,8 @@ import {
   buildGrokSessionUpdate,
   calculateGrokServiceEstimate,
   executeGrokShopTool,
+  extractGrokClientSecret,
+  grokClientSecretRejectionMessage,
   handleGrokClientSecret,
   handleTwilioVoiceIncoming,
   mulawByteToPcm16,
@@ -145,6 +147,20 @@ test('executeGrokShopTool save_call_intake_and_estimate saves Customer, Vehicle,
   assert.equal(savedOrder.intake.vehicle.vin, '4T1G11AK5MU123456');
   assert.equal(savedOrder.intake.aiFilledFields['vehicle.vin'], true);
   assert.equal(savedOrder.intake.aiFilledFields['concern.description'], true);
+  const savedEstimate = savedEntities.find((e) => e.entityType === 'estimates').record;
+  for (const record of [savedEstimate, savedOrder.estimate]) {
+    assert.equal(record.laborRate, 160);
+    assert.equal(record.taxRate, 8);
+    assert.deepEqual(record.taxPolicy, { laborTaxable: false, feesTaxable: true });
+    assert.ok(record.fees.length > 0);
+    assert.equal(record.shopSupplies, savedEstimate.shopSupplies);
+  }
+  assert.equal(savedEstimate.taxRate, 8);
+  assert.deepEqual(savedEstimate.taxPolicy, { laborTaxable: false, feesTaxable: true });
+  assert.equal(savedEstimate.taxableSubtotal, savedOrder.estimate.taxableSubtotal);
+  assert.deepEqual(savedEstimate.fees, savedOrder.estimate.fees);
+  assert.equal(savedOrder.estimate.taxRate, 8);
+  assert.deepEqual(savedOrder.estimate.taxPolicy, { laborTaxable: false, feesTaxable: true });
 });
 
 test('Twilio 8kHz mu-law and Grok 24kHz PCM16 transcode cleanly', () => {
@@ -227,4 +243,31 @@ test('handleGrokClientSecret mints an ephemeral token from xAI without exposing 
   assert.equal(payload.url, GROK_REALTIME_URL);
   assert.equal(payload.voice, 'eve');
   assert.doesNotMatch(JSON.stringify(payload), new RegExp(longLivedKey));
+});
+
+test('extractGrokClientSecret reads the documented xAI { value } payload', () => {
+  assert.equal(extractGrokClientSecret({ value: 'xai-realtime-client-secret-abc', expires_at: 1774274445 }), 'xai-realtime-client-secret-abc');
+  assert.equal(extractGrokClientSecret({ client_secret: { value: 'nested-secret' } }), 'nested-secret');
+  assert.equal(extractGrokClientSecret({ client_secret: 'string-secret' }), 'string-secret');
+  assert.equal(extractGrokClientSecret({}), '');
+  assert.match(grokClientSecretRejectionMessage({}, 401), /rejected this API key/i);
+  assert.match(grokClientSecretRejectionMessage({ error: { message: 'insufficient credits' } }, 402), /insufficient credits/);
+});
+
+test('handleGrokClientSecret mints from the official xAI client_secrets response shape', async () => {
+  const req = new Request('https://www.shopcrank.com/api/ai/voice/client-secret', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ voice: 'ara' }),
+  });
+  const res = await handleGrokClientSecret(req, { XAI_API_KEY: 'xai-live-key-1234567890abcd' }, { shopId: 'shop-a', role: 'admin' }, {
+    fetcher: async () => Response.json({
+      value: 'xai-realtime-client-secret-live',
+      expires_at: 1774274445,
+    }),
+  });
+  assert.equal(res.status, 200);
+  const payload = await res.json();
+  assert.equal(payload.token, 'xai-realtime-client-secret-live');
+  assert.equal(payload.voice, 'ara');
 });

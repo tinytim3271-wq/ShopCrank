@@ -290,6 +290,17 @@ test('GET on the unlock link never redeems, and tokens never reach the audit log
   const serialized = JSON.stringify(await h.audit());
   assert.ok(!serialized.includes(token));
   assert.ok(!serialized.includes(token.split('.')[2]));
+  const issuedEvent = (await h.audit()).find(row => row.event === 'token.issued');
+  assert.deepEqual(JSON.parse(issuedEvent.detail_json), { exp: EXPIRY, tokenVersion: 1 });
+});
+
+test('audit details drop secrets passed by mistake but keep token versions', async () => {
+  const h = harness();
+  await (await import('../src/licenses.mjs')).recordLicenseAudit(h.env, 'test.event', {
+    detail: { token: 'sck1.a.b', signature: 'sig', publicKey: 'pk', unlockUrl: 'https://x/#token=a', tokenVersion: 4 },
+  });
+  const [row] = await h.audit();
+  assert.deepEqual(JSON.parse(row.detail_json), { tokenVersion: 4 });
 });
 
 test('live key-programming gate binds each device proof to the procedure, VIN, and one-time nonce', async () => {
@@ -406,6 +417,9 @@ test('expiry parsing and license path detection', () => {
   assert.equal(parseLicenseExpiry('2027-03-01T08:30:15.987Z', START), '2027-03-01T08:30:15.000Z');
   assert.throws(() => parseLicenseExpiry('', START), /required/);
   assert.throws(() => parseLicenseExpiry('soon', START), /valid date/);
+  assert.throws(() => parseLicenseExpiry('+070630-02-02', START), /within 10 years/);
+  assert.throws(() => parseLicenseExpiry('2037-12-31', START), /within 10 years/);
+  assert.equal(parseLicenseExpiry('2036-10-01', START), '2036-10-01T23:59:59.000Z');
   assert.ok(isLicensePath('/api/licenses/unlock'));
   assert.ok(isLicensePath('/api/admin/licenses/abc/revoke'));
   assert.ok(!isLicensePath('/api/admin/accounts'));

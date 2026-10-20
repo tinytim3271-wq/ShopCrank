@@ -350,6 +350,18 @@ test('editing an invoiced work order synchronizes unpaid invoice lines and total
   assert.equal(invoice.revisedAt, '2026-10-06T04:00:00.000Z');
 });
 
+test('revised invoices retain fee taxability from the saved estimate policy', () => {
+  const order = workOrderWithEditedEstimate({ id: 'RO-1058', status: 'invoiced' }, {
+    taxRate: 8.25,
+    taxPolicy: { laborTaxable: false, feesTaxable: false },
+    fees: [{ description: 'Shop supplies', amount: 12 }],
+    lines: [{ id: 'labor', type: 'labor', description: 'Diagnosis', hours: 1, laborRate: 140 }],
+  });
+  const invoice = invoiceWithEditedWorkOrder({}, order);
+
+  assert.deepEqual(invoice.fees, [{ description: 'Shop supplies', amount: 12, taxable: false }]);
+});
+
 test('labor lines normalize none, one, or several technician ids as a unique list', () => {
   assert.deepEqual(normalizeEstimateLine({ type: 'labor' }).technicianIds, []);
   assert.deepEqual(normalizeEstimateLine({ type: 'labor', technicianId: 'tech-1' }).technicianIds, ['tech-1']);

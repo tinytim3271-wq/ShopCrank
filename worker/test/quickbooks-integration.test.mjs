@@ -390,6 +390,26 @@ test("US automated sales tax marks lines and lets QBO compute tax", () => {
   assert.equal("TxnTaxDetail" in payload, false);
 });
 
+test("US automated sales tax preserves exempt fee flags", () => {
+  const payload = normalizeQuickBooksInvoice({
+    ...shopInvoice,
+    tax: 8.25,
+    lines: [{ type: "part", description: "Taxable part", quantity: 1, unitPrice: 20, taxable: true }],
+    fees: [{ description: "Exempt fee", amount: 5, taxable: false }],
+    subtotal: 25,
+  }, { tax: { mode: "ast" } });
+
+  assert.deepEqual(payload.Line.map((line) => line.SalesItemLineDetail.TaxCodeRef.value), ["TAX", "NON"]);
+});
+
+test("US automated sales tax preserves fee taxability", () => {
+  const payload = normalizeQuickBooksInvoice(
+    { ...shopInvoice, fees: [{ ...shopInvoice.fees[0], taxable: false }] },
+    { tax: { mode: "ast" } },
+  );
+  assert.deepEqual(payload.Line.map((line) => line.SalesItemLineDetail.TaxCodeRef.value), ["TAX", "TAX", "NON"]);
+});
+
 test("non-US companies get real tax code ids on every line", () => {
   const payload = normalizeQuickBooksInvoice(
     { ...shopInvoice, lines: [shopInvoice.lines[0], { ...shopInvoice.lines[1], taxable: false }], fees: [], subtotal: undefined },

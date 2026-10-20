@@ -2508,6 +2508,9 @@
     const source = policy && typeof policy === "object" ? policy : fallback || DEFAULT_TAX_POLICY;
     return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
   }
+  function taxPolicyForStoredEstimate(estimate = {}) {
+    return estimate.taxPolicy ?? DEFAULT_TAX_POLICY;
+  }
   function setDefaultTaxPolicy(policy) {
     defaultTaxPolicy = policy || DEFAULT_TAX_POLICY;
   }
@@ -2759,7 +2762,10 @@
       taxPolicy: estimate.taxPolicy,
       tax: estimate.tax,
       taxRate: estimate.taxRate,
-      fees: estimate.fees,
+      fees: (estimate.fees || []).map((fee) => ({
+        ...fee,
+        taxable: estimate.taxPolicy?.feesTaxable !== false
+      })),
       lines: billableEstimateLines(estimate.lines).map((line, index) => {
         const normalized = normalizeEstimateLine(line, index);
         return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
@@ -3529,15 +3535,18 @@
     const email = String(draft.customer?.email || "").trim().toLowerCase();
     return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
   }
-  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
+  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [], customer = null } = {}) {
     const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
     const approval = draft.estimate?.approval || "pending";
     const status = approval === "approved" ? "approved" : "estimate";
     const assigned = applyAssignments({ id }, draft.assignments || [], users);
+    const missingPhotos = missingRequiredPhotos(draft);
     return {
       id,
-      customer: customerDisplayName(draft),
-      phone: String(draft.customer?.phone || "").trim(),
+      customerId: customer?.id || "",
+      customer: String(customer?.name || "").trim() || customerDisplayName(draft),
+      phone: String(customer?.phone || draft.customer?.phone || "").trim(),
+      email: String(customer?.email || draft.customer?.email || "").trim(),
       vehicle: vehicleLabel(draft) || "Vehicle pending",
       vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
       complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
@@ -3572,12 +3581,13 @@
         customer: draft.customer,
         vehicle: draft.vehicle,
         photos: draft.photos || [],
-        photosWaived: Boolean(draft.photosWaived && missingRequiredPhotos(draft).length),
         damage: draft.damage || [],
         concern: draft.concern,
         diagnosis: draft.diagnosis,
         disclaimer: INTAKE_DISCLAIMER,
-        approval
+        approval,
+        photosWaived: missingPhotos.length > 0 && draft.photosWaived === true,
+        missingPhotos
       }
     };
   }
@@ -3595,8 +3605,9 @@
     const problems = [];
     if (missingCustomerFields(draft).length) problems.push("Customer name and phone are required.");
     if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    if (!draft.photosWaived && missingRequiredPhotos(draft).length) {
-      problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
+    const missingPhotos = missingRequiredPhotos(draft);
+    if (missingPhotos.length && draft.photosWaived !== true) {
+      problems.push(`Required photos: ${missingPhotos.join(", ")}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
     }
     if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
     return { ok: problems.length === 0, problems };
@@ -3696,6 +3707,7 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
 ${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ""}
 ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not create the work order: ${escapeHtml3(draft.convertError)}</span></div>` : ""}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
   }
   function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
@@ -3845,8 +3857,9 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
         host.querySelector("#intake-add-labor")?.addEventListener("click", () => addLine("labor"));
         host.querySelector("#intake-add-part")?.addEventListener("click", () => addLine("part"));
         host.querySelectorAll("[data-remove-line]").forEach((button) => button.addEventListener("click", () => {
+          const lineIndex = form ? [...form.querySelectorAll("tbody tr")].filter((row) => row.querySelector('[name="line-description"]')?.value.trim()).indexOf(button.closest("tr")) : Number(button.dataset.removeLine);
           if (form) current = readForm(current, form);
-          current.estimate.lines = current.estimate.lines.filter((_, index) => index !== Number(button.dataset.removeLine));
+          current.estimate.lines = current.estimate.lines.filter((_, index) => index !== lineIndex);
           persist("line");
           paint();
         }));
@@ -3855,6 +3868,7 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
         if (form) current = readForm(current, form);
         const check2 = canConvertIntake(current);
         if (!check2.ok) {
+          current.convertError = "";
           persist("blocked");
           paint();
           const problems = host.querySelector("#intake-problems");
@@ -3862,7 +3876,20 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
           problems?.focus();
           return;
         }
-        await onConvert?.(current);
+        const button = host.querySelector("#intake-convert");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Creating work order...";
+        }
+        try {
+          current.convertError = "";
+          await onConvert?.(current);
+        } catch (error) {
+          current.convertError = error?.message || "The work order could not be saved. Your intake is still saved on this device.";
+          persist("convert-failed");
+          paint();
+          host.querySelector(".import-errors")?.scrollIntoView?.({ block: "nearest" });
+        }
       });
       host.querySelector("#intake-decode")?.addEventListener("click", async () => {
         if (form) current = readForm(current, form);
@@ -4471,20 +4498,26 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
             }
           }
         });
+        let reportedError = false;
+        const reportVoiceError = (err) => {
+          if (reportedError) return;
+          reportedError = true;
+          onError(err instanceof Error ? err : new Error(String(err)));
+        };
         ws.addEventListener("close", (ev) => {
           if (!active) return;
           const code = Number(ev?.code || 0);
           const reason = String(ev?.reason || "").trim();
           if (code && code !== 1e3) {
-            onError(new Error(
-              reason ? `Grok Voice disconnected (${code}): ${reason}` : `Grok Voice disconnected (code ${code}). Check mic permission and your xAI API key.`
+            reportVoiceError(new Error(
+              reason ? `Grok Voice disconnected (${code}): ${reason}` : `Grok Voice disconnected (code ${code}). The browser could not stay connected to api.x.ai \u2014 hard-refresh, then retry the live call.`
             ));
           }
           stop();
         });
         ws.addEventListener("error", () => {
           if (active) {
-            onError(new Error("Grok Voice realtime connection failed. Confirm your xAI API key, then hard-refresh and try again."));
+            reportVoiceError(new Error("Grok Voice could not open a live socket to api.x.ai. Hard-refresh this page, then try again."));
             stop();
           }
         });
@@ -4932,9 +4965,9 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
     const nonce = crypto.randomUUID();
     return { token, deviceId: identity.deviceId, nonce, ...await signDeviceProof(identity, authorizePurpose(procedure, vin), await sha256Hex(token), Date.now(), nonce) };
   }
-  async function uploadProof(file, apiFetch2) {
+  async function uploadProof(file, { apiFetch: apiFetch2, fetchImpl }) {
     if (!PROOF_TYPES.has(file.type)) throw new Error("Upload the proof as a PDF, PNG, JPEG, or WebP file");
-    return uploadFileToStorage(file, "license-proof", file.type, { apiFetch: apiFetch2 });
+    return uploadFileToStorage(file, "license-proof", file.type, { apiFetch: apiFetch2, fetchImpl });
   }
   function parseUnlockInput(value2) {
     const text = String(value2 || "").trim();
@@ -4970,7 +5003,7 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
     return `<span class="badge ${STATUS_BADGE[status] || ""}">${escapeHtml4(label2)}</span>`;
   }
   function requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, previous) {
-    return `<form class="form-grid" id="key-license-request-form"><label>Contact name *<input name="contactName" required maxlength="120" value="${escapeHtml4(previous?.contactName || "")}"></label><label>Business name *<input name="businessName" required maxlength="160" value="${escapeHtml4(previous?.businessName || "")}"></label><label>License or registration number<input name="licenseNumber" maxlength="120" placeholder="e.g. NASTF VSP LSID or state locksmith license"></label><label>Computers to license<input name="requestedDevices" type="number" min="1" max="100" value="1"></label><label class="full">Proof of licensing *<textarea name="proofDetails" rows="3" required minlength="10" maxlength="4000" placeholder="Issuing body, license number, expiry, and anything ShopCrank should verify"></textarea></label><label class="full">Proof document (PDF or image, optional)<input name="proofFile" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><div class="full"><button class="primary" type="submit">${icon2("send", 14)} Submit license request</button></div></form>`;
+    return `<form class="form-grid" id="key-license-request-form"><label>Contact name *<input name="contactName" required maxlength="120" value="${escapeHtml4(previous?.contactName || "")}"></label><label>Business name *<input name="businessName" required maxlength="160" value="${escapeHtml4(previous?.businessName || "")}"></label><label>License or registration number<input name="licenseNumber" maxlength="120" placeholder="e.g. NASTF VSP LSID or state locksmith license" value="${escapeHtml4(previous?.licenseNumber || "")}"></label><label>Computers to license<input name="requestedDevices" type="number" min="1" max="100" value="${escapeHtml4(previous?.requestedDevices || 1)}"></label><label class="full">Proof of licensing *<textarea name="proofDetails" rows="3" required minlength="10" maxlength="4000" placeholder="Issuing body, license number, expiry, and anything ShopCrank should verify">${escapeHtml4(previous?.proofDetails || "")}</textarea></label><label class="full">Proof document (PDF or image, optional)<input name="proofFile" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><div class="full"><button class="primary" type="submit">${icon2("send", 14)} Submit license request</button></div></form>`;
   }
   function keyLicensePanelHtml(view, { escapeHtml: escapeHtml4, icon: icon2 }) {
     const head = `<div class="eyebrow">Vehicle key license</div>`;
@@ -4987,7 +5020,7 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
         body = `${revoked}<div class="messaging-status idle">${icon2("hourglass", 17)}<div><strong>Request under review</strong><span>Submitted ${escapeHtml4(formatDate(latest.createdAt))} for ${escapeHtml4(latest.businessName)}. ShopCrank reviews your proof and sets the license expiry.</span></div></div>`;
       } else {
         const denied = latest?.status === "denied" ? `<div class="messaging-status idle">${icon2("circle-x", 17)}<div><strong>Last request denied</strong><span>${escapeHtml4(latest.decisionNote || "No reason given")}</span></div></div>` : "";
-        body = `${revoked}${denied}<p>Live key programming on this shop needs a vehicle key license from ShopCrank. Send proof that your shop is licensed for key and immobilizer work.</p>${canRequest ? requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, latest) : '<p class="ledger-note">Ask your shop owner or admin to submit the license request.</p>'}`;
+        body = `${revoked}${denied}<p>Live key programming on this shop needs a vehicle key license from ShopCrank. Send proof that your shop is licensed for key and immobilizer work.</p>${canRequest ? requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, view.draft || latest) : '<p class="ledger-note">Ask your shop owner or admin to submit the license request.</p>'}`;
       }
     } else {
       const stateLabel = license.status === "suspended" ? "Suspended" : license.expired ? "Expired" : "Active";
@@ -5007,7 +5040,8 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
       }
     }
     const busy = view.busy ? `<p class="ledger-note">${escapeHtml4(view.busy)}</p>` : "";
-    return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}${refresh}${body}${deviceLine}${busy}</section>`;
+    const failure = view.lastError ? `<p class="login-error" role="alert">${escapeHtml4(view.lastError)}</p>` : "";
+    return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}${refresh}${failure}${body}${deviceLine}${busy}</section>`;
   }
   function shortId(value2) {
     return value2 ? `${String(value2).slice(0, 10)}\u2026` : "";
@@ -5777,7 +5811,14 @@ button{margin-top:12px;padding:8px 14px}
     const storage = portable ? "ShopCrank Demo Data folder beside the executable on this drive" : "ShopCrank Offline folder on this computer";
     const nameField = hasAccount ? "" : `<label for="offline-name">Your name</label><input id="offline-name" name="displayName" autocomplete="name" required minlength="2" maxlength="80" placeholder="Shop owner"/>`;
     const confirmField = hasAccount ? "" : `<label for="offline-confirm">Confirm password</label><input id="offline-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8"/>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${portable ? "ShopCrank Demo" : "ShopCrank"}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`}</h1><p>${hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. ShopCrank stores the sign-in check here and does not send the password to the cloud.`}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${hasAccount ? `value="${safeEmail}"` : "autofocus"} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${hasAccount ? "current-password" : "new-password"}" required minlength="8" ${hasAccount ? "autofocus" : ""}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
+    const brandName = portable ? "ShopCrank Demo" : "ShopCrank";
+    const heading2 = hasAccount ? `Sign in on this ${device}` : `Create this ${device}\u2019s sign-in`;
+    const copy = hasAccount ? `The password check stays on this ${shortDevice}. Work orders, customers, and invoices open from this ${device} when the internet is down.` : `Choose a password for this ${shortDevice}. ShopCrank stores the sign-in check here and does not send the password to the cloud.`;
+    const emailAttrs = hasAccount ? `value="${safeEmail}"` : "autofocus";
+    const passwordAutocomplete = hasAccount ? "current-password" : "new-password";
+    const passwordAutofocus = hasAccount ? "autofocus" : "";
+    const submitLabel = hasAccount ? "Sign in" : `Save sign-in on this ${shortDevice}`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${mark}</div><div><div class="brand-name">${brandName}</div><small>Offline on this ${shortDevice}</small></div></div><div class="eyebrow">This ${device}</div><h1>${heading2}</h1><p>${copy}</p><form id="login-form">${nameField}<label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" required ${emailAttrs} placeholder="you@yourshop.com"/><label for="offline-password">Password</label><input id="offline-password" name="password" type="password" autocomplete="${passwordAutocomplete}" required minlength="8" ${passwordAutofocus}/>${confirmField}<p class="login-error" id="login-error" hidden></p><button class="primary login-button" type="submit">${buttonIcon}${submitLabel}</button></form><div class="login-security">${lock}<span>Shop records for this copy are saved in the ${storage}.</span></div></section></main>`;
   }
   function stripOfflineSecrets(value2) {
     if (Array.isArray(value2)) return value2.map(stripOfflineSecrets);
@@ -8092,7 +8133,7 @@ button{margin-top:12px;padding:8px 14px}
     estimate.lastSentAt = now();
     estimate.lastSentChannel = channel;
     estimate.deliveryMode = result.mode;
-    updateEstimateInApi(estimate);
+    void updateEstimateInApi(estimate);
     save();
     toast(result.mode === "service" ? `${estimate.number} sent through the shop messaging service` : `${estimate.number} opened in your device ${channel === "email" ? "email" : "messaging"} app`);
   }
@@ -9870,7 +9911,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelectorAll("[data-receive-stock]").forEach((button) => button.onclick = () => receiveStock(button.dataset.receiveStock));
     document.querySelectorAll("[data-send-reminder]").forEach((button) => button.onclick = (event) => {
       event.stopPropagation();
-      sendReminder(button.dataset.sendReminder);
+      void sendReminder(button.dataset.sendReminder);
     });
     document.querySelector("#elm-connect")?.addEventListener("click", connectElm);
     document.querySelectorAll("[data-elm-command]").forEach((button) => button.onclick = () => runElm(button.dataset.elmCommand));
@@ -9948,7 +9989,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       invoice.taxRate = taxRate;
       invoice.tax = tax;
       invoice.amount = Math.round((subtotal + tax) * 100) / 100;
-      updateInvoiceInApi(invoice);
+      void updateInvoiceInApi(invoice);
       save();
       closeModal();
       toast(`${invoice.number} tax updated`);
@@ -9989,13 +10030,13 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       }
       const paymentRecord = { id: `payment-${Date.now()}`, invoiceNumber, customer: invoice.customer, amount, method, receivedAt: data.receivedAt, reference: data.reference.trim(), note: data.note.trim(), status: "completed", recordedBy: currentUser().id };
       state.payments.push(paymentRecord);
-      pushPaymentToApi(paymentRecord);
+      void pushPaymentToApi(paymentRecord);
       const newBalance = invoiceBalance(invoice);
       if (newBalance === 0) {
         invoice.status = "paid";
         invoice.due = `Paid ${data.receivedAt}`;
       } else invoice.status = "sent";
-      updateInvoiceInApi(invoice);
+      void updateInvoiceInApi(invoice);
       save();
       closeModal();
       toast(`${money4(amount)} ${method} payment recorded for ${invoice.number}`);
@@ -10248,13 +10289,25 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       bind();
       return;
     }
-    if (!canAccess(state.route)) state.route = (routesForRole(currentUser().role) || ["home"])[0];
+    if (!canAccess(state.route)) {
+      state.route = (routesForRole(currentUser().role) || ["home"])[0];
+    }
     const views = { superadmin: superAdmin, home: homeDashboard, dispatch, orders, schedule, customers, chat: teamChat, invoices, pos: cardTerminal, ai: aiWorkbench, messaging, payments, integrations, support, reports, settings };
-    if (typeof accounting === "function") views.accounting = accounting;
-    if (typeof payroll === "function") views.payroll = payroll;
-    if (typeof imports === "function") views.imports = imports;
-    if (typeof employees === "function") views.employees = employees;
-    if (typeof oemDiagnosticsView === "function") views["oem-diagnostics"] = oemDiagnosticsView;
+    if (typeof accounting === "function") {
+      views.accounting = accounting;
+    }
+    if (typeof payroll === "function") {
+      views.payroll = payroll;
+    }
+    if (typeof imports === "function") {
+      views.imports = imports;
+    }
+    if (typeof employees === "function") {
+      views.employees = employees;
+    }
+    if (typeof oemDiagnosticsView === "function") {
+      views["oem-diagnostics"] = oemDiagnosticsView;
+    }
     root.innerHTML = DOMPurify.sanitize((views[state.route] || views.home || views.dispatch)(), { USE_PROFILES: { html: true } });
     const unread = state.conversations.reduce((sum, item) => sum + chatUnread(item), 0);
     if (currentUser().role !== "super_admin" && !root.querySelector('[data-route="chat"]') && canAccess("chat")) {
@@ -10273,9 +10326,13 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     bindEstimateActions();
     bindMessagingService();
     bindPaymentService();
-    if (state.route === "payments") void loadStripePaymentStatus();
+    if (state.route === "payments") {
+      void loadStripePaymentStatus();
+    }
     bindTeamChat();
-    if (typeof bindOemDiagnostics === "function") bindOemDiagnostics();
+    if (typeof bindOemDiagnostics === "function") {
+      bindOemDiagnostics();
+    }
     root.querySelector('[data-route="chat"]')?.addEventListener("click", async () => {
       await loadChatFromApi();
       render();
@@ -10286,8 +10343,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelector("#open-twilio-phone-credentials")?.addEventListener("click", () => openTwilioPhoneCredentialsDialog());
     document.querySelector("#messaging-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = readFormValues(event.target);
-      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || shopDisplayName() };
+      const data = Object.fromEntries(new FormData(event.target));
+      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your Car Guy" };
       if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) {
         toast("A secure service endpoint is required before enabling delivery");
         return;
@@ -10562,7 +10619,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       applyAiWorkflowEstimate(order, aiResult.estimate, { rate: shopMileageRate(), taxRate: state.taxSettings.rate });
       order.notes = `${order.notes || ""}
 AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.trim();
-      updateOrderInApi(order);
+      void updateOrderInApi(order);
       save();
       toast(`${order.id} updated with AI workflow`);
       render();
@@ -11368,7 +11425,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       e.preventDefault();
       const d = readFormValues(e.target), record = { date: d.date, vendor: d.vendor, category: d.category, memo: d.memo, amount: Number(d.amount), account: expenseAccount(d.category) };
       state.expenses.push(record);
-      pushExpenseToApi(record);
+      void pushExpenseToApi(record);
       save();
       closeModal();
       toast("Expense recorded in the general ledger");
@@ -11873,7 +11930,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     bindPhoneOrder();
     if (posReaders === null) {
       posReaders = [];
-      loadPosReaders();
+      void loadPosReaders();
     }
     document.querySelector("#pos-order")?.addEventListener("change", (event) => {
       posSelectedId = event.target.value;
@@ -11914,7 +11971,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         button.disabled = false;
       }
     });
-    if (posCharge?.phase === "waiting") pollPosCharge();
+    if (posCharge?.phase === "waiting") void pollPosCharge();
   }
   function openAssignmentEditor(order) {
     const assignments = order.assignments?.length ? order.assignments : order.tech && order.tech !== "Unassigned" ? [{ name: order.tech, role: "primary", sharePercent: 100 }] : [];
@@ -12867,7 +12924,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       taxRate: estimate.taxRate ?? state.taxSettings.rate,
       discountPercent: estimate.discountPercent,
       discountReason: estimate.discountReason,
-      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+      taxPolicy: taxPolicyForStoredEstimate(estimate)
     });
     return { ...estimate, ...totals };
   }
@@ -14390,11 +14448,13 @@ ${line}`.trim();
   }
   async function withKeyLicenseBusy(message, task) {
     keyLicenseView.busy = message;
+    keyLicenseView.lastError = "";
     render();
     try {
       await task();
     } catch (error) {
-      toast(error.message || "Vehicle key license request failed");
+      keyLicenseView.lastError = error.message || "Vehicle key license request failed";
+      toast(keyLicenseView.lastError);
     }
     keyLicenseView.busy = "";
     await loadKeyLicense(true);
@@ -14414,9 +14474,12 @@ ${line}`.trim();
     document.querySelector("#key-license-request-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const form = new FormData(event.target), file = form.get("proofFile");
+      const draft = { contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1) };
+      keyLicenseView.draft = draft;
       void withKeyLicenseBusy("Sending your license request\u2026", async () => {
-        const proofFileKey = file && file.size ? await uploadProof(file, apiFetch) : "";
-        await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1), proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
+        const proofFileKey = file && file.size ? await uploadProof(file, { apiFetch, fetchImpl: (url, init) => authorizedApiRequest(url.replace(/^\/api(?=\/)/, ""), init) }) : "";
+        await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ ...draft, proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
+        keyLicenseView.draft = null;
         toast("License request sent to ShopCrank for review");
       });
     });
@@ -14494,7 +14557,8 @@ ${line}`.trim();
   }
   function licenseExpiryField(value2 = "") {
     const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-    return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" value="${escapeHtml(value2)}"/></label>`;
+    const latest = new Date(Date.now() + 3650 * 864e5).toISOString().slice(0, 10);
+    return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" max="${latest}" value="${escapeHtml(value2)}"/></label>`;
   }
   function openLicenseApprove(requestId, business, devices) {
     licenseFormModal({
@@ -16278,7 +16342,8 @@ ${line}`.trim();
           taxRate: source.taxRate ?? state.taxSettings.rate,
           discountPercent: source.discountPercent,
           discountReason: source.discountReason,
-          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+          taxPolicy: taxPolicyForStoredEstimate(source)
         });
         return {
           ...estimate,
@@ -16506,7 +16571,7 @@ ${line}`.trim();
           const bd = invoiceTaxBreakdown(invoice);
           const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
           const gross = Number(payment.amount);
-          const taxable = Math.round(bd.subtotal * ratio * 100) / 100;
+          const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100;
           const tax = Math.round(bd.tax * ratio * 100) / 100;
           const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
           return {

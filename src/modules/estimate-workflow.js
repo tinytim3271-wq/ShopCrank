@@ -11,6 +11,10 @@ export function normalizeTaxPolicy(policy) {
   return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
 }
 
+export function taxPolicyForStoredEstimate(estimate = {}) {
+  return estimate.taxPolicy ?? DEFAULT_TAX_POLICY;
+}
+
 /**
  * Browser only: the shop's policy for estimates that don't carry one yet, as an
  * object or a function returning one. The Worker never sets this, so it re-prices
@@ -381,7 +385,10 @@ export function invoiceWithEditedWorkOrder(invoice = {}, order = {}, editedAt = 
     taxPolicy: estimate.taxPolicy,
     tax: estimate.tax,
     taxRate: estimate.taxRate,
-    fees: estimate.fees.map(fee => ({ ...fee, taxable: normalizeTaxPolicy(estimate.taxPolicy).feesTaxable })),
+    fees: (estimate.fees || []).map(fee => ({
+      ...fee,
+      taxable: estimate.taxPolicy?.feesTaxable !== false,
+    })),
     lines: billableEstimateLines(estimate.lines).map((line, index) => {
       const normalized = normalizeEstimateLine(line, index);
       return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };

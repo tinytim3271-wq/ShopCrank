@@ -69,7 +69,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild esbuild electron
       - name: Build web bundle
         run: npm run build:web
       - name: Bake diagnostics capability secret for packaged desktop
@@ -122,7 +123,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild esbuild electron
       - run: npm run test:desktop && npm run test:offline
       - name: Build offline flash-drive demo (no credentials or native host)
         run: npm run build:windows:demo
@@ -222,7 +224,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Check Cloudflare credentials
         id: creds
         env:

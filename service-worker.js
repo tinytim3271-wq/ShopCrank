@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shopcrank-shell-v33';
+const CACHE_NAME = 'shopcrank-shell-v35';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -25,7 +25,8 @@ const SHELL_FILES = [
 // Installers and API calls must reach the network untouched: a navigation to
 // an installer would otherwise be cloned into the cache as the app shell.
 function bypassesServiceWorker(pathname) {
-  return pathname.startsWith('/api/')
+  // API reads are live data (license status, revocations); never answer them from cache.
+  return pathname === '/api' || pathname.startsWith('/api/')
     || /^\/downloads\/[^/]+\.(exe|zip|apk)$/i.test(pathname);
 }
 

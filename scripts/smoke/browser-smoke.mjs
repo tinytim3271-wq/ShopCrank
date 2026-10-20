@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import https from 'node:https';
 import { chromium } from 'playwright';
-import { LOCAL_WRANGLER_CONFIG, writeLocalWranglerConfig } from '../dev-worker-local.mjs';
+import { LOCAL_WRANGLER_CONFIG, WRANGLER_BIN, writeLocalWranglerConfig } from '../dev-worker-local.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const pagesDir = join(root, '.pages-dist');
@@ -53,7 +53,7 @@ async function check(name, fn) {
 }
 
 function run(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { cwd: root, stdio: 'pipe', shell: process.platform === 'win32', ...opts }).toString();
+  return execFileSync(cmd, args, { cwd: root, stdio: 'pipe', ...opts }).toString();
 }
 
 async function waitFor(url, timeoutMs = 60_000) {
@@ -107,7 +107,7 @@ async function startStack() {
   const work = mkdtempSync(join(tmpdir(), 'shopcrank-smoke-'));
   const config = writeLocalWranglerConfig();
   const persist = join(work, 'state');
-  run('npx', ['wrangler', 'd1', 'migrations', 'apply', 'DB', '--local', '-c', config, '--persist-to', persist], { env: { ...process.env, CI: '1' } });
+  run(process.execPath, [WRANGLER_BIN, 'd1', 'migrations', 'apply', 'DB', '--local', '-c', config, '--persist-to', persist], { env: { ...process.env, CI: '1' } });
   const vars = {
     AUTH_EXPOSE_LOGIN_LINK: '1',
     ALLOWED_ORIGINS: ORIGIN,
@@ -118,9 +118,9 @@ async function startStack() {
   if (await fetch(`${WORKER}/api/healthz`).then(() => true, () => false)) {
     throw new Error(`Port ${WORKER_PORT} is already serving; stop that process or set SMOKE_WORKER_PORT`);
   }
-  const worker = spawn('npx', ['wrangler', 'dev', '-c', config, '--port', String(WORKER_PORT), '--ip', '127.0.0.1', '--persist-to', persist,
+  const worker = spawn(process.execPath, [WRANGLER_BIN, 'dev', '-c', config, '--port', String(WORKER_PORT), '--ip', '127.0.0.1', '--persist-to', persist,
     ...Object.entries(vars).flatMap(([key, value]) => ['--var', `${key}:${value}`])], {
-    cwd: root, stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32', env: { ...process.env, CI: '1' },
+    cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CI: '1' },
     detached: process.platform !== 'win32',
   });
   let workerLog = '';
@@ -314,10 +314,10 @@ main()
   .catch(error => record('smoke harness', false, error?.stack || error))
   .finally(() => {
     server?.close();
-    // npx -> wrangler -> workerd: stop the whole tree, or workerd keeps the port.
+    // wrangler -> workerd: stop the whole tree, or workerd keeps the port.
     for (const child of children) {
       try {
-        if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        if (process.platform === 'win32') execFileSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
         else process.kill(-child.pid, 'SIGKILL');
       } catch { /* already gone */ }
     }

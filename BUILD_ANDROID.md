@@ -31,6 +31,7 @@ cd android
 ```
 
 The APK is output to:
+
 ```
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -42,12 +43,14 @@ Transfer this file to your Android device and install it (you may need to enable
 ## Build a release APK (for distribution)
 
 1. Generate a signing keystore (one-time):
+
    ```bash
    keytool -genkey -v -keystore shopcrank.jks -keyalg RSA -keysize 2048 \
      -validity 10000 -alias shopcrank
    ```
 
 2. Build the release APK:
+
    ```bash
    cd android
    ./gradlew assembleRelease
@@ -72,7 +75,7 @@ Then rebuild the APK.
 ## App details
 
 | Property | Value |
-|---|---|
+| --- | --- |
 | App ID | `com.shopcrank.dispatch` |
 | Min Android | 6.0 (API 23) |
 | Target Android | 15 (API 35) |

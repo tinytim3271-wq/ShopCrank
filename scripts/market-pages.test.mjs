@@ -11,6 +11,8 @@ const diagnosticsUi = readFileSync(new URL('../diagnostics-ui.js', import.meta.u
 test('marketing pages and the app shell advertise www.shopcrank.com', () => {
   const shell = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(shell, /https:\/\/www\.shopcrank\.com\//);
+  assert.match(shell, /connect-src[^"]*https:\/\/api\.x\.ai/);
+  assert.match(shell, /connect-src[^"]*wss:\/\/api\.x\.ai/);
   assert.doesNotMatch(shell, /yourcarguy806|MechPro dispatch board/);
   for (const href of ['/features/', '/pricing/', '/login/', '/signup/']) {
     const page = readFileSync(new URL(`../public${href}index.html`, import.meta.url), 'utf8');
