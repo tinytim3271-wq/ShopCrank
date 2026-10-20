@@ -2503,6 +2503,28 @@
   });
 
   // src/modules/estimate-workflow.js
+  function normalizeTaxPolicy(policy) {
+    const fallback = typeof defaultTaxPolicy === "function" ? defaultTaxPolicy() : defaultTaxPolicy;
+    const source = policy && typeof policy === "object" ? policy : fallback || DEFAULT_TAX_POLICY;
+    return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
+  }
+  function setDefaultTaxPolicy(policy) {
+    defaultTaxPolicy = policy || DEFAULT_TAX_POLICY;
+  }
+  function shopTaxPolicy(taxSettings = {}) {
+    const state2 = String(taxSettings?.state || "").trim().toUpperCase();
+    return {
+      laborTaxable: typeof taxSettings?.laborTaxable === "boolean" ? taxSettings.laborTaxable : state2 !== "TX",
+      feesTaxable: typeof taxSettings?.feesTaxable === "boolean" ? taxSettings.feesTaxable : true
+    };
+  }
+  function isLineTaxable(line = {}, policy) {
+    if (typeof line.taxable === "boolean") return line.taxable;
+    const resolved = normalizeTaxPolicy(policy);
+    if (line.type === "part") return true;
+    if (line.type === "fee") return resolved.feesTaxable;
+    return resolved.laborTaxable;
+  }
   function afterMidnightFeeLine(id = "fee-after-midnight") {
     return { ...AFTER_MIDNIGHT_FEE_PRESET, id };
   }
@@ -2558,7 +2580,8 @@
       }));
     });
   }
-  function calculateEstimate(lines = [], taxRate = 0, fees = []) {
+  function calculateEstimate(lines = [], taxRate = 0, fees = [], taxPolicy) {
+    const policy = normalizeTaxPolicy(taxPolicy);
     const normalizedLines = lines.map((line, index) => normalizeEstimateLine(line, index));
     const billableLines = billableEstimateLines(normalizedLines);
     const normalizedFees = fees.map((fee) => ({
@@ -2571,8 +2594,11 @@
     const lineFees = roundMoney3(billableLines.filter((line) => line.type === "fee").reduce((sum, line) => sum + line.total, 0));
     const feeTotal = roundMoney3(lineFees + normalizedFees.reduce((sum, fee) => sum + fee.amount, 0));
     const subtotal = roundMoney3(labor + parts + feeTotal);
+    const taxableSubtotal = roundMoney3(
+      billableLines.filter((line) => isLineTaxable(line, policy)).reduce((sum, line) => sum + line.total, 0) + (policy.feesTaxable ? normalizedFees.reduce((sum, fee) => sum + fee.amount, 0) : 0)
+    );
     const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-    const tax = roundMoney3(subtotal * safeTaxRate / 100);
+    const tax = roundMoney3(taxableSubtotal * safeTaxRate / 100);
     return {
       lines: normalizedLines,
       fees: normalizedFees,
@@ -2582,15 +2608,25 @@
       lineFees,
       feeTotal,
       subtotal,
+      taxableSubtotal,
+      taxPolicy: policy,
       taxRate: safeTaxRate,
       tax,
       total: roundMoney3(subtotal + tax)
     };
   }
+  function discountedTaxTotals(totals, discountPercent = 0, taxRate = totals.taxRate) {
+    const percent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    const discountAmount = roundMoney3(totals.subtotal * percent / 100);
+    const subtotal = roundMoney3(totals.subtotal - discountAmount);
+    const taxableSubtotal = roundMoney3((totals.taxableSubtotal ?? totals.subtotal) * (100 - percent) / 100);
+    const tax = roundMoney3(taxableSubtotal * Math.max(0, Number(taxRate) || 0) / 100);
+    return { discountPercent: percent, discountAmount, subtotal, taxableSubtotal, tax, total: roundMoney3(subtotal + tax) };
+  }
   function calculateShopTotals(lines, estimate, { repriceSupplies = false } = {}) {
     const taxRate = Math.max(0, Number(estimate.taxRate) || 0);
     let fees = estimate.fees || [];
-    let totals = calculateEstimate(lines, taxRate, fees);
+    let totals = calculateEstimate(lines, taxRate, fees, estimate.taxPolicy);
     const hasSuppliesFee = fees.some((fee) => /shop supplies/i.test(fee.description));
     if (repriceSupplies && hasSuppliesFee) {
       const supplies = totals.labor > 0 ? roundMoney3(Math.min(
@@ -2598,21 +2634,14 @@
         totals.labor * SHOP_SUPPLIES_RULES.shopSuppliesRate / 100
       )) : 0;
       fees = fees.map((fee) => /shop supplies/i.test(fee.description) ? { ...fee, amount: supplies } : fee).filter((fee) => !/shop supplies/i.test(fee.description) || fee.amount > 0);
-      totals = calculateEstimate(lines, taxRate, fees);
+      totals = calculateEstimate(lines, taxRate, fees, estimate.taxPolicy);
     }
-    const discountPercent = Math.min(100, Math.max(0, Number(estimate.discountPercent) || 0));
-    const discountAmount = roundMoney3(totals.subtotal * discountPercent / 100);
-    const subtotal = roundMoney3(totals.subtotal - discountAmount);
-    const tax = roundMoney3(subtotal * taxRate / 100);
+    const discounted = discountedTaxTotals(totals, estimate.discountPercent, taxRate);
     return {
       ...totals,
       grossSubtotal: totals.subtotal,
-      discountPercent,
-      discountReason: String(estimate.discountReason || ""),
-      discountAmount,
-      subtotal,
-      tax,
-      total: roundMoney3(subtotal + tax)
+      ...discounted,
+      discountReason: String(estimate.discountReason || "")
     };
   }
   function approvedEstimate(estimate = {}, decisions = {}) {
@@ -2653,18 +2682,23 @@
       discountAmount: estimate.discountAmount,
       discountReason: estimate.discountReason,
       fees: estimate.fees,
+      taxableSubtotal: estimate.taxableSubtotal,
+      taxPolicy: estimate.taxPolicy,
       tax: estimate.tax,
       taxRate: Math.max(0, Number(estimate.taxRate) || 0),
       status: "sent",
       date: issuedAt.toISOString().slice(0, 10),
       due: due.toISOString().slice(0, 10),
-      lines: billableEstimateLines(estimate.lines).map((line, index) => normalizeEstimateLine(line, index)),
+      lines: billableEstimateLines(estimate.lines).map((line, index) => {
+        const normalized = normalizeEstimateLine(line, index);
+        return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
+      }),
       sourceEstimateApproval: order.estimateApproval || null,
       createdAt: issuedAt.toISOString()
     };
   }
   function workOrderWithEditedEstimate(order = {}, estimate = {}, editedAt = (/* @__PURE__ */ new Date()).toISOString()) {
-    const recalculated = calculateEstimate(estimate.lines || [], estimate.taxRate, estimate.fees || []);
+    const recalculated = calculateEstimate(estimate.lines || [], estimate.taxRate, estimate.fees || [], estimate.taxPolicy);
     const hadApproval = Boolean(
       order.linesLockedAt || order.estimateApproval?.status === "approved" || ["approved", "in_progress", "waiting_parts", "completed", "invoiced"].includes(order.status)
     );
@@ -2716,24 +2750,31 @@
   }
   function invoiceWithEditedWorkOrder(invoice = {}, order = {}, editedAt = (/* @__PURE__ */ new Date()).toISOString()) {
     const source = order.estimate || {};
-    const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || []);
+    const estimate = calculateEstimate(source.lines || [], source.taxRate, source.fees || [], source.taxPolicy);
     return {
       ...invoice,
       amount: estimate.total,
       subtotal: estimate.subtotal,
+      taxableSubtotal: estimate.taxableSubtotal,
+      taxPolicy: estimate.taxPolicy,
       tax: estimate.tax,
       taxRate: estimate.taxRate,
       fees: estimate.fees,
-      lines: billableEstimateLines(estimate.lines).map((line, index) => normalizeEstimateLine(line, index)),
+      lines: billableEstimateLines(estimate.lines).map((line, index) => {
+        const normalized = normalizeEstimateLine(line, index);
+        return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
+      }),
       signature: null,
       sourceEstimateApproval: null,
       revisedAt: editedAt
     };
   }
-  var roundMoney3, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET, CLOSED_ORDER_STATUSES;
+  var roundMoney3, DEFAULT_TAX_POLICY, defaultTaxPolicy, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET, CLOSED_ORDER_STATUSES;
   var init_estimate_workflow = __esm({
     "src/modules/estimate-workflow.js"() {
       roundMoney3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      DEFAULT_TAX_POLICY = Object.freeze({ laborTaxable: true, feesTaxable: true });
+      defaultTaxPolicy = DEFAULT_TAX_POLICY;
       SHOP_SUPPLIES_RULES = Object.freeze({
         shopSuppliesRate: 3,
         shopSuppliesCap: 20
@@ -2756,7 +2797,8 @@
     laborRate = 0,
     discountPercent = 0,
     discountReason = "",
-    shopSupplies
+    shopSupplies,
+    taxPolicy
   } = {}) {
     const normalizedLines = lines.map((line, index) => normalizeEstimateLine(
       line.type === "labor" && line.laborRate == null ? { ...line, laborRate } : line,
@@ -2771,23 +2813,16 @@
     const base = calculateEstimate(
       normalizedLines,
       0,
-      supplies ? [{ description: "Shop supplies", amount: supplies }] : []
+      supplies ? [{ description: "Shop supplies", amount: supplies }] : [],
+      taxPolicy
     );
-    const safeDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
-    const discountAmount = money(base.subtotal * safeDiscountPercent / 100);
-    const subtotal = money(base.subtotal - discountAmount);
     const safeTaxRate = Math.max(0, Number(taxRate) || 0);
-    const tax = money(subtotal * safeTaxRate / 100);
     return {
       ...base,
       grossSubtotal: base.subtotal,
-      discountPercent: safeDiscountPercent,
+      ...discountedTaxTotals(base, discountPercent, safeTaxRate),
       discountReason: String(discountReason || ""),
-      discountAmount,
-      subtotal,
-      taxRate: safeTaxRate,
-      tax,
-      total: money(subtotal + tax)
+      taxRate: safeTaxRate
     };
   }
   function workOrderDraftFromEstimate(estimate = REFERENCE_ESTIMATE) {
@@ -2816,7 +2851,8 @@
         laborRate: estimate.laborRate,
         discountPercent: estimate.discountPercent,
         discountReason: estimate.discountReason,
-        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount
+        shopSupplies: estimate.fees?.find((fee) => fee.description === "Shop supplies")?.amount,
+        taxPolicy: estimate.taxPolicy
       }),
       exclusions: estimate.exclusions || [],
       insurance,
@@ -9831,7 +9867,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   }
   function invoiceTaxBreakdown(invoice) {
     if (!invoice) return { subtotal: 0, tax: 0, taxRate: state.taxSettings.rate };
-    if (typeof invoice.tax === "number" && typeof invoice.subtotal === "number") return { subtotal: invoice.subtotal, tax: invoice.tax, taxRate: invoice.taxRate ?? state.taxSettings.rate };
+    if (typeof invoice.tax === "number" && typeof invoice.subtotal === "number") return { subtotal: invoice.subtotal, taxableSubtotal: typeof invoice.taxableSubtotal === "number" ? invoice.taxableSubtotal : invoice.subtotal, tax: invoice.tax, taxRate: invoice.taxRate ?? state.taxSettings.rate };
     const rate = state.taxSettings.rate, subtotal = Math.round(invoice.amount / (1 + rate / 100) * 100) / 100, tax = Math.round((invoice.amount - subtotal) * 100) / 100;
     return { subtotal, tax, taxRate: rate };
   }
@@ -9871,7 +9907,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       return d >= from && d <= to;
     }).map((payment) => {
       const invoice = invoices2.get(payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round(bd.subtotal * ratio * 100) / 100, tax: Math.round(bd.tax * ratio * 100) / 100 };
+      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100, tax: Math.round(bd.tax * ratio * 100) / 100 };
     }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const totals = rows.reduce((acc, row) => ({ gross: acc.gross + row.gross, taxable: acc.taxable + row.taxable, tax: acc.tax + row.tax }), { gross: 0, taxable: 0, tax: 0 });
     return { from: fromDate, to: toDate, rows, totals };
@@ -10927,7 +10963,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       estimate.discountReason = data.discountReason.trim();
       estimate.discountAmount = Math.round(base * percent) / 100;
       estimate.subtotal = Math.round((base - estimate.discountAmount) * 100) / 100;
-      estimate.tax = Math.round(estimate.subtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
+      const taxableBase = Number(estimate.originalTaxableSubtotal ?? estimate.taxableSubtotal ?? base);
+      estimate.originalTaxableSubtotal = taxableBase;
+      estimate.taxableSubtotal = Math.round(taxableBase * (100 - percent)) / 100;
+      estimate.tax = Math.round(estimate.taxableSubtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
       estimate.total = Math.round((estimate.subtotal + estimate.tax) * 100) / 100;
       await updateEstimateInApi(estimate);
       save();
@@ -11097,6 +11136,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function shopDisplayName(profile = shopProfile()) {
     return String(profile?.shopName || "").trim() || "Your shop";
+  }
+  function taxBaseNote(totals = {}) {
+    const taxable = Number(totals.taxableSubtotal), subtotal = Number(totals.subtotal);
+    return Number.isFinite(taxable) && Number.isFinite(subtotal) && taxable < subtotal - 4e-3 ? ` on ${money4(taxable)}` : "";
   }
   function shopMileageRate() {
     return normalizeMileageRate(shopProfile().mileageRate);
@@ -11406,7 +11449,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       toast("Allow pop-ups to print the invoice");
       return;
     }
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span{color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice summary</h2><table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody><tr><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money4(breakdown.subtotal)}</td></tr><tr><td>Sales tax (${Number(breakdown.taxRate || 0)}%)</td><td>${money4(breakdown.tax)}</td></tr></tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span{color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : ""}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice summary</h2><table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody><tr><td>Services and materials for ${escapeHtml(invoice.ro || invoice.number)}</td><td>${money4(breakdown.subtotal)}</td></tr><tr><td>Sales tax (${Number(breakdown.taxRate || 0)}%${taxBaseNote(breakdown)})</td><td>${money4(breakdown.tax)}</td></tr></tbody></table>${paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : ""}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button" onclick="window.print()">Print invoice</button></body></html>`);
     win.document.close();
   }
   function printableLineType(type) {
@@ -12746,7 +12789,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       ${feeLines.length ? `<div><span>Fees</span><b>${money4(estimate.lineFees || 0)}</b></div>` : ""}
       <div><span>Shop supplies</span><b>${money4(supply?.amount || 0)}</b></div>
       <div><span>${escapeHtml(estimate.discountReason || "Discount")}${estimate.discountPercent ? ` \xB7 ${estimate.discountPercent}%` : ""}</span><b>${estimate.discountAmount ? `-${money4(estimate.discountAmount)}` : money4(0)}</b></div>
-      <div><span>Tax \xB7 ${Number(estimate.taxRate || 0).toFixed(2)}%</span><b>${money4(estimate.tax)}</b></div>
+      <div><span>Tax \xB7 ${Number(estimate.taxRate || 0).toFixed(2)}%${taxBaseNote(estimate)}</span><b>${money4(estimate.tax)}</b></div>
       <div class="total"><span>Estimate total</span><b>${money4(estimate.total)}</b></div>
     </section>
     <aside class="reference-exclusions"><strong>Not included / still pending</strong><ul>${exclusions.length ? exclusions.map((item) => `<li>${escapeHtml(item)}</li>`).join("") : "<li>Additional or hidden work is not included without a revised estimate and authorization.</li>"}</ul></aside>
@@ -15059,6 +15102,7 @@ ${line}`.trim();
         });
       };
       shopProfileDefaults = { id: "profile", shopName: "", phone: "", address: "", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
+      setDefaultTaxPolicy(() => shopTaxPolicy(state.taxSettings));
       appearanceMedia = matchMedia("(prefers-color-scheme: dark)");
       appearanceMedia.addEventListener?.("change", () => {
         if (document.documentElement.dataset.themeMode === "device") applyAppearance("device");
@@ -15163,7 +15207,10 @@ ${line}`.trim();
           estimate.couponCode = data.couponCode || "";
           estimate.discountAmount = Math.round(base * percent) / 100;
           estimate.subtotal = Math.round((base - estimate.discountAmount) * 100) / 100;
-          estimate.tax = Math.round(estimate.subtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
+          const taxableBase = Number(estimate.originalTaxableSubtotal ?? estimate.taxableSubtotal ?? base);
+          estimate.originalTaxableSubtotal = taxableBase;
+          estimate.taxableSubtotal = Math.round(taxableBase * (100 - percent)) / 100;
+          estimate.tax = Math.round(estimate.taxableSubtotal * Number(estimate.taxRate || state.taxSettings.rate) / 100 * 100) / 100;
           estimate.total = Math.round((estimate.subtotal + estimate.tax) * 100) / 100;
           await updateEstimateInApi(estimate);
           save();
@@ -15187,7 +15234,7 @@ ${line}`.trim();
         const paymentRows = paymentRecords().filter((payment) => payment.invoiceNumber === invoice.number).map((payment) => `<tr><td>${escapeHtml(payment.receivedAt || "")}</td><td>${escapeHtml(payment.method || "")}</td><td>${escapeHtml(payment.reference || "")}</td><td>${money4(Number(payment.amount || 0))}</td></tr>`).join("");
         const billingAddressHtml = customer?.billingAddress ? `<small>${escapeHtml(customer.billingAddress)}</small>` : "";
         const paymentSectionHtml = paymentRows ? `<h2>Payments</h2><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>` : "";
-        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${billingAddressHtml}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentSectionHtml}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%)</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print invoice</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the invoice", autoPrint: true });
+        openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(invoice.number)} invoice</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:850px;margin:auto;padding:22px;color:#172029}h2{margin:20px 0 8px}.invoice-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.invoice-meta div,.totals{padding:10px;border:1px solid #d6ddd7}.invoice-meta b,.invoice-meta span{display:block}.invoice-meta span,td small{display:block;color:#66727a}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:7px 9px;border-bottom:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.totals{width:min(320px,100%);margin:18px 0 18px auto}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .balance{padding-top:8px;border-top:2px solid var(--brand);font-size:15px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d6ddd7;text-align:center;color:#66727a}@media(max-width:600px){.invoice-meta{grid-template-columns:1fr}}</style></head><body>${brand.header}<div class="invoice-meta"><div><span>Invoice</span><b>${escapeHtml(invoice.number)}</b></div><div><span>Repair order</span><b>${escapeHtml(invoice.ro || "")}</b></div><div><span>Customer</span><b>${escapeHtml(invoice.customer || "")}</b>${billingAddressHtml}</div><div><span>Vehicle</span><b>${escapeHtml(order?.vehicle || invoice.vehicle || "")}</b></div><div><span>Issued</span><b>${escapeHtml(invoice.date || "")}</b></div><div><span>Due</span><b>${escapeHtml(invoice.due || "")}</b></div></div><h2>Invoice line items</h2><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${itemRows || fallbackRow}</tbody></table>${paymentSectionHtml}<div class="totals"><p><span>Subtotal</span><b>${money4(breakdown.subtotal)}</b></p><p><span>Tax (${Number(breakdown.taxRate || 0)}%${taxBaseNote(breakdown)})</span><b>${money4(breakdown.tax)}</b></p><p><span>Invoice amount</span><b>${money4(invoice.amount)}</b></p><p><span>Payments</span><b>-${money4(paid)}</b></p><p class="balance"><span>Balance due</span><b>${money4(balance)}</b></p></div><p class="footer">${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print invoice</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the invoice", autoPrint: true });
       };
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
@@ -15483,7 +15530,9 @@ ${line}`.trim();
               ein: String(tax.ein || ""),
               texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
               webfileNumber: String(tax.webfileNumber || ""),
-              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+              ...typeof tax.laborTaxable === "boolean" ? { laborTaxable: tax.laborTaxable } : {},
+              ...typeof tax.feesTaxable === "boolean" ? { feesTaxable: tax.feesTaxable } : {}
             };
           }
         } catch (error) {
@@ -15997,7 +16046,9 @@ ${line}`.trim();
               ein: String(tax.ein || ""),
               texasTaxpayerNumber: String(tax.texasTaxpayerNumber || ""),
               webfileNumber: String(tax.webfileNumber || ""),
-              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null
+              jurisdictions: Array.isArray(tax.jurisdictions) ? tax.jurisdictions : null,
+              ...typeof tax.laborTaxable === "boolean" ? { laborTaxable: tax.laborTaxable } : {},
+              ...typeof tax.feesTaxable === "boolean" ? { feesTaxable: tax.feesTaxable } : {}
             };
           }
         } catch (error) {
@@ -16736,7 +16787,9 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
 <label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
 <label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
 <label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>`);
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
           }
           taxSettingsForm.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -16758,7 +16811,9 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
               ein: String(data.ein || "").trim(),
               texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
               webfileNumber: String(data.webfileNumber || "").trim(),
-              jurisdictions
+              jurisdictions,
+              laborTaxable: data.laborTaxable === "on",
+              feesTaxable: data.feesTaxable === "on"
             };
             try {
               await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });

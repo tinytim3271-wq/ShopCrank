@@ -76,7 +76,7 @@ test('assistant pricing prompt uses rates from tenant-scoped shop settings', asy
     },
   };
   const pricing = await loadShopPricing(env, 'shop-a');
-  assert.deepEqual(pricing, { laborRate: 175, taxRate: 6.5 });
+  assert.deepEqual(pricing, { laborRate: 175, taxRate: 6.5, taxPolicy: { laborTaxable: false, feesTaxable: true } });
   assert.deepEqual(statements[0].args, ['shop-a', 'shopsettings', 'profile', 'tax']);
   assert.match(statements[0].sql, /shop_id = \?/);
 

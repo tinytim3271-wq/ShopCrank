@@ -727,7 +727,9 @@ bindExpandedFeatures = function () {
 <label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || '')}" placeholder="1-xxxxxxxxxx-x"/></label>
 <label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || '')}" placeholder="RTxxxxxx"/></label>
 <label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} — city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || Filing.DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>`);
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || Filing.DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? 'checked' : ''}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? 'checked' : ''}/> Charge sales tax on shop supplies and fees</label>`);
     }
     taxSettingsForm.addEventListener('submit', async event => {
       event.preventDefault();
@@ -745,6 +747,8 @@ bindExpandedFeatures = function () {
         texasTaxpayerNumber: String(data.texasTaxpayerNumber || '').trim(),
         webfileNumber: String(data.webfileNumber || '').trim(),
         jurisdictions,
+        laborTaxable: data.laborTaxable === 'on',
+        feesTaxable: data.feesTaxable === 'on',
       };
       try {
         await saveShopEntity('shopsettings', { ...taxSettings, id: 'tax', updatedAt: now() });

@@ -1,4 +1,5 @@
 import { HttpError } from './http.mjs';
+import { shopTaxPolicy } from '../../src/modules/estimate-workflow.js';
 import {
   ANTHROPIC_MESSAGES_URL,
   ANTHROPIC_VERSION,
@@ -68,6 +69,8 @@ export async function loadShopPricing(env, shopId) {
   return {
     laborRate: nonnegativeRate(settings.get('profile')?.laborRate, DEFAULT_SHOP_PRICING.laborRate),
     taxRate: nonnegativeRate(settings.get('tax')?.rate, DEFAULT_SHOP_PRICING.taxRate),
+    // Shops default to Texas until they save tax settings (matches the browser default).
+    taxPolicy: shopTaxPolicy({ state: 'TX', ...(settings.get('tax') || {}) }),
   };
 }
 
@@ -76,10 +79,13 @@ export function buildAssistantSystemPrompt(pricing = DEFAULT_SHOP_PRICING, {
 } = {}) {
   const laborRate = nonnegativeRate(pricing.laborRate, DEFAULT_SHOP_PRICING.laborRate);
   const taxRate = nonnegativeRate(pricing.taxRate, DEFAULT_SHOP_PRICING.taxRate);
+  const taxBase = pricing.taxPolicy?.laborTaxable === false
+    ? ' (charged on parts only; labor is not taxed)'
+    : '';
   const capabilities = allowEstimatePreparation
     ? 'You may prepare a reviewable estimate and work-order draft with the prepare_estimate_work_order tool when the user asks to create them, but the user must explicitly save the estimate and submit the work order in ShopCrank.'
     : 'Do not prepare or claim to create an estimate or work-order draft; this interaction cannot return structured drafts for review or saving.';
-  return `${SHOP_CRANK_SYSTEM_PROMPT}\n\n${capabilities} For this shop, use $${laborRate.toFixed(2)} per labor hour, ${taxRate.toFixed(2)}% tax, shop supplies at 3% of labor capped at $20 when labor is billed, and no parts markup. When labor is performed between midnight (12:00 AM) and 6:00 AM, set afterMidnightFee to true so the estimate includes exactly a $200 flat fee as its own itemized work-order line; never calculate it as a percentage of labor. Apply these shop settings rather than generic rates.`;
+  return `${SHOP_CRANK_SYSTEM_PROMPT}\n\n${capabilities} For this shop, use $${laborRate.toFixed(2)} per labor hour, ${taxRate.toFixed(2)}% tax${taxBase}, shop supplies at 3% of labor capped at $20 when labor is billed, and no parts markup. When labor is performed between midnight (12:00 AM) and 6:00 AM, set afterMidnightFee to true so the estimate includes exactly a $200 flat fee as its own itemized work-order line; never calculate it as a percentage of labor. Apply these shop settings rather than generic rates.`;
 }
 
 const LOOKUP_TOOLS = Object.entries(LOOKUP_TYPES).map(([name, entityType]) => ({
