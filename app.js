@@ -2508,6 +2508,9 @@
     const source = policy && typeof policy === "object" ? policy : fallback || DEFAULT_TAX_POLICY;
     return { laborTaxable: source.laborTaxable !== false, feesTaxable: source.feesTaxable !== false };
   }
+  function taxPolicyForStoredEstimate(estimate = {}) {
+    return estimate.taxPolicy ?? DEFAULT_TAX_POLICY;
+  }
   function setDefaultTaxPolicy(policy) {
     defaultTaxPolicy = policy || DEFAULT_TAX_POLICY;
   }
@@ -3532,15 +3535,18 @@
     const email = String(draft.customer?.email || "").trim().toLowerCase();
     return customers2.find((item) => phone.length >= 7 && phoneDigits(item?.phone) === phone || email && String(item?.email || "").trim().toLowerCase() === email) || null;
   }
-  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [] } = {}) {
+  function intakeOrderPayload(draft, { id, laborRate = 165, taxRate = 0, users = [], customer = null } = {}) {
     const priced = priceIntakeEstimate(draft, { laborRate, taxRate });
     const approval = draft.estimate?.approval || "pending";
     const status = approval === "approved" ? "approved" : "estimate";
     const assigned = applyAssignments({ id }, draft.assignments || [], users);
+    const missingPhotos = missingRequiredPhotos(draft);
     return {
       id,
-      customer: customerDisplayName(draft),
-      phone: String(draft.customer?.phone || "").trim(),
+      customerId: customer?.id || "",
+      customer: String(customer?.name || "").trim() || customerDisplayName(draft),
+      phone: String(customer?.phone || draft.customer?.phone || "").trim(),
+      email: String(customer?.email || draft.customer?.email || "").trim(),
       vehicle: vehicleLabel(draft) || "Vehicle pending",
       vin: String(draft.vehicle?.vin || "").trim().toUpperCase() || "VIN pending",
       complaint: String(draft.concern?.description || "").trim() || "Customer concern pending",
@@ -3575,12 +3581,13 @@
         customer: draft.customer,
         vehicle: draft.vehicle,
         photos: draft.photos || [],
-        photosWaived: Boolean(draft.photosWaived && missingRequiredPhotos(draft).length),
         damage: draft.damage || [],
         concern: draft.concern,
         diagnosis: draft.diagnosis,
         disclaimer: INTAKE_DISCLAIMER,
-        approval
+        approval,
+        photosWaived: missingPhotos.length > 0 && draft.photosWaived === true,
+        missingPhotos
       }
     };
   }
@@ -3598,8 +3605,9 @@
     const problems = [];
     if (missingCustomerFields(draft).length) problems.push("Customer name and phone are required.");
     if (missingVehicleFields(draft).length) problems.push("Enter a VIN or the year, make, and model.");
-    if (!draft.photosWaived && missingRequiredPhotos(draft).length) {
-      problems.push(`Required photos: ${missingRequiredPhotos(draft).join(", ")}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
+    const missingPhotos = missingRequiredPhotos(draft);
+    if (missingPhotos.length && draft.photosWaived !== true) {
+      problems.push(`Required photos: ${missingPhotos.join(", ")}. Add them on the Photos step, or tick "Convert without walk-around photos" below.`);
     }
     if (draft.estimate?.approval === "denied") problems.push("This estimate was denied. Update the approval before creating the work order.");
     return { ok: problems.length === 0, problems };
@@ -3699,6 +3707,7 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
 ${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ""}
 ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not create the work order: ${escapeHtml3(draft.convertError)}</span></div>` : ""}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
   }
   function intakeWizardHtml(draft, { users = [], laborRate = 165, taxRate = 0 } = {}) {
@@ -3859,6 +3868,7 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
         if (form) current = readForm(current, form);
         const check2 = canConvertIntake(current);
         if (!check2.ok) {
+          current.convertError = "";
           persist("blocked");
           paint();
           const problems = host.querySelector("#intake-problems");
@@ -3866,7 +3876,20 @@ ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert"
           problems?.focus();
           return;
         }
-        await onConvert?.(current);
+        const button = host.querySelector("#intake-convert");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Creating work order...";
+        }
+        try {
+          current.convertError = "";
+          await onConvert?.(current);
+        } catch (error) {
+          current.convertError = error?.message || "The work order could not be saved. Your intake is still saved on this device.";
+          persist("convert-failed");
+          paint();
+          host.querySelector(".import-errors")?.scrollIntoView?.({ block: "nearest" });
+        }
       });
       host.querySelector("#intake-decode")?.addEventListener("click", async () => {
         if (form) current = readForm(current, form);
@@ -10320,8 +10343,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelector("#open-twilio-phone-credentials")?.addEventListener("click", () => openTwilioPhoneCredentialsDialog());
     document.querySelector("#messaging-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = readFormValues(event.target);
-      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || shopDisplayName() };
+      const data = Object.fromEntries(new FormData(event.target));
+      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your Car Guy" };
       if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) {
         toast("A secure service endpoint is required before enabling delivery");
         return;
@@ -12899,10 +12922,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     if (!estimate) return null;
     const totals = calculateShopEstimate(expandedEstimateLines(estimate), {
       taxRate: estimate.taxRate ?? state.taxSettings.rate,
-      taxPolicy: estimate.taxPolicy || LEGACY_ESTIMATE_TAX_POLICY,
       discountPercent: estimate.discountPercent,
       discountReason: estimate.discountReason,
-      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+      shopSupplies: estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+      taxPolicy: taxPolicyForStoredEstimate(estimate)
     });
     return { ...estimate, ...totals };
   }
@@ -14832,7 +14855,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, LEGACY_ESTIMATE_TAX_POLICY, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15211,7 +15234,6 @@ ${line}`.trim();
       };
       shopProfileDefaults = { id: "profile", shopName: "", phone: "", address: "", laborRate: 140, mileageRate: 0.68, invoiceFooter: "Thank you for your business.", logoUrl: "", brandColor: "#087e6a", accentColor: "#ffd34e", themeMode: "device", coupons: [], defaultVendor: "", defaultVendorByKind: {}, carfaxEnabled: false, plateProviderEnabled: false };
       setDefaultTaxPolicy(() => shopTaxPolicy(state.taxSettings));
-      LEGACY_ESTIMATE_TAX_POLICY = Object.freeze({ laborTaxable: true, feesTaxable: true });
       appearanceMedia = matchMedia("(prefers-color-scheme: dark)");
       appearanceMedia.addEventListener?.("change", () => {
         if (document.documentElement.dataset.themeMode === "device") applyAppearance("device");
@@ -16318,10 +16340,10 @@ ${line}`.trim();
         const source = order.estimate || {};
         const estimate = calculateShopEstimate(expandedEstimateLines(source), {
           taxRate: source.taxRate ?? state.taxSettings.rate,
-          taxPolicy: source.taxPolicy || LEGACY_ESTIMATE_TAX_POLICY,
           discountPercent: source.discountPercent,
           discountReason: source.discountReason,
-          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount
+          shopSupplies: source.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount,
+          taxPolicy: taxPolicyForStoredEstimate(source)
         });
         return {
           ...estimate,

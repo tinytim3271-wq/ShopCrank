@@ -27,6 +27,7 @@ fi
 
 TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 API_BASE="${GITHUB_API_URL:-https://api.github.com}"
+CURL_BIN="${CURL_BIN:-curl}"
 
 usage() {
   cat <<USAGE
@@ -194,7 +195,7 @@ api_request() {
       args+=( -H "Content-Type: application/json" --data "$payload" )
     fi
 
-    status="$(curl "${args[@]}")" || curl_exit=$?
+    status="$("$CURL_BIN" "${args[@]}")" || curl_exit=$?
     if [[ "$curl_exit" -ne 0 ]]; then
       status="000"
     fi
