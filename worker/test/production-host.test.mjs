@@ -67,6 +67,7 @@ test('the pre-cutover host redirects to the canonical host, keeping path and que
   assert.equal(page.headers.get('location'), `${CANONICAL_ORIGIN}/pricing/`);
 });
 
+<<<<<<< Updated upstream
 test('legacy Stripe webhook POSTs reach signature validation instead of redirecting', async () => {
   const response = await worker.fetch(new Request(
     `https://${LEGACY_HOST}/api/payments/webhook/shop-1`,
@@ -130,6 +131,8 @@ test('legacy Twilio voice callbacks return a stream URL on the legacy host', asy
   );
 });
 
+=======
+>>>>>>> Stashed changes
 test('the canonical host is never redirected', async () => {
   const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
   assert.equal(response.status, 200);

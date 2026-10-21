@@ -40,7 +40,7 @@ function filingInRange(dateValue, from, to) {
 function shopFilingProfile() {
   const profile = shopProfile();
   const t = state.taxSettings || {};
-  const jurisdictions = Filing.normalizeJurisdictions(t.jurisdictions, Number(t.rate) || 8.25);
+  const jurisdictions = Filing.normalizeJurisdictions(t.jurisdictions);
   return {
     shopName: shopDisplayName(profile),
     address: profile.address || '',

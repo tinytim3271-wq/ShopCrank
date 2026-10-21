@@ -1,3 +1,5 @@
+import { localIsoDate } from '../shared/dates.js';
+
 const roundMoney = value => Math.round((Number(value) || 0) * 100) / 100;
 
 // Sales-tax taxability (ADR-003). Parts are always taxed; labor and fees follow
@@ -300,8 +302,10 @@ export function invoiceRecordForOrder(order, issuedAt = new Date()) {
     tax: estimate.tax,
     taxRate: Math.max(0, Number(estimate.taxRate) || 0),
     status: 'sent',
-    date: issuedAt.toISOString().slice(0, 10),
-    due: due.toISOString().slice(0, 10),
+    // Calendar days in the shop's local time. toISOString() would roll an
+    // evening completion into tomorrow and misfile the sale's tax period.
+    date: localIsoDate(issuedAt),
+    due: localIsoDate(due),
     lines: billableEstimateLines(estimate.lines).map((line, index) => {
       const normalized = normalizeEstimateLine(line, index);
       return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };

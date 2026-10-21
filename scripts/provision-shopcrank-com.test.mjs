@@ -14,9 +14,13 @@ import {
   desiredLegacyWorkerRoutes,
   desiredState,
   desiredWorkerRoutes,
+<<<<<<< Updated upstream
   detachLegacyWorkerDomains,
   ensureDnsRecords,
   ensureSupportForwarding,
+=======
+  ensureDnsRecords,
+>>>>>>> Stashed changes
   googleOAuthRemaining,
   isAlreadyConfiguredError,
   isDesiredApiRoute,
@@ -283,6 +287,7 @@ test('ensureDnsRecords replaces a record of a different type on the same name', 
   assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
 });
 
+<<<<<<< Updated upstream
 test('ensureDnsRecords reads every page and preserves mail and verification records', async () => {
   const calls = [];
   const client = createCloudflareClient({
@@ -445,6 +450,8 @@ test('detachLegacyWorkerDomains restores earlier deletions if a later detach fai
   assert.ok(calls.some((call) => call.method === 'PUT' && call.body.hostname === 'yourcarguy806.com'));
 });
 
+=======
+>>>>>>> Stashed changes
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -661,8 +668,11 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
 
 test('provisionShopcrankCom retires the legacy zone and forwards support mail', async () => {
   const calls = [];
+<<<<<<< Updated upstream
   let failPagesRead = false;
   let failLegacyDnsCreate = false;
+=======
+>>>>>>> Stashed changes
   const store = {
     zones: [
       { id: 'zone-1', name: 'shopcrank.com', status: 'active' },
@@ -699,23 +709,34 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     const method = init.method || 'GET';
     const parsed = new URL(url);
     const path = parsed.pathname.replace('/client/v4', '');
+<<<<<<< Updated upstream
     calls.push({
       method,
       path,
       query: Object.fromEntries(parsed.searchParams),
       body: init.body ? JSON.parse(init.body) : undefined,
     });
+=======
+    calls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined });
+>>>>>>> Stashed changes
 
     if (method === 'GET' && path === '/zones') {
       const name = parsed.searchParams.get('name');
       return jsonResponse(200, { success: true, result: store.zones.filter((zone) => !name || zone.name === name) });
     }
     if (method === 'GET' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
+<<<<<<< Updated upstream
       if (failPagesRead) return jsonResponse(500, { success: false, errors: [{ message: 'Pages unavailable' }] });
       return jsonResponse(200, { success: true, result: store.pagesDomains });
     }
     if (method === 'POST' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
       const domain = { name: JSON.parse(init.body).name, status: 'active' };
+=======
+      return jsonResponse(200, { success: true, result: store.pagesDomains });
+    }
+    if (method === 'POST' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
+      const domain = { name: JSON.parse(init.body).name, status: 'pending' };
+>>>>>>> Stashed changes
       store.pagesDomains.push(domain);
       return jsonResponse(200, { success: true, result: domain });
     }
@@ -724,6 +745,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     }
     if (method === 'DELETE' && path.startsWith('/accounts/acct-1/workers/domains/')) {
       const id = path.split('/').at(-1);
+<<<<<<< Updated upstream
       const removed = store.workerDomains.find((domain) => domain.id === id);
       store.workerDomains = store.workerDomains.filter((domain) => domain.id !== id);
       store.dnsRecords = store.dnsRecords.filter((record) => record.name !== removed?.hostname);
@@ -734,6 +756,11 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       store.workerDomains.push(domain);
       return jsonResponse(200, { success: true, result: domain });
     }
+=======
+      store.workerDomains = store.workerDomains.filter((domain) => domain.id !== id);
+      return jsonResponse(200, { success: true, result: null });
+    }
+>>>>>>> Stashed changes
     const routeMatch = path.match(/^\/zones\/([^/]+)\/workers\/routes$/);
     if (method === 'GET' && routeMatch) {
       return jsonResponse(200, { success: true, result: store.routes[routeMatch[1]] || [] });
@@ -766,12 +793,16 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       return jsonResponse(200, { success: true, result: store.addresses });
     }
     if (method === 'POST' && path === '/accounts/acct-1/email/routing/addresses') {
+<<<<<<< Updated upstream
       const email = JSON.parse(init.body).email;
       const row = {
         id: `addr-${store.addresses.length + 1}`,
         email,
         verified: email === 'support@shopcrank.com' ? false : '2026-10-21T00:00:00Z',
       };
+=======
+      const row = { id: 'addr-1', email: JSON.parse(init.body).email, verified: '2026-10-21T00:00:00Z' };
+>>>>>>> Stashed changes
       store.addresses.push(row);
       return jsonResponse(200, { success: true, result: row });
     }
@@ -792,9 +823,12 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       return jsonResponse(200, { success: true, result: store.dnsRecords });
     }
     if (method === 'POST' && path === '/zones/zone-legacy/dns_records') {
+<<<<<<< Updated upstream
       if (failLegacyDnsCreate) {
         return jsonResponse(500, { success: false, errors: [{ message: 'DNS restoration failed' }] });
       }
+=======
+>>>>>>> Stashed changes
       const record = { id: `dns-${store.dnsRecords.length}`, ...JSON.parse(init.body) };
       store.dnsRecords.push(record);
       return jsonResponse(200, { success: true, result: record });
@@ -845,6 +879,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
   // Support mail is forwarded to the configured mailbox.
   assert.equal(report.steps.supportMail.action, 'created');
   assert.equal(report.steps.supportMail.address, 'support@shopcrank.com');
+<<<<<<< Updated upstream
   assert.equal(report.steps.supportMail.notificationAddress.verified, false);
   assert.ok(report.remaining.some((item) => item.kind === 'support_notification_email_verification'));
   assert.equal(store.mailRules[0].actions[0].value[0], 'ops@example.test');
@@ -854,6 +889,9 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     && call.path === '/accounts/acct-1/email/routing/addresses'
     && call.body.email === 'support@shopcrank.com');
   assert.ok(supportRuleCreated < supportAddressRegistered);
+=======
+  assert.equal(store.mailRules[0].actions[0].value[0], 'ops@example.test');
+>>>>>>> Stashed changes
   // The legacy DNS records are restored so the redirect is reachable.
   assert.equal(report.steps.legacyDns.action, 'updated');
   assert.deepEqual(
@@ -863,6 +901,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
   // The canonical apex resolves too.
   assert.equal(report.steps.apexDns.action, 'updated');
   assert.deepEqual(store.apexDnsRecords.map((record) => record.name), ['shopcrank.com']);
+<<<<<<< Updated upstream
   const legacyZoneLookup = calls.findIndex((call) => call.method === 'GET'
     && call.path === '/zones' && call.query.name === LEGACY_ZONE);
   const legacyDnsPreflight = calls.findIndex((call) => call.method === 'GET'
@@ -942,4 +981,6 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     store.workerDomains.map((domain) => domain.hostname).toSorted(),
     ['www.yourcarguy806.com', 'yourcarguy806.com'],
   );
+=======
+>>>>>>> Stashed changes
 });

@@ -339,6 +339,18 @@
     }
   });
 
+  // src/shared/dates.js
+  function localIsoDate(date = /* @__PURE__ */ new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  var init_dates = __esm({
+    "src/shared/dates.js"() {
+    }
+  });
+
   // src/runtime/home.js
   function emptyState(message) {
     return `<div class="empty-state"><h2>${escapeHtml(message)}</h2></div>`;
@@ -348,12 +360,6 @@
     if (hour < 12) return "Good morning";
     if (hour < 17) return "Good afternoon";
     return "Good evening";
-  }
-  function localIsoDate(date = /* @__PURE__ */ new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
   }
   function isTodayPromise(promise) {
     return /^today\b/i.test(String(promise || ""));
@@ -484,6 +490,7 @@
   var init_home = __esm({
     "src/runtime/home.js"() {
       init_html();
+      init_dates();
       CLOSED = /* @__PURE__ */ new Set(["completed", "invoiced", "declined", "archived"]);
       sidebarCatalog = [
         {
@@ -702,7 +709,7 @@
     }
     const parsed = new Date(text);
     if (Number.isNaN(parsed.valueOf())) return "";
-    return parsed.toISOString().slice(0, 10);
+    return localIsoDate(parsed);
   }
   function addDays(iso, days) {
     const date = /* @__PURE__ */ new Date(`${iso}T00:00:00Z`);
@@ -755,7 +762,7 @@
     const estimates = existing.estimates || [];
     const taxRateDefault = Number(existing.taxRate);
     const shopTaxRate = Number.isFinite(taxRateDefault) ? taxRateDefault : 0;
-    const today = isoDate(existing.today) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    const today = isoDate(existing.today) || localIsoDate();
     const createdAt = existing.createdAt || (/* @__PURE__ */ new Date()).toISOString();
     const seenCustomers = new Set(customers2.map((item) => String(item.name || "").toLowerCase()).filter(Boolean));
     const seenVins = new Set(vehicles.map((item) => String(item.vin || "").toLowerCase()).filter(Boolean));
@@ -944,6 +951,7 @@
   var IMPORT_TYPES, ORDER_STATUSES, INVOICE_STATUSES, ESTIMATE_STATUSES;
   var init_imports = __esm({
     "src/modules/imports.js"() {
+      init_dates();
       IMPORT_TYPES = {
         customers: {
           title: "Customers",
@@ -2690,8 +2698,10 @@
       tax: estimate.tax,
       taxRate: Math.max(0, Number(estimate.taxRate) || 0),
       status: "sent",
-      date: issuedAt.toISOString().slice(0, 10),
-      due: due.toISOString().slice(0, 10),
+      // Calendar days in the shop's local time. toISOString() would roll an
+      // evening completion into tomorrow and misfile the sale's tax period.
+      date: localIsoDate(issuedAt),
+      due: localIsoDate(due),
       lines: billableEstimateLines(estimate.lines).map((line, index) => {
         const normalized = normalizeEstimateLine(line, index);
         return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
@@ -2778,6 +2788,7 @@
   var roundMoney3, DEFAULT_TAX_POLICY, defaultTaxPolicy, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET, CLOSED_ORDER_STATUSES;
   var init_estimate_workflow = __esm({
     "src/modules/estimate-workflow.js"() {
+      init_dates();
       roundMoney3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
       DEFAULT_TAX_POLICY = Object.freeze({ laborTaxable: true, feesTaxable: true });
       defaultTaxPolicy = DEFAULT_TAX_POLICY;
@@ -5370,6 +5381,11 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function roundCents2(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
   }
+  function needsLocalJurisdictions(jurisdictions) {
+    const list = Array.isArray(jurisdictions) ? jurisdictions : [];
+    const hasLocal = list.some((j) => j && j.kind !== "state");
+    return !hasLocal;
+  }
   function combinedSalesTaxRate(jurisdictions) {
     return roundCents2((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
   }
@@ -5429,7 +5445,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     ];
     return [...header, ...body, ...footer].map((row) => row.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\n");
   }
-  function normalizeJurisdictions(list, fallbackRate = 8.25) {
+  function normalizeJurisdictions(list) {
     if (Array.isArray(list) && list.length) {
       return list.map((j) => ({
         code: String(j.code || "").trim(),
@@ -5439,22 +5455,15 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         required: Boolean(j.required)
       }));
     }
-    const state2 = 6.25;
-    const local = Math.max(0, Number(fallbackRate) - state2);
-    return [
-      { code: "2001000", name: "State of Texas", kind: "state", rate: state2, required: true },
-      { code: "2200001", name: "Local combined (shop default)", kind: "combined", rate: roundCents2(local), required: true }
-    ];
+    return DEFAULT_TX_JURISDICTIONS.map((j) => ({ ...j }));
   }
-  var DEFAULT_TX_JURISDICTIONS;
+  var DEFAULT_TX_JURISDICTIONS, MISSING_LOCAL_TX_KINDS;
   var init_jurisdictions = __esm({
     "src/modules/filing/jurisdictions.js"() {
       DEFAULT_TX_JURISDICTIONS = [
-        { code: "2001000", name: "State of Texas", kind: "state", rate: 6.25, required: true },
-        { code: "2201598", name: "Example City", kind: "city", rate: 1, required: true },
-        { code: "3201598", name: "Example Transit Authority", kind: "transit", rate: 0.5, required: false },
-        { code: "4201598", name: "Example County", kind: "county", rate: 0.5, required: true }
+        { code: "2001000", name: "State of Texas", kind: "state", rate: 6.25, required: true }
       ];
+      MISSING_LOCAL_TX_KINDS = Object.freeze(["city", "transit", "county", "combined"]);
     }
   });
 
@@ -5856,7 +5865,7 @@ button{margin-top:12px;padding:8px 14px}
         employeeId: "EMP-LOCAL",
         phone: "",
         address: "",
-        startDate: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+        startDate: localIsoDate(),
         employmentType: "Salary",
         payRate: 0,
         payFrequency: "Biweekly",
@@ -5876,6 +5885,7 @@ button{margin-top:12px;padding:8px 14px}
   var SECRET_KEY;
   var init_offline_desktop = __esm({
     "src/modules/offline-desktop.js"() {
+      init_dates();
       SECRET_KEY = /^(password|passphrase|secret|token|apikey|api_key)$/i;
     }
   });
@@ -8714,7 +8724,7 @@ button{margin-top:12px;padding:8px 14px}
     monday.setHours(0, 0, 0, 0);
     const friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
-    return { key: monday.toISOString().slice(0, 10), start: monday.toLocaleDateString("en-US", { month: "short", day: "numeric" }), end: friday.toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
+    return { key: localIsoDate(monday), start: monday.toLocaleDateString("en-US", { month: "short", day: "numeric" }), end: friday.toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
   }
   function shopDayLabel(date = /* @__PURE__ */ new Date()) {
     return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -8881,7 +8891,7 @@ button{margin-top:12px;padding:8px 14px}
     return visibleOrders().filter((x) => (filter === "all" || (filter === "active" ? !["completed", "invoiced"].includes(x.status) : ["completed", "invoiced"].includes(x.status))) && (!q || [x.id, x.customer, x.vehicle, x.vin, x.complaint, x.tech].some((v) => String(v).toLowerCase().includes(q))));
   }
   function receivableStats() {
-    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), rows = state.invoices.map((invoice) => ({ invoice, balance: Number(invoiceBalance(invoice)) || 0, paid: Number(invoicePaid(invoice)) || 0 })), open = rows.filter((row) => row.balance > 4e-3), outstanding = open.reduce((sum, row) => sum + row.balance, 0), overdue = open.filter(({ invoice }) => invoice.status === "overdue" || /^\d{4}-\d{2}-\d{2}$/.test(String(invoice.due || "")) && invoice.due < today), overdueTotal = overdue.reduce((sum, row) => sum + row.balance, 0), collected = rows.reduce((sum, row) => sum + row.paid, 0), cells = [["file-text", "Open invoices", open.length, open.length ? `${open.length} with a balance` : "Nothing open", "good"], ["wallet", "Outstanding", money4(outstanding), "Unpaid balance across open invoices", ""], ["clock-alert", "Overdue", overdue.length, overdue.length ? `${money4(overdueTotal)} past due` : "None overdue", "warn"], ["badge-dollar-sign", "Collected", money4(collected), "Payments recorded on invoices", "good"]];
+    const today = localIsoDate(), rows = state.invoices.map((invoice) => ({ invoice, balance: Number(invoiceBalance(invoice)) || 0, paid: Number(invoicePaid(invoice)) || 0 })), open = rows.filter((row) => row.balance > 4e-3), outstanding = open.reduce((sum, row) => sum + row.balance, 0), overdue = open.filter(({ invoice }) => invoice.status === "overdue" || /^\d{4}-\d{2}-\d{2}$/.test(String(invoice.due || "")) && invoice.due < today), overdueTotal = overdue.reduce((sum, row) => sum + row.balance, 0), collected = rows.reduce((sum, row) => sum + row.paid, 0), cells = [["file-text", "Open invoices", open.length, open.length ? `${open.length} with a balance` : "Nothing open", "good"], ["wallet", "Outstanding", money4(outstanding), "Unpaid balance across open invoices", ""], ["clock-alert", "Overdue", overdue.length, overdue.length ? `${money4(overdueTotal)} past due` : "None overdue", "warn"], ["badge-dollar-sign", "Collected", money4(collected), "Payments recorded on invoices", "good"]];
     return `<div class="stats">${cells.map((x) => `<div class="stat"><div class="stat-top"><span>${x[1]}</span>${icon(x[0])}</div><div class="stat-value">${x[2]}</div><div class="stat-note ${x[4]}">${x[3]}</div></div>`).join("")}</div>`;
   }
   function stats() {
@@ -9171,7 +9181,7 @@ button{margin-top:12px;padding:8px 14px}
     return shell(`${heading("Connected workflow", "Shop operations", "Linked vehicles, inspections, stock, service templates, reminders, vendors, and basic OBD-II tools.", false)}<div class="accounting-tabs ops-tabs">${tabs.map((tab) => `<button class="tab ${shopOpsTab === tab[0] ? "active" : ""}" data-ops-tab="${tab[0]}">${tab[1]}</button>`).join("")}</div>${view()}`);
   }
   function openVehicleForm(existing = null) {
-    showModal(`<form class="modal" id="vehicle-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add linked"} vehicle</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<select name="customer" required>${customerOptions(existing?.customer)}</select></label><label>VIN<input name="vin" maxlength="17" pattern="[A-HJ-NPR-Z0-9]{17}" value="${escapeHtml(existing?.vin || "")}"/></label><div class="full vin-actions"><button class="secondary" type="button" id="decode-vin">${icon("scan-line", 14)} Decode VIN with NHTSA</button><span id="vin-status"></span></div><label>Year<input name="year" required value="${escapeHtml(existing?.year || "")}"/></label><label>Make<input name="make" required value="${escapeHtml(existing?.make || "")}"/></label><label>Model<input name="model" required value="${escapeHtml(existing?.model || "")}"/></label><label>Trim<input name="trim" value="${escapeHtml(existing?.trim || "")}"/></label><label>Plate<input name="plate" value="${escapeHtml(existing?.plate || "")}"/></label><label>Mileage<input name="mileage" type="number" min="0" value="${existing?.mileage || ""}"/></label><label>Next service date<input name="nextServiceDate" type="date" value="${existing?.nextServiceDate || ""}"/></label><label class="full">Notes<textarea name="notes">${escapeHtml(existing?.notes || "")}</textarea></label><label class="full">Vehicle photos<input name="photos" type="file" accept="image/*" multiple/></label>${(existing?.photoKeys || []).length ? `<div class="full vehicle-photo-thumbs">${existing.photoKeys.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save vehicle</button></div></form>`);
+    showModal(`<form class="modal" id="vehicle-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add linked"} vehicle</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<select name="customer" required>${customerOptions(existing?.customer)}</select></label><label>VIN<input name="vin" maxlength="17" pattern="[A-HJ-NPR-Z0-9]{17}" value="${escapeHtml(existing?.vin || "")}"/></label><div class="full vin-actions"><button class="secondary" type="button" id="decode-vin">${icon("scan-line", 14)} Decode VIN with NHTSA</button><span id="vin-status"></span></div><label>Year<input name="year" required value="${escapeHtml(existing?.year || "")}"/></label><label>Make<input name="make" required value="${escapeHtml(existing?.make || "")}"/></label><label>Model<input name="model" required value="${escapeHtml(existing?.model || "")}"/></label><label>Trim<input name="trim" value="${escapeHtml(existing?.trim || "")}"/></label><label>Plate<input name="plate" value="${escapeHtml(existing?.plate || "")}"/></label><label>Mileage<input name="mileage" type="number" min="0" value="${existing?.mileage || ""}"/></label><label>Next service date<input name="nextServiceDate" type="date" value="${existing?.nextServiceDate || ""}"/></label><label class="full">Notes<textarea name="notes">${escapeHtml(existing?.notes || "")}</textarea></label><label class="full">Vehicle photos<input name="photos" type="file" accept="image/*" multiple/></label>${(existing?.photoKeys || []).length ? `<div class="full vehicle-photo-thumbs">${existing.photoKeys.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Save vehicle</button></div></form>`);
     const form = document.querySelector("#vehicle-form");
     document.querySelector("#decode-vin").onclick = async () => {
       const vin = form.elements.vin.value.trim().toUpperCase(), s = document.querySelector("#vin-status");
@@ -11231,6 +11241,76 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const pending = pendingAuthProfile || {};
     return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Account almost ready</small></div></div><div class="eyebrow">Employee profile required</div><h1>${pending.reason === "deactivated" ? "Your shop profile is deactivated" : "Ask an admin to finish setup"}</h1><p>${pending.reason === "deactivated" ? `The Cloudflare Access identity <strong>${escapeHtml(pending.email || "")}</strong> works, but the matching employee profile is inactive.` : `You signed in as <strong>${escapeHtml(pending.email || "")}</strong> (${escapeHtml(roleLabel[pending.role] || pending.role || "team member")}), but this shop does not have an active employee profile for that email yet.`}</p><div class="service-contract"><p>Ask a shop administrator to open <b>Employees</b> and create (or reactivate) a profile using exactly this email:</p><code>${escapeHtml(pending.email || "")}</code></div><div class="modal-actions" style="justify-content:flex-start;margin-top:18px"><button class="primary" id="pending-sign-out">${icon("log-out", 14)} Sign out</button></div></section></main>`;
   }
+  async function signInOfflineDesktop(form) {
+    const data = readFormValues(form);
+    if (!offlineAccountReady && data.password !== data.confirm) throw new Error("Those passwords do not match.");
+    const account = offlineAccountReady ? await window.shopcrankDesktop.localAuth.signIn({ email: data.email, password: data.password }) : await window.shopcrankDesktop.localAuth.create({ name: data.name, email: data.email, password: data.password });
+    const session = offlineSession(account);
+    sessionStorage.setItem(storageKeys.session, JSON.stringify(session));
+    const user = ensureOfflineOwner(state, account);
+    pendingAuthProfile = null;
+    state.currentUserId = user.id;
+    desktopEntitlementVerified = true;
+    offlineAccountReady = true;
+    offlineAccountEmail = account.email;
+    state.route = roleRoutes[user.role]?.[0] || "home";
+    query = "";
+    save();
+    render();
+  }
+  async function signInLocalShell() {
+    const session = await cloudflareSignIn();
+    if (isDesktopApp) await verifyDesktopEntitlement();
+    const user = await resolveAuthenticatedProfile(session);
+    if (!user) {
+      state.currentUserId = null;
+      save();
+      render();
+      return;
+    }
+    pendingAuthProfile = null;
+    state.currentUserId = user.id;
+    state.route = roleRoutes[user.role]?.[0] || "dispatch";
+    query = "";
+    save();
+    await Promise.all([
+      loadCustomersFromApi(),
+      loadOrdersFromApi(),
+      loadInvoicesFromApi(),
+      loadPaymentsFromApi(),
+      loadExpensesFromApi(),
+      loadEstimatesFromApi(),
+      loadShiftEntriesFromApi(),
+      loadJobClockEntriesFromApi(),
+      loadPayrollEntriesFromApi(),
+      loadShopEntities()
+    ]);
+    render();
+  }
+  async function signInWithEmailLink(email, { sentEl, submitButton, turnstile }) {
+    const result = await requestMagicLinkSignIn(email, turnstile?.token() || "");
+    if (result?.redirecting) return;
+    if (result?.sent) {
+      if (sentEl) {
+        sentEl.textContent = result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
+        sentEl.hidden = false;
+      }
+      submitButton.disabled = false;
+      submitButton.textContent = "Resend sign-in link";
+      return;
+    }
+    throw new Error("Check your email for a sign-in link.");
+  }
+  function resetFailedSignIn(error, { errorEl, submitButton, turnstile }) {
+    clearAuthSession();
+    pendingAuthProfile = null;
+    desktopEntitlementVerified = !isDesktopApp;
+    desktopLoginMessage = isDesktopApp ? error.message : "";
+    errorEl.textContent = error.message || "Sign-in failed.";
+    errorEl.hidden = false;
+    submitButton.disabled = false;
+    turnstile?.reset();
+  }
   function safeHexColor(value2, fallback) {
     const color = String(value2 || "").trim();
     return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : fallback;
@@ -11466,7 +11546,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} records</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>`;
   }
   function prepareImport(type, text) {
-    return prepareImportRecords(type, text, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
+    return prepareImportRecords(type, text, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
   }
   function downloadTemplate(type) {
     const link = document.createElement("a"), file = importTypes[type];
@@ -11585,7 +11665,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     Object.assign(order, applyMileageToOrder(order, { rate: shopMileageRate(), taxRate: state.taxSettings.rate }));
     const number = invoiceNumberForOrder(order), estimate = order.estimate || {}, amount = Math.max(0, Number(order.total ?? estimate.total) || 0), tax = Math.max(0, Number(order.tax ?? estimate.tax) || 0), subtotal = Math.max(0, Number(estimate.subtotal) || Math.max(0, amount - tax)), issued = /* @__PURE__ */ new Date(), due = new Date(issued);
     due.setDate(due.getDate() + 14);
-    const invoice = { id: number, number, ro: order.id, customer: order.customer, vehicle: order.vehicle, amount, subtotal, tax, taxRate: Number(estimate.taxRate ?? state.taxSettings.rate) || 0, status: "sent", date: issued.toISOString().slice(0, 10), due: due.toISOString().slice(0, 10), lines: estimate.lines || [], createdAt: now() };
+    const invoice = { id: number, number, ro: order.id, customer: order.customer, vehicle: order.vehicle, amount, subtotal, tax, taxRate: Number(estimate.taxRate ?? state.taxSettings.rate) || 0, status: "sent", date: localIsoDate(issued), due: localIsoDate(due), lines: estimate.lines || [], createdAt: now() };
     const saved = await apiFetch("/entities/invoices", { method: "POST", body: JSON.stringify(invoice) }), record = saved?.queued ? invoice : saved;
     state.invoices.push(record);
     order.invoiceNumber = number;
@@ -11691,7 +11771,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function invoiceDateValue(value2) {
     const date = new Date(value2);
-    return Number.isNaN(date.valueOf()) ? "" : date.toISOString().slice(0, 10);
+    return Number.isNaN(date.valueOf()) ? "" : localIsoDate(date);
   }
   function openInvoiceEditor(key) {
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
@@ -12915,10 +12995,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   </section>`;
   }
   function availableEstimateSources() {
-    return [
-      REFERENCE_ESTIMATE,
-      ...state.estimates.map((estimate) => ({ ...estimate, id: estimate.id || estimate.number }))
-    ];
+    return state.estimates.map((estimate) => ({ ...estimate, id: estimate.id || estimate.number }));
   }
   function estimateSourceById(id) {
     return availableEstimateSources().find((estimate) => String(estimate.id) === String(id));
@@ -12943,11 +13020,13 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function addEstimateSourceControls(form) {
     const body = form.querySelector(".modal-body");
     if (!body || document.querySelector("#estimate-source-picker")) return;
-    const options = availableEstimateSources().map((estimate) => `<option value="${escapeAttr(estimate.id)}">${escapeHtml(estimate.number || "Saved draft")} \xB7 ${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer || "Customer")}</option>`).join("");
-    body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate\u2026</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
+    const sources = availableEstimateSources();
     const estimator = form.querySelector(".new-order-estimator");
     estimator?.insertAdjacentHTML("beforeend", `<div class="estimate-adjustments"><label>Shop supplies<input name="shopSupplies" type="number" min="0" step=".01" placeholder="Auto: 3% of labor, max $20"/></label><label>Discount %<input name="estimateDiscount" type="number" min="0" max="100" step=".1" value="0"/></label><label>Discount reason<input name="estimateDiscountReason" placeholder="Optional"/></label></div>`);
     form.querySelectorAll("[name=shopSupplies],[name=estimateDiscount],[name=estimateDiscountReason]").forEach((input) => input.addEventListener("input", () => refreshEstimateEditor(form.querySelector("#new-estimate-lines"))));
+    if (!sources.length) return;
+    const options = sources.map((estimate) => `<option value="${escapeAttr(estimate.id)}">${escapeHtml(estimate.number || "Saved draft")} \xB7 ${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer || "Customer")}</option>`).join("");
+    body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate\u2026</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
     document.querySelector("#apply-estimate-source").onclick = () => {
       const estimate = estimateSourceById(document.querySelector("#estimate-source-picker").value);
       if (estimate) applyWorkOrderDraftToForm(form, workOrderDraftFromEstimate(normalizedEstimateSource(estimate)));
@@ -13290,7 +13369,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function shopFilingProfile() {
     const profile = shopProfile();
     const t = state.taxSettings || {};
-    const jurisdictions = normalizeJurisdictions(t.jurisdictions, Number(t.rate) || 8.25);
+    const jurisdictions = normalizeJurisdictions(t.jurisdictions);
     return {
       shopName: shopDisplayName(profile),
       address: profile.address || "",
@@ -15183,45 +15262,17 @@ ${line}`.trim();
           desktopEntitlementVerified = !isDesktopApp;
           try {
             if (isOfflineDesktop()) {
-              const data = readFormValues(form);
-              if (!offlineAccountReady && data.password !== data.confirm) throw new Error("Those passwords do not match.");
-              const account = offlineAccountReady ? await window.shopcrankDesktop.localAuth.signIn({ email: data.email, password: data.password }) : await window.shopcrankDesktop.localAuth.create({ name: data.name, email: data.email, password: data.password });
-              const session = offlineSession(account);
-              sessionStorage.setItem(storageKeys.session, JSON.stringify(session));
-              const user = ensureOfflineOwner(state, account);
-              pendingAuthProfile = null;
-              state.currentUserId = user.id;
-              desktopEntitlementVerified = true;
-              offlineAccountReady = true;
-              offlineAccountEmail = account.email;
-              state.route = roleRoutes[user.role]?.[0] || "home";
-              query = "";
-              save();
-              render();
+              await signInOfflineDesktop(form);
               return;
             }
             if (!navigator.onLine && !isLocalShell()) throw new Error("An internet connection is required to sign in.");
             if (isLocalShell()) {
-              const session = await cloudflareSignIn();
-              if (isDesktopApp) await verifyDesktopEntitlement();
-              const user = await resolveAuthenticatedProfile(session);
-              if (!user) {
-                state.currentUserId = null;
-                save();
-                render();
-                return;
-              }
-              pendingAuthProfile = null;
-              state.currentUserId = user.id;
-              state.route = roleRoutes[user.role]?.[0] || "dispatch";
-              query = "";
-              save();
-              await Promise.all([loadCustomersFromApi(), loadOrdersFromApi(), loadInvoicesFromApi(), loadPaymentsFromApi(), loadExpensesFromApi(), loadEstimatesFromApi(), loadShiftEntriesFromApi(), loadJobClockEntriesFromApi(), loadPayrollEntriesFromApi(), loadShopEntities()]);
-              render();
+              await signInLocalShell();
               return;
             }
             const email = String(emailInput?.value || "").trim().toLowerCase();
             if (!email) throw new Error("Enter your work email to continue.");
+<<<<<<< Updated upstream
             const result = await requestMagicLinkSignIn(email, turnstile?.token() || "");
             if (result?.redirecting) return;
             if (result?.sent) {
@@ -15234,15 +15285,11 @@ ${line}`.trim();
               return;
             }
             throw new Error("Check your email for a sign-in link.");
+=======
+            await signInWithEmailLink(email, { sentEl, submitButton, turnstile });
+>>>>>>> Stashed changes
           } catch (error) {
-            clearAuthSession();
-            pendingAuthProfile = null;
-            desktopEntitlementVerified = !isDesktopApp;
-            desktopLoginMessage = isDesktopApp ? error.message : "";
-            errorEl.textContent = error.message || "Sign-in failed.";
-            errorEl.hidden = false;
-            submitButton.disabled = false;
-            turnstile?.reset();
+            resetFailedSignIn(error, { errorEl, submitButton, turnstile });
           }
         });
       };
@@ -15693,7 +15740,7 @@ ${line}`.trim();
         return shell(`${heading("Team access", "Employees", "Employee records, employment details, payroll rates, and login access.", false)}<div class="employee-actions"><div class="access-note">${icon("shield-check", 15)} Employee profiles are saved to this shop and remain available after sign-in or refresh.</div><button class="primary" id="new-employee">${icon("user-plus", 15)} Add employee</button></div><div class="data-panel"><table><thead><tr><th>Employee record</th><th>Role & department</th><th>Employment & pay</th><th>Contact & start</th><th>Access</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No employee profiles yet.</td></tr>`}</tbody></table></div>`);
       };
       openEmployee = function(existing = null) {
-        showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="displayName" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="jobTitle" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="accessRole">${["technician", "office", "service_writer", "admin"].map((role) => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map((value2) => `<option ${existing?.employmentType === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map((value2) => `<option ${existing?.payFrequency === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10))}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map((value2) => `<option ${existing?.taxStatus === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
+        showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="displayName" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="jobTitle" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="accessRole">${["technician", "office", "service_writer", "admin"].map((role) => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map((value2) => `<option ${existing?.employmentType === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map((value2) => `<option ${existing?.payFrequency === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", localIsoDate())}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map((value2) => `<option ${existing?.taxStatus === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
         document.querySelector("#employee-form").onsubmit = async (event) => {
           event.preventDefault();
           const data = readFormValues(event.target);
@@ -16376,9 +16423,14 @@ ${line}`.trim();
         openNewWithDraft();
       };
       savedEstimates = function() {
+<<<<<<< Updated upstream
         const reference = `<section class="reference-template-card"><div><div class="eyebrow">Reusable shop template</div><h2>${REFERENCE_ESTIMATE.number}</h2><p>${escapeHtml(REFERENCE_ESTIMATE.customer.name)} \xB7 ${escapeHtml(REFERENCE_ESTIMATE.vehicle.description)}</p></div><strong>${money4(REFERENCE_ESTIMATE.total)}</strong><div><button class="secondary" data-preview-estimate="${REFERENCE_ESTIMATE.id}">${icon("file-text", 14)} View estimate</button><button class="primary" data-fill-estimate="${REFERENCE_ESTIMATE.id}">${icon("clipboard-plus", 14)} Fill new work order</button></div></section>`;
         const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge2(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
         return `${reference}<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
+=======
+        const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
+        return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
+>>>>>>> Stashed changes
       };
       liveAssistant = function() {
         const rows = assistantConversation.map(assistantMessageMarkup).join("");
@@ -16935,7 +16987,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
 <label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
 <label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
 <label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
 <label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
 <label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
           }

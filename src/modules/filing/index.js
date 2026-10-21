@@ -11,8 +11,10 @@ export {
 
 export {
   DEFAULT_TX_JURISDICTIONS,
+  MISSING_LOCAL_TX_KINDS,
   combinedSalesTaxRate,
   buildJurisdictionSupplement,
+  needsLocalJurisdictions,
   texasListSupplementCsv,
   normalizeJurisdictions,
 } from './jurisdictions.js';

@@ -7,13 +7,29 @@ function roundCents(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
-/** Default Texas shop outlet jurisdictions (editable in settings). */
+/**
+ * The state line only.
+ *
+ * A new shop has no outlet address yet, so its local city, transit, and county
+ * districts are unknown. Shipping placeholder districts ("Example City", 1%)
+ * would make the sales-tax filing report list a jurisdiction the shop does not
+ * actually owe, and would silently inflate the default rate to 8.25%. The
+ * owner adds their own local districts from the Texas Comptroller lookup in
+ * Shop settings → Tax before the first filing report.
+ */
 export const DEFAULT_TX_JURISDICTIONS = [
   { code: '2001000', name: 'State of Texas', kind: 'state', rate: 6.25, required: true },
-  { code: '2201598', name: 'Example City', kind: 'city', rate: 1.0, required: true },
-  { code: '3201598', name: 'Example Transit Authority', kind: 'transit', rate: 0.5, required: false },
-  { code: '4201598', name: 'Example County', kind: 'county', rate: 0.5, required: true },
 ];
+
+/** The local districts a Texas shop still has to supply. */
+export const MISSING_LOCAL_TX_KINDS = Object.freeze(['city', 'transit', 'county', 'combined']);
+
+/** True when the shop has not yet entered its local tax districts. */
+export function needsLocalJurisdictions(jurisdictions) {
+  const list = Array.isArray(jurisdictions) ? jurisdictions : [];
+  const hasLocal = list.some(j => j && j.kind !== 'state');
+  return !hasLocal;
+}
 
 /**
  * @param {Array<{ code: string, name: string, kind: string, rate: number, required?: boolean }>} jurisdictions
@@ -87,7 +103,7 @@ export function texasListSupplementCsv(supplement, meta = {}) {
     .join('\n');
 }
 
-export function normalizeJurisdictions(list, fallbackRate = 8.25) {
+export function normalizeJurisdictions(list) {
   if (Array.isArray(list) && list.length) {
     return list.map(j => ({
       code: String(j.code || '').trim(),
@@ -97,10 +113,7 @@ export function normalizeJurisdictions(list, fallbackRate = 8.25) {
       required: Boolean(j.required),
     }));
   }
-  const state = 6.25;
-  const local = Math.max(0, Number(fallbackRate) - state);
-  return [
-    { code: '2001000', name: 'State of Texas', kind: 'state', rate: state, required: true },
-    { code: '2200001', name: 'Local combined (shop default)', kind: 'combined', rate: roundCents(local), required: true },
-  ];
+  // No districts saved yet: keep the state line only rather than inventing a
+  // local district the shop may not owe.
+  return DEFAULT_TX_JURISDICTIONS.map(j => ({ ...j }));
 }

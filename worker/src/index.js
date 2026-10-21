@@ -1192,6 +1192,7 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
       }
     }
     // Live key programming also needs this device's vehicle-key license unlock,
+<<<<<<< Updated upstream
     // checked live against the license database on every job.
     let vehicleKeyLicense = null;
     if (mode === 'live' && spec.klass === 'immobilizer') {
@@ -1216,6 +1217,13 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
       if (signedOrder.signatureKey) {
         await verifyOrderApprovalSignature(env, context, signedOrder);
       }
+=======
+    // checked live against the license database on every job. Reuse the
+    // signedOrder validated above — it must not be redeclared in this block,
+    // or the audit record after it would lose orderId/authorizationName.
+    let vehicleKeyLicense = null;
+    if (mode === 'live' && spec.klass === 'immobilizer') {
+>>>>>>> Stashed changes
       vehicleKeyLicense = await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
     }
     const { token, payload } = await mintCapabilityToken(env, {
@@ -3783,6 +3791,7 @@ export default {
     };
     try {
       const legacyRedirect = legacyToCanonicalRedirect(request);
+<<<<<<< Updated upstream
       const requestUrl = new URL(request.url);
       const legacyProviderCallback = (
         request.method === 'POST'
@@ -3793,6 +3802,9 @@ export default {
         && /^\/api\/voice\/twilio\/stream\/[^/]+$/.test(requestUrl.pathname)
       );
       if (legacyRedirect && !legacyProviderCallback) return legacyRedirect;
+=======
+      if (legacyRedirect) return legacyRedirect;
+>>>>>>> Stashed changes
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {
