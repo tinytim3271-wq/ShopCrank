@@ -3724,9 +3724,15 @@ export default {
     try {
       const legacyRedirect = legacyToCanonicalRedirect(request);
       const requestUrl = new URL(request.url);
-      const legacyStripeWebhook = request.method === 'POST'
-        && /^\/api\/payments\/webhook\/[^/]+$/.test(requestUrl.pathname);
-      if (legacyRedirect && !legacyStripeWebhook) return legacyRedirect;
+      const legacyProviderCallback = (
+        request.method === 'POST'
+        && /^\/api\/(?:payments\/webhook\/[^/]+|billing\/webhook|agentphone\/webhook\/[^/]+|messaging\/twilio\/webhook\/[^/]+|voice\/twilio\/incoming\/[^/]+)$/.test(requestUrl.pathname)
+      ) || (
+        request.method === 'GET'
+        && request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
+        && /^\/api\/voice\/twilio\/stream\/[^/]+$/.test(requestUrl.pathname)
+      );
+      if (legacyRedirect && !legacyProviderCallback) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {

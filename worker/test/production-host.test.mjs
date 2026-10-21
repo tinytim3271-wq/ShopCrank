@@ -77,6 +77,32 @@ test('legacy Stripe webhook POSTs reach signature validation instead of redirect
   assert.equal(response.headers.get('location'), null);
 });
 
+test('legacy provider callbacks reach their existing authentication checks', async () => {
+  const requests = [
+    [new Request(`https://${LEGACY_HOST}/api/billing/webhook`, { method: 'POST', body: '{}' }), {}, 400],
+    [new Request(`https://${LEGACY_HOST}/api/agentphone/webhook/shop-1`, { method: 'POST', body: '{}' }), {}, 400],
+    [new Request(`https://${LEGACY_HOST}/api/messaging/twilio/webhook/shop-1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '',
+    }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
+    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/incoming/shop-1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '',
+    }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
+    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/stream/shop-1`, {
+      headers: { Upgrade: 'websocket' },
+    }), {}, 401],
+  ];
+
+  for (const [request, env, expectedStatus] of requests) {
+    const response = await worker.fetch(request, env);
+    assert.equal(response.status, expectedStatus, new URL(request.url).pathname);
+    assert.equal(response.headers.get('location'), null, new URL(request.url).pathname);
+  }
+});
+
 test('the canonical host is never redirected', async () => {
   const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
   assert.equal(response.status, 200);
