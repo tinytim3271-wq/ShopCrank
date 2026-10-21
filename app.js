@@ -7993,11 +7993,16 @@ button{margin-top:12px;padding:8px 14px}
       }
     });
   }
-  function openGlobalAssistant() {
-    showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>ShopCrank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`);
-    bindLiveAssistant();
+  function toggleGlobalLiveAssistant() {
+    if (assistantPaused && !activeGrokSession?.isActive()) toggleAssistantPause();
+    startOrStopGrokVoice({ target: "global" });
   }
   function toggleAssistantPause() {
+    if (activeGrokSession?.isActive()) {
+      startOrStopGrokVoice();
+      toast("Live AI ended");
+      return;
+    }
     assistantPaused = !assistantPaused;
     if (assistantPaused) {
       window.speechSynthesis?.cancel();
@@ -14734,6 +14739,15 @@ ${line}`.trim();
     if (srStatus) {
       srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
     }
+    const floatBtn = document.querySelector("#global-assistant");
+    if (floatBtn) {
+      floatBtn.classList.toggle("is-live", isLive);
+      floatBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
+      floatBtn.setAttribute("aria-label", isLive ? `End live AI (${placeholder || "Live"})` : "Start live AI");
+      floatBtn.title = isLive ? "Click to end the live AI session" : "Talk to ShopCrank AI (live voice)";
+      floatBtn.innerHTML = isLive ? `${grokWaveformButtonIcon(true, phase)}<span class="assistant-float-label">${escapeHtml(placeholder || "Live")}</span>` : `${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span>`;
+      if (!isLive) globalThis.lucide?.createIcons?.();
+    }
     const phoneBtn = document.querySelector("#grok-phone-live-btn");
     if (phoneBtn) {
       phoneBtn.classList.toggle("is-live", isLive);
@@ -15573,10 +15587,11 @@ ${line}`.trim();
           return;
         }
         if (existing) return;
-        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
-        document.querySelector("#global-assistant").onclick = openGlobalAssistant;
+        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Talk to ShopCrank AI (live voice)" aria-label="Start live AI" aria-pressed="false">${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
+        document.querySelector("#global-assistant").onclick = toggleGlobalLiveAssistant;
         document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
         lucide.createIcons();
+        updateGrokVoiceUiControls();
       };
       apiFetchAssistantCore = apiFetch;
       apiFetch = async function(path, options = {}) {
