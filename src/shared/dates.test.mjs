@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import process from 'node:process';
 import { addLocalDays, localIsoDate, toLocalIsoDate } from './dates.js';
+
+// These cases are about a US shop's calendar day; CI runners default to UTC.
+process.env.TZ = 'America/Chicago';
 
 // A fixed instant in the evening. In any US timezone this is still the same
 // calendar day locally, but UTC has already rolled over to the next day.
