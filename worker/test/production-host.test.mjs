@@ -12,6 +12,8 @@ import {
   DEFAULT_AUTH_EMAIL_FROM,
   DEFAULT_PAGES_ORIGIN,
   HEALTHZ_SERVICE,
+  LEGACY_APEX_HOST,
+  LEGACY_HOST,
 } from '../src/production-host.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -51,6 +53,87 @@ test('apex shopcrank.com redirects to www for API and Pages paths', async () => 
   const site = await worker.fetch(new Request(`https://${APEX_HOST}/login`), {});
   assert.equal(site.status, 301);
   assert.equal(site.headers.get('location'), `${CANONICAL_ORIGIN}/login`);
+});
+
+test('the pre-cutover host redirects to the canonical host, keeping path and query', async () => {
+  for (const host of [LEGACY_HOST, LEGACY_APEX_HOST]) {
+    const response = await worker.fetch(new Request(`https://${host}/api/auth/session?returnTo=%2Fapp`), {});
+    assert.equal(response.status, 301, `${host} should redirect`);
+    assert.equal(response.headers.get('location'), `${CANONICAL_ORIGIN}/api/auth/session?returnTo=%2Fapp`);
+  }
+
+  const page = await worker.fetch(new Request(`https://${LEGACY_HOST}/pricing/`), {});
+  assert.equal(page.status, 301);
+  assert.equal(page.headers.get('location'), `${CANONICAL_ORIGIN}/pricing/`);
+});
+
+test('legacy Stripe webhook POSTs reach signature validation instead of redirecting', async () => {
+  const response = await worker.fetch(new Request(
+    `https://${LEGACY_HOST}/api/payments/webhook/shop-1`,
+    { method: 'POST', body: '{}' },
+  ), {});
+
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('location'), null);
+});
+
+test('legacy provider callbacks reach their existing authentication checks', async () => {
+  const requests = [
+    [new Request(`https://${LEGACY_HOST}/api/billing/webhook`, { method: 'POST', body: '{}' }), {}, 400],
+    [new Request(`https://${LEGACY_HOST}/api/agentphone/webhook/shop-1`, { method: 'POST', body: '{}' }), {}, 400],
+    [new Request(`https://${LEGACY_HOST}/api/messaging/twilio/webhook/shop-1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '',
+    }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
+    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/incoming/shop-1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '',
+    }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
+    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/stream/shop-1`, {
+      headers: { Upgrade: 'websocket' },
+    }), {}, 401],
+  ];
+
+  for (const [request, env, expectedStatus] of requests) {
+    const response = await worker.fetch(request, env);
+    assert.equal(response.status, expectedStatus, new URL(request.url).pathname);
+    assert.equal(response.headers.get('location'), null, new URL(request.url).pathname);
+  }
+});
+
+test('legacy Twilio voice callbacks return a stream URL on the legacy host', async () => {
+  const body = new URLSearchParams({
+    From: '+18065550123',
+    To: '+18065550999',
+    CallSid: 'CA1234567890abcdef',
+  });
+  const response = await worker.fetch(new Request(
+    `https://${LEGACY_HOST}/api/voice/twilio/incoming/shop-1`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    },
+  ), {
+    XAI_API_KEY: 'xai-test-key-1234567890abcdef',
+    INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
+    TWILIO_VERIFY_VOICE: '0',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('location'), null);
+  assert.match(
+    await response.text(),
+    /wss:\/\/www\.yourcarguy806\.com\/api\/voice\/twilio\/stream\/shop-1\?token=/,
+  );
+});
+
+test('the canonical host is never redirected', async () => {
+  const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('location'), null);
 });
 
 test('session cookie and desktop start URL use the canonical ShopCrank host', () => {

@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 
 const pricing = readFileSync(new URL('../public/pricing/index.html', import.meta.url), 'utf8');
 const features = readFileSync(new URL('../public/features/index.html', import.meta.url), 'utf8');
+const privacy = readFileSync(new URL('../public/privacy/index.html', import.meta.url), 'utf8');
+const terms = readFileSync(new URL('../public/terms/index.html', import.meta.url), 'utf8');
 const plansSql = readFileSync(new URL('../worker/migrations/0002_public_saas_auth.sql', import.meta.url), 'utf8');
 const legacy = readFileSync(new URL('../src/runtime/legacy.js', import.meta.url), 'utf8');
 const diagnosticsUi = readFileSync(new URL('../diagnostics-ui.js', import.meta.url), 'utf8');
@@ -18,6 +20,14 @@ test('marketing pages and the app shell advertise www.shopcrank.com', () => {
     const page = readFileSync(new URL(`../public${href}index.html`, import.meta.url), 'utf8');
     assert.match(page, new RegExp(`https://www\\.shopcrank\\.com${href.replaceAll('/', '\\/')}`));
   }
+});
+
+test('the legal pages are generic and name no legacy shop or host', () => {
+  for (const [name, page] of [['privacy', privacy], ['terms', terms]]) {
+    assert.doesNotMatch(page, /Your Car Guy|yourcarguy806|MechPro/i, `${name} names a legacy brand`);
+    assert.match(page, new RegExp('https://www\\.shopcrank\\.com/' + name + '/'), `${name} canonical URL`);
+  }
+  assert.match(privacy, /subscribing shop/);
 });
 
 test('the public site sells the launch catalog, not the retired starter plan', () => {

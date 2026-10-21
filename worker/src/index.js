@@ -8,6 +8,7 @@ import {
   DESKTOP_AUTH_SCHEME,
   HEALTHZ_SERVICE,
   apexToWwwRedirect,
+  legacyToCanonicalRedirect,
 } from './production-host.mjs';
 import {
   ENTITY_TYPES,
@@ -2423,9 +2424,10 @@ function normalizeSignupIntent({ planId, shopName, ownerName, email, name } = {}
 /** Pack public signup fields into return_to so magic-link works before D1 columns exist. */
 function embedSignupIntent(returnTo, { planId, shopName, ownerName, desktop, handoff } = {}) {
   const path = safeReturnPath(returnTo);
-  if (!planId && !shopName && !ownerName && !desktop && !handoff) return path;
   try {
     const parsed = new URL(path, 'https://shopcrank.invalid');
+    parsed.searchParams.delete('desktopApp');
+    parsed.searchParams.delete('desktopHandoff');
     if (planId && isPublicPlan(planId)) parsed.searchParams.set('trialPlan', planId);
     if (shopName) parsed.searchParams.set('trialShop', shopName);
     if (ownerName) parsed.searchParams.set('trialOwner', ownerName);
@@ -2593,13 +2595,18 @@ async function pkceChallenge(verifier) {
   return base64UrlEncode(new Uint8Array(digest));
 }
 
+function requestIsShopCrankElectron(request) {
+  return /Electron/i.test(request.headers.get('User-Agent') || '');
+}
+
 function desktopHandoffPage(token, heading = 'Google sign-in succeeded') {
-  const link = `${DESKTOP_AUTH_SCHEME}//auth?token=${encodeURIComponent(token)}`;
+  const link = escapeHtmlText(`${DESKTOP_AUTH_SCHEME}//auth?token=${encodeURIComponent(token)}`);
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="referrer" content="no-referrer">
+  <meta http-equiv="refresh" content="0;url=${link}">
   <title>Return to ShopCrank</title>
   <style>
     body { font-family: "Segoe UI", sans-serif; background: #18252b; color: #f4f7f8; margin: 0; min-height: 100vh; display: grid; place-items: center; }
@@ -2610,8 +2617,8 @@ function desktopHandoffPage(token, heading = 'Google sign-in succeeded') {
 </head>
 <body>
   <main>
-    <h1>${heading}</h1>
-    <p>Open ShopCrank to finish signing in. If Windows asks which app to use, choose ShopCrank.</p>
+    <h1>${escapeHtmlText(heading)}</h1>
+    <p>ShopCrank should open on its own. If Windows asks which app to use, choose ShopCrank.</p>
     <a href="${link}">Open ShopCrank</a>
   </main>
 </body>
@@ -2787,7 +2794,11 @@ async function handleGoogleCallback(request, env) {
   const returnTo = safeReturnPath(getCookieValue(request, GOOGLE_RETURN_COOKIE), '/');
   const targetOrigin = safeGoogleTargetOrigin(getCookieValue(request, GOOGLE_ORIGIN_COOKIE), url.origin, env);
   const isDesktop = getCookieValue(request, GOOGLE_DESKTOP_COOKIE) === '1';
-  if (isDesktop || targetOrigin !== url.origin) {
+  // The Windows app loads this site inside Electron. Google already finished in
+  // that window, so a shopcrank:// handoff never leaves the webview and the
+  // "Open ShopCrank" page sits there. Issue the session here instead.
+  const finishInThisWindow = requestIsShopCrankElectron(request);
+  if (targetOrigin !== url.origin || (isDesktop && !finishInThisWindow)) {
     const handoffToken = crypto.randomUUID().replaceAll('-', '');
     const handoffHash = await hashValue(handoffToken);
     const now = new Date().toISOString();
@@ -3067,7 +3078,7 @@ async function handleAuthCallback(request, env) {
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
   }
-  if (signup.desktop && !signup.handoff) {
+  if (signup.desktop && !signup.handoff && !requestIsShopCrankElectron(request)) {
     // The emailed link opened in the browser, but sign-in started in the desktop
     // app. Swap the spent email token for a short-lived handoff token and give
     // the browser an "Open ShopCrank" button; the app redeems it via shopcrank://.
@@ -3078,16 +3089,22 @@ async function handleAuthCallback(request, env) {
       ownerName: signup.ownerName,
       handoff: true,
     });
-    await env.DB.prepare(`
+    const now = new Date().toISOString();
+    const updated = await env.DB.prepare(`
       UPDATE login_tokens SET token_hash = ?, return_to = ?, expires_at = ?, used_at = NULL, created_at = ?
-      WHERE id = ?
+      WHERE id = ? AND token_hash = ? AND used_at IS NULL AND expires_at > ?
     `).bind(
       await hashValue(handoffToken),
       handoffReturnTo,
       new Date(Date.now() + 2 * 60 * 1000).toISOString(),
-      new Date().toISOString(),
+      now,
       loginToken.id,
+      tokenHash,
+      now,
     ).run();
+    if (Number(updated?.meta?.changes) !== 1) {
+      throw new HttpError(401, 'The sign-in link has expired');
+    }
     return new Response(desktopHandoffPage(handoffToken, 'Sign-in confirmed'), {
       status: 200,
       headers: {
@@ -3765,6 +3782,17 @@ export default {
         || crypto.randomUUID(),
     };
     try {
+      const legacyRedirect = legacyToCanonicalRedirect(request);
+      const requestUrl = new URL(request.url);
+      const legacyProviderCallback = (
+        request.method === 'POST'
+        && /^\/api\/(?:payments\/webhook\/[^/]+|billing\/webhook|agentphone\/webhook\/[^/]+|messaging\/twilio\/webhook\/[^/]+|voice\/twilio\/incoming\/[^/]+)$/.test(requestUrl.pathname)
+      ) || (
+        request.method === 'GET'
+        && request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
+        && /^\/api\/voice\/twilio\/stream\/[^/]+$/.test(requestUrl.pathname)
+      );
+      if (legacyRedirect && !legacyProviderCallback) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {
