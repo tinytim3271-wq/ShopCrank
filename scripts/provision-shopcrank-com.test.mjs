@@ -431,7 +431,7 @@ test('detachLegacyWorkerDomains restores earlier deletions if a later detach fai
       if (method === 'DELETE' && path.endsWith('/domain-2')) {
         return jsonResponse(500, { success: false, errors: [{ message: 'delete failed' }] });
       }
-      if (method === 'POST' && path.endsWith('/workers/domains')) {
+      if (method === 'PUT' && path.endsWith('/workers/domains')) {
         return jsonResponse(200, { success: true, result: { id: 'restored-1' } });
       }
       return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
@@ -442,7 +442,7 @@ test('detachLegacyWorkerDomains restores earlier deletions if a later detach fai
     () => detachLegacyWorkerDomains(client, { accountId: 'acct-1' }),
     /delete failed/,
   );
-  assert.ok(calls.some((call) => call.method === 'POST' && call.body.hostname === 'yourcarguy806.com'));
+  assert.ok(calls.some((call) => call.method === 'PUT' && call.body.hostname === 'yourcarguy806.com'));
 });
 
 function jsonResponse(status, body) {
@@ -729,7 +729,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       store.dnsRecords = store.dnsRecords.filter((record) => record.name !== removed?.hostname);
       return jsonResponse(200, { success: true, result: null });
     }
-    if (method === 'POST' && path === '/accounts/acct-1/workers/domains') {
+    if (method === 'PUT' && path === '/accounts/acct-1/workers/domains') {
       const domain = { id: `restored-${store.workerDomains.length}`, ...JSON.parse(init.body) };
       store.workerDomains.push(domain);
       return jsonResponse(200, { success: true, result: domain });
