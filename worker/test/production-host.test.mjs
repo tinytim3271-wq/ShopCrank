@@ -12,6 +12,8 @@ import {
   DEFAULT_AUTH_EMAIL_FROM,
   DEFAULT_PAGES_ORIGIN,
   HEALTHZ_SERVICE,
+  LEGACY_APEX_HOST,
+  LEGACY_HOST,
 } from '../src/production-host.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -51,6 +53,24 @@ test('apex shopcrank.com redirects to www for API and Pages paths', async () => 
   const site = await worker.fetch(new Request(`https://${APEX_HOST}/login`), {});
   assert.equal(site.status, 301);
   assert.equal(site.headers.get('location'), `${CANONICAL_ORIGIN}/login`);
+});
+
+test('the pre-cutover host redirects to the canonical host, keeping path and query', async () => {
+  for (const host of [LEGACY_HOST, LEGACY_APEX_HOST]) {
+    const response = await worker.fetch(new Request(`https://${host}/api/auth/session?returnTo=%2Fapp`), {});
+    assert.equal(response.status, 301, `${host} should redirect`);
+    assert.equal(response.headers.get('location'), `${CANONICAL_ORIGIN}/api/auth/session?returnTo=%2Fapp`);
+  }
+
+  const page = await worker.fetch(new Request(`https://${LEGACY_HOST}/pricing/`), {});
+  assert.equal(page.status, 301);
+  assert.equal(page.headers.get('location'), `${CANONICAL_ORIGIN}/pricing/`);
+});
+
+test('the canonical host is never redirected', async () => {
+  const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('location'), null);
 });
 
 test('session cookie and desktop start URL use the canonical ShopCrank host', () => {

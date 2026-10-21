@@ -8,6 +8,7 @@ import {
   DESKTOP_AUTH_SCHEME,
   HEALTHZ_SERVICE,
   apexToWwwRedirect,
+  legacyToCanonicalRedirect,
 } from './production-host.mjs';
 import {
   ENTITY_TYPES,
@@ -3721,6 +3722,8 @@ export default {
         || crypto.randomUUID(),
     };
     try {
+      const legacyRedirect = legacyToCanonicalRedirect(request);
+      if (legacyRedirect) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {

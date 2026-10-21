@@ -5,19 +5,27 @@ import test from 'node:test';
 import {
   COPYABLE_SECRET_ENV,
   CloudflareApiError,
+  LEGACY_ZONE,
   PAGES_PROJECT,
+  SUPPORT_EMAIL,
   WORKER_NAME,
   createCloudflareClient,
+  desiredLegacyWorkerRoutes,
   desiredState,
   desiredWorkerRoutes,
   googleOAuthRemaining,
   isAlreadyConfiguredError,
   isDesiredApiRoute,
+  isLegacyApiRoute,
+  isLegacyHostRoute,
+  isLegacyWildcardRoute,
   isWholeHostnameRoute,
+  legacyRoutesToCreate,
   parseArgs,
   provisionShopcrankCom,
   routesToCreate,
   secretCopyPlan,
+  shouldDeleteLegacyRoute,
   shouldDeleteWorkerRoute,
 } from './provision-shopcrank-com.mjs';
 
@@ -121,6 +129,59 @@ test('Google OAuth remaining step is console-only', () => {
   assert.equal(remaining.javascriptOrigin, 'https://www.shopcrank.com');
   assert.equal(remaining.redirectUri, 'https://www.shopcrank.com/api/auth/google/callback');
   assert.match(remaining.message, /Google Cloud/);
+});
+
+test('the legacy zone is retired to a whole-host Worker route', () => {
+  assert.equal(LEGACY_ZONE, 'yourcarguy806.com');
+  assert.deepEqual(desiredLegacyWorkerRoutes(), [
+    'www.yourcarguy806.com/*',
+    'yourcarguy806.com/*',
+  ]);
+  assert.equal(isLegacyApiRoute('www.yourcarguy806.com/api/*'), true);
+  assert.equal(isLegacyApiRoute('yourcarguy806.com/api/*'), true);
+  assert.equal(isLegacyApiRoute('www.shopcrank.com/api/*'), false);
+  assert.equal(isLegacyHostRoute('www.yourcarguy806.com/*'), true);
+  assert.equal(isLegacyHostRoute('yourcarguy806.com/*'), true);
+  assert.equal(isLegacyHostRoute('www.yourcarguy806.com/api/*'), false);
+  assert.equal(isLegacyWildcardRoute('*.yourcarguy806.com/*'), true);
+  assert.equal(isLegacyWildcardRoute('*.yourcarguy806.com'), true);
+  assert.equal(isLegacyWildcardRoute('www.yourcarguy806.com/api/*'), false);
+});
+
+test('the legacy wildcard Pages route is deleted and the whole host is re-pointed at the Worker', () => {
+  assert.equal(shouldDeleteLegacyRoute({ pattern: '*.yourcarguy806.com/*', script: 'shopcrank-dispatch' }), true);
+  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.yourcarguy806.com/*', script: 'shopcrank-api' }), false);
+  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.yourcarguy806.com/*', script: 'mechpro-api' }), true);
+  // The /api/* route is replaced by the whole-host route.
+  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' }), true);
+  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' }), false);
+});
+
+test('legacyRoutesToCreate adds the missing whole-host bindings only', () => {
+  assert.deepEqual(
+    legacyRoutesToCreate([{ pattern: 'www.yourcarguy806.com/*', script: 'shopcrank-api' }]),
+    ['yourcarguy806.com/*'],
+  );
+  assert.deepEqual(
+    legacyRoutesToCreate([
+      { pattern: 'www.yourcarguy806.com/*', script: 'shopcrank-api' },
+      { pattern: 'yourcarguy806.com/*', script: 'shopcrank-api' },
+    ]),
+    [],
+  );
+  // An /api/* route does not count as the whole-host route.
+  assert.deepEqual(
+    legacyRoutesToCreate([{ pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' }]),
+    ['www.yourcarguy806.com/*', 'yourcarguy806.com/*'],
+  );
+});
+
+test('desired state records the legacy cutover and the ShopCrank support address', () => {
+  const state = desiredState();
+  assert.equal(state.legacyZone, 'yourcarguy806.com');
+  assert.equal(state.supportEmail, 'support@shopcrank.com');
+  assert.equal(SUPPORT_EMAIL, 'support@shopcrank.com');
+  assert.ok(!state.workerRoutes.some((pattern) => pattern.includes('yourcarguy806')));
 });
 
 function jsonResponse(status, body) {
@@ -326,4 +387,152 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
   assert.ok(!calls.some((call) => call.body?.pattern === 'www.shopcrank.com/*' && call.method === 'POST'));
   assert.ok(logs.length > 0);
   assert.equal(WORKER_NAME, 'shopcrank-api');
+});
+
+test('provisionShopcrankCom retires the legacy zone and forwards support mail', async () => {
+  const calls = [];
+  const store = {
+    zones: [
+      { id: 'zone-1', name: 'shopcrank.com', status: 'active' },
+      { id: 'zone-legacy', name: 'yourcarguy806.com', status: 'active' },
+    ],
+    pagesDomains: [],
+    workerDomains: [
+      { id: 'dom-legacy-www', hostname: 'www.yourcarguy806.com', service: 'mechpro-api' },
+      { id: 'dom-legacy-apex', hostname: 'yourcarguy806.com', service: 'mechpro-api' },
+    ],
+    routes: {
+      'zone-1': [
+        { id: 'rt-www', pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' },
+        { id: 'rt-apex', pattern: 'shopcrank.com/api/*', script: 'shopcrank-api' },
+        { id: 'rt-dl', pattern: 'www.shopcrank.com/downloads/*', script: 'shopcrank-api' },
+        { id: 'rt-dl2', pattern: 'shopcrank.com/downloads/*', script: 'shopcrank-api' },
+      ],
+      'zone-legacy': [
+        { id: 'rt-legacy-www', pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' },
+        { id: 'rt-legacy-wild', pattern: '*.yourcarguy806.com/*', script: 'shopcrank-dispatch' },
+      ],
+    },
+    mailRules: [],
+    r2: [],
+    secrets: { 'mechpro-api': [], 'shopcrank-api': [] },
+    routing: { enabled: true, status: 'ready' },
+    sending: [{ name: 'shopcrank.com', enabled: true }],
+    addresses: [],
+  };
+
+  const fetchImpl = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace('/client/v4', '');
+    calls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined });
+
+    if (method === 'GET' && path === '/zones') {
+      const name = parsed.searchParams.get('name');
+      return jsonResponse(200, { success: true, result: store.zones.filter((zone) => !name || zone.name === name) });
+    }
+    if (method === 'GET' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
+      return jsonResponse(200, { success: true, result: store.pagesDomains });
+    }
+    if (method === 'POST' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
+      const domain = { name: JSON.parse(init.body).name, status: 'pending' };
+      store.pagesDomains.push(domain);
+      return jsonResponse(200, { success: true, result: domain });
+    }
+    if (method === 'GET' && path === '/accounts/acct-1/workers/domains') {
+      return jsonResponse(200, { success: true, result: store.workerDomains });
+    }
+    if (method === 'DELETE' && path.startsWith('/accounts/acct-1/workers/domains/')) {
+      const id = path.split('/').at(-1);
+      store.workerDomains = store.workerDomains.filter((domain) => domain.id !== id);
+      return jsonResponse(200, { success: true, result: null });
+    }
+    const routeMatch = path.match(/^\/zones\/([^/]+)\/workers\/routes$/);
+    if (method === 'GET' && routeMatch) {
+      return jsonResponse(200, { success: true, result: store.routes[routeMatch[1]] || [] });
+    }
+    const routeDelete = path.match(/^\/zones\/([^/]+)\/workers\/routes\/([^/]+)$/);
+    if (method === 'DELETE' && routeDelete) {
+      const list = store.routes[routeDelete[1]] || [];
+      store.routes[routeDelete[1]] = list.filter((route) => route.id !== routeDelete[2]);
+      return jsonResponse(200, { success: true, result: null });
+    }
+    if (method === 'POST' && routeMatch) {
+      const route = { id: `new-${store.routes[routeMatch[1]].length}`, ...JSON.parse(init.body) };
+      store.routes[routeMatch[1]].push(route);
+      return jsonResponse(200, { success: true, result: route });
+    }
+    if (method === 'GET' && path === '/accounts/acct-1/r2/buckets') {
+      return jsonResponse(200, { success: true, result: { buckets: store.r2 } });
+    }
+    if (method === 'POST' && path === '/accounts/acct-1/r2/buckets') {
+      store.r2.push({ name: JSON.parse(init.body).name });
+      return jsonResponse(200, { success: true, result: store.r2.at(-1) });
+    }
+    if (method === 'GET' && path === '/zones/zone-1/email/routing') {
+      return jsonResponse(200, { success: true, result: store.routing });
+    }
+    if (method === 'GET' && path === '/zones/zone-1/email/sending/subdomains') {
+      return jsonResponse(200, { success: true, result: store.sending });
+    }
+    if (method === 'GET' && path === '/accounts/acct-1/email/routing/addresses') {
+      return jsonResponse(200, { success: true, result: store.addresses });
+    }
+    if (method === 'POST' && path === '/accounts/acct-1/email/routing/addresses') {
+      const row = { id: 'addr-1', email: JSON.parse(init.body).email, verified: '2026-10-21T00:00:00Z' };
+      store.addresses.push(row);
+      return jsonResponse(200, { success: true, result: row });
+    }
+    if (method === 'PATCH' && path === '/accounts/acct-1/email/routing/addresses/addr-1') {
+      store.addresses[0] = { ...store.addresses[0], verified: '2026-10-21T00:00:00Z' };
+      return jsonResponse(200, { success: true, result: store.addresses[0] });
+    }
+    if (method === 'GET' && path === '/zones/zone-1/email/routing/rules') {
+      return jsonResponse(200, { success: true, result: store.mailRules });
+    }
+    if (method === 'POST' && path === '/zones/zone-1/email/routing/rules') {
+      const body = JSON.parse(init.body);
+      const rule = { id: 'rule-1', ...body };
+      store.mailRules.push(rule);
+      return jsonResponse(200, { success: true, result: rule });
+    }
+    if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/mechpro-api/secrets') {
+      return jsonResponse(200, { success: true, result: [] });
+    }
+    if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/shopcrank-api/secrets') {
+      return jsonResponse(200, { success: true, result: [] });
+    }
+    return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
+  };
+
+  const client = createCloudflareClient({ apiToken: 'token', fetchImpl });
+  const report = await provisionShopcrankCom({
+    client,
+    accountId: 'acct-1',
+    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
+    logger: { info() {} },
+  });
+
+  assert.equal(report.ok, true);
+  // The legacy custom domains are detached from the old Worker.
+  assert.deepEqual(
+    report.steps.legacyWorkerDomains.detached.map((item) => item.hostname).toSorted(),
+    ['www.yourcarguy806.com', 'yourcarguy806.com'],
+  );
+  // The wildcard Pages route is dropped and the whole host points at the Worker.
+  assert.deepEqual(
+    report.steps.legacyWorkerRoutes.deleted.toSorted((a, b) => a.pattern.localeCompare(b.pattern)),
+    [
+      { pattern: '*.yourcarguy806.com/*', script: 'shopcrank-dispatch' },
+      { pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' },
+    ],
+  );
+  assert.ok(!report.steps.legacyWorkerRoutes.routes.some((route) => route.pattern === '*.yourcarguy806.com/*'));
+  assert.ok(report.steps.legacyWorkerRoutes.routes.some(
+    (route) => route.pattern === 'www.yourcarguy806.com/*' && route.script === 'shopcrank-api',
+  ));
+  // Support mail is forwarded to the configured mailbox.
+  assert.equal(report.steps.supportMail.action, 'created');
+  assert.equal(report.steps.supportMail.address, 'support@shopcrank.com');
+  assert.equal(store.mailRules[0].actions[0].value[0], 'ops@example.test');
 });

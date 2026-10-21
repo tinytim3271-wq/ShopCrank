@@ -26,15 +26,14 @@
     "ANTHROPIC_OPUS_MODEL": "claude-opus-5",
     "DEEPGRAM_LISTEN_MODEL": "nova-3",
     "DEEPGRAM_SPEAK_MODEL": "flux-kit-en",
-    "ALLOWED_ORIGINS": "https://www.shopcrank.com,https://shopcrank.com,https://shopcrank-dispatch.pages.dev,https://www.yourcarguy806.com",
-    // Keep the legacy bridge until Google Cloud accepts the ShopCrank callback
-    // (npm run verify:google-oauth). Then set this to https://www.shopcrank.com
-    // and npm run deploy:worker.
-    "GOOGLE_REDIRECT_ORIGIN": "https://www.yourcarguy806.com",
+    "ALLOWED_ORIGINS": "https://www.shopcrank.com,https://shopcrank.com,https://shopcrank-dispatch.pages.dev",
+    // Same-origin Google callback on the production host (register this URI in
+    // Google Cloud OAuth before deploy: https://www.shopcrank.com/api/auth/google/callback).
+    "GOOGLE_REDIRECT_ORIGIN": "https://www.shopcrank.com",
     "PAGES_ORIGIN": "https://shopcrank-dispatch.pages.dev",
     "AUTH_EMAIL_FROM": "noreply@shopcrank.com",
-    "SUPPORT_EMAIL_TO": "support@yourcarguy806.com",
-    "SUPPORT_EMAIL_FROM": "support@yourcarguy806.com"
+    "SUPPORT_EMAIL_TO": "support@shopcrank.com",
+    "SUPPORT_EMAIL_FROM": "support@shopcrank.com"
   },
   "send_email": [
     {
