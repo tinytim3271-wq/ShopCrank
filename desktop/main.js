@@ -33,6 +33,15 @@ function isTrustedUrl(rawUrl) {
   }
 }
 
+function isGoogleSignInStart(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' && trustedOrigins.has(url.origin) && url.pathname === '/api/auth/google';
+  } catch {
+    return false;
+  }
+}
+
 function registerOfflineIpc() {
   if (edition.offline !== true) return;
   const handlers = {
@@ -138,6 +147,13 @@ function createWindow() {
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
+    // Google refuses sign-in inside embedded app windows, so the Google button
+    // always opens the system browser; the browser hands back via shopcrank://.
+    if (isGoogleSignInStart(url)) {
+      event.preventDefault();
+      if (edition.demo !== true) void shell.openExternal(url);
+      return;
+    }
     if (!isTrustedUrl(url)) event.preventDefault();
   });
   window.webContents.on('will-redirect', (event, url) => {
