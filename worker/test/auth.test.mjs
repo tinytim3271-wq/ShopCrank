@@ -632,7 +632,12 @@ test('Google sign-in bridges through a non-canonical GOOGLE_REDIRECT_ORIGIN and 
   const callback = await worker.fetch(
     new Request(
       `${bridgeOrigin}/api/auth/google/callback?code=authorization-code&state=${encodeURIComponent(state)}`,
-      { headers: { Cookie: cookies } },
+      {
+        headers: {
+          Cookie: cookies,
+          'User-Agent': 'Mozilla/5.0 ShopCrank/1.1.0 Chrome/120.0.0.0 Electron/41.0.0 Safari/537.36',
+        },
+      },
     ),
     env,
   );
