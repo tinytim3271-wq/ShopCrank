@@ -2796,7 +2796,7 @@ async function handleGoogleCallback(request, env) {
   // that window, so a shopcrank:// handoff never leaves the webview and the
   // "Open ShopCrank" page sits there. Issue the session here instead.
   const finishInThisWindow = requestIsShopCrankElectron(request);
-  if (!finishInThisWindow && (isDesktop || targetOrigin !== url.origin)) {
+  if (targetOrigin !== url.origin || (isDesktop && !finishInThisWindow)) {
     const handoffToken = crypto.randomUUID().replaceAll('-', '');
     const handoffHash = await hashValue(handoffToken);
     const now = new Date().toISOString();
