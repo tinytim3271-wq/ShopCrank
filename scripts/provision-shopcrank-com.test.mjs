@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   COPYABLE_SECRET_ENV,
+  apexDnsRecords,
   CloudflareApiError,
   LEGACY_ZONE,
   PAGES_PROJECT,
@@ -196,6 +197,16 @@ test('legacyDnsRecords restores both legacy hostnames as proxied A records', () 
   }
 });
 
+test('apexDnsRecords points the apex at the Pages project with a CNAME', () => {
+  const records = apexDnsRecords();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].name, 'shopcrank.com');
+  // An A record to a Cloudflare address is rejected as a prohibited IP.
+  assert.equal(records[0].type, 'CNAME');
+  assert.equal(records[0].content, 'shopcrank-dispatch.pages.dev');
+  assert.equal(records[0].proxied, true);
+});
+
 test('ensureDnsRecords creates missing records and leaves matching ones alone', async () => {
   const calls = [];
   const existing = [{ id: 'rec-1', type: 'A', name: 'yourcarguy806.com', content: '104.21.17.176', proxied: true }];
@@ -232,6 +243,41 @@ test('ensureDnsRecords creates missing records and leaves matching ones alone', 
   assert.deepEqual(result.updated, []);
   assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
   assert.equal(calls.filter((call) => call.method === 'PUT').length, 0);
+});
+
+test('ensureDnsRecords replaces a record of a different type on the same name', async () => {
+  const calls = [];
+  const existing = [{ id: 'rec-a', type: 'A', name: 'shopcrank.com', content: '104.21.17.59', proxied: true }];
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method || 'GET';
+      const path = new URL(url).pathname.replace('/client/v4', '');
+      calls.push({ method, path });
+      if (method === 'GET' && path === '/zones/zone-1/dns_records') {
+        return jsonResponse(200, { success: true, result: existing });
+      }
+      if (method === 'DELETE' && path === '/zones/zone-1/dns_records/rec-a') {
+        return jsonResponse(200, { success: true, result: null });
+      }
+      if (method === 'POST' && path === '/zones/zone-1/dns_records') {
+        return jsonResponse(200, { success: true, result: { id: 'rec-c' } });
+      }
+      return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
+    },
+  });
+
+  const result = await ensureDnsRecords(client, {
+    zoneId: 'zone-1',
+    records: [{ type: 'CNAME', name: 'shopcrank.com', content: 'shopcrank-dispatch.pages.dev', proxied: true }],
+  });
+
+  assert.equal(result.action, 'updated');
+  assert.deepEqual(result.created, []);
+  assert.equal(result.updated[0].type, 'CNAME');
+  assert.equal(result.updated[0].replaced, 'A');
+  assert.equal(calls.filter((call) => call.method === 'DELETE').length, 1);
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
 });
 
 function jsonResponse(status, body) {

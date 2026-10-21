@@ -485,11 +485,20 @@ export async function ensureDnsRecords(client, { zoneId, records = [] }) {
   const created = [];
   const updated = [];
   for (const record of records) {
-    const match = existing.find((item) => item.type === record.type && item.name === record.name);
+    const match = existing.find((item) => item.name === record.name && item.type === record.type);
     if (match) {
       if (match.content === record.content && match.proxied === record.proxied) continue;
       await client.request('PUT', `${path}/${match.id}`, { body: { ...record, ttl: 1 } });
       updated.push({ type: record.type, name: record.name, content: record.content });
+      continue;
+    }
+    // A name can only carry one record shape. If a record of another type
+    // already uses the name, replace it — an A and a CNAME cannot coexist.
+    const conflicting = existing.find((item) => item.name === record.name && item.type !== record.type);
+    if (conflicting) {
+      await client.request('DELETE', `${path}/${conflicting.id}`);
+      await client.request('POST', path, { body: { ...record, ttl: 1 } });
+      updated.push({ type: record.type, name: record.name, content: record.content, replaced: conflicting.type });
       continue;
     }
     await client.request('POST', path, { body: { ...record, ttl: 1 } });
@@ -516,12 +525,13 @@ export function legacyDnsRecords() {
 
 /**
  * The canonical apex. Pages owns www.shopcrank.com; shopcrank.com points at
- * the same Pages project so the apex reaches the site and the Worker can 301
- * the apex to www.
+ * the same Pages project with a proxied CNAME, so the apex reaches the site.
+ * An A record to a Cloudflare address is rejected with "DNS points to
+ * prohibited IP", so the CNAME is the only form that works here.
  */
 export function apexDnsRecords() {
   return [
-    { type: 'A', name: APEX_HOST, content: '104.21.17.59', proxied: true },
+    { type: 'CNAME', name: APEX_HOST, content: `${PAGES_PROJECT}.pages.dev`, proxied: true },
   ];
 }
 
