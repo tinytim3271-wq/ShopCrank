@@ -995,6 +995,9 @@ export async function provisionShopcrankCom({
   const legacyZone = report.steps.legacyZone;
   const canonicalPrerequisites = ['pages', 'workerRoutes', 'apexDns'];
   const failedPrerequisite = canonicalPrerequisites.find((name) => !report.steps[name]?.ok);
+  const pendingPagesDomains = report.desired.pagesDomains.filter((name) => (
+    report.steps.pages?.domains?.find((domain) => domain.name === name)?.status !== 'active'
+  ));
   const skipLegacyCutover = (reason) => {
     report.steps.legacyWorkerRoutes = { ok: true, action: 'skipped', reason };
     report.steps.legacyWorkerDomains = { ok: true, action: 'skipped', reason };
@@ -1018,6 +1021,20 @@ export async function provisionShopcrankCom({
     });
   } else if (failedPrerequisite) {
     skipLegacyCutover(`canonical prerequisite ${failedPrerequisite} failed`);
+  } else if (zoneStep.status !== 'active') {
+    skipLegacyCutover(`canonical zone ${APEX_HOST} is not active`);
+    report.remaining.push({
+      kind: 'canonical_zone_activation',
+      message: `Activate the ${APEX_HOST} zone before retiring the legacy host.`,
+      status: zoneStep.status,
+    });
+  } else if (pendingPagesDomains.length) {
+    skipLegacyCutover(`canonical Pages domains are not active: ${pendingPagesDomains.join(', ')}`);
+    report.remaining.push({
+      kind: 'pages_domain_activation',
+      message: `Wait for the required Pages domains to become active before retiring the legacy host.`,
+      domains: pendingPagesDomains,
+    });
   } else {
     const legacyZoneId = legacyZone.zoneId;
     const dnsPreflight = await cfTry('legacyDnsPreflight', async () => ({

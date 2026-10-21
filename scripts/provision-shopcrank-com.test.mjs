@@ -715,7 +715,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       return jsonResponse(200, { success: true, result: store.pagesDomains });
     }
     if (method === 'POST' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
-      const domain = { name: JSON.parse(init.body).name, status: 'pending' };
+      const domain = { name: JSON.parse(init.body).name, status: 'active' };
       store.pagesDomains.push(domain);
       return jsonResponse(200, { success: true, result: domain });
     }
@@ -892,6 +892,44 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
   );
 
   failPagesRead = false;
+  store.pagesDomains.forEach((domain) => { domain.status = 'pending'; });
+  const deletesBeforePendingPages = calls.filter((call) => call.method === 'DELETE'
+    && call.path.startsWith('/accounts/acct-1/workers/domains/')).length;
+  const pendingPages = await provisionShopcrankCom({
+    client,
+    accountId: 'acct-1',
+    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
+    logger: { info() {} },
+  });
+  assert.equal(pendingPages.steps.legacyWorkerDomains.action, 'skipped');
+  assert.ok(pendingPages.remaining.some((item) => (
+    item.kind === 'pages_domain_activation'
+    && item.domains.includes('www.shopcrank.com')
+    && item.domains.includes('shopcrank.com')
+  )));
+  assert.equal(
+    calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/accounts/acct-1/workers/domains/')).length,
+    deletesBeforePendingPages,
+  );
+
+  store.pagesDomains.forEach((domain) => { domain.status = 'active'; });
+  store.zones.find((zone) => zone.id === 'zone-1').status = 'pending';
+  const deletesBeforePendingZone = calls.filter((call) => call.method === 'DELETE'
+    && call.path.startsWith('/accounts/acct-1/workers/domains/')).length;
+  const pendingZone = await provisionShopcrankCom({
+    client,
+    accountId: 'acct-1',
+    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
+    logger: { info() {} },
+  });
+  assert.equal(pendingZone.steps.legacyWorkerDomains.action, 'skipped');
+  assert.ok(pendingZone.remaining.some((item) => item.kind === 'canonical_zone_activation'));
+  assert.equal(
+    calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/accounts/acct-1/workers/domains/')).length,
+    deletesBeforePendingZone,
+  );
+
+  store.zones.find((zone) => zone.id === 'zone-1').status = 'active';
   failLegacyDnsCreate = true;
   const rolledBack = await provisionShopcrankCom({
     client,
