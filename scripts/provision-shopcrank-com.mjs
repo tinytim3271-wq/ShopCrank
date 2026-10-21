@@ -514,6 +514,17 @@ export function legacyDnsRecords() {
   ];
 }
 
+/**
+ * The canonical apex. Pages owns www.shopcrank.com; shopcrank.com points at
+ * the same Pages project so the apex reaches the site and the Worker can 301
+ * the apex to www.
+ */
+export function apexDnsRecords() {
+  return [
+    { type: 'A', name: APEX_HOST, content: '104.21.17.59', proxied: true },
+  ];
+}
+
 export async function detachWholeHostWorkerDomains(client, { accountId, hosts = shopcrankHosts() }) {
   const records = asList((await client.request('GET', `/accounts/${accountId}/workers/domains`)).result);
   const detached = [];
@@ -814,6 +825,7 @@ export async function provisionShopcrankCom({
     workerRoutes: () => ensureWorkerRoutes(client, { zoneId }),
     legacyWorkerDomains: () => detachLegacyWorkerDomains(client, { accountId }),
     legacyZone: () => findLegacyZone(client, { accountId }),
+    apexDns: () => ensureDnsRecords(client, { zoneId, records: apexDnsRecords() }),
     r2: () => ensureR2Buckets(client, { accountId }),
     email: () => enableEmail(client, { accountId, zoneId }),
     supportMail: () => ensureSupportForwarding(client, { zoneId, forwardTo: supportForward }),

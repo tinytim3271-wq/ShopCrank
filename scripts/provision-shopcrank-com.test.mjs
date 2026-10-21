@@ -287,6 +287,7 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
     routing: { enabled: false, status: 'unconfigured' },
     sending: [],
     addresses: [],
+    apexDnsRecords: [],
     putSecrets: [],
   };
 
@@ -375,6 +376,14 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
       const row = { ...store.addresses[0], verified: '2026-10-14T00:00:00Z' };
       store.addresses[0] = row;
       return jsonResponse(200, { success: true, result: row });
+    }
+    if (method === 'GET' && path === '/zones/zone-1/dns_records') {
+      return jsonResponse(200, { success: true, result: store.apexDnsRecords });
+    }
+    if (method === 'POST' && path === '/zones/zone-1/dns_records') {
+      const record = { id: `apex-dns-${store.apexDnsRecords.length}`, ...JSON.parse(init.body) };
+      store.apexDnsRecords.push(record);
+      return jsonResponse(200, { success: true, result: record });
     }
     if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/mechpro-api/secrets') {
       return jsonResponse(200, { success: true, result: store.secrets['mechpro-api'] });
@@ -465,6 +474,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     },
     mailRules: [],
     dnsRecords: [],
+    apexDnsRecords: [],
     r2: [],
     secrets: { 'mechpro-api': [], 'shopcrank-api': [] },
     routing: { enabled: true, status: 'ready' },
@@ -555,6 +565,14 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       store.dnsRecords.push(record);
       return jsonResponse(200, { success: true, result: record });
     }
+    if (method === 'GET' && path === '/zones/zone-1/dns_records') {
+      return jsonResponse(200, { success: true, result: store.apexDnsRecords });
+    }
+    if (method === 'POST' && path === '/zones/zone-1/dns_records') {
+      const record = { id: `apex-dns-${store.apexDnsRecords.length}`, ...JSON.parse(init.body) };
+      store.apexDnsRecords.push(record);
+      return jsonResponse(200, { success: true, result: record });
+    }
     if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/mechpro-api/secrets') {
       return jsonResponse(200, { success: true, result: [] });
     }
@@ -600,4 +618,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     store.dnsRecords.map((record) => record.name).toSorted(),
     ['www.yourcarguy806.com', 'yourcarguy806.com'],
   );
+  // The canonical apex resolves too.
+  assert.equal(report.steps.apexDns.action, 'updated');
+  assert.deepEqual(store.apexDnsRecords.map((record) => record.name), ['shopcrank.com']);
 });
