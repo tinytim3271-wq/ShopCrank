@@ -103,6 +103,33 @@ test('legacy provider callbacks reach their existing authentication checks', asy
   }
 });
 
+test('legacy Twilio voice callbacks return a stream URL on the legacy host', async () => {
+  const body = new URLSearchParams({
+    From: '+18065550123',
+    To: '+18065550999',
+    CallSid: 'CA1234567890abcdef',
+  });
+  const response = await worker.fetch(new Request(
+    `https://${LEGACY_HOST}/api/voice/twilio/incoming/shop-1`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    },
+  ), {
+    XAI_API_KEY: 'xai-test-key-1234567890abcdef',
+    INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
+    TWILIO_VERIFY_VOICE: '0',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('location'), null);
+  assert.match(
+    await response.text(),
+    /wss:\/\/www\.yourcarguy806\.com\/api\/voice\/twilio\/stream\/shop-1\?token=/,
+  );
+});
+
 test('the canonical host is never redirected', async () => {
   const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
   assert.equal(response.status, 200);
