@@ -481,28 +481,70 @@ export async function ensurePagesDomains(client, { accountId, project = PAGES_PR
  */
 export async function ensureDnsRecords(client, { zoneId, records = [] }) {
   const path = `/zones/${zoneId}/dns_records`;
-  const existing = asList((await client.request('GET', path)).result);
+  const existing = await listPaged(client, path);
   const created = [];
   const updated = [];
   for (const record of records) {
     const match = existing.find((item) => item.name === record.name && item.type === record.type);
+    const conflicting = existing.filter((item) => item.name === record.name && (
+      record.type === 'CNAME'
+        ? ['A', 'AAAA'].includes(item.type)
+        : ['A', 'AAAA'].includes(record.type) && item.type === 'CNAME'
+    ));
+    for (const item of conflicting) {
+      await client.request('DELETE', `${path}/${item.id}`);
+      existing.splice(existing.indexOf(item), 1);
+    }
     if (match) {
-      if (match.content === record.content && match.proxied === record.proxied) continue;
+      if (match.content === record.content && match.proxied === record.proxied) {
+        if (conflicting.length) {
+          updated.push({
+            type: record.type,
+            name: record.name,
+            content: record.content,
+            replaced: conflicting.map((item) => item.type).join(','),
+          });
+        }
+        continue;
+      }
       await client.request('PUT', `${path}/${match.id}`, { body: { ...record, ttl: 1 } });
-      updated.push({ type: record.type, name: record.name, content: record.content });
+      updated.push({
+        type: record.type,
+        name: record.name,
+        content: record.content,
+        ...(conflicting.length && { replaced: conflicting.map((item) => item.type).join(',') }),
+      });
       continue;
     }
-    // A name can only carry one record shape. If a record of another type
-    // already uses the name, replace it — an A and a CNAME cannot coexist.
-    const conflicting = existing.find((item) => item.name === record.name && item.type !== record.type);
-    if (conflicting) {
-      await client.request('DELETE', `${path}/${conflicting.id}`);
-      await client.request('POST', path, { body: { ...record, ttl: 1 } });
-      updated.push({ type: record.type, name: record.name, content: record.content, replaced: conflicting.type });
+    const payload = await client.request('POST', path, { body: { ...record, ttl: 1 } });
+    if (payload.alreadyConfigured) {
+      const refreshed = await listPaged(client, path);
+      const actual = refreshed.find((item) => item.name === record.name && item.type === record.type);
+      if (!actual) {
+        throw new ProvisionError(`Cloudflare reported ${record.type} ${record.name} already exists, but it was not found.`);
+      }
+      if (actual.content !== record.content || actual.proxied !== record.proxied) {
+        await client.request('PUT', `${path}/${actual.id}`, { body: { ...record, ttl: 1 } });
+      }
+      updated.push({
+        type: record.type,
+        name: record.name,
+        content: record.content,
+        ...(conflicting.length && { replaced: conflicting.map((item) => item.type).join(',') }),
+      });
       continue;
     }
-    await client.request('POST', path, { body: { ...record, ttl: 1 } });
-    created.push({ type: record.type, name: record.name, content: record.content });
+    if (conflicting.length) {
+      updated.push({
+        type: record.type,
+        name: record.name,
+        content: record.content,
+        replaced: conflicting.map((item) => item.type).join(','),
+      });
+    } else {
+      created.push({ type: record.type, name: record.name, content: record.content });
+    }
+    existing.push({ ...record, id: payload.result?.id });
   }
   return {
     action: created.length || updated.length ? 'updated' : 'exists',
@@ -553,14 +595,47 @@ export async function detachWholeHostWorkerDomains(client, { accountId, hosts = 
  * the Worker's legacy->canonical redirect.
  */
 export async function detachLegacyWorkerDomains(client, { accountId, hosts = LEGACY_HOSTS }) {
-  const records = asList((await client.request('GET', `/accounts/${accountId}/workers/domains`)).result);
+  const records = await listPaged(client, `/accounts/${accountId}/workers/domains`);
   const detached = [];
-  for (const domain of records) {
-    if (!hosts.includes(domain.hostname)) continue;
-    await client.request('DELETE', `/accounts/${accountId}/workers/domains/${domain.id}`);
-    detached.push({ hostname: domain.hostname, service: domain.service, id: domain.id });
+  try {
+    for (const domain of records) {
+      if (!hosts.includes(domain.hostname)) continue;
+      await client.request('DELETE', `/accounts/${accountId}/workers/domains/${domain.id}`);
+      detached.push(domain);
+    }
+  } catch (error) {
+    try {
+      await restoreWorkerDomains(client, { accountId, domains: detached });
+    } catch (rollbackError) {
+      error.message = `${error.message}; failed to restore detached legacy domains: ${rollbackError.message}`;
+    }
+    throw error;
   }
-  return { action: detached.length ? 'detached' : 'none', detached };
+  return {
+    action: detached.length ? 'detached' : 'none',
+    detached: detached.map(({ hostname, service, id }) => ({ hostname, service, id })),
+    detachedDomains: detached,
+  };
+}
+
+export async function restoreWorkerDomains(client, { accountId, domains = [] }) {
+  const path = `/accounts/${accountId}/workers/domains`;
+  const restored = [];
+  for (const domain of domains) {
+    const body = {
+      hostname: domain.hostname,
+      service: domain.service,
+      ...(domain.environment && { environment: domain.environment }),
+    };
+    if (domain.zone_id) body.zone_id = domain.zone_id;
+    const result = await client.request('POST', path, { body });
+    restored.push({
+      hostname: domain.hostname,
+      service: domain.service,
+      alreadyConfigured: Boolean(result.alreadyConfigured),
+    });
+  }
+  return { action: restored.length ? 'restored' : 'none', restored };
 }
 
 /**
@@ -598,9 +673,35 @@ export async function ensureLegacyWorkerRoutes(client, { zoneId, worker = WORKER
  * mail to the old owner's Gmail address; the ShopCrank zone needs the same
  * forwarding so support@shopcrank.com reaches a human.
  */
-export async function ensureSupportForwarding(client, { zoneId, address = SUPPORT_EMAIL, forwardTo }) {
+export async function ensureSupportForwarding(client, { accountId, zoneId, address = SUPPORT_EMAIL, forwardTo }) {
   if (!forwardTo) {
     return { action: 'skipped', reason: 'no support forward target configured', address };
+  }
+  const addressPath = `/accounts/${accountId}/email/routing/addresses`;
+  let destinations = asList((await client.request('GET', addressPath)).result);
+  let destination = destinations.find((item) => item.email?.toLowerCase() === forwardTo.toLowerCase());
+  if (!destination) {
+    const created = await client.request('POST', addressPath, { body: { email: forwardTo } });
+    destination = created.result;
+    if (!destination || created.alreadyConfigured) {
+      destinations = asList((await client.request('GET', addressPath)).result);
+      destination = destinations.find((item) => item.email?.toLowerCase() === forwardTo.toLowerCase());
+    }
+  }
+  if (!destination) {
+    throw new CloudflareApiError(`Cloudflare did not register the support destination ${forwardTo}.`, {
+      path: addressPath,
+    });
+  }
+  const verified = Boolean(destination.verified || destination.status === 'verified');
+  if (!verified) {
+    return {
+      action: 'pending',
+      address,
+      forwardTo,
+      destinationId: destination.id,
+      reason: 'verify the destination email address before forwarding can be enabled',
+    };
   }
   const path = `/zones/${zoneId}/email/routing/rules`;
   const existing = asList((await client.request('GET', path)).result);
@@ -828,17 +929,19 @@ export async function provisionShopcrankCom({
   }
 
   const zoneId = zoneStep.zoneId;
+  report.steps.legacyZone = await cfTry('legacyZone', () => findLegacyZone(client, { accountId }));
+  logger.info?.(`[provision] legacyZone: ${report.steps.legacyZone.ok
+    ? report.steps.legacyZone.action || 'ok'
+    : report.steps.legacyZone.error}`);
   const supportForward = String(env.SUPPORT_EMAIL_FORWARD_TO || '').trim();
   const steps = {
     pages: () => ensurePagesDomains(client, { accountId }),
     workerDomains: () => detachWholeHostWorkerDomains(client, { accountId }),
     workerRoutes: () => ensureWorkerRoutes(client, { zoneId }),
-    legacyWorkerDomains: () => detachLegacyWorkerDomains(client, { accountId }),
-    legacyZone: () => findLegacyZone(client, { accountId }),
     apexDns: () => ensureDnsRecords(client, { zoneId, records: apexDnsRecords() }),
     r2: () => ensureR2Buckets(client, { accountId }),
     email: () => enableEmail(client, { accountId, zoneId }),
-    supportMail: () => ensureSupportForwarding(client, { zoneId, forwardTo: supportForward }),
+    supportMail: () => ensureSupportForwarding(client, { accountId, zoneId, forwardTo: supportForward }),
     secrets: () => syncWorkerSecrets(client, { accountId, env }),
   };
 
@@ -849,30 +952,80 @@ export async function provisionShopcrankCom({
     logger.info?.(`[provision] ${name}: ${result.ok ? result.action || 'ok' : result.error}`);
   }
 
-  // The legacy zone is only touched after the shared steps ran, so a failure
-  // above never leaves the old host half-rewired.
-  if (report.steps.legacyZone?.ok && report.steps.legacyZone.zoneId) {
-    const legacyZoneId = report.steps.legacyZone.zoneId;
-    const legacyRoutes = await cfTry('legacyWorkerRoutes', () => ensureLegacyWorkerRoutes(client, {
-      zoneId: legacyZoneId,
-    }));
-    report.steps.legacyWorkerRoutes = legacyRoutes;
-    if (!legacyRoutes.ok) report.ok = false;
-    logger.info?.(`[provision] legacyWorkerRoutes: ${legacyRoutes.ok ? legacyRoutes.action || 'ok' : legacyRoutes.error}`);
+  const legacyZone = report.steps.legacyZone;
+  const canonicalPrerequisites = ['pages', 'workerRoutes', 'apexDns'];
+  const failedPrerequisite = canonicalPrerequisites.find((name) => !report.steps[name]?.ok);
+  const skipLegacyCutover = (reason) => {
+    report.steps.legacyWorkerRoutes = { ok: true, action: 'skipped', reason };
+    report.steps.legacyWorkerDomains = { ok: true, action: 'skipped', reason };
+    report.steps.legacyDns = { ok: true, action: 'skipped', reason };
+    for (const name of ['legacyWorkerRoutes', 'legacyWorkerDomains', 'legacyDns']) {
+      logger.info?.(`[provision] ${name}: skipped (${reason})`);
+    }
+  };
 
-    // Detaching the old custom domain removed the legacy DNS records, so the
-    // redirect would be unreachable. Put them back.
-    const legacyDns = await cfTry('legacyDns', () => ensureDnsRecords(client, {
-      zoneId: legacyZoneId,
-      records: legacyDnsRecords(),
-    }));
-    report.steps.legacyDns = legacyDns;
-    if (!legacyDns.ok) report.ok = false;
-    logger.info?.(`[provision] legacyDns: ${legacyDns.ok ? legacyDns.action || 'ok' : legacyDns.error}`);
-  } else if (report.steps.legacyZone && !report.steps.legacyZone.ok) {
+  if (!legacyZone.ok) {
     report.ok = false;
+    skipLegacyCutover(`legacy zone discovery failed: ${legacyZone.error}`);
+  } else if (!legacyZone.zoneId) {
+    skipLegacyCutover(`legacy zone ${LEGACY_ZONE} not on this account`);
+  } else if (legacyZone.status && legacyZone.status !== 'active') {
+    skipLegacyCutover(`legacy zone ${LEGACY_ZONE} is not active`);
+    report.remaining.push({
+      kind: 'legacy_zone',
+      message: `Activate the ${LEGACY_ZONE} zone before detaching its Worker custom domains.`,
+      status: legacyZone.status,
+    });
+  } else if (failedPrerequisite) {
+    skipLegacyCutover(`canonical prerequisite ${failedPrerequisite} failed`);
   } else {
-    report.steps.legacyWorkerRoutes = { ok: true, action: 'skipped', reason: `legacy zone ${LEGACY_ZONE} not on this account` };
+    const legacyZoneId = legacyZone.zoneId;
+    const dnsPreflight = await cfTry('legacyDnsPreflight', async () => ({
+      records: (await listPaged(client, `/zones/${legacyZoneId}/dns_records`)).length,
+    }));
+    report.steps.legacyDnsPreflight = dnsPreflight;
+    if (!dnsPreflight.ok) {
+      report.ok = false;
+      skipLegacyCutover(`legacy DNS preflight failed: ${dnsPreflight.error}`);
+    } else {
+      const legacyRoutes = await cfTry('legacyWorkerRoutes', () => ensureLegacyWorkerRoutes(client, {
+        zoneId: legacyZoneId,
+      }));
+      report.steps.legacyWorkerRoutes = legacyRoutes;
+      logger.info?.(`[provision] legacyWorkerRoutes: ${legacyRoutes.ok ? legacyRoutes.action || 'ok' : legacyRoutes.error}`);
+      if (!legacyRoutes.ok) {
+        report.ok = false;
+        skipLegacyCutover(`legacy Worker routes failed: ${legacyRoutes.error}`);
+      } else {
+        const legacyDomains = await cfTry('legacyWorkerDomains', () => detachLegacyWorkerDomains(client, { accountId }));
+        report.steps.legacyWorkerDomains = legacyDomains;
+        logger.info?.(`[provision] legacyWorkerDomains: ${legacyDomains.ok ? legacyDomains.action || 'ok' : legacyDomains.error}`);
+        if (!legacyDomains.ok) {
+          report.ok = false;
+          report.steps.legacyDns = { ok: true, action: 'skipped', reason: 'legacy domain detachment failed' };
+        } else {
+          // Detaching the old custom domain removes its DNS record. Restore the
+          // records only after the destination Worker route is ready.
+          const legacyDns = await cfTry('legacyDns', () => ensureDnsRecords(client, {
+            zoneId: legacyZoneId,
+            records: legacyDnsRecords(),
+          }));
+          report.steps.legacyDns = legacyDns;
+          logger.info?.(`[provision] legacyDns: ${legacyDns.ok ? legacyDns.action || 'ok' : legacyDns.error}`);
+          if (!legacyDns.ok) {
+            report.ok = false;
+            if (legacyDomains.detachedDomains?.length) {
+              const rollback = await cfTry('legacyRollback', () => restoreWorkerDomains(client, {
+                accountId,
+                domains: legacyDomains.detachedDomains,
+              }));
+              report.steps.legacyRollback = rollback;
+              logger.info?.(`[provision] legacyRollback: ${rollback.ok ? rollback.action || 'ok' : rollback.error}`);
+            }
+          }
+        }
+      }
+    }
   }
 
   if (report.steps.email?.destination && !report.steps.email.destination.verified) {
@@ -894,6 +1047,12 @@ export async function provisionShopcrankCom({
     report.remaining.push({
       kind: 'support_email',
       message: `Set SUPPORT_EMAIL_FORWARD_TO to the mailbox that should receive ${SUPPORT_EMAIL}, then re-run this script. Until then, support tickets are stored in D1 but no email is sent.`,
+    });
+  }
+  if (report.steps.supportMail?.action === 'pending') {
+    report.remaining.push({
+      kind: 'support_email_verification',
+      message: `Verify ${supportForward} using Cloudflare's destination-address email before forwarding to ${SUPPORT_EMAIL} can be enabled.`,
     });
   }
 

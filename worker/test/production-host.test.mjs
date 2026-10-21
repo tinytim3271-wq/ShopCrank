@@ -67,6 +67,16 @@ test('the pre-cutover host redirects to the canonical host, keeping path and que
   assert.equal(page.headers.get('location'), `${CANONICAL_ORIGIN}/pricing/`);
 });
 
+test('legacy Stripe webhook POSTs reach signature validation instead of redirecting', async () => {
+  const response = await worker.fetch(new Request(
+    `https://${LEGACY_HOST}/api/payments/webhook/shop-1`,
+    { method: 'POST', body: '{}' },
+  ), {});
+
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('location'), null);
+});
+
 test('the canonical host is never redirected', async () => {
   const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
   assert.equal(response.status, 200);

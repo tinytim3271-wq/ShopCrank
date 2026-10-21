@@ -14,7 +14,9 @@ import {
   desiredLegacyWorkerRoutes,
   desiredState,
   desiredWorkerRoutes,
+  detachLegacyWorkerDomains,
   ensureDnsRecords,
+  ensureSupportForwarding,
   googleOAuthRemaining,
   isAlreadyConfiguredError,
   isDesiredApiRoute,
@@ -26,6 +28,7 @@ import {
   legacyRoutesToCreate,
   parseArgs,
   provisionShopcrankCom,
+  restoreWorkerDomains,
   routesToCreate,
   secretCopyPlan,
   shouldDeleteLegacyRoute,
@@ -280,6 +283,168 @@ test('ensureDnsRecords replaces a record of a different type on the same name', 
   assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
 });
 
+test('ensureDnsRecords reads every page and preserves mail and verification records', async () => {
+  const calls = [];
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url);
+      const method = init.method || 'GET';
+      const page = Number(parsed.searchParams.get('page') || '1');
+      calls.push({ method, page });
+      if (method === 'GET') {
+        return jsonResponse(200, {
+          success: true,
+          result: page === 1
+            ? [{ id: 'txt-1', type: 'TXT', name: 'legacy.example', content: 'verification', proxied: false }]
+            : [{ id: 'a-1', type: 'A', name: 'legacy.example', content: '104.21.17.176', proxied: true }],
+          result_info: { total_pages: 2 },
+        });
+      }
+      if (method === 'PUT') return jsonResponse(200, { success: true, result: { id: 'a-1' } });
+      if (method === 'POST') return jsonResponse(200, { success: true, result: { id: 'a-2' } });
+      return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method}` }] });
+    },
+  });
+
+  const result = await ensureDnsRecords(client, {
+    zoneId: 'zone-1',
+    records: [{ type: 'A', name: 'legacy.example', content: '104.21.17.188', proxied: true }],
+  });
+
+  assert.equal(result.action, 'updated');
+  assert.deepEqual(result.updated, [{ type: 'A', name: 'legacy.example', content: '104.21.17.188' }]);
+  assert.equal(calls.filter((call) => call.method === 'GET').length, 2);
+  assert.equal(calls.filter((call) => call.method === 'PUT').length, 1);
+  assert.equal(calls.filter((call) => call.method === 'DELETE').length, 0);
+});
+
+test('ensureDnsRecords deletes every A and AAAA conflict but keeps TXT and MX for a CNAME', async () => {
+  const records = [
+    { id: 'a-1', type: 'A', name: 'shopcrank.com' },
+    { id: 'a-2', type: 'A', name: 'shopcrank.com' },
+    { id: 'aaaa-1', type: 'AAAA', name: 'shopcrank.com' },
+    { id: 'txt-1', type: 'TXT', name: 'shopcrank.com' },
+    { id: 'mx-1', type: 'MX', name: 'shopcrank.com' },
+  ];
+  const calls = [];
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method || 'GET';
+      const path = new URL(url).pathname.replace('/client/v4', '');
+      calls.push({ method, path });
+      if (method === 'GET') return jsonResponse(200, { success: true, result: records });
+      if (method === 'DELETE') return jsonResponse(200, { success: true, result: null });
+      if (method === 'POST') return jsonResponse(200, { success: true, result: { id: 'cname-1' } });
+      return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method}` }] });
+    },
+  });
+
+  const result = await ensureDnsRecords(client, {
+    zoneId: 'zone-1',
+    records: [{ type: 'CNAME', name: 'shopcrank.com', content: 'shopcrank-dispatch.pages.dev', proxied: true }],
+  });
+
+  assert.equal(result.action, 'updated');
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'DELETE').map((call) => call.path.split('/').at(-1)),
+    ['a-1', 'a-2', 'aaaa-1'],
+  );
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
+  assert.deepEqual(records.filter((record) => ['TXT', 'MX'].includes(record.type)).map((record) => record.id), ['txt-1', 'mx-1']);
+});
+
+test('ensureDnsRecords does not treat duplicate-create responses as success without a record', async () => {
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method || 'GET';
+      if (method === 'GET') {
+        return jsonResponse(200, { success: true, result: [], result_info: { total_pages: 1 } });
+      }
+      return jsonResponse(409, { success: false, errors: [{ message: 'already exists' }] });
+    },
+  });
+
+  await assert.rejects(
+    () => ensureDnsRecords(client, {
+      zoneId: 'zone-1',
+      records: [{ type: 'A', name: 'legacy.example', content: '104.21.17.176', proxied: true }],
+    }),
+    /reported A legacy\.example already exists, but it was not found/,
+  );
+});
+
+test('ensureSupportForwarding waits for a registered destination to be verified', async () => {
+  const calls = [];
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method || 'GET';
+      const path = new URL(url).pathname.replace('/client/v4', '');
+      calls.push({ method, path });
+      if (method === 'GET' && path.endsWith('/email/routing/addresses')) {
+        return jsonResponse(200, { success: true, result: [] });
+      }
+      if (method === 'POST' && path.endsWith('/email/routing/addresses')) {
+        return jsonResponse(200, {
+          success: true,
+          result: { id: 'address-1', email: 'ops@example.test', verified: null },
+        });
+      }
+      return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
+    },
+  });
+
+  const result = await ensureSupportForwarding(client, {
+    accountId: 'acct-1',
+    zoneId: 'zone-1',
+    forwardTo: 'ops@example.test',
+  });
+
+  assert.equal(result.action, 'pending');
+  assert.equal(result.destinationId, 'address-1');
+  assert.equal(calls.some((call) => call.path.endsWith('/email/routing/rules')), false);
+});
+
+test('detachLegacyWorkerDomains restores earlier deletions if a later detach fails', async () => {
+  const calls = [];
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method || 'GET';
+      const path = new URL(url).pathname.replace('/client/v4', '');
+      calls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined });
+      if (method === 'GET' && path.endsWith('/workers/domains')) {
+        return jsonResponse(200, {
+          success: true,
+          result: [
+            { id: 'domain-1', hostname: 'yourcarguy806.com', service: 'mechpro-api' },
+            { id: 'domain-2', hostname: 'www.yourcarguy806.com', service: 'mechpro-api' },
+          ],
+        });
+      }
+      if (method === 'DELETE' && path.endsWith('/domain-1')) {
+        return jsonResponse(200, { success: true, result: null });
+      }
+      if (method === 'DELETE' && path.endsWith('/domain-2')) {
+        return jsonResponse(500, { success: false, errors: [{ message: 'delete failed' }] });
+      }
+      if (method === 'POST' && path.endsWith('/workers/domains')) {
+        return jsonResponse(200, { success: true, result: { id: 'restored-1' } });
+      }
+      return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
+    },
+  });
+
+  await assert.rejects(
+    () => detachLegacyWorkerDomains(client, { accountId: 'acct-1' }),
+    /delete failed/,
+  );
+  assert.ok(calls.some((call) => call.method === 'POST' && call.body.hostname === 'yourcarguy806.com'));
+});
+
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -496,6 +661,8 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
 
 test('provisionShopcrankCom retires the legacy zone and forwards support mail', async () => {
   const calls = [];
+  let failPagesRead = false;
+  let failLegacyDnsCreate = false;
   const store = {
     zones: [
       { id: 'zone-1', name: 'shopcrank.com', status: 'active' },
@@ -532,13 +699,19 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     const method = init.method || 'GET';
     const parsed = new URL(url);
     const path = parsed.pathname.replace('/client/v4', '');
-    calls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined });
+    calls.push({
+      method,
+      path,
+      query: Object.fromEntries(parsed.searchParams),
+      body: init.body ? JSON.parse(init.body) : undefined,
+    });
 
     if (method === 'GET' && path === '/zones') {
       const name = parsed.searchParams.get('name');
       return jsonResponse(200, { success: true, result: store.zones.filter((zone) => !name || zone.name === name) });
     }
     if (method === 'GET' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
+      if (failPagesRead) return jsonResponse(500, { success: false, errors: [{ message: 'Pages unavailable' }] });
       return jsonResponse(200, { success: true, result: store.pagesDomains });
     }
     if (method === 'POST' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
@@ -551,8 +724,15 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     }
     if (method === 'DELETE' && path.startsWith('/accounts/acct-1/workers/domains/')) {
       const id = path.split('/').at(-1);
+      const removed = store.workerDomains.find((domain) => domain.id === id);
       store.workerDomains = store.workerDomains.filter((domain) => domain.id !== id);
+      store.dnsRecords = store.dnsRecords.filter((record) => record.name !== removed?.hostname);
       return jsonResponse(200, { success: true, result: null });
+    }
+    if (method === 'POST' && path === '/accounts/acct-1/workers/domains') {
+      const domain = { id: `restored-${store.workerDomains.length}`, ...JSON.parse(init.body) };
+      store.workerDomains.push(domain);
+      return jsonResponse(200, { success: true, result: domain });
     }
     const routeMatch = path.match(/^\/zones\/([^/]+)\/workers\/routes$/);
     if (method === 'GET' && routeMatch) {
@@ -607,6 +787,9 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       return jsonResponse(200, { success: true, result: store.dnsRecords });
     }
     if (method === 'POST' && path === '/zones/zone-legacy/dns_records') {
+      if (failLegacyDnsCreate) {
+        return jsonResponse(500, { success: false, errors: [{ message: 'DNS restoration failed' }] });
+      }
       const record = { id: `dns-${store.dnsRecords.length}`, ...JSON.parse(init.body) };
       store.dnsRecords.push(record);
       return jsonResponse(200, { success: true, result: record });
@@ -667,4 +850,46 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
   // The canonical apex resolves too.
   assert.equal(report.steps.apexDns.action, 'updated');
   assert.deepEqual(store.apexDnsRecords.map((record) => record.name), ['shopcrank.com']);
+  const legacyZoneLookup = calls.findIndex((call) => call.method === 'GET'
+    && call.path === '/zones' && call.query.name === LEGACY_ZONE);
+  const legacyDnsPreflight = calls.findIndex((call) => call.method === 'GET'
+    && call.path === '/zones/zone-legacy/dns_records');
+  const firstLegacyDetach = calls.findIndex((call) => call.method === 'DELETE'
+    && call.path.startsWith('/accounts/acct-1/workers/domains/'));
+  assert.ok(legacyZoneLookup < firstLegacyDetach);
+  assert.ok(legacyDnsPreflight < firstLegacyDetach);
+
+  store.workerDomains.push(
+    { id: 'dom-legacy-www-retry', hostname: 'www.yourcarguy806.com', service: 'mechpro-api' },
+    { id: 'dom-legacy-apex-retry', hostname: 'yourcarguy806.com', service: 'mechpro-api' },
+  );
+  const deletesBeforeFailedPreflight = calls.filter((call) => call.method === 'DELETE'
+    && call.path.startsWith('/accounts/acct-1/workers/domains/')).length;
+  failPagesRead = true;
+  const guarded = await provisionShopcrankCom({
+    client,
+    accountId: 'acct-1',
+    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
+    logger: { info() {} },
+  });
+  assert.equal(guarded.steps.legacyWorkerDomains.action, 'skipped');
+  assert.equal(
+    calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/accounts/acct-1/workers/domains/')).length,
+    deletesBeforeFailedPreflight,
+  );
+
+  failPagesRead = false;
+  failLegacyDnsCreate = true;
+  const rolledBack = await provisionShopcrankCom({
+    client,
+    accountId: 'acct-1',
+    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
+    logger: { info() {} },
+  });
+  assert.equal(rolledBack.steps.legacyDns.ok, false);
+  assert.equal(rolledBack.steps.legacyRollback.ok, true);
+  assert.deepEqual(
+    store.workerDomains.map((domain) => domain.hostname).toSorted(),
+    ['www.yourcarguy806.com', 'yourcarguy806.com'],
+  );
 });

@@ -3723,7 +3723,10 @@ export default {
     };
     try {
       const legacyRedirect = legacyToCanonicalRedirect(request);
-      if (legacyRedirect) return legacyRedirect;
+      const requestUrl = new URL(request.url);
+      const legacyStripeWebhook = request.method === 'POST'
+        && /^\/api\/payments\/webhook\/[^/]+$/.test(requestUrl.pathname);
+      if (legacyRedirect && !legacyStripeWebhook) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {
