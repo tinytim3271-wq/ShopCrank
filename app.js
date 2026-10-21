@@ -10344,7 +10344,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     document.querySelector("#messaging-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(event.target));
-      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your Car Guy" };
+      state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your shop" };
       if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) {
         toast("A secure service endpoint is required before enabling delivery");
         return;
