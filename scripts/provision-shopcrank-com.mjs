@@ -668,6 +668,31 @@ export async function ensureLegacyWorkerRoutes(client, { zoneId, worker = WORKER
   };
 }
 
+async function ensureSupportNotificationAddress(client, { accountId, address }) {
+  const path = `/accounts/${accountId}/email/routing/addresses`;
+  let destinations = asList((await client.request('GET', path)).result);
+  let destination = destinations.find((item) => item.email?.toLowerCase() === address.toLowerCase());
+  if (!destination) {
+    const created = await client.request('POST', path, { body: { email: address } });
+    destination = created.result;
+    if (!destination || created.alreadyConfigured) {
+      destinations = asList((await client.request('GET', path)).result);
+      destination = destinations.find((item) => item.email?.toLowerCase() === address.toLowerCase());
+    }
+  }
+  if (!destination) {
+    throw new CloudflareApiError(`Cloudflare did not register the support notification address ${address}.`, {
+      path,
+    });
+  }
+  return {
+    email: address,
+    verified: Boolean(destination.verified || destination.status === 'verified'),
+    created: Boolean(destination.id && !destinations.some((item) => item.id === destination.id)),
+    id: destination.id,
+  };
+}
+
 /**
  * Points the support address at a real destination. The legacy zone routed
  * mail to the old owner's Gmail address; the ShopCrank zone needs the same
@@ -707,10 +732,14 @@ export async function ensureSupportForwarding(client, { accountId, zoneId, addre
   const existing = asList((await client.request('GET', path)).result);
   const matcher = { type: 'literal', field: 'to', value: address };
   const already = existing.find((rule) => (rule.matchers || []).some((m) => m.type === 'literal' && m.field === 'to' && m.value === address));
+  const withNotificationAddress = async (result) => ({
+    ...result,
+    notificationAddress: await ensureSupportNotificationAddress(client, { accountId, address }),
+  });
   if (already) {
     const forwarded = (already.actions || []).some((action) => action.type === 'forward' && (action.value || []).includes(forwardTo));
     if (forwarded && already.enabled) {
-      return { action: 'exists', address, forwardTo, ruleId: already.id };
+      return withNotificationAddress({ action: 'exists', address, forwardTo, ruleId: already.id });
     }
     const updated = await client.request('PUT', `${path}/${already.id}`, {
       body: {
@@ -721,7 +750,13 @@ export async function ensureSupportForwarding(client, { accountId, zoneId, addre
         priority: 0,
       },
     });
-    return { action: 'updated', address, forwardTo, ruleId: already.id, result: updated?.result ?? null };
+    return withNotificationAddress({
+      action: 'updated',
+      address,
+      forwardTo,
+      ruleId: already.id,
+      result: updated?.result ?? null,
+    });
   }
   const created = await client.request('POST', path, {
     body: {
@@ -732,7 +767,12 @@ export async function ensureSupportForwarding(client, { accountId, zoneId, addre
       priority: 0,
     },
   });
-  return { action: 'created', address, forwardTo, ruleId: created?.result?.id ?? null };
+  return withNotificationAddress({
+    action: 'created',
+    address,
+    forwardTo,
+    ruleId: created?.result?.id ?? null,
+  });
 }
 
 export async function ensureWorkerRoutes(client, { zoneId, worker = WORKER_NAME }) {
@@ -1053,6 +1093,12 @@ export async function provisionShopcrankCom({
     report.remaining.push({
       kind: 'support_email_verification',
       message: `Verify ${supportForward} using Cloudflare's destination-address email before forwarding to ${SUPPORT_EMAIL} can be enabled.`,
+    });
+  }
+  if (report.steps.supportMail?.notificationAddress && !report.steps.supportMail.notificationAddress.verified) {
+    report.remaining.push({
+      kind: 'support_notification_email_verification',
+      message: `Verify ${SUPPORT_EMAIL} using Cloudflare's destination-address email before support ticket notifications can be delivered.`,
     });
   }
 

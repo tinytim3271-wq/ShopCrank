@@ -766,7 +766,12 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       return jsonResponse(200, { success: true, result: store.addresses });
     }
     if (method === 'POST' && path === '/accounts/acct-1/email/routing/addresses') {
-      const row = { id: 'addr-1', email: JSON.parse(init.body).email, verified: '2026-10-21T00:00:00Z' };
+      const email = JSON.parse(init.body).email;
+      const row = {
+        id: `addr-${store.addresses.length + 1}`,
+        email,
+        verified: email === 'support@shopcrank.com' ? false : '2026-10-21T00:00:00Z',
+      };
       store.addresses.push(row);
       return jsonResponse(200, { success: true, result: row });
     }
@@ -840,7 +845,15 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
   // Support mail is forwarded to the configured mailbox.
   assert.equal(report.steps.supportMail.action, 'created');
   assert.equal(report.steps.supportMail.address, 'support@shopcrank.com');
+  assert.equal(report.steps.supportMail.notificationAddress.verified, false);
+  assert.ok(report.remaining.some((item) => item.kind === 'support_notification_email_verification'));
   assert.equal(store.mailRules[0].actions[0].value[0], 'ops@example.test');
+  const supportRuleCreated = calls.findIndex((call) => call.method === 'POST'
+    && call.path === '/zones/zone-1/email/routing/rules');
+  const supportAddressRegistered = calls.findIndex((call) => call.method === 'POST'
+    && call.path === '/accounts/acct-1/email/routing/addresses'
+    && call.body.email === 'support@shopcrank.com');
+  assert.ok(supportRuleCreated < supportAddressRegistered);
   // The legacy DNS records are restored so the redirect is reachable.
   assert.equal(report.steps.legacyDns.action, 'updated');
   assert.deepEqual(
