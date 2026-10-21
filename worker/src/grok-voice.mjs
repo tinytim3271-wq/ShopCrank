@@ -1417,6 +1417,15 @@ export async function handleGrokVoiceSettings(request, env, context, {
 
 // --- Durable Object Bridge: Twilio Media Stream <-> xAI Grok Realtime WebSocket ---
 
+function parseSocketJson(event) {
+  if (typeof event.data !== 'string') return null;
+  try {
+    return JSON.parse(event.data);
+  } catch {
+    return null;
+  }
+}
+
 function safeCloseSocket(socket, code = 1000, reason = 'Session ended') {
   try {
     socket.close(code, String(reason).slice(0, 120));
@@ -1500,134 +1509,101 @@ export async function handleGrokTwilioBridge({
     }
   };
 
+  const closeFromTwilio = (code, reason, finalizeReason) => {
+    twilioClosed = true;
+    if (upstream) safeCloseSocket(upstream, code, reason);
+    state?.waitUntil?.(finalizeCall(finalizeReason));
+  };
+
+  const onTwilioStart = (msg) => {
+    streamSid = String(msg.start?.streamSid || msg.streamSid || '');
+    const custom = msg.start?.customParameters || {};
+    if (custom.caller && !currentCaller) currentCaller = String(custom.caller);
+    if (custom.callSid && !currentCallSid) currentCallSid = String(custom.callSid);
+    triggerInitialGreeting();
+  };
+
+  const onTwilioMedia = (payload) => {
+    twilioInboundBytes += Math.floor((payload.length * 3) / 4);
+    if (!upstreamOpen()) return;
+    const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
+    if (pcm24kBase64) {
+      upstream.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcm24kBase64 }));
+    }
+  };
+
   // Twilio -> Grok
   server.addEventListener('message', (event) => {
-    if (typeof event.data !== 'string') return;
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-    if (msg.event === 'start') {
-      streamSid = String(msg.start?.streamSid || msg.streamSid || '');
-      const custom = msg.start?.customParameters || {};
-      if (custom.caller && !currentCaller) currentCaller = String(custom.caller);
-      if (custom.callSid && !currentCallSid) currentCallSid = String(custom.callSid);
-      triggerInitialGreeting();
-      return;
-    }
-    if (msg.event === 'media' && msg.media?.payload) {
-      const payload = String(msg.media.payload);
-      twilioInboundBytes += Math.floor((payload.length * 3) / 4);
-      if (!upstreamOpen()) return;
-      const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
-      if (pcm24kBase64) {
-        upstream.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: pcm24kBase64,
-        }));
-      }
-      return;
-    }
-    if (msg.event === 'stop') {
-      twilioClosed = true;
-      if (upstream) safeCloseSocket(upstream, 1000, 'Twilio call ended');
-      state?.waitUntil?.(finalizeCall('twilio_stop'));
-    }
+    const msg = parseSocketJson(event);
+    if (msg?.event === 'start') onTwilioStart(msg);
+    else if (msg?.event === 'media' && msg.media?.payload) onTwilioMedia(String(msg.media.payload));
+    else if (msg?.event === 'stop') closeFromTwilio(1000, 'Twilio call ended', 'twilio_stop');
   });
+  server.addEventListener('close', () => closeFromTwilio(1000, 'Twilio stream closed', 'twilio_closed'));
+  server.addEventListener('error', () => closeFromTwilio(1011, 'Twilio stream error', 'twilio_error'));
 
-  server.addEventListener('close', () => {
-    twilioClosed = true;
-    if (upstream) safeCloseSocket(upstream, 1000, 'Twilio stream closed');
-    state?.waitUntil?.(finalizeCall('twilio_closed'));
-  });
-  server.addEventListener('error', () => {
-    twilioClosed = true;
-    if (upstream) safeCloseSocket(upstream, 1011, 'Twilio stream error');
-    state?.waitUntil?.(finalizeCall('twilio_error'));
-  });
+  const sendToTwilio = (message) => {
+    if (streamSid && server.readyState === WebSocket.OPEN) server.send(JSON.stringify({ ...message, streamSid }));
+  };
+
+  const runGrokToolCall = async (msg) => {
+    let parsedArgs = {};
+    try {
+      parsedArgs = JSON.parse(msg.arguments || '{}');
+    } catch {
+      parsedArgs = {};
+    }
+    let output;
+    try {
+      output = await executeGrokShopTool(env, shopId, String(msg.name || ''), parsedArgs, {
+        callerPhone: currentCaller,
+        callSid: currentCallSid,
+      });
+    } catch (err) {
+      output = { error: err instanceof Error ? err.message : 'Tool execution failed' };
+    }
+    if (!upstreamOpen()) return;
+    upstream.send(JSON.stringify({
+      type: 'conversation.item.create',
+      item: {
+        type: 'function_call_output',
+        call_id: String(msg.call_id || ''),
+        output: JSON.stringify(output),
+      },
+    }));
+    upstream.send(JSON.stringify({ type: 'response.create' }));
+  };
+
+  const upstreamHandlers = {
+    'session.updated': () => triggerInitialGreeting(),
+    error: (msg) => console.error(JSON.stringify({
+      message: 'grok realtime error during phone call',
+      shopId,
+      callSid: currentCallSid,
+      error: msg.error?.message || msg.message || 'unknown',
+    })),
+    // Barge-in: caller started speaking, immediately clear Twilio's playback buffer
+    'input_audio_buffer.speech_started': () => sendToTwilio({ event: 'clear' }),
+    'conversation.item.input_audio_transcription.completed': (msg) => {
+      if (msg.transcript) transcriptLines.push({ role: 'caller', text: String(msg.transcript).trim() });
+    },
+    'response.output_audio_transcript.done': (msg) => {
+      if (msg.transcript) transcriptLines.push({ role: 'grok', text: String(msg.transcript).trim() });
+    },
+    'response.function_call_arguments.done': runGrokToolCall,
+  };
 
   // Grok -> Twilio
   const onUpstreamMessage = async (event) => {
-    if (typeof event.data !== 'string') return;
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-
-    if (msg.type === 'session.updated') {
-      triggerInitialGreeting();
-    }
-
-    if (msg.type === 'error') {
-      console.error(JSON.stringify({
-        message: 'grok realtime error during phone call',
-        shopId,
-        callSid: currentCallSid,
-        error: msg.error?.message || msg.message || 'unknown',
-      }));
-    }
-
-    // Barge-in: caller started speaking, immediately clear Twilio's playback buffer
-    if (msg.type === 'input_audio_buffer.speech_started' && streamSid && server.readyState === WebSocket.OPEN) {
-      server.send(JSON.stringify({ event: 'clear', streamSid }));
-      return;
-    }
-
-    // Audio output from Grok -> transcode 24kHz PCM16 to 8kHz mu-law for Twilio
+    const msg = parseSocketJson(event);
+    if (!msg) return;
     if ((msg.type === 'response.output_audio.delta' || msg.type === 'response.audio.delta') && msg.delta) {
+      // 24kHz PCM16 from Grok -> 8kHz mu-law for Twilio
       const mulawBase64 = transcodeGrokPcm24kToTwilioMulaw8k(String(msg.delta));
-      if (mulawBase64 && streamSid && server.readyState === WebSocket.OPEN) {
-        server.send(JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: { payload: mulawBase64 },
-        }));
-      }
+      if (mulawBase64) sendToTwilio({ event: 'media', media: { payload: mulawBase64 } });
       return;
     }
-
-    if (msg.type === 'conversation.item.input_audio_transcription.completed' && msg.transcript) {
-      transcriptLines.push({ role: 'caller', text: String(msg.transcript).trim() });
-    }
-    if (msg.type === 'response.output_audio_transcript.done' && msg.transcript) {
-      transcriptLines.push({ role: 'grok', text: String(msg.transcript).trim() });
-    }
-
-    // Function tool calls from Grok during the phone call
-    if (msg.type === 'response.function_call_arguments.done') {
-      const toolName = String(msg.name || '');
-      const callId = String(msg.call_id || '');
-      let parsedArgs = {};
-      try {
-        parsedArgs = JSON.parse(msg.arguments || '{}');
-      } catch {
-        parsedArgs = {};
-      }
-      let output;
-      try {
-        output = await executeGrokShopTool(env, shopId, toolName, parsedArgs, {
-          callerPhone: currentCaller,
-          callSid: currentCallSid,
-        });
-      } catch (err) {
-        output = { error: err instanceof Error ? err.message : 'Tool execution failed' };
-      }
-      if (upstreamOpen()) {
-        upstream.send(JSON.stringify({
-          type: 'conversation.item.create',
-          item: {
-            type: 'function_call_output',
-            call_id: callId,
-            output: JSON.stringify(output),
-          },
-        }));
-        upstream.send(JSON.stringify({ type: 'response.create' }));
-      }
-    }
+    if (Object.hasOwn(upstreamHandlers, msg.type)) await upstreamHandlers[msg.type](msg);
   };
 
   const connectUpstream = async () => {

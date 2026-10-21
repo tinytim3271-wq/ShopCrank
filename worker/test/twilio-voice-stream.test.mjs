@@ -158,6 +158,10 @@ class FakeSocket {
   emit(type, event) { for (const fn of this.listeners[type] || []) fn(event); }
 }
 
+async function onUpstreamTool(upstream, message) {
+  await Promise.all((upstream.listeners.message || []).map(fn => fn({ data: JSON.stringify(message) })));
+}
+
 function withWorkersRuntime(run) {
   const originals = {
     WebSocketPair: globalThis.WebSocketPair,
@@ -244,6 +248,22 @@ test('the bridge greets the caller once Twilio starts and xAI is connected', () 
   const toTwilio = twilioSide.sent.map(item => JSON.parse(item));
   assert.equal(toTwilio.at(-1).event, 'media');
   assert.equal(toTwilio.at(-1).streamSid, 'MZ1');
+
+  upstream.emit('message', { data: JSON.stringify({ type: 'input_audio_buffer.speech_started' }) });
+  assert.deepEqual(JSON.parse(twilioSide.sent.at(-1)), { event: 'clear', streamSid: 'MZ1' }, 'barge-in clears playback');
+
+  upstream.emit('message', { data: JSON.stringify({ type: 'constructor' }) });
+  const sentBeforeTool = upstream.sent.length;
+  await onUpstreamTool(upstream, {
+    type: 'response.function_call_arguments.done',
+    name: 'no_such_tool',
+    call_id: 'call-1',
+    arguments: '{}',
+  });
+  const toolReply = upstream.sent.slice(sentBeforeTool).map(item => JSON.parse(item));
+  assert.equal(toolReply[0].item.type, 'function_call_output');
+  assert.equal(toolReply[0].item.call_id, 'call-1');
+  assert.equal(toolReply[1].type, 'response.create');
 
   twilioSide.emit('message', { data: JSON.stringify({ event: 'stop' }) });
   assert.equal(upstream.readyState, 3, 'hanging up closes the xAI session');
