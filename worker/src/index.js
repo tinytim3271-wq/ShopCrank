@@ -2424,9 +2424,10 @@ function normalizeSignupIntent({ planId, shopName, ownerName, email, name } = {}
 /** Pack public signup fields into return_to so magic-link works before D1 columns exist. */
 function embedSignupIntent(returnTo, { planId, shopName, ownerName, desktop, handoff } = {}) {
   const path = safeReturnPath(returnTo);
-  if (!planId && !shopName && !ownerName && !desktop && !handoff) return path;
   try {
     const parsed = new URL(path, 'https://shopcrank.invalid');
+    parsed.searchParams.delete('desktopApp');
+    parsed.searchParams.delete('desktopHandoff');
     if (planId && isPublicPlan(planId)) parsed.searchParams.set('trialPlan', planId);
     if (shopName) parsed.searchParams.set('trialShop', shopName);
     if (ownerName) parsed.searchParams.set('trialOwner', ownerName);
@@ -3088,16 +3089,22 @@ async function handleAuthCallback(request, env) {
       ownerName: signup.ownerName,
       handoff: true,
     });
-    await env.DB.prepare(`
+    const now = new Date().toISOString();
+    const updated = await env.DB.prepare(`
       UPDATE login_tokens SET token_hash = ?, return_to = ?, expires_at = ?, used_at = NULL, created_at = ?
-      WHERE id = ?
+      WHERE id = ? AND token_hash = ? AND used_at IS NULL AND expires_at > ?
     `).bind(
       await hashValue(handoffToken),
       handoffReturnTo,
       new Date(Date.now() + 2 * 60 * 1000).toISOString(),
-      new Date().toISOString(),
+      now,
       loginToken.id,
+      tokenHash,
+      now,
     ).run();
+    if (Number(updated?.meta?.changes) !== 1) {
+      throw new HttpError(401, 'The sign-in link has expired');
+    }
     return new Response(desktopHandoffPage(handoffToken, 'Sign-in confirmed'), {
       status: 200,
       headers: {

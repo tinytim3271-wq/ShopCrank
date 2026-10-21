@@ -161,6 +161,41 @@ test('email sign-in started in the desktop app hands the session back to the app
   assert.equal(again.status, 401);
 });
 
+test('client returnTo cannot request a desktop handoff', async () => {
+  const env = { DB: createD1(), AUTH_EXPOSE_LOGIN_LINK: '1' };
+  const start = await worker.fetch(new Request(`${ORIGIN}/api/auth/magic-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.50' },
+    body: JSON.stringify({ email: 'web@example.org', returnTo: '/?desktopHandoff=1' }),
+  }), env);
+  const loginUrl = new URL((await start.json()).loginUrl);
+  const response = await worker.fetch(new Request(loginUrl), env);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Set-Cookie'), null);
+  assert.match(await response.text(), /<form method="post" action="\/api\/auth\/callback">/);
+});
+
+test('overlapping desktop confirmations replace an email token only once', async () => {
+  const env = { DB: createD1(), AUTH_EXPOSE_LOGIN_LINK: '1' };
+  const start = await worker.fetch(new Request(`${ORIGIN}/api/auth/magic-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.50' },
+    body: JSON.stringify({ email: 'desk@example.org', returnTo: '/', desktop: true }),
+  }), env);
+  const emailToken = new URL((await start.json()).loginUrl).searchParams.get('token');
+  const confirm = () => worker.fetch(new Request(`${ORIGIN}/api/auth/callback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: ORIGIN },
+    body: `token=${emailToken}`,
+  }), env);
+
+  const responses = await Promise.all([confirm(), confirm()]);
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 401]);
+  const handoffPage = await responses.find(response => response.status === 200).text();
+  assert.match(handoffPage, /shopcrank:\/\/auth\?token=[a-f0-9]{32}/);
+});
+
 test('browser email sign-in still signs the browser in on confirm', async () => {
   const env = { DB: createD1(), AUTH_EXPOSE_LOGIN_LINK: '1' };
   const { confirm } = await emailSignIn(env, { email: 'web@example.org', returnTo: '/' });
