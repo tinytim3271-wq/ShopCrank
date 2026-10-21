@@ -313,8 +313,24 @@ has the old MechPro bucket names, and copies GitHub-available secrets from
 Cloudflare; names that exist only on `mechpro-api` still need `wrangler secret
 put` unless the same values are in the environment.
 
+It also finishes the cutover away from the pre-cutover host
+`www.yourcarguy806.com`: the old `mechpro-api` custom domains are detached,
+the legacy zone's wildcard Pages route is dropped, and the whole old host is
+re-pointed at `shopcrank-api`, which answers every legacy URL with a 301 to
+`https://www.shopcrank.com`. Detaching a Worker custom domain deletes that
+hostname's DNS record, so the script restores the legacy records and the
+`shopcrank.com` apex CNAME afterwards — without them the redirects are
+unreachable and the apex answers "DNS points to prohibited IP".
+
+Set `SUPPORT_EMAIL_FORWARD_TO` to the mailbox that should receive
+`support@shopcrank.com`; the script adds the Email Routing rule that forwards
+it. Without it, support tickets are still stored in D1 but no email is sent.
+
 `.github/workflows/provision-shopcrank-com.yml` runs that command with the
-`production` Actions secrets on this change and on `main`.
+`production` Actions secrets on this change and on `main`. The DNS steps need
+an API token with DNS edit permission — a Wrangler OAuth login cannot change
+DNS records, so run the script from the Actions job or a machine holding the
+token.
 
 Google Cloud OAuth cannot be updated with a Cloudflare token. On the OAuth 2.0
 Web client, set authorized JavaScript origin `https://www.shopcrank.com` and

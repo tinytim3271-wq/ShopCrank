@@ -62,6 +62,26 @@
 - Worker var `GOOGLE_REDIRECT_ORIGIN` is set to that origin in `wrangler.jsonc`. **Do not deploy the Worker until Google accepts the URI.**
 - Verify: `npm run verify:google-oauth` (exits 0 when registered, 1 while still mismatched).
 - Then: `npm run deploy:worker`. Cloudflare cannot register Google Cloud OAuth clients.
+- Status: registered. The live Worker redirects to
+  `https://www.shopcrank.com/api/auth/google/callback` and Google accepts it.
+
+## Legacy host cutover (`www.yourcarguy806.com`)
+- The pre-cutover host now 301s every URL to `https://www.shopcrank.com`. The
+  legacy zone's wildcard Pages route is gone and the whole host points at
+  `shopcrank-api`, which answers with the redirect.
+- `npm run provision:shopcrank-com` is idempotent and reapplies this state: it
+  detaches the old `mechpro-api` custom domains, drops the wildcard Pages
+  route, re-points the legacy host at `shopcrank-api`, and restores the legacy
+  DNS records. **DNS edit requires an API token** — a Wrangler OAuth login
+  cannot write DNS, so run it from the Actions job or a machine with the token.
+- Detaching a Worker custom domain deletes that hostname's DNS record. If the
+  legacy host stops resolving, re-run the script; it recreates the records.
+- The `shopcrank.com` apex is a proxied CNAME to `shopcrank-dispatch.pages.dev`.
+  An A record to a Cloudflare address is rejected with "DNS points to
+  prohibited IP", so keep it a CNAME.
+- `support@shopcrank.com` needs an Email Routing forward rule. Set
+  `SUPPORT_EMAIL_FORWARD_TO` before running the script; otherwise the support
+  ticket is stored in D1 but no email is sent.
 
 ## Live key programming (AutoAuth unlock)
 - Per-shop AutoAuth login is stored encrypted in D1 (`POST /api/diagnostics/autoauth`).

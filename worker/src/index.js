@@ -8,6 +8,7 @@ import {
   DESKTOP_AUTH_SCHEME,
   HEALTHZ_SERVICE,
   apexToWwwRedirect,
+  legacyToCanonicalRedirect,
 } from './production-host.mjs';
 import {
   ENTITY_TYPES,
@@ -3774,6 +3775,17 @@ export default {
         || crypto.randomUUID(),
     };
     try {
+      const legacyRedirect = legacyToCanonicalRedirect(request);
+      const requestUrl = new URL(request.url);
+      const legacyProviderCallback = (
+        request.method === 'POST'
+        && /^\/api\/(?:payments\/webhook\/[^/]+|billing\/webhook|agentphone\/webhook\/[^/]+|messaging\/twilio\/webhook\/[^/]+|voice\/twilio\/incoming\/[^/]+)$/.test(requestUrl.pathname)
+      ) || (
+        request.method === 'GET'
+        && request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
+        && /^\/api\/voice\/twilio\/stream\/[^/]+$/.test(requestUrl.pathname)
+      );
+      if (legacyRedirect && !legacyProviderCallback) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect) return apexRedirect;
       if (!isApiRequest(request)) {

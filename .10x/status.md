@@ -19,5 +19,12 @@ lint ✓ · 275 front-end/license tests ✓ · 281 Worker tests ✓ · config/J2
 1. Merging deploys to production and runs migrations 0015 (demo-profile repair) and 0016 (rate-limit table).
 2. Optional: set `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` Worker secrets to turn on the bot check.
 3. Confirm branch protection on `main` requires CI + a review (auto-merge.yml relies on it).
-4. Finish the Google OAuth cutover (`npm run verify:google-oauth`), then set `GOOGLE_REDIRECT_ORIGIN` to shopcrank.com.
+4. ~~Finish the Google OAuth cutover~~ **Done (Oct 21, 2026).** `GOOGLE_REDIRECT_ORIGIN` is `https://www.shopcrank.com`, the live Worker redirects to `https://www.shopcrank.com/api/auth/google/callback`, and `npm run verify:google-oauth` exits 0.
 5. After deploy: sign up a throwaway shop and record a payment on production.
+6. Set `SUPPORT_EMAIL_FORWARD_TO` to the mailbox that should receive `support@shopcrank.com`, then re-run `npm run provision:shopcrank-com`. Until then support tickets are stored in D1 but no email goes out.
+
+## Domain cutover (Oct 21, 2026)
+- Canonical host is `https://www.shopcrank.com`; the apex `shopcrank.com` serves the same site.
+- The pre-cutover host `www.yourcarguy806.com` (and its apex) now 301s every URL to the canonical host, path and query preserved.
+- The privacy and terms pages no longer name a legacy shop; they describe the ShopCrank product generically.
+- `ALLOWED_ORIGINS` and `SUPPORT_EMAIL_*` no longer reference the legacy domain.

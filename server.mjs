@@ -62,9 +62,9 @@ app.get('/api/auth/session', (req, res) => {
   res.json({
     claims: {
       sub: 'user_local_owner',
-      email: 'lee@yourcarguy806.com',
-      name: 'Lee (Your Car Guy)',
-      'custom:shopId': 'shop_yourcarguy',
+      email: 'owner@shopcrank.test',
+      name: 'Local Shop Owner',
+      'custom:shopId': 'shop_local_demo',
       'custom:role': 'admin',
       exp: Math.floor(expiresAt / 1000),
     },
@@ -671,7 +671,7 @@ app.post('/api/geocode', async (req, res) => {
   try {
     const searchUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
     const geoRes = await fetch(searchUrl, {
-      headers: { 'User-Agent': 'ShopCrank/1.1 (dispatch@yourcarguy806.com)' },
+      headers: { 'User-Agent': 'ShopCrank/1.1 (dispatch@shopcrank.com)' },
       signal: AbortSignal.timeout(3500),
     });
     if (geoRes.ok) {
