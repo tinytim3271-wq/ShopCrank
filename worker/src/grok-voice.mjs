@@ -1088,17 +1088,45 @@ export async function verifyGrokStreamToken(env, token, expectedShopId) {
   }
 }
 
-export function buildTwilioVoiceStreamTwiml({ streamUrl, caller = '', callSid = '', shopId = '' }) {
+const TWILIO_STREAM_FALLBACK_SAY = 'Sorry, our automated service advisor is unavailable right now. Please call back during shop hours.';
+
+// Twilio drops query strings from <Stream url>, so the signed token must ride in the path.
+export function twilioVoiceStreamUrl(host, shopId, token) {
+  return `wss://${host}/api/voice/twilio/stream/${encodeURIComponent(shopId)}/${encodeURIComponent(token)}`;
+}
+
+export function twilioVoiceStatusUrl(origin, shopId) {
+  return `${origin}/api/voice/twilio/status/${encodeURIComponent(shopId)}`;
+}
+
+export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '', caller = '', callSid = '', shopId = '' }) {
+  const statusAttrs = statusCallbackUrl
+    ? ` statusCallback="${xmlEscape(statusCallbackUrl)}" statusCallbackMethod="POST"`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${xmlEscape(streamUrl)}">
+    <Stream url="${xmlEscape(streamUrl)}"${statusAttrs}>
       <Parameter name="shopId" value="${xmlEscape(shopId)}" />
       <Parameter name="caller" value="${xmlEscape(caller)}" />
       <Parameter name="callSid" value="${xmlEscape(callSid)}" />
     </Stream>
   </Connect>
+  <Say>${xmlEscape(TWILIO_STREAM_FALLBACK_SAY)}</Say>
 </Response>`;
+}
+
+async function verifyTwilioVoiceRequest(request, env, shopId, params, getSecret) {
+  const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
+  const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
+  if (!authToken || String(env?.TWILIO_VERIFY_VOICE || '1') === '0') return;
+  const valid = await verifyTwilioWebhookSignature({
+    authToken,
+    url: new URL(request.url).toString(),
+    parameters: params,
+    signature: request.headers.get('X-Twilio-Signature'),
+  });
+  if (!valid) throw new HttpError(401, 'Invalid Twilio webhook signature');
 }
 
 export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecret = null } = {}) {
@@ -1107,23 +1135,7 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
 
   const rawBody = await request.text();
   const params = new URLSearchParams(rawBody);
-
-  // Prefer shop Twilio auth token, then platform env, for signature verification
-  const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
-  const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
-  const signature = request.headers.get('X-Twilio-Signature');
-  if (authToken && String(env?.TWILIO_VERIFY_VOICE || '1') !== '0') {
-    const publicUrl = new URL(request.url);
-    const valid = await verifyTwilioWebhookSignature({
-      authToken,
-      url: publicUrl.toString(),
-      parameters: params,
-      signature,
-    });
-    if (!valid) {
-      throw new HttpError(401, 'Invalid Twilio webhook signature');
-    }
-  }
+  await verifyTwilioVoiceRequest(request, env, shopId, params, getSecret);
 
   const { apiKey } = await resolveGrokApiKey(env, shopId, getSecret);
   if (!apiKey) {
@@ -1139,11 +1151,48 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
   const token = await signGrokStreamToken(env, { shopId, caller, callSid });
 
   const url = new URL(request.url);
-  const wsProtocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
-  const streamUrl = `${wsProtocol}//${url.host}/api/voice/twilio/stream/${encodeURIComponent(shopId)}?token=${encodeURIComponent(token)}`;
-  const twiml = buildTwilioVoiceStreamTwiml({ streamUrl, caller, callSid, shopId });
+  const twiml = buildTwilioVoiceStreamTwiml({
+    streamUrl: twilioVoiceStreamUrl(url.host, shopId, token),
+    statusCallbackUrl: twilioVoiceStatusUrl(url.origin, shopId),
+    caller,
+    callSid,
+    shopId,
+  });
 
   return new Response(twiml, {
+    status: 200,
+    headers: { 'Content-Type': 'application/xml; charset=utf-8' },
+  });
+}
+
+/**
+ * Receives both call status callbacks (CallStatus) and <Stream statusCallback>
+ * events (StreamEvent / StreamError), so a stream that fails to open is logged.
+ */
+export async function handleTwilioVoiceStatus(request, env, shopId, { getSecret = null } = {}) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  if (!shopId) throw new HttpError(400, 'Shop ID is required');
+  const params = new URLSearchParams(await request.text());
+  await verifyTwilioVoiceRequest(request, env, shopId, params, getSecret);
+
+  const streamEvent = cleanText(params.get('StreamEvent') || '', 40);
+  const streamError = cleanText(params.get('StreamError') || '', 500);
+  const entry = {
+    message: streamEvent ? 'twilio voice stream status' : 'twilio voice call status',
+    shopId,
+    callSid: cleanText(params.get('CallSid') || '', 80),
+    ...(streamEvent
+      ? { streamSid: cleanText(params.get('StreamSid') || '', 80), streamEvent, streamError: streamError || undefined }
+      : {
+        callStatus: cleanText(params.get('CallStatus') || '', 40),
+        callDuration: cleanText(params.get('CallDuration') || '', 20) || undefined,
+        errorCode: cleanText(params.get('ErrorCode') || '', 20) || undefined,
+      }),
+  };
+  if (streamEvent === 'stream-error' || entry.errorCode) console.error(JSON.stringify(entry));
+  else console.log(JSON.stringify(entry));
+
+  return new Response('<?xml version="1.0" encoding="UTF-8"?><Response/>', {
     status: 200,
     headers: { 'Content-Type': 'application/xml; charset=utf-8' },
   });
@@ -1225,6 +1274,7 @@ export async function handleGrokVoiceSettings(request, env, context, {
   const shopId = context.shopId;
   const origin = new URL(request.url).origin;
   const twilioVoiceWebhookUrl = `${origin}/api/voice/twilio/incoming/${encodeURIComponent(shopId)}`;
+  const twilioVoiceStatusCallbackUrl = twilioVoiceStatusUrl(origin, shopId);
 
   if (request.method === 'GET') {
     const [{ apiKey, keySource }, shopSettings, orders, twilio] = await Promise.all([
@@ -1248,6 +1298,7 @@ export async function handleGrokVoiceSettings(request, env, context, {
       shopHours: shopSettings.shopHours,
       autoSaveIntake: shopSettings.autoSaveIntake,
       twilioVoiceWebhookUrl,
+      twilioVoiceStatusCallbackUrl,
       recentCalls: recentGrokCalls,
       ...twilioStatusFields(twilio),
       canManage: PHONE_CREDENTIAL_ROLES.includes(context.role),
@@ -1325,6 +1376,7 @@ export async function handleGrokVoiceSettings(request, env, context, {
       maskedKey: apiKey ? `\u2022\u2022\u2022\u2022${apiKey.slice(-4)}` : '',
       ...nextSettings,
       twilioVoiceWebhookUrl,
+      twilioVoiceStatusCallbackUrl,
       ...twilioStatusFields(twilioAfterSave),
       saved: true,
     });
@@ -1355,6 +1407,7 @@ export async function handleGrokVoiceSettings(request, env, context, {
       maskedKey: apiKey ? `\u2022\u2022\u2022\u2022${apiKey.slice(-4)}` : '',
       removed: true,
       twilioVoiceWebhookUrl,
+      twilioVoiceStatusCallbackUrl,
       ...twilioStatusFields(twilioAfterDelete),
     });
   }
@@ -1372,8 +1425,14 @@ function safeCloseSocket(socket, code = 1000, reason = 'Session ended') {
   }
 }
 
+/**
+ * Twilio gives up on the Media Stream handshake (error 31920) if the upgrade is
+ * not answered promptly or is answered with an error, so the Twilio socket is
+ * accepted first and xAI is dialed afterwards. If xAI cannot be reached the
+ * Twilio socket is closed, which lets Twilio run the <Say> fallback after
+ * </Connect> instead of leaving the caller in silence.
+ */
 export async function handleGrokTwilioBridge({
-  request,
   env,
   state,
   shopId,
@@ -1382,28 +1441,13 @@ export async function handleGrokTwilioBridge({
   apiKey = '',
   fetcher = fetch,
 }) {
-  const [shopSettings, pricing, callerContext, upstreamResponse] = await Promise.all([
-    loadGrokShopSettings(env, shopId),
-    loadShopPricing(env, shopId),
-    callerPhone ? lookupCallerContext(env, shopId, callerPhone) : Promise.resolve(null),
-    fetcher(GROK_REALTIME_URL.replace(/^wss:/, 'https:'), {
-      headers: {
-        Upgrade: 'websocket',
-        Authorization: `Bearer ${apiKey}`,
-      },
-    }),
-  ]);
-
-  const upstream = upstreamResponse?.webSocket;
-  if (!upstream || upstreamResponse.status !== 101) {
-    throw new HttpError(502, 'Grok Realtime Voice API is unavailable');
-  }
-
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
   server.accept();
-  upstream.accept();
 
+  let upstream = null;
+  let shopSettings = null;
+  let twilioClosed = false;
   let streamSid = '';
   let currentCaller = callerPhone;
   let currentCallSid = callSid;
@@ -1412,16 +1456,10 @@ export async function handleGrokTwilioBridge({
   let finalized = false;
   const transcriptLines = [];
 
-  const sessionUpdate = buildGrokSessionUpdate({
-    shopSettings,
-    pricing,
-    callerPhone: currentCaller,
-    callerContext,
-  });
-  upstream.send(JSON.stringify(sessionUpdate));
+  const upstreamOpen = () => Boolean(upstream) && upstream.readyState === WebSocket.OPEN;
 
   const triggerInitialGreeting = () => {
-    if (greetingSent) return;
+    if (greetingSent || !streamSid || !upstreamOpen()) return;
     greetingSent = true;
     const greetingText = shopSettings.greeting
       || `Greet the caller warmly on behalf of ${shopSettings.shopName}, introduce yourself as Grok the shop's automated service advisor, and ask how you can help with their vehicle today.`;
@@ -1482,8 +1520,9 @@ export async function handleGrokTwilioBridge({
     if (msg.event === 'media' && msg.media?.payload) {
       const payload = String(msg.media.payload);
       twilioInboundBytes += Math.floor((payload.length * 3) / 4);
+      if (!upstreamOpen()) return;
       const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
-      if (pcm24kBase64 && upstream.readyState === WebSocket.OPEN) {
+      if (pcm24kBase64) {
         upstream.send(JSON.stringify({
           type: 'input_audio_buffer.append',
           audio: pcm24kBase64,
@@ -1492,22 +1531,25 @@ export async function handleGrokTwilioBridge({
       return;
     }
     if (msg.event === 'stop') {
-      safeCloseSocket(upstream, 1000, 'Twilio call ended');
+      twilioClosed = true;
+      if (upstream) safeCloseSocket(upstream, 1000, 'Twilio call ended');
       state?.waitUntil?.(finalizeCall('twilio_stop'));
     }
   });
 
   server.addEventListener('close', () => {
-    safeCloseSocket(upstream, 1000, 'Twilio stream closed');
+    twilioClosed = true;
+    if (upstream) safeCloseSocket(upstream, 1000, 'Twilio stream closed');
     state?.waitUntil?.(finalizeCall('twilio_closed'));
   });
   server.addEventListener('error', () => {
-    safeCloseSocket(upstream, 1011, 'Twilio stream error');
+    twilioClosed = true;
+    if (upstream) safeCloseSocket(upstream, 1011, 'Twilio stream error');
     state?.waitUntil?.(finalizeCall('twilio_error'));
   });
 
   // Grok -> Twilio
-  upstream.addEventListener('message', async (event) => {
+  const onUpstreamMessage = async (event) => {
     if (typeof event.data !== 'string') return;
     let msg;
     try {
@@ -1516,8 +1558,17 @@ export async function handleGrokTwilioBridge({
       return;
     }
 
-    if (msg.type === 'session.updated' && !greetingSent && streamSid) {
+    if (msg.type === 'session.updated') {
       triggerInitialGreeting();
+    }
+
+    if (msg.type === 'error') {
+      console.error(JSON.stringify({
+        message: 'grok realtime error during phone call',
+        shopId,
+        callSid: currentCallSid,
+        error: msg.error?.message || msg.message || 'unknown',
+      }));
     }
 
     // Barge-in: caller started speaking, immediately clear Twilio's playback buffer
@@ -1556,46 +1607,84 @@ export async function handleGrokTwilioBridge({
       } catch {
         parsedArgs = {};
       }
+      let output;
       try {
-        const output = await executeGrokShopTool(env, shopId, toolName, parsedArgs, {
+        output = await executeGrokShopTool(env, shopId, toolName, parsedArgs, {
           callerPhone: currentCaller,
           callSid: currentCallSid,
         });
-        if (upstream.readyState === WebSocket.OPEN) {
-          upstream.send(JSON.stringify({
-            type: 'conversation.item.create',
-            item: {
-              type: 'function_call_output',
-              call_id: callId,
-              output: JSON.stringify(output),
-            },
-          }));
-          upstream.send(JSON.stringify({ type: 'response.create' }));
-        }
       } catch (err) {
-        if (upstream.readyState === WebSocket.OPEN) {
-          upstream.send(JSON.stringify({
-            type: 'conversation.item.create',
-            item: {
-              type: 'function_call_output',
-              call_id: callId,
-              output: JSON.stringify({ error: err instanceof Error ? err.message : 'Tool execution failed' }),
-            },
-          }));
-          upstream.send(JSON.stringify({ type: 'response.create' }));
-        }
+        output = { error: err instanceof Error ? err.message : 'Tool execution failed' };
+      }
+      if (upstreamOpen()) {
+        upstream.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: JSON.stringify(output),
+          },
+        }));
+        upstream.send(JSON.stringify({ type: 'response.create' }));
       }
     }
-  });
+  };
 
-  upstream.addEventListener('close', () => {
-    safeCloseSocket(server, 1000, 'Grok session ended');
-    state?.waitUntil?.(finalizeCall('grok_closed'));
-  });
-  upstream.addEventListener('error', () => {
-    safeCloseSocket(server, 1011, 'Grok session error');
-    state?.waitUntil?.(finalizeCall('grok_error'));
-  });
+  const connectUpstream = async () => {
+    try {
+      const [settings, pricing, callerContext, upstreamResponse] = await Promise.all([
+        loadGrokShopSettings(env, shopId),
+        loadShopPricing(env, shopId),
+        callerPhone ? lookupCallerContext(env, shopId, callerPhone) : Promise.resolve(null),
+        fetcher(GROK_REALTIME_URL.replace(/^wss:/, 'https:'), {
+          headers: {
+            Upgrade: 'websocket',
+            Authorization: `Bearer ${apiKey}`,
+          },
+        }),
+      ]);
+      const socket = upstreamResponse?.webSocket;
+      if (!socket || upstreamResponse.status !== 101) {
+        const detail = await upstreamResponse?.text?.().catch(() => '') || '';
+        throw new Error(`xAI realtime upgrade failed with HTTP ${upstreamResponse?.status ?? 'none'} ${String(detail).slice(0, 200)}`.trim());
+      }
+      socket.accept();
+      if (twilioClosed) {
+        safeCloseSocket(socket, 1000, 'Twilio stream closed');
+        return;
+      }
+      shopSettings = settings;
+      upstream = socket;
+      upstream.addEventListener('message', onUpstreamMessage);
+      upstream.addEventListener('close', () => {
+        safeCloseSocket(server, 1000, 'Grok session ended');
+        state?.waitUntil?.(finalizeCall('grok_closed'));
+      });
+      upstream.addEventListener('error', () => {
+        safeCloseSocket(server, 1011, 'Grok session error');
+        state?.waitUntil?.(finalizeCall('grok_error'));
+      });
+      upstream.send(JSON.stringify(buildGrokSessionUpdate({
+        shopSettings,
+        pricing,
+        callerPhone: currentCaller,
+        callerContext,
+      })));
+      triggerInitialGreeting();
+    } catch (error) {
+      console.error(JSON.stringify({
+        message: 'grok phone bridge could not reach xAI realtime',
+        shopId,
+        callSid: currentCallSid,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      safeCloseSocket(server, 1011, 'Grok Realtime Voice API is unavailable');
+      await finalizeCall('grok_unavailable');
+    }
+  };
+
+  const connecting = connectUpstream();
+  state?.waitUntil?.(connecting);
 
   return new Response(null, { status: 101, webSocket: client });
 }
