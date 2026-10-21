@@ -409,6 +409,10 @@ test('Google sign-in validates the ID token and creates a one-time desktop hando
                 };
               },
               async run() {
+                if (/INSERT INTO sessions/.test(sql)) {
+                  sessionInserted = true;
+                  return;
+                }
                 assert.match(sql, /INSERT INTO login_tokens/);
                 assert.equal(args[1], 'owner@example.test');
                 assert.equal(args[3], '/dispatch');
@@ -419,6 +423,7 @@ test('Google sign-in validates the ID token and creates a one-time desktop hando
       },
     },
   };
+  let sessionInserted = false;
   const start = await worker.fetch(
     new Request('https://app.example.test/api/auth/google?returnTo=%2Fdispatch&desktop=1'),
     env,
@@ -470,9 +475,21 @@ test('Google sign-in validates the ID token and creates a one-time desktop hando
     { headers: { Cookie: cookies } },
   ), env);
   assert.equal(callback.status, 200);
-  assert.match(await callback.text(), /href="shopcrank:\/\/auth\?token=[a-f0-9]{32}"/);
+  const handoffPage = await callback.text();
+  assert.match(handoffPage, /href="shopcrank:\/\/auth\?token=[a-f0-9]{32}"/);
+  assert.match(handoffPage, /http-equiv="refresh" content="0;url=shopcrank:\/\/auth\?token=[a-f0-9]{32}"/);
   assert.doesNotMatch(callback.headers.getSetCookie().join('\n'), /shopcrank_session=/);
   assert.equal(requests.length, 2);
+
+  const embedded = await worker.fetch(new Request(
+    `https://app.example.test/api/auth/google/callback?code=authorization-code&state=${encodeURIComponent(state)}`,
+    { headers: { Cookie: cookies, 'User-Agent': 'Mozilla/5.0 ShopCrank/1.1.0 Chrome/120.0.0.0 Electron/41.0.0 Safari/537.36' } },
+  ), env);
+  assert.equal(embedded.status, 302);
+  assert.equal(embedded.headers.get('location'), 'https://app.example.test/dispatch');
+  assert.match(embedded.headers.getSetCookie().join('\n'), /shopcrank_session=/);
+  assert.equal(sessionInserted, true);
+  assert.equal(await embedded.text(), '');
 });
 
 test('Google sign-in from the apex host uses the registered www callback', async () => {
