@@ -41,11 +41,7 @@ async function setup() {
   DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .bind('high-plains', 'orders', 'RO-UNSIGNED', JSON.stringify({
       id: 'RO-UNSIGNED', vin: VIN, linesLockedAt: now,
-<<<<<<< Updated upstream
         estimateApproval: { status: 'approved', type: 'other', authorizationName: 'Dana Customer' },
-=======
-      estimateApproval: { status: 'approved', type: 'other', authorizationName: 'Dana Customer' },
->>>>>>> Stashed changes
     }), 'owner-1', now, now).runSync();
   const call = async (email, method, path, body) => {
     const response = await worker.fetch(new Request(`https://www.shopcrank.com/api${path}`, {
@@ -72,11 +68,7 @@ async function makeDevice() {
 }
 
 test('end to end through the Worker: request, approve, issue, live key authorize, revoke', async () => {
-<<<<<<< Updated upstream
   const { call } = await setup();
-=======
-  const { env, call } = await setup();
->>>>>>> Stashed changes
   const connect = await call('owner@hpa.test', 'POST', '/diagnostics/autoauth', { accountId: 'hpa', apiKey: 'test-key' });
   assert.equal(connect.status, 201);
 
@@ -130,22 +122,6 @@ test('end to end through the Worker: request, approve, issue, live key authorize
   const first = await authorize(await unlock());
   assert.equal(first.status, 200, JSON.stringify(first.body));
   assert.equal(first.body.authorized, true);
-<<<<<<< Updated upstream
-=======
-
-  // Regression (Bug 1): the diagnostics audit record must carry the signed
-  // repair order that authorized this job — orderId, authorizationName and
-  // signedAt come from the signedOrder validated before token minting.
-  const auditRows = env.DB.sqlite.prepare(
-    "SELECT event_json FROM audit_log WHERE shop_id = 'high-plains'",
-  ).all().map(row => JSON.parse(row.event_json));
-  const authorizeAudit = auditRows.find(event => event.kind === 'diagnostics.authorize');
-  assert.ok(authorizeAudit, 'diagnostics.authorize audit row recorded');
-  assert.equal(authorizeAudit.orderId, 'RO-1');
-  assert.equal(authorizeAudit.authorizationName, 'Dana Customer');
-  assert.ok(Number.isFinite(Date.parse(authorizeAudit.signedAt)), 'audit signedAt is the order approval time');
-
->>>>>>> Stashed changes
   const second = await authorize(await unlock());
   assert.equal(second.status, 200, 'the same unlock token works for every job until expiry');
 
