@@ -902,11 +902,10 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     logger: { info() {} },
   });
   assert.equal(pendingPages.steps.legacyWorkerDomains.action, 'skipped');
-  assert.ok(pendingPages.remaining.some((item) => (
-    item.kind === 'pages_domain_activation'
-    && item.domains.includes('www.shopcrank.com')
-    && item.domains.includes('shopcrank.com')
-  )));
+  assert.deepEqual(
+    pendingPages.remaining.find((item) => item.kind === 'pages_domain_activation')?.domains?.toSorted(),
+    ['shopcrank.com', 'www.shopcrank.com'],
+  );
   assert.equal(
     calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/accounts/acct-1/workers/domains/')).length,
     deletesBeforePendingPages,
