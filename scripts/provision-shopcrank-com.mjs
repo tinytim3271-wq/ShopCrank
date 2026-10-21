@@ -628,7 +628,7 @@ export async function restoreWorkerDomains(client, { accountId, domains = [] }) 
       ...(domain.environment && { environment: domain.environment }),
     };
     if (domain.zone_id) body.zone_id = domain.zone_id;
-    const result = await client.request('POST', path, { body });
+    const result = await client.request('PUT', path, { body });
     restored.push({
       hostname: domain.hostname,
       service: domain.service,
