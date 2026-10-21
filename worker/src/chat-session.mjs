@@ -30,6 +30,8 @@ export class AiChatSession {
     const shopId = (request.headers.get('X-ShopCrank-Shop-Id') || request.headers.get('X-MechPro-Shop-Id'));
     const userId = (request.headers.get('X-ShopCrank-User-Id') || request.headers.get('X-MechPro-User-Id'));
     const sessionId = (request.headers.get('X-ShopCrank-Ai-Session-Id') || request.headers.get('X-MechPro-Ai-Session-Id'));
+    // Set only by the Worker from the verified session; least privilege if absent.
+    const role = request.headers.get('X-ShopCrank-User-Role') || 'technician';
     if (!shopId || !userId || !sessionId) throw new HttpError(401, 'Authenticated shop context is required');
 
     const ownerShopId = await this.state.storage.get('shopId');
@@ -54,6 +56,8 @@ export class AiChatSession {
       requestedModel: body.model,
       autoEscalate: body.autoEscalate === true,
       previousInteractionId,
+      role,
+      userId,
     });
     const costs = usageCostsForResult(this.env, result);
     await recordAiUsage(this.env, {
@@ -95,6 +99,8 @@ export class AiChatSession {
       usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
       provider: result.provider,
       keySource: result.keySource || null,
+      ...(result.citations?.length ? { citations: result.citations } : {}),
+      ...(result.accessDenied?.length ? { accessDenied: result.accessDenied } : {}),
       ...(result.notice ? { notice: result.notice } : {}),
     });
   }

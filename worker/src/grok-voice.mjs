@@ -12,6 +12,13 @@ import {
   verifyTwilioWebhookSignature,
 } from './integrations/sms.mjs';
 import { searchLicensedLabor } from './integrations/labor.mjs';
+import { PERSONAS, frontDeskOpeningCue, normalizePersona } from './assistant/personas.mjs';
+import { HANDOFF_LINE, classifyCallerTurn, createDtmfTracker } from './front-desk/handoff-detect.mjs';
+import { afterStreamUrl, createHandoff, shopHasHandoffTargets } from './front-desk/handoff-store.mjs';
+import { phoneGoLiveGate } from './onboarding/store.mjs';
+
+// tools.mjs imports this module, so it is loaded lazily to keep the graph acyclic.
+const assistantTools = () => import('./assistant/tools.mjs');
 
 const PHONE_CREDENTIAL_ROLES = Object.freeze(['admin', 'owner', 'office', 'super_admin']);
 
@@ -344,17 +351,24 @@ Your Core Responsibilities on Every Call:
    - Call \`save_call_intake_and_estimate\` as soon as you have the caller's name/phone, vehicle, and concern so the shop's intake form, customer record, estimate, and work order draft are filled in automatically.`;
 }
 
+/**
+ * Realtime session config. Live surfaces pass persona-specific `instructions`
+ * and `tools` from assistant/tools.mjs buildPersonaSession().
+ */
 export function buildGrokSessionUpdate({
   shopSettings = {},
   pricing = { laborRate: 140, taxRate: 8.25 },
   callerPhone = '',
   callerContext = null,
+  instructions = null,
+  tools = GROK_SHOP_TOOLS,
+  voice = null,
 } = {}) {
   return {
     type: 'session.update',
     session: {
-      voice: normalizeGrokVoice(shopSettings.voice),
-      instructions: buildGrokInstructions({ shopSettings, pricing, callerPhone, callerContext }),
+      voice: normalizeGrokVoice(voice || shopSettings.voice),
+      instructions: instructions ?? buildGrokInstructions({ shopSettings, pricing, callerPhone, callerContext }),
       turn_detection: { type: 'server_vad' },
       audio: {
         input: {
@@ -365,7 +379,7 @@ export function buildGrokSessionUpdate({
           format: { type: 'audio/pcm', rate: GROK_SAMPLE_RATE },
         },
       },
-      tools: GROK_SHOP_TOOLS,
+      tools,
     },
   };
 }
@@ -1088,7 +1102,7 @@ export async function verifyGrokStreamToken(env, token, expectedShopId) {
   }
 }
 
-const TWILIO_STREAM_FALLBACK_SAY = 'Sorry, our automated service advisor is unavailable right now. Please call back during shop hours.';
+export const TWILIO_STREAM_FALLBACK_SAY = 'Sorry, our automated service advisor is unavailable right now. Please call back during shop hours.';
 
 // Twilio drops query strings from <Stream url>, so the signed token must ride in the path.
 export function twilioVoiceStreamUrl(host, shopId, token) {
@@ -1099,10 +1113,17 @@ export function twilioVoiceStatusUrl(origin, shopId) {
   return `${origin}/api/voice/twilio/status/${encodeURIComponent(shopId)}`;
 }
 
-export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '', caller = '', callSid = '', shopId = '' }) {
+/**
+ * With `afterStreamUrl` (shops that configured handoff targets) Twilio redirects
+ * there when the stream ends, which either rings staff or plays the fallback.
+ */
+export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '', caller = '', callSid = '', shopId = '', afterStreamUrl: redirectUrl = '' }) {
   const statusAttrs = statusCallbackUrl
     ? ` statusCallback="${xmlEscape(statusCallbackUrl)}" statusCallbackMethod="POST"`
     : '';
+  const afterStream = redirectUrl
+    ? `<Redirect method="POST">${xmlEscape(redirectUrl)}</Redirect>`
+    : `<Say>${xmlEscape(TWILIO_STREAM_FALLBACK_SAY)}</Say>`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
@@ -1112,11 +1133,11 @@ export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '',
       <Parameter name="callSid" value="${xmlEscape(callSid)}" />
     </Stream>
   </Connect>
-  <Say>${xmlEscape(TWILIO_STREAM_FALLBACK_SAY)}</Say>
+  ${afterStream}
 </Response>`;
 }
 
-async function verifyTwilioVoiceRequest(request, env, shopId, params, getSecret) {
+export async function verifyTwilioVoiceRequest(request, env, shopId, params, getSecret) {
   const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
   const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
   if (!authToken || String(env?.TWILIO_VERIFY_VOICE || '1') === '0') return;
@@ -1137,6 +1158,17 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
   const params = new URLSearchParams(rawBody);
   await verifyTwilioVoiceRequest(request, env, shopId, params, getSecret);
 
+  const gate = await phoneGoLiveGate(env, shopId, params.get('From') || '');
+  if (gate.gated) {
+    const holding = /^\+[1-9]\d{7,14}$/.test(gate.holdingPhone || '')
+      ? `<Dial timeout="25">${xmlEscape(gate.holdingPhone)}</Dial>`
+      : `<Say>Thanks for calling${gate.shopName ? ` ${xmlEscape(gate.shopName)}` : ''}. Please call back during business hours.</Say>`;
+    return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response>${holding}</Response>`, {
+      status: 200,
+      headers: { 'Content-Type': 'application/xml; charset=utf-8' },
+    });
+  }
+
   const { apiKey } = await resolveGrokApiKey(env, shopId, getSecret);
   if (!apiKey) {
     const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Thank you for calling. Our automated service advisor is currently offline. Please leave a message or call back during shop hours.</Say></Response>`;
@@ -1151,12 +1183,14 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
   const token = await signGrokStreamToken(env, { shopId, caller, callSid });
 
   const url = new URL(request.url);
+  const handoffEnabled = await shopHasHandoffTargets(env, shopId).catch(() => false);
   const twiml = buildTwilioVoiceStreamTwiml({
     streamUrl: twilioVoiceStreamUrl(url.host, shopId, token),
     statusCallbackUrl: twilioVoiceStatusUrl(url.origin, shopId),
     caller,
     callSid,
     shopId,
+    afterStreamUrl: handoffEnabled ? afterStreamUrl(url.origin, shopId) : '',
   });
 
   return new Response(twiml, {
@@ -1229,21 +1263,20 @@ export async function handleGrokClientSecret(request, env, context, { getSecret 
     throw new HttpError(502, grokClientSecretRejectionMessage(payload, response.status));
   }
 
-  const [shopSettings, pricing, callerContext] = await Promise.all([
-    loadGrokShopSettings(env, context.shopId),
-    loadShopPricing(env, context.shopId),
-    callerPhone ? lookupCallerContext(env, context.shopId, callerPhone) : Promise.resolve(null),
-  ]);
-
-  const requestedVoice = body.voice ? normalizeGrokVoice(body.voice) : shopSettings.voice;
+  // The in-app assistant button is the Tech Assistant. Staff may explicitly open
+  // a Front Desk session to rehearse a phone call; it gets only front-desk tools.
+  const persona = normalizePersona(body.persona, PERSONAS.TECH);
+  const { buildPersonaSession } = await assistantTools();
+  const session = await buildPersonaSession(env, { persona, shopId: context.shopId, role: context.role, callerPhone });
+  const requestedVoice = body.voice ? normalizeGrokVoice(body.voice) : normalizeGrokVoice(session.voice);
   const sessionUpdate = buildGrokSessionUpdate({
-    shopSettings: { ...shopSettings, voice: requestedVoice },
-    pricing,
-    callerPhone,
-    callerContext,
+    voice: requestedVoice,
+    instructions: session.instructions,
+    tools: session.tools,
   });
 
   return json({
+    persona,
     token,
     expiresAt: payload?.client_secret?.expires_at || payload?.expires_at || Math.floor(Date.now() / 1000) + 300,
     url: GROK_REALTIME_URL,
@@ -1260,8 +1293,18 @@ export async function handleGrokToolCall(request, env, context) {
   const name = cleanText(body.name || '', 80);
   const args = body.arguments && typeof body.arguments === 'object' ? body.arguments : {};
   const callerPhone = cleanText(body.callerPhone || '', 40);
-  const result = await executeGrokShopTool(env, context.shopId, name, args, { callerPhone });
-  return json({ name, result });
+  const persona = normalizePersona(body.persona, PERSONAS.TECH);
+  const { executeAssistantTool } = await assistantTools();
+  const result = await executeAssistantTool(env, {
+    shopId: context.shopId,
+    persona,
+    role: context.role,
+    userId: context.userId,
+    name,
+    args,
+    callerPhone,
+  });
+  return json({ name, persona, result });
 }
 
 export async function handleGrokVoiceSettings(request, env, context, {
@@ -1446,7 +1489,10 @@ export async function handleGrokTwilioBridge({
   server.accept();
 
   let upstream = null;
-  let shopSettings = null;
+  let session = null;
+  let handoffEnabled = false;
+  let handingOff = false;
+  const dtmf = createDtmfTracker();
   let twilioClosed = false;
   let streamSid = '';
   let currentCaller = callerPhone;
@@ -1459,19 +1505,38 @@ export async function handleGrokTwilioBridge({
   const upstreamOpen = () => Boolean(upstream) && upstream.readyState === WebSocket.OPEN;
 
   const triggerInitialGreeting = () => {
-    if (greetingSent || !streamSid || !upstreamOpen()) return;
+    if (greetingSent || !streamSid || !upstreamOpen() || handingOff) return;
     greetingSent = true;
-    const greetingText = shopSettings.greeting
-      || `Greet the caller warmly on behalf of ${shopSettings.shopName}, introduce yourself as Grok the shop's automated service advisor, and ask how you can help with their vehicle today.`;
     upstream.send(JSON.stringify({
       type: 'conversation.item.create',
       item: {
         type: 'message',
         role: 'user',
-        content: [{ type: 'input_text', text: `[Phone call connected${currentCaller ? ` from ${currentCaller}` : ''}. ${greetingText}]` }],
+        content: [{ type: 'input_text', text: frontDeskOpeningCue(session.shopSettings, session.frontDeskPersona, currentCaller) }],
       },
     }));
     upstream.send(JSON.stringify({ type: 'response.create' }));
+  };
+
+  // Server-side handoff: log it, silence Grok, and end the stream so Twilio
+  // follows the <Redirect> to the ordered <Dial>. The model is not consulted.
+  const startHandoff = async (trigger, reason = '') => {
+    if (handingOff || !handoffEnabled) return false;
+    handingOff = true;
+    const snippet = transcriptLines.filter(line => line.role === 'caller').slice(-3).map(line => line.text).join(' / ');
+    try {
+      await createHandoff(env, { shopId, callSid: currentCallSid, caller: currentCaller, trigger, reason, transcriptSnippet: snippet });
+    } catch (error) {
+      console.error(JSON.stringify({ message: 'front desk handoff could not be logged', shopId, callSid: currentCallSid, error: String(error?.message || error) }));
+    }
+    if (streamSid && server.readyState === WebSocket.OPEN) server.send(JSON.stringify({ event: 'clear', streamSid }));
+    if (upstreamOpen()) {
+      upstream.send(JSON.stringify({ type: 'response.cancel' }));
+      safeCloseSocket(upstream, 1000, 'Transferred to staff');
+    }
+    safeCloseSocket(server, 1000, HANDOFF_LINE);
+    state?.waitUntil?.(finalizeCall(`handoff_${trigger}`));
+    return true;
   };
 
   const finalizeCall = async (reason) => {
@@ -1528,6 +1593,10 @@ export async function handleGrokTwilioBridge({
           audio: pcm24kBase64,
         }));
       }
+      return;
+    }
+    if (msg.event === 'dtmf') {
+      if (dtmf.press(msg.dtmf?.digit)) state?.waitUntil?.(startHandoff('keypad', `pressed ${msg.dtmf?.digit} repeatedly`));
       return;
     }
     if (msg.event === 'stop') {
@@ -1591,7 +1660,14 @@ export async function handleGrokTwilioBridge({
     }
 
     if (msg.type === 'conversation.item.input_audio_transcription.completed' && msg.transcript) {
-      transcriptLines.push({ role: 'caller', text: String(msg.transcript).trim() });
+      const text = String(msg.transcript).trim();
+      const previousCallerTurns = transcriptLines.filter(line => line.role === 'caller').map(line => line.text);
+      transcriptLines.push({ role: 'caller', text });
+      const verdict = classifyCallerTurn({ text, previousCallerTurns, sentiment: msg.sentiment ?? null, tone: msg.tone || '' });
+      if (verdict.handoff) {
+        await startHandoff(verdict.trigger, verdict.reason);
+        return;
+      }
     }
     if (msg.type === 'response.output_audio_transcript.done' && msg.transcript) {
       transcriptLines.push({ role: 'grok', text: String(msg.transcript).trim() });
@@ -1609,12 +1685,21 @@ export async function handleGrokTwilioBridge({
       }
       let output;
       try {
-        output = await executeGrokShopTool(env, shopId, toolName, parsedArgs, {
+        const { executeAssistantTool } = await assistantTools();
+        output = await executeAssistantTool(env, {
+          shopId,
+          persona: PERSONAS.FRONT_DESK,
+          name: toolName,
+          args: parsedArgs,
           callerPhone: currentCaller,
           callSid: currentCallSid,
         });
       } catch (err) {
         output = { error: err instanceof Error ? err.message : 'Tool execution failed' };
+      }
+      if (output?.transfer === true) {
+        if (await startHandoff('tool', output.reason)) return;
+        output = { transfer: false, message: 'Live transfer is not set up for this shop. Offer to take a message for a callback.' };
       }
       if (upstreamOpen()) {
         upstream.send(JSON.stringify({
@@ -1632,10 +1717,10 @@ export async function handleGrokTwilioBridge({
 
   const connectUpstream = async () => {
     try {
-      const [settings, pricing, callerContext, upstreamResponse] = await Promise.all([
-        loadGrokShopSettings(env, shopId),
-        loadShopPricing(env, shopId),
-        callerPhone ? lookupCallerContext(env, shopId, callerPhone) : Promise.resolve(null),
+      const { buildPersonaSession } = await assistantTools();
+      const [personaSession, hasTargets, upstreamResponse] = await Promise.all([
+        buildPersonaSession(env, { persona: PERSONAS.FRONT_DESK, shopId, callerPhone }),
+        shopHasHandoffTargets(env, shopId).catch(() => false),
         fetcher(GROK_REALTIME_URL.replace(/^wss:/, 'https:'), {
           headers: {
             Upgrade: 'websocket',
@@ -1653,7 +1738,8 @@ export async function handleGrokTwilioBridge({
         safeCloseSocket(socket, 1000, 'Twilio stream closed');
         return;
       }
-      shopSettings = settings;
+      session = personaSession;
+      handoffEnabled = hasTargets;
       upstream = socket;
       upstream.addEventListener('message', onUpstreamMessage);
       upstream.addEventListener('close', () => {
@@ -1665,10 +1751,9 @@ export async function handleGrokTwilioBridge({
         state?.waitUntil?.(finalizeCall('grok_error'));
       });
       upstream.send(JSON.stringify(buildGrokSessionUpdate({
-        shopSettings,
-        pricing,
-        callerPhone: currentCaller,
-        callerContext,
+        voice: session.voice,
+        instructions: session.instructions,
+        tools: session.tools,
       })));
       triggerInitialGreeting();
     } catch (error) {
