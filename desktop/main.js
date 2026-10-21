@@ -2,7 +2,7 @@ const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const diagnostics = require('./diagnostics-bridge');
 const { resolveDesktopStart } = require('./start-url');
-const { resolveAuthDeepLink } = require('./auth-deep-link');
+const { findAuthDeepLink, resolveAuthDeepLink } = require('./auth-deep-link');
 const edition = require('./edition.json');
 const vault = require('./local-vault');
 const { configurePortableData } = require('./portable-data');
@@ -28,6 +28,15 @@ function isTrustedUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
     return url.protocol === 'file:' || (edition.demo !== true && trustedOrigins.has(url.origin));
+  } catch {
+    return false;
+  }
+}
+
+function isGoogleSignInStart(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' && trustedOrigins.has(url.origin) && url.pathname === '/api/auth/google';
   } catch {
     return false;
   }
@@ -118,6 +127,7 @@ function createWindow() {
     );
   }
   window.webContents.setWindowOpenHandler(({ url }) => {
+    if (handleAuthDeepLink(url)) return { action: 'deny' };
     if (isPrintPopupUrl(url)) {
       return {
         action: 'allow',
@@ -138,10 +148,35 @@ function createWindow() {
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
+    // A shopcrank:// link inside this window is the sign-in handoff. Load the
+    // callback here instead of letting the webview cancel the custom protocol.
+    if (handleAuthDeepLink(url)) {
+      event.preventDefault();
+      return;
+    }
+    // Google refuses sign-in inside embedded app windows, so the Google button
+    // always opens the system browser; the browser hands back via shopcrank://.
+    if (isGoogleSignInStart(url)) {
+      event.preventDefault();
+      if (edition.demo !== true) void shell.openExternal(url);
+      return;
+    }
     if (!isTrustedUrl(url)) event.preventDefault();
   });
   window.webContents.on('will-redirect', (event, url) => {
+    if (handleAuthDeepLink(url)) {
+      event.preventDefault();
+      return;
+    }
     if (!isTrustedUrl(url)) event.preventDefault();
+  });
+  window.webContents.on('did-finish-load', () => {
+    if (smokeTest) return;
+    void window.webContents.executeJavaScript(
+      'document.querySelector(\'a[href^="shopcrank:"]\')?.getAttribute("href") || ""',
+    ).then(href => {
+      if (href) handleAuthDeepLink(href);
+    }).catch(() => {});
   });
   if (smokeTest) {
     window.webContents.once('did-finish-load', async () => {
@@ -197,17 +232,26 @@ function createWindow() {
   }
 }
 
-function findAuthDeepLink(argv) {
-  return (argv || []).map(value => String(value).trim().replace(/^"|"$/g, '')).find(value => value.includes('shopcrank://')) || '';
-}
+let pendingAuthUrl = '';
+let authHandoffUrl = '';
 
 function handleAuthDeepLink(rawUrl) {
-  if (edition.offline === true || !rawUrl || !mainWindow) return false;
+  if (edition.offline === true || !rawUrl) return false;
   const callbackUrl = resolveAuthDeepLink(rawUrl, resolveDesktopStart().remoteUrl);
   if (!callbackUrl) return false;
-  void mainWindow.loadURL(callbackUrl);
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.focus();
+  if (!mainWindow) {
+    pendingAuthUrl = rawUrl;
+    return true;
+  }
+  if (authHandoffUrl === callbackUrl) return true;
+  authHandoffUrl = callbackUrl;
+  const shellWindow = mainWindow;
+  void shellWindow.loadURL(callbackUrl).finally(() => {
+    if (authHandoffUrl === callbackUrl) authHandoffUrl = '';
+  });
+  if (shellWindow.isMinimized()) shellWindow.restore();
+  shellWindow.show();
+  shellWindow.focus();
   return true;
 }
 
@@ -222,22 +266,15 @@ app.on('open-url', (event, url) => {
   handleAuthDeepLink(url);
 });
 
-function registerWindowsProtocol() {
-  if (process.platform !== 'win32' || edition.offline === true) return;
-  const { spawnSync } = require('node:child_process');
-  const command = `"${process.execPath}" "%1"`;
-  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank', '/ve', '/d', 'URL:ShopCrank authentication', '/f'], { windowsHide: true });
-  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank', '/v', 'URL Protocol', '/d', '', '/f'], { windowsHide: true });
-  spawnSync('reg', ['add', 'HKCU\\Software\\Classes\\shopcrank\\shell\\open\\command', '/ve', '/d', command, '/f'], { windowsHide: true });
-}
-
 if (edition.offline !== true) {
+  // Electron writes the shopcrank:// command with the URL in "%1".
+  // A separate reg add used to overwrite that command and drop the token,
+  // so "Open ShopCrank" focused the app and then sat on the browser page.
   if (process.defaultApp) {
     app.setAsDefaultProtocolClient('shopcrank', process.execPath, [path.resolve(process.argv[1] || '.')]);
   } else {
     app.setAsDefaultProtocolClient('shopcrank');
   }
-  registerWindowsProtocol();
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(() => {
@@ -245,6 +282,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   registerDiagnosticsIpc();
   // Do not auto-start the J2534 host — start on first user-initiated diagnostics action.
   createWindow();
+  if (pendingAuthUrl) handleAuthDeepLink(pendingAuthUrl);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
