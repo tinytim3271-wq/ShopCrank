@@ -13,6 +13,7 @@ import {
   desiredLegacyWorkerRoutes,
   desiredState,
   desiredWorkerRoutes,
+  ensureDnsRecords,
   googleOAuthRemaining,
   isAlreadyConfiguredError,
   isDesiredApiRoute,
@@ -20,6 +21,7 @@ import {
   isLegacyHostRoute,
   isLegacyWildcardRoute,
   isWholeHostnameRoute,
+  legacyDnsRecords,
   legacyRoutesToCreate,
   parseArgs,
   provisionShopcrankCom,
@@ -182,6 +184,54 @@ test('desired state records the legacy cutover and the ShopCrank support address
   assert.equal(state.supportEmail, 'support@shopcrank.com');
   assert.equal(SUPPORT_EMAIL, 'support@shopcrank.com');
   assert.ok(!state.workerRoutes.some((pattern) => pattern.includes('yourcarguy806')));
+});
+
+test('legacyDnsRecords restores both legacy hostnames as proxied A records', () => {
+  const records = legacyDnsRecords();
+  assert.equal(records.length, 2);
+  assert.deepEqual(records.map((record) => record.name).toSorted(), ['www.yourcarguy806.com', 'yourcarguy806.com']);
+  for (const record of records) {
+    assert.equal(record.type, 'A');
+    assert.equal(record.proxied, true);
+  }
+});
+
+test('ensureDnsRecords creates missing records and leaves matching ones alone', async () => {
+  const calls = [];
+  const existing = [{ id: 'rec-1', type: 'A', name: 'yourcarguy806.com', content: '104.21.17.176', proxied: true }];
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method || 'GET';
+      const path = new URL(url).pathname.replace('/client/v4', '');
+      calls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined });
+      if (method === 'GET' && path === '/zones/zone-1/dns_records') {
+        return jsonResponse(200, { success: true, result: existing });
+      }
+      if (method === 'POST' && path === '/zones/zone-1/dns_records') {
+        return jsonResponse(200, { success: true, result: { id: 'rec-2' } });
+      }
+      if (method === 'PUT' && path.startsWith('/zones/zone-1/dns_records/')) {
+        return jsonResponse(200, { success: true, result: { id: 'rec-1' } });
+      }
+      return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
+    },
+  });
+
+  const result = await ensureDnsRecords(client, {
+    zoneId: 'zone-1',
+    records: [
+      { type: 'A', name: 'yourcarguy806.com', content: '104.21.17.176', proxied: true },
+      { type: 'A', name: 'www.yourcarguy806.com', content: '104.21.17.188', proxied: true },
+    ],
+  });
+
+  assert.equal(result.action, 'updated');
+  // The matching record is left alone; only the missing one is created.
+  assert.deepEqual(result.created, [{ type: 'A', name: 'www.yourcarguy806.com', content: '104.21.17.188' }]);
+  assert.deepEqual(result.updated, []);
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
+  assert.equal(calls.filter((call) => call.method === 'PUT').length, 0);
 });
 
 function jsonResponse(status, body) {
@@ -414,6 +464,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       ],
     },
     mailRules: [],
+    dnsRecords: [],
     r2: [],
     secrets: { 'mechpro-api': [], 'shopcrank-api': [] },
     routing: { enabled: true, status: 'ready' },
@@ -496,6 +547,14 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       store.mailRules.push(rule);
       return jsonResponse(200, { success: true, result: rule });
     }
+    if (method === 'GET' && path === '/zones/zone-legacy/dns_records') {
+      return jsonResponse(200, { success: true, result: store.dnsRecords });
+    }
+    if (method === 'POST' && path === '/zones/zone-legacy/dns_records') {
+      const record = { id: `dns-${store.dnsRecords.length}`, ...JSON.parse(init.body) };
+      store.dnsRecords.push(record);
+      return jsonResponse(200, { success: true, result: record });
+    }
     if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/mechpro-api/secrets') {
       return jsonResponse(200, { success: true, result: [] });
     }
@@ -535,4 +594,10 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
   assert.equal(report.steps.supportMail.action, 'created');
   assert.equal(report.steps.supportMail.address, 'support@shopcrank.com');
   assert.equal(store.mailRules[0].actions[0].value[0], 'ops@example.test');
+  // The legacy DNS records are restored so the redirect is reachable.
+  assert.equal(report.steps.legacyDns.action, 'updated');
+  assert.deepEqual(
+    store.dnsRecords.map((record) => record.name).toSorted(),
+    ['www.yourcarguy806.com', 'yourcarguy806.com'],
+  );
 });
