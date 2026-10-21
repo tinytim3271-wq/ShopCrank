@@ -1,3 +1,5 @@
+import { localIsoDate } from '../shared/dates.js';
+
 function escapeText(value) {
   return String(value || '').replace(/[&<>"']/g, (char) => ({
     '&': '&amp;',
@@ -98,7 +100,7 @@ export function ensureOfflineOwner(state, account) {
       employeeId: 'EMP-LOCAL',
       phone: '',
       address: '',
-      startDate: new Date().toISOString().slice(0, 10),
+      startDate: localIsoDate(),
       employmentType: 'Salary',
       payRate: 0,
       payFrequency: 'Biweekly',

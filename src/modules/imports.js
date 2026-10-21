@@ -3,6 +3,8 @@
  * smoke-tested without the browser shell.
  */
 
+import { localIsoDate } from '../shared/dates.js';
+
 export const IMPORT_TYPES = {
   customers: {
     title: 'Customers',
@@ -122,7 +124,9 @@ function isoDate(raw) {
   }
   const parsed = new Date(text);
   if (Number.isNaN(parsed.valueOf())) return '';
-  return parsed.toISOString().slice(0, 10);
+  // A date-time is an instant, so read its calendar day in local time. UTC
+  // would roll an evening timestamp into the next day.
+  return localIsoDate(parsed);
 }
 
 function addDays(iso, days) {
@@ -183,7 +187,7 @@ export function prepareImportRecords(type, text, existing = {}) {
   const estimates = existing.estimates || [];
   const taxRateDefault = Number(existing.taxRate);
   const shopTaxRate = Number.isFinite(taxRateDefault) ? taxRateDefault : 0;
-  const today = isoDate(existing.today) || new Date().toISOString().slice(0, 10);
+  const today = isoDate(existing.today) || localIsoDate();
   const createdAt = existing.createdAt || new Date().toISOString();
 
   const seenCustomers = new Set(customers.map(item => String(item.name || '').toLowerCase()).filter(Boolean));

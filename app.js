@@ -339,6 +339,18 @@
     }
   });
 
+  // src/shared/dates.js
+  function localIsoDate(date = /* @__PURE__ */ new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  var init_dates = __esm({
+    "src/shared/dates.js"() {
+    }
+  });
+
   // src/runtime/home.js
   function emptyState(message) {
     return `<div class="empty-state"><h2>${escapeHtml(message)}</h2></div>`;
@@ -348,12 +360,6 @@
     if (hour < 12) return "Good morning";
     if (hour < 17) return "Good afternoon";
     return "Good evening";
-  }
-  function localIsoDate(date = /* @__PURE__ */ new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
   }
   function isTodayPromise(promise) {
     return /^today\b/i.test(String(promise || ""));
@@ -484,6 +490,7 @@
   var init_home = __esm({
     "src/runtime/home.js"() {
       init_html();
+      init_dates();
       CLOSED = /* @__PURE__ */ new Set(["completed", "invoiced", "declined", "archived"]);
       sidebarCatalog = [
         {
@@ -598,26 +605,26 @@
   function defaultMutationId() {
     return globalThis.crypto?.randomUUID?.() || `mutation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
-  function withOptimisticConcurrencyHeaders(options = {}, expectedUpdatedAt = null) {
-    if (!expectedUpdatedAt) return options;
+  function withOptimisticConcurrencyHeaders(options2 = {}, expectedUpdatedAt = null) {
+    if (!expectedUpdatedAt) return options2;
     return {
-      ...options,
+      ...options2,
       headers: {
-        ...options.headers || {},
+        ...options2.headers || {},
         "If-Match": expectedUpdatedAt
       }
     };
   }
-  function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
-    const method = String(options.method || "GET").toUpperCase();
+  function prepareEntityMutation(path, options2, createMutationId = defaultMutationId) {
+    const method = String(options2.method || "GET").toUpperCase();
     const isEntityMutation = path.startsWith("/entities/") && ["POST", "PUT", "DELETE"].includes(method);
     const containsSensitiveEndpoint = path === "/agentphone/configure" || path === "/voice/grok/configure";
     const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !containsSensitiveEndpoint;
-    if (!queueable) return { path, options, queueable: false };
+    if (!queueable) return { path, options: options2, queueable: false };
     let body = null;
-    if (options.body) {
+    if (options2.body) {
       try {
-        body = JSON.parse(options.body);
+        body = JSON.parse(options2.body);
       } catch {
         body = null;
       }
@@ -628,7 +635,7 @@
     const entityKey = method === "POST" ? body && body.id ? `${path}/${body.id}` : `${path}/${createMutationId()}` : path;
     return {
       path,
-      options: { ...options, method, body: body ? JSON.stringify(body) : void 0 },
+      options: { ...options2, method, body: body ? JSON.stringify(body) : void 0 },
       queueable: Boolean(body) || method === "DELETE",
       expectedUpdatedAt: method === "PUT" ? body?.updatedAt : null,
       key: entityKey
@@ -702,7 +709,7 @@
     }
     const parsed = new Date(text);
     if (Number.isNaN(parsed.valueOf())) return "";
-    return parsed.toISOString().slice(0, 10);
+    return localIsoDate(parsed);
   }
   function addDays(iso, days) {
     const date = /* @__PURE__ */ new Date(`${iso}T00:00:00Z`);
@@ -755,7 +762,7 @@
     const estimates = existing.estimates || [];
     const taxRateDefault = Number(existing.taxRate);
     const shopTaxRate = Number.isFinite(taxRateDefault) ? taxRateDefault : 0;
-    const today = isoDate(existing.today) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    const today = isoDate(existing.today) || localIsoDate();
     const createdAt = existing.createdAt || (/* @__PURE__ */ new Date()).toISOString();
     const seenCustomers = new Set(customers2.map((item) => String(item.name || "").toLowerCase()).filter(Boolean));
     const seenVins = new Set(vehicles.map((item) => String(item.vin || "").toLowerCase()).filter(Boolean));
@@ -944,6 +951,7 @@
   var IMPORT_TYPES, ORDER_STATUSES, INVOICE_STATUSES, ESTIMATE_STATUSES;
   var init_imports = __esm({
     "src/modules/imports.js"() {
+      init_dates();
       IMPORT_TYPES = {
         customers: {
           title: "Customers",
@@ -2690,8 +2698,10 @@
       tax: estimate.tax,
       taxRate: Math.max(0, Number(estimate.taxRate) || 0),
       status: "sent",
-      date: issuedAt.toISOString().slice(0, 10),
-      due: due.toISOString().slice(0, 10),
+      // Calendar days in the shop's local time. toISOString() would roll an
+      // evening completion into tomorrow and misfile the sale's tax period.
+      date: localIsoDate(issuedAt),
+      due: localIsoDate(due),
       lines: billableEstimateLines(estimate.lines).map((line, index) => {
         const normalized = normalizeEstimateLine(line, index);
         return { ...normalized, taxable: isLineTaxable(normalized, estimate.taxPolicy) };
@@ -2778,6 +2788,7 @@
   var roundMoney3, DEFAULT_TAX_POLICY, defaultTaxPolicy, SHOP_SUPPLIES_RULES, AFTER_MIDNIGHT_FEE_PRESET, CLOSED_ORDER_STATUSES;
   var init_estimate_workflow = __esm({
     "src/modules/estimate-workflow.js"() {
+      init_dates();
       roundMoney3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
       DEFAULT_TAX_POLICY = Object.freeze({ laborTaxable: true, feesTaxable: true });
       defaultTaxPolicy = DEFAULT_TAX_POLICY;
@@ -3699,12 +3710,12 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
   function reviewStep(draft, users) {
     const check2 = canConvertIntake(draft);
     const techs = assignableTechnicians(users);
-    const options = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
+    const options2 = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
       const selected = (draft.assignments || []).find((item) => item.role === role);
       return `<option value="${escapeAttr3(user.id)}" ${selected?.employeeId === user.id ? "selected" : ""}>${escapeHtml3(technicianName(user))}</option>`;
     }).join("")}`;
     return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
-<div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
+<div class="form-grid"><label>Primary technician<select name="assign-primary">${options2("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options2("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options2("apprentice")}</select></label></div>
 ${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ""}
 ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
 ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not create the work order: ${escapeHtml3(draft.convertError)}</span></div>` : ""}
@@ -4699,8 +4710,8 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       status: next === "estimate_draft" ? "estimate" : next
     };
   }
-  function inspectionFindingsToEstimateLines(inspection = {}, options = {}) {
-    const laborRate = Math.max(0, Number(options.laborRate) || 0);
+  function inspectionFindingsToEstimateLines(inspection = {}, options2 = {}) {
+    const laborRate = Math.max(0, Number(options2.laborRate) || 0);
     const items = Array.isArray(inspection.items) ? inspection.items : [];
     const lines = [];
     let index = 0;
@@ -4732,25 +4743,25 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       catalogId: inspection.catalogId || null
     };
   }
-  function estimateFromInspection(inspection = {}, options = {}, at = /* @__PURE__ */ new Date()) {
-    const built = inspectionFindingsToEstimateLines(inspection, options);
-    const taxRate = Math.max(0, Number(options.taxRate) || 0);
-    const estimate = calculateEstimate(built.lines, taxRate, options.fees || []);
+  function estimateFromInspection(inspection = {}, options2 = {}, at = /* @__PURE__ */ new Date()) {
+    const built = inspectionFindingsToEstimateLines(inspection, options2);
+    const taxRate = Math.max(0, Number(options2.taxRate) || 0);
+    const estimate = calculateEstimate(built.lines, taxRate, options2.fees || []);
     return {
       ...estimate,
-      summary: built.recommendations || options.summary || "",
+      summary: built.recommendations || options2.summary || "",
       generatedAt: isoNow(at),
       sourceInspectionId: built.inspectionId,
       sourceCatalogId: built.catalogId,
       photoKeys: built.photoKeys
     };
   }
-  function applyEstimateFromInspection(order = {}, inspection = {}, options = {}, actor = {}, at = /* @__PURE__ */ new Date()) {
+  function applyEstimateFromInspection(order = {}, inspection = {}, options2 = {}, actor = {}, at = /* @__PURE__ */ new Date()) {
     const estimate = estimateFromInspection(inspection, {
-      laborRate: options.laborRate ?? order.laborRate,
-      taxRate: options.taxRate ?? order.estimate?.taxRate,
-      fees: options.fees || order.estimate?.fees || [],
-      summary: options.summary
+      laborRate: options2.laborRate ?? order.laborRate,
+      taxRate: options2.taxRate ?? order.estimate?.taxRate,
+      fees: options2.fees || order.estimate?.fees || [],
+      summary: options2.summary
     }, at);
     let next = {
       ...order,
@@ -5370,6 +5381,11 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function roundCents2(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
   }
+  function needsLocalJurisdictions(jurisdictions) {
+    const list = Array.isArray(jurisdictions) ? jurisdictions : [];
+    const hasLocal = list.some((j) => j && j.kind !== "state");
+    return !hasLocal;
+  }
   function combinedSalesTaxRate(jurisdictions) {
     return roundCents2((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
   }
@@ -5429,7 +5445,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     ];
     return [...header, ...body, ...footer].map((row) => row.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\n");
   }
-  function normalizeJurisdictions(list, fallbackRate = 8.25) {
+  function normalizeJurisdictions(list) {
     if (Array.isArray(list) && list.length) {
       return list.map((j) => ({
         code: String(j.code || "").trim(),
@@ -5439,22 +5455,15 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         required: Boolean(j.required)
       }));
     }
-    const state2 = 6.25;
-    const local = Math.max(0, Number(fallbackRate) - state2);
-    return [
-      { code: "2001000", name: "State of Texas", kind: "state", rate: state2, required: true },
-      { code: "2200001", name: "Local combined (shop default)", kind: "combined", rate: roundCents2(local), required: true }
-    ];
+    return DEFAULT_TX_JURISDICTIONS.map((j) => ({ ...j }));
   }
-  var DEFAULT_TX_JURISDICTIONS;
+  var DEFAULT_TX_JURISDICTIONS, MISSING_LOCAL_TX_KINDS;
   var init_jurisdictions = __esm({
     "src/modules/filing/jurisdictions.js"() {
       DEFAULT_TX_JURISDICTIONS = [
-        { code: "2001000", name: "State of Texas", kind: "state", rate: 6.25, required: true },
-        { code: "2201598", name: "Example City", kind: "city", rate: 1, required: true },
-        { code: "3201598", name: "Example Transit Authority", kind: "transit", rate: 0.5, required: false },
-        { code: "4201598", name: "Example County", kind: "county", rate: 0.5, required: true }
+        { code: "2001000", name: "State of Texas", kind: "state", rate: 6.25, required: true }
       ];
+      MISSING_LOCAL_TX_KINDS = Object.freeze(["city", "transit", "county", "combined"]);
     }
   });
 
@@ -5590,13 +5599,13 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       return false;
     }
   }
-  function openPrintDocument(html, options = {}) {
-    const target = options.windowObject || globalThis;
-    const notify = options.toast || (() => {
+  function openPrintDocument(html, options2 = {}) {
+    const target = options2.windowObject || globalThis;
+    const notify = options2.toast || (() => {
     });
-    const blockedMessage = options.blockedMessage || "Allow pop-ups to print";
-    const autoPrint = options.autoPrint !== false;
-    const schedule2 = options.schedule || ((fn) => setTimeout(fn, 0));
+    const blockedMessage = options2.blockedMessage || "Allow pop-ups to print";
+    const autoPrint = options2.autoPrint !== false;
+    const schedule2 = options2.schedule || ((fn) => setTimeout(fn, 0));
     const markup = withBaseHref(html, target);
     const blobAvailable = typeof target.Blob === "function" && typeof target.URL?.createObjectURL === "function";
     if (blobAvailable) {
@@ -5856,7 +5865,7 @@ button{margin-top:12px;padding:8px 14px}
         employeeId: "EMP-LOCAL",
         phone: "",
         address: "",
-        startDate: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+        startDate: localIsoDate(),
         employmentType: "Salary",
         payRate: 0,
         payFrequency: "Biweekly",
@@ -5876,6 +5885,7 @@ button{margin-top:12px;padding:8px 14px}
   var SECRET_KEY;
   var init_offline_desktop = __esm({
     "src/modules/offline-desktop.js"() {
+      init_dates();
       SECRET_KEY = /^(password|passphrase|secret|token|apikey|api_key)$/i;
     }
   });
@@ -7755,14 +7765,14 @@ button{margin-top:12px;padding:8px 14px}
     });
     const selected = model.selected;
     if (selected) posSelectedId = selected.targetId;
-    const options = model.choices.map((choice) => `<option value="${escapeAttr(choice.targetId)}" ${selected?.targetId === choice.targetId ? "selected" : ""}>${escapeHtml(choice.label)} \xB7 due ${money4(choice.balance)}</option>`).join("");
+    const options2 = model.choices.map((choice) => `<option value="${escapeAttr(choice.targetId)}" ${selected?.targetId === choice.targetId ? "selected" : ""}>${escapeHtml(choice.label)} \xB7 due ${money4(choice.balance)}</option>`).join("");
     const readerOptions = model.readers.map((reader) => `<option value="${escapeAttr(reader.id)}">${escapeHtml(reader.label)} \xB7 ${escapeHtml(reader.status)}</option>`).join("");
     const writeup = selected ? recoveryWriteup({ customer: selected.customer, vehicle: selected.vehicle }) : recoveryWriteup({});
     const chargeNote = posCharge ? `<p class="pos-status" data-phase="${escapeAttr(posCharge.phase || "")}">${escapeHtml(posCharge.message || "")}</p>` : "";
     const connection = posReaders === null ? "Checking the shop Stripe account\u2026" : model.configured ? model.readers.length ? `${model.readers.length} reader${model.readers.length === 1 ? "" : "s"} online in this Stripe account.` : "Stripe is connected. No card reader is registered yet. Add one in the Stripe Dashboard under Terminal, then refresh." : "Stripe is not connected. An owner saves the shop keys on the Payments page before this counter can take a card.";
     const identity = `<div class="full pos-identity"><span>Customer</span><strong>${escapeHtml(selected?.customer || "Select a work order")}</strong><span>Vehicle</span><strong>${escapeHtml(selected?.vehicle || "Vehicle comes from the work order")}</strong></div>`;
     const amountField = `<label>Amount<input name="amount" id="pos-amount" type="number" min="0.50" step="0.01" value="${selected && selected.balance >= 0.5 ? selected.balance.toFixed(2) : ""}" required/></label>`;
-    const orderField = `<label class="full">Work order<select name="orderId" id="pos-order" required>${options || `<option value="">No work orders</option>`}</select></label>`;
+    const orderField = `<label class="full">Work order<select name="orderId" id="pos-order" required>${options2 || `<option value="">No work orders</option>`}</select></label>`;
     const phoneNotice = posPhoneEntry ? "Type the card number, expiration, security code, and postal code from the phone call. Stripe collects the card. ShopCrank stores the approval on the work order." : "Add the Stripe publishable key on the Payments page first. It starts with pk_test_ or pk_live_ and must belong to the same account as the secret key.";
     const counter = posMode === "phone" ? `<form class="form-grid" id="pos-phone-form">${orderField}${identity}${amountField}<div class="full" id="pos-card-element"></div><p class="ai-disclaimer">${escapeHtml(phoneNotice)}</p><div class="full messaging-actions"><button class="primary" type="submit" id="pos-phone-prepare" ${!selected || selected.balance < 0.5 || !posPhoneEntry ? "disabled" : ""}>${icon("credit-card", 14)} Enter card</button><button class="primary" type="button" id="pos-phone-charge" hidden>${icon("check", 14)} Charge card</button></div><p class="pos-status" id="pos-phone-status" hidden></p></form>` : `<form class="form-grid" id="pos-form">${orderField}${identity}${amountField}<label>Reader<select name="readerId" id="pos-reader" required>${readerOptions || `<option value="">No reader</option>`}</select></label><div class="full messaging-actions"><button class="secondary" type="button" id="pos-refresh">${icon("refresh-cw", 14)} Refresh readers</button><button class="secondary" type="button" id="pos-cancel" ${posCharge ? "" : "disabled"}>${icon("x", 14)} Cancel on reader</button><button class="primary" type="submit" id="pos-charge" ${!selected || selected.balance < 0.5 || !model.readers.length ? "disabled" : ""}>${icon("credit-card", 14)} Charge card</button></div>${chargeNote}</form>`;
     return shell(`${heading("Front counter", "Card terminal", "Take a card on the reader, or type a card for a purchase made over the phone.", false)}<section class="messaging-panel pos-terminal"><div class="messaging-status ${model.configured ? "ready" : "idle"}">${icon("credit-card", 17)}<div><strong>${posMode === "phone" ? "Phone order" : model.configured ? "Card reader ready" : "Card reader not connected"}</strong><span>${escapeHtml(posMode === "phone" ? phoneNotice : connection)}</span></div></div><div class="accounting-tabs"><button class="tab ${posMode === "reader" ? "active" : ""}" type="button" data-pos-mode="reader">Card reader</button><button class="tab ${posMode === "phone" ? "active" : ""}" type="button" data-pos-mode="phone">Phone order</button></div>${counter}<section class="pos-writeup"><h2>Technician write-up</h2><p>The recovery note uses the customer and vehicle on the selected work order.</p><pre id="pos-writeup">${escapeHtml(writeup.ready ? writeup.text : "Select a work order that has both a customer name and a vehicle. Those details are written into the note. They are not filled in from memory.")}</pre><button class="secondary" type="button" id="pos-save-writeup" ${writeup.ready ? "" : "disabled"}>${icon("save", 14)} Save on work order</button></section></section>`);
@@ -7956,8 +7966,8 @@ button{margin-top:12px;padding:8px 14px}
       const panel = document.querySelector("#quickbooks-tax-settings");
       if (!panel) return;
       const modeLabel = { ast: "Automated Sales Tax (QuickBooks calculates tax)", manual: "Manual sales tax rate", global: "Tax codes per line (non-US company)", none: "Sales tax is off in QuickBooks" }[settings2.mode] || settings2.mode;
-      const options = (selected, taxable) => `<option value="">Choose\u2026</option>${(settings2.taxCodes || []).filter((code) => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map((code) => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`;
-      const pickers = settings2.mode === "manual" || settings2.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options(settings2.taxCodeId, true)}</select></label>${settings2.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options(settings2.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : "";
+      const options2 = (selected, taxable) => `<option value="">Choose\u2026</option>${(settings2.taxCodes || []).filter((code) => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map((code) => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`;
+      const pickers = settings2.mode === "manual" || settings2.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options2(settings2.taxCodeId, true)}</select></label>${settings2.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options2(settings2.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : "";
       panel.innerHTML = `<form class="form-grid" id="quickbooks-tax-form"><p class="full ops-note"><b>${escapeHtml(modeLabel)}</b>${settings2.needsChoice ? " \xB7 choose a rate before syncing taxed invoices" : ""}</p>${pickers}</form>`;
       panel.querySelector("#quickbooks-tax-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -8028,8 +8038,8 @@ button{margin-top:12px;padding:8px 14px}
     return `<section class="ai-panel"><div class="statement-head"><div><div class="eyebrow">AI assistant</div><h2>${title}</h2><p>${description}</p></div>${icon("sparkles", 19)}</div><form class="form-grid" id="ai-form">${fields}<div class="full"><button class="primary" type="submit">${icon("sparkles", 15)} ${action}</button></div></form></section>`;
   }
   function aiWorkflowForm() {
-    const options = visibleOrders().map((order) => `<option value="${order.id}">${order.id} \xB7 ${escapeHtml(order.customer)} \xB7 ${escapeHtml(order.vehicle)}</option>`).join("");
-    return `${aiFormShell("Repair-order workflow", "Generate causes, labor, parts, diagnostics, repair steps, and recommended services for an existing work order.", `<label class="full">Work order<select name="workOrderId">${options}</select></label>`, "Generate workflow")}${aiResult?.kind === "workflow" ? workflowResult(aiResult) : ""}`;
+    const options2 = visibleOrders().map((order) => `<option value="${order.id}">${order.id} \xB7 ${escapeHtml(order.customer)} \xB7 ${escapeHtml(order.vehicle)}</option>`).join("");
+    return `${aiFormShell("Repair-order workflow", "Generate causes, labor, parts, diagnostics, repair steps, and recommended services for an existing work order.", `<label class="full">Work order<select name="workOrderId">${options2}</select></label>`, "Generate workflow")}${aiResult?.kind === "workflow" ? workflowResult(aiResult) : ""}`;
   }
   function aiDiagnosticsForm() {
     return `${aiFormShell("AI diagnostics", "Analyze symptoms and DTC codes into probable causes, tests, urgency, and labor time.", `<label>Vehicle<input name="vehicle" required placeholder="2018 Ford F-150 5.0L"/></label><label>DTC codes<input name="dtc" placeholder="P0300, P0171"/></label><label class="full">Symptoms / complaint<textarea name="symptoms" required placeholder="Rough idle, check engine light, hesitation on acceleration"></textarea></label>`, "Run diagnostics")}${aiResult?.kind === "diagnostics" ? diagnosticsResult(aiResult) : ""}`;
@@ -8369,8 +8379,8 @@ button{margin-top:12px;padding:8px 14px}
   function mutationId() {
     return globalThis.crypto?.randomUUID?.() || `mutation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
-  function prepareMutation(path, options) {
-    return prepareEntityMutation(path, options, mutationId);
+  function prepareMutation(path, options2) {
+    return prepareEntityMutation(path, options2, mutationId);
   }
   function queueEntityMutation(mutation, conflict = false) {
     const queue = readMutationQueue(), existingIndex = queue.findIndex((item2) => item2.key === mutation.key);
@@ -8384,11 +8394,11 @@ button{margin-top:12px;padding:8px 14px}
     else queue.push(item);
     writeMutationQueue(queue);
   }
-  async function authorizedApiRequest(path, options = {}) {
+  async function authorizedApiRequest(path, options2 = {}) {
     const session = authSession();
     if (!session) throw new Error("Not signed in");
     const localHeaders = isLocalShell() ? { "X-ShopCrank-Dev-Email": session.claims.email || "admin@example.com", "X-ShopCrank-Dev-Name": session.claims.name || "Local Developer", "X-ShopCrank-Dev-Sub": session.claims.sub || "local-development" } : {};
-    return fetch(`${cloudflareConfig2.apiUrl}${path}`, { ...options, credentials: "include", headers: { "Content-Type": "application/json", ...localHeaders, ...options.headers || {} } });
+    return fetch(`${cloudflareConfig2.apiUrl}${path}`, { ...options2, credentials: "include", headers: { "Content-Type": "application/json", ...localHeaders, ...options2.headers || {} } });
   }
   async function verifyDesktopEntitlement() {
     if (!isDesktopApp || isOfflineDesktop() || isLocalShell() && cloudflareConfig2.apiUrl.startsWith("/")) {
@@ -8443,14 +8453,14 @@ button{margin-top:12px;padding:8px 14px}
       flushingMutationQueue = false;
     }
   }
-  async function apiFetch(path, options = {}) {
+  async function apiFetch(path, options2 = {}) {
     if (isOfflineDesktop()) {
       if (String(path).startsWith("/ai/")) {
         const aiError = new Error("ShopCrank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
         aiError.retryable = false;
         throw aiError;
       }
-      const method = String(options.method || "GET").toUpperCase();
+      const method = String(options2.method || "GET").toUpperCase();
       if (method === "GET" || method === "HEAD") {
         const offlineError = new Error("This copy of ShopCrank keeps shop records on this computer.");
         offlineError.retryable = false;
@@ -8459,7 +8469,7 @@ button{margin-top:12px;padding:8px 14px}
       return { queued: true };
     }
     if (readMutationQueue().some((item) => !item.conflict) && navigator.onLine && !flushingMutationQueue) void flushMutationQueue();
-    const mutation = prepareMutation(path, options);
+    const mutation = prepareMutation(path, options2);
     try {
       const response = await authorizedApiRequest(path, withOptimisticConcurrencyHeaders(mutation.options, mutation.expectedUpdatedAt));
       if (!response.ok) {
@@ -8472,7 +8482,7 @@ button{margin-top:12px;padding:8px 14px}
     } catch (error) {
       if (mutation.queueable && (error.retryable || !navigator.onLine || error instanceof TypeError)) {
         queueEntityMutation(mutation);
-        if (!options.silent) toast("Saved offline. ShopCrank will sync when the connection returns.");
+        if (!options2.silent) toast("Saved offline. ShopCrank will sync when the connection returns.");
         return { queued: true };
       }
       throw error;
@@ -8714,7 +8724,7 @@ button{margin-top:12px;padding:8px 14px}
     monday.setHours(0, 0, 0, 0);
     const friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
-    return { key: monday.toISOString().slice(0, 10), start: monday.toLocaleDateString("en-US", { month: "short", day: "numeric" }), end: friday.toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
+    return { key: localIsoDate(monday), start: monday.toLocaleDateString("en-US", { month: "short", day: "numeric" }), end: friday.toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
   }
   function shopDayLabel(date = /* @__PURE__ */ new Date()) {
     return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -8881,7 +8891,7 @@ button{margin-top:12px;padding:8px 14px}
     return visibleOrders().filter((x) => (filter === "all" || (filter === "active" ? !["completed", "invoiced"].includes(x.status) : ["completed", "invoiced"].includes(x.status))) && (!q || [x.id, x.customer, x.vehicle, x.vin, x.complaint, x.tech].some((v) => String(v).toLowerCase().includes(q))));
   }
   function receivableStats() {
-    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), rows = state.invoices.map((invoice) => ({ invoice, balance: Number(invoiceBalance(invoice)) || 0, paid: Number(invoicePaid(invoice)) || 0 })), open = rows.filter((row) => row.balance > 4e-3), outstanding = open.reduce((sum, row) => sum + row.balance, 0), overdue = open.filter(({ invoice }) => invoice.status === "overdue" || /^\d{4}-\d{2}-\d{2}$/.test(String(invoice.due || "")) && invoice.due < today), overdueTotal = overdue.reduce((sum, row) => sum + row.balance, 0), collected = rows.reduce((sum, row) => sum + row.paid, 0), cells = [["file-text", "Open invoices", open.length, open.length ? `${open.length} with a balance` : "Nothing open", "good"], ["wallet", "Outstanding", money4(outstanding), "Unpaid balance across open invoices", ""], ["clock-alert", "Overdue", overdue.length, overdue.length ? `${money4(overdueTotal)} past due` : "None overdue", "warn"], ["badge-dollar-sign", "Collected", money4(collected), "Payments recorded on invoices", "good"]];
+    const today = localIsoDate(), rows = state.invoices.map((invoice) => ({ invoice, balance: Number(invoiceBalance(invoice)) || 0, paid: Number(invoicePaid(invoice)) || 0 })), open = rows.filter((row) => row.balance > 4e-3), outstanding = open.reduce((sum, row) => sum + row.balance, 0), overdue = open.filter(({ invoice }) => invoice.status === "overdue" || /^\d{4}-\d{2}-\d{2}$/.test(String(invoice.due || "")) && invoice.due < today), overdueTotal = overdue.reduce((sum, row) => sum + row.balance, 0), collected = rows.reduce((sum, row) => sum + row.paid, 0), cells = [["file-text", "Open invoices", open.length, open.length ? `${open.length} with a balance` : "Nothing open", "good"], ["wallet", "Outstanding", money4(outstanding), "Unpaid balance across open invoices", ""], ["clock-alert", "Overdue", overdue.length, overdue.length ? `${money4(overdueTotal)} past due` : "None overdue", "warn"], ["badge-dollar-sign", "Collected", money4(collected), "Payments recorded on invoices", "good"]];
     return `<div class="stats">${cells.map((x) => `<div class="stat"><div class="stat-top"><span>${x[1]}</span>${icon(x[0])}</div><div class="stat-value">${x[2]}</div><div class="stat-note ${x[4]}">${x[3]}</div></div>`).join("")}</div>`;
   }
   function stats() {
@@ -9016,8 +9026,8 @@ button{margin-top:12px;padding:8px 14px}
   function orderingTargetHtml() {
     const orders2 = ordersAcceptingEstimateLines(state.orders);
     if (!orders2.some((order) => order.id === orderingTargetOrderId)) orderingTargetOrderId = orders2[0]?.id || "";
-    const options = orders2.map((order) => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} \xB7 ${escapeHtml(order.customer || "")} \xB7 ${escapeHtml(order.vehicle || "")}</option>`).join("");
-    return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
+    const options2 = orders2.map((order) => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} \xB7 ${escapeHtml(order.customer || "")} \xB7 ${escapeHtml(order.vehicle || "")}</option>`).join("");
+    return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options2 || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
   }
   async function addLinesToTargetOrder(lines, label2, orderId = orderingTargetOrderId) {
     const order = state.orders.find((item) => item.id === orderId);
@@ -9171,7 +9181,7 @@ button{margin-top:12px;padding:8px 14px}
     return shell(`${heading("Connected workflow", "Shop operations", "Linked vehicles, inspections, stock, service templates, reminders, vendors, and basic OBD-II tools.", false)}<div class="accounting-tabs ops-tabs">${tabs.map((tab) => `<button class="tab ${shopOpsTab === tab[0] ? "active" : ""}" data-ops-tab="${tab[0]}">${tab[1]}</button>`).join("")}</div>${view()}`);
   }
   function openVehicleForm(existing = null) {
-    showModal(`<form class="modal" id="vehicle-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add linked"} vehicle</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<select name="customer" required>${customerOptions(existing?.customer)}</select></label><label>VIN<input name="vin" maxlength="17" pattern="[A-HJ-NPR-Z0-9]{17}" value="${escapeHtml(existing?.vin || "")}"/></label><div class="full vin-actions"><button class="secondary" type="button" id="decode-vin">${icon("scan-line", 14)} Decode VIN with NHTSA</button><span id="vin-status"></span></div><label>Year<input name="year" required value="${escapeHtml(existing?.year || "")}"/></label><label>Make<input name="make" required value="${escapeHtml(existing?.make || "")}"/></label><label>Model<input name="model" required value="${escapeHtml(existing?.model || "")}"/></label><label>Trim<input name="trim" value="${escapeHtml(existing?.trim || "")}"/></label><label>Plate<input name="plate" value="${escapeHtml(existing?.plate || "")}"/></label><label>Mileage<input name="mileage" type="number" min="0" value="${existing?.mileage || ""}"/></label><label>Next service date<input name="nextServiceDate" type="date" value="${existing?.nextServiceDate || ""}"/></label><label class="full">Notes<textarea name="notes">${escapeHtml(existing?.notes || "")}</textarea></label><label class="full">Vehicle photos<input name="photos" type="file" accept="image/*" multiple/></label>${(existing?.photoKeys || []).length ? `<div class="full vehicle-photo-thumbs">${existing.photoKeys.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">Save vehicle</button></div></form>`);
+    showModal(`<form class="modal" id="vehicle-form"><div class="modal-head"><h2>${existing ? "Edit" : "Add linked"} vehicle</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<select name="customer" required>${customerOptions(existing?.customer)}</select></label><label>VIN<input name="vin" maxlength="17" pattern="[A-HJ-NPR-Z0-9]{17}" value="${escapeHtml(existing?.vin || "")}"/></label><div class="full vin-actions"><button class="secondary" type="button" id="decode-vin">${icon("scan-line", 14)} Decode VIN with NHTSA</button><span id="vin-status"></span></div><label>Year<input name="year" required value="${escapeHtml(existing?.year || "")}"/></label><label>Make<input name="make" required value="${escapeHtml(existing?.make || "")}"/></label><label>Model<input name="model" required value="${escapeHtml(existing?.model || "")}"/></label><label>Trim<input name="trim" value="${escapeHtml(existing?.trim || "")}"/></label><label>Plate<input name="plate" value="${escapeHtml(existing?.plate || "")}"/></label><label>Mileage<input name="mileage" type="number" min="0" value="${existing?.mileage || ""}"/></label><label>Next service date<input name="nextServiceDate" type="date" value="${existing?.nextServiceDate || ""}"/></label><label class="full">Notes<textarea name="notes">${escapeHtml(existing?.notes || "")}</textarea></label><label class="full">Vehicle photos<input name="photos" type="file" accept="image/*" multiple/></label>${(existing?.photoKeys || []).length ? `<div class="full vehicle-photo-thumbs">${existing.photoKeys.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Save vehicle</button></div></form>`);
     const form = document.querySelector("#vehicle-form");
     document.querySelector("#decode-vin").onclick = async () => {
       const vin = form.elements.vin.value.trim().toUpperCase(), s = document.querySelector("#vin-status");
@@ -10135,8 +10145,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       }
     };
   }
-  async function platformApi(path, options = {}) {
-    const response = await authorizedApiRequest(path, options);
+  async function platformApi(path, options2 = {}) {
+    const response = await authorizedApiRequest(path, options2);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || payload.error || `Platform request failed (${response.status})`);
     return payload;
@@ -11231,6 +11241,76 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const pending = pendingAuthProfile || {};
     return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Account almost ready</small></div></div><div class="eyebrow">Employee profile required</div><h1>${pending.reason === "deactivated" ? "Your shop profile is deactivated" : "Ask an admin to finish setup"}</h1><p>${pending.reason === "deactivated" ? `The Cloudflare Access identity <strong>${escapeHtml(pending.email || "")}</strong> works, but the matching employee profile is inactive.` : `You signed in as <strong>${escapeHtml(pending.email || "")}</strong> (${escapeHtml(roleLabel[pending.role] || pending.role || "team member")}), but this shop does not have an active employee profile for that email yet.`}</p><div class="service-contract"><p>Ask a shop administrator to open <b>Employees</b> and create (or reactivate) a profile using exactly this email:</p><code>${escapeHtml(pending.email || "")}</code></div><div class="modal-actions" style="justify-content:flex-start;margin-top:18px"><button class="primary" id="pending-sign-out">${icon("log-out", 14)} Sign out</button></div></section></main>`;
   }
+  async function signInOfflineDesktop(form) {
+    const data = readFormValues(form);
+    if (!offlineAccountReady && data.password !== data.confirm) throw new Error("Those passwords do not match.");
+    const account = offlineAccountReady ? await window.shopcrankDesktop.localAuth.signIn({ email: data.email, password: data.password }) : await window.shopcrankDesktop.localAuth.create({ name: data.name, email: data.email, password: data.password });
+    const session = offlineSession(account);
+    sessionStorage.setItem(storageKeys.session, JSON.stringify(session));
+    const user = ensureOfflineOwner(state, account);
+    pendingAuthProfile = null;
+    state.currentUserId = user.id;
+    desktopEntitlementVerified = true;
+    offlineAccountReady = true;
+    offlineAccountEmail = account.email;
+    state.route = roleRoutes[user.role]?.[0] || "home";
+    query = "";
+    save();
+    render();
+  }
+  async function signInLocalShell() {
+    const session = await cloudflareSignIn();
+    if (isDesktopApp) await verifyDesktopEntitlement();
+    const user = await resolveAuthenticatedProfile(session);
+    if (!user) {
+      state.currentUserId = null;
+      save();
+      render();
+      return;
+    }
+    pendingAuthProfile = null;
+    state.currentUserId = user.id;
+    state.route = roleRoutes[user.role]?.[0] || "dispatch";
+    query = "";
+    save();
+    await Promise.all([
+      loadCustomersFromApi(),
+      loadOrdersFromApi(),
+      loadInvoicesFromApi(),
+      loadPaymentsFromApi(),
+      loadExpensesFromApi(),
+      loadEstimatesFromApi(),
+      loadShiftEntriesFromApi(),
+      loadJobClockEntriesFromApi(),
+      loadPayrollEntriesFromApi(),
+      loadShopEntities()
+    ]);
+    render();
+  }
+  async function signInWithEmailLink(email, { sentEl, submitButton, turnstile }) {
+    const result = await requestMagicLinkSignIn(email, turnstile?.token() || "");
+    if (result?.redirecting) return;
+    if (result?.sent) {
+      if (sentEl) {
+        sentEl.textContent = result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
+        sentEl.hidden = false;
+      }
+      submitButton.disabled = false;
+      submitButton.textContent = "Resend sign-in link";
+      return;
+    }
+    throw new Error("Check your email for a sign-in link.");
+  }
+  function resetFailedSignIn(error, { errorEl, submitButton, turnstile }) {
+    clearAuthSession();
+    pendingAuthProfile = null;
+    desktopEntitlementVerified = !isDesktopApp;
+    desktopLoginMessage = isDesktopApp ? error.message : "";
+    errorEl.textContent = error.message || "Sign-in failed.";
+    errorEl.hidden = false;
+    submitButton.disabled = false;
+    turnstile?.reset();
+  }
   function safeHexColor(value2, fallback) {
     const color = String(value2 || "").trim();
     return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : fallback;
@@ -11438,8 +11518,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     };
   }
   function openJournal() {
-    const options = state.chartOfAccounts.map((x) => `<option value="${x.code}">${x.code} \xB7 ${x.name}</option>`).join("");
-    showModal(`<form class="modal" id="journal-form"><div class="modal-head"><h2>Journal entry</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="ledger-note">${icon("scale", 15)} Post equal debit and credit amounts for an adjustment.</div><div class="form-grid" style="margin-top:14px"><label>Date<input type="date" name="date" value="2026-08-14" required/></label><label>Amount *<input name="amount" type="number" step=".01" min=".01" required/></label><label class="full">Description *<input name="description" required placeholder="e.g. Owner contribution"/></label><label>Debit account<select name="debitAccount">${options}</select></label><label>Credit account<select name="creditAccount">${options}</select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("book-open-check", 14)} Post entry</button></div></form>`);
+    const options2 = state.chartOfAccounts.map((x) => `<option value="${x.code}">${x.code} \xB7 ${x.name}</option>`).join("");
+    showModal(`<form class="modal" id="journal-form"><div class="modal-head"><h2>Journal entry</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="ledger-note">${icon("scale", 15)} Post equal debit and credit amounts for an adjustment.</div><div class="form-grid" style="margin-top:14px"><label>Date<input type="date" name="date" value="2026-08-14" required/></label><label>Amount *<input name="amount" type="number" step=".01" min=".01" required/></label><label class="full">Description *<input name="description" required placeholder="e.g. Owner contribution"/></label><label>Debit account<select name="debitAccount">${options2}</select></label><label>Credit account<select name="creditAccount">${options2}</select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("book-open-check", 14)} Post entry</button></div></form>`);
     document.querySelector("#journal-form").onsubmit = (e) => {
       e.preventDefault();
       const d = readFormValues(e.target);
@@ -11466,7 +11546,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} records</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>`;
   }
   function prepareImport(type, text) {
-    return prepareImportRecords(type, text, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
+    return prepareImportRecords(type, text, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
   }
   function downloadTemplate(type) {
     const link = document.createElement("a"), file = importTypes[type];
@@ -11585,7 +11665,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     Object.assign(order, applyMileageToOrder(order, { rate: shopMileageRate(), taxRate: state.taxSettings.rate }));
     const number = invoiceNumberForOrder(order), estimate = order.estimate || {}, amount = Math.max(0, Number(order.total ?? estimate.total) || 0), tax = Math.max(0, Number(order.tax ?? estimate.tax) || 0), subtotal = Math.max(0, Number(estimate.subtotal) || Math.max(0, amount - tax)), issued = /* @__PURE__ */ new Date(), due = new Date(issued);
     due.setDate(due.getDate() + 14);
-    const invoice = { id: number, number, ro: order.id, customer: order.customer, vehicle: order.vehicle, amount, subtotal, tax, taxRate: Number(estimate.taxRate ?? state.taxSettings.rate) || 0, status: "sent", date: issued.toISOString().slice(0, 10), due: due.toISOString().slice(0, 10), lines: estimate.lines || [], createdAt: now() };
+    const invoice = { id: number, number, ro: order.id, customer: order.customer, vehicle: order.vehicle, amount, subtotal, tax, taxRate: Number(estimate.taxRate ?? state.taxSettings.rate) || 0, status: "sent", date: localIsoDate(issued), due: localIsoDate(due), lines: estimate.lines || [], createdAt: now() };
     const saved = await apiFetch("/entities/invoices", { method: "POST", body: JSON.stringify(invoice) }), record = saved?.queued ? invoice : saved;
     state.invoices.push(record);
     order.invoiceNumber = number;
@@ -11691,7 +11771,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function invoiceDateValue(value2) {
     const date = new Date(value2);
-    return Number.isNaN(date.valueOf()) ? "" : date.toISOString().slice(0, 10);
+    return Number.isNaN(date.valueOf()) ? "" : localIsoDate(date);
   }
   function openInvoiceEditor(key) {
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
@@ -11981,9 +12061,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function openAssignmentEditor(order) {
     const assignments = order.assignments?.length ? order.assignments : order.tech && order.tech !== "Unassigned" ? [{ name: order.tech, role: "primary", sharePercent: 100 }] : [];
     const techs = state.users.filter((user) => user.active !== false && classificationFor(user) === "technician" && (user.techName || user.name));
-    const options = (role) => `<option value="">Select technician</option>${techs.map((user) => `<option value="${escapeAttr(user.id)}" ${assignments.find((item) => item.role === role)?.employeeId === user.id ? "selected" : ""}>${escapeHtml(user.techName || user.name)}</option>`).join("")}`;
+    const options2 = (role) => `<option value="">Select technician</option>${techs.map((user) => `<option value="${escapeAttr(user.id)}" ${assignments.find((item) => item.role === role)?.employeeId === user.id ? "selected" : ""}>${escapeHtml(user.techName || user.name)}</option>`).join("")}`;
     const writeIn = assignments.find((item) => item.writeIn)?.name || "";
-    showModal(`<form class="modal" id="assignment-form"><div class="modal-head"><h2>Assigned technicians</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Primary technician<select name="primary">${options("primary")}</select></label><label>Primary share %<input name="primaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "primary")?.sharePercent ?? 100}"/></label><label>Secondary technician<select name="secondary">${options("secondary")}</select></label><label>Secondary share %<input name="secondaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "secondary")?.sharePercent ?? 0}"/></label><label>Apprentice<select name="apprentice">${options("apprentice")}</select></label><label>Apprentice share %<input name="apprenticeShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "apprentice")?.sharePercent ?? 0}"/></label><label class="full">Temporary technician name<input name="writeIn" value="${escapeAttr(writeIn)}" placeholder="Subcontractor or temp"/></label></div><p class="form-help">Only technicians appear in the lists. A temporary name is stored on this work order without a payroll rate.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Save assignments</button></div></form>`);
+    showModal(`<form class="modal" id="assignment-form"><div class="modal-head"><h2>Assigned technicians</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Primary technician<select name="primary">${options2("primary")}</select></label><label>Primary share %<input name="primaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "primary")?.sharePercent ?? 100}"/></label><label>Secondary technician<select name="secondary">${options2("secondary")}</select></label><label>Secondary share %<input name="secondaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "secondary")?.sharePercent ?? 0}"/></label><label>Apprentice<select name="apprentice">${options2("apprentice")}</select></label><label>Apprentice share %<input name="apprenticeShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "apprentice")?.sharePercent ?? 0}"/></label><label class="full">Temporary technician name<input name="writeIn" value="${escapeAttr(writeIn)}" placeholder="Subcontractor or temp"/></label></div><p class="form-help">Only technicians appear in the lists. A temporary name is stored on this work order without a payroll rate.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Save assignments</button></div></form>`);
     document.querySelector("#assignment-form").onsubmit = async (event) => {
       event.preventDefault();
       const data = readFormValues(event.target);
@@ -12340,14 +12420,14 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       resultsElement.querySelectorAll("[data-customer-result]").forEach((button) => {
         button.onclick = () => selectCustomer(results[Number(button.dataset.customerResult)]);
         button.onkeydown = (event) => {
-          const options = [...resultsElement.querySelectorAll("[data-customer-result]")];
-          const index = options.indexOf(button);
+          const options2 = [...resultsElement.querySelectorAll("[data-customer-result]")];
+          const index = options2.indexOf(button);
           if (event.key === "ArrowDown") {
             event.preventDefault();
-            (options[index + 1] || options[0])?.focus();
+            (options2[index + 1] || options2[0])?.focus();
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            (options[index - 1] || options.at(-1))?.focus();
+            (options2[index - 1] || options2.at(-1))?.focus();
           } else if (event.key === "Escape") {
             event.preventDefault();
             hideResults();
@@ -12512,7 +12592,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     <div class="job-line-total"><span>Line total</span><b>${money4(item.total)}</b></div>
   </article>`;
   }
-  function estimateFromEditor(root, options = root?._estimateOptions || {}) {
+  function estimateFromEditor(root, options2 = root?._estimateOptions || {}) {
     const lines = [...root.querySelectorAll(".job-estimate-line")].map((row, index) => {
       const type = row.querySelector(".job-line-type").value;
       const quantity = Math.max(0, Number(row.querySelector(".job-line-quantity").value) || 0);
@@ -12535,8 +12615,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         amount: type === "fee" ? unitPrice : 0
       }, index);
     }).filter((line) => line.description && line.quantity > 0);
-    const fees = options.fees ?? (lines.length ? [{ description: "Shop supplies", amount: 12 }] : []);
-    return calculateEstimate(lines, options.taxRate ?? state.taxSettings.rate, fees);
+    const fees = options2.fees ?? (lines.length ? [{ description: "Shop supplies", amount: 12 }] : []);
+    return calculateEstimate(lines, options2.taxRate ?? state.taxSettings.rate, fees);
   }
   function refreshEstimateEditor(root) {
     root.querySelectorAll(".job-estimate-line").forEach((row) => {
@@ -12558,9 +12638,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const total = document.querySelector("#new-estimate-total");
     if (total && root.id === "new-estimate-lines") total.value = estimate.total.toFixed(2);
   }
-  function bindEstimateEditor(root, options) {
+  function bindEstimateEditor(root, options2) {
     if (!root) return;
-    if (options) root._estimateOptions = options;
+    if (options2) root._estimateOptions = options2;
     const bindRows = () => {
       root.querySelectorAll("input,textarea,select").forEach((control) => control.oninput = () => refreshEstimateEditor(root));
       root.querySelectorAll(".job-line-type").forEach((control) => control.onchange = () => {
@@ -12915,10 +12995,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   </section>`;
   }
   function availableEstimateSources() {
-    return [
-      REFERENCE_ESTIMATE,
-      ...state.estimates.map((estimate) => ({ ...estimate, id: estimate.id || estimate.number }))
-    ];
+    return state.estimates.map((estimate) => ({ ...estimate, id: estimate.id || estimate.number }));
   }
   function estimateSourceById(id) {
     return availableEstimateSources().find((estimate) => String(estimate.id) === String(id));
@@ -12943,11 +13020,12 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function addEstimateSourceControls(form) {
     const body = form.querySelector(".modal-body");
     if (!body || document.querySelector("#estimate-source-picker")) return;
-    const options = availableEstimateSources().map((estimate) => `<option value="${escapeAttr(estimate.id)}">${escapeHtml(estimate.number || "Saved draft")} \xB7 ${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer || "Customer")}</option>`).join("");
+    const sources = availableEstimateSources();
     body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate\u2026</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
     const estimator = form.querySelector(".new-order-estimator");
     estimator?.insertAdjacentHTML("beforeend", `<div class="estimate-adjustments"><label>Shop supplies<input name="shopSupplies" type="number" min="0" step=".01" placeholder="Auto: 3% of labor, max $20"/></label><label>Discount %<input name="estimateDiscount" type="number" min="0" max="100" step=".1" value="0"/></label><label>Discount reason<input name="estimateDiscountReason" placeholder="Optional"/></label></div>`);
     form.querySelectorAll("[name=shopSupplies],[name=estimateDiscount],[name=estimateDiscountReason]").forEach((input) => input.addEventListener("input", () => refreshEstimateEditor(form.querySelector("#new-estimate-lines"))));
+    if (!sources.length) return;
     document.querySelector("#apply-estimate-source").onclick = () => {
       const estimate = estimateSourceById(document.querySelector("#estimate-source-picker").value);
       if (estimate) applyWorkOrderDraftToForm(form, workOrderDraftFromEstimate(normalizedEstimateSource(estimate)));
@@ -13290,7 +13368,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function shopFilingProfile() {
     const profile = shopProfile();
     const t = state.taxSettings || {};
-    const jurisdictions = normalizeJurisdictions(t.jurisdictions, Number(t.rate) || 8.25);
+    const jurisdictions = normalizeJurisdictions(t.jurisdictions);
     return {
       shopName: shopDisplayName(profile),
       address: profile.address || "",
@@ -15183,66 +15261,19 @@ ${line}`.trim();
           desktopEntitlementVerified = !isDesktopApp;
           try {
             if (isOfflineDesktop()) {
-              const data = readFormValues(form);
-              if (!offlineAccountReady && data.password !== data.confirm) throw new Error("Those passwords do not match.");
-              const account = offlineAccountReady ? await window.shopcrankDesktop.localAuth.signIn({ email: data.email, password: data.password }) : await window.shopcrankDesktop.localAuth.create({ name: data.name, email: data.email, password: data.password });
-              const session = offlineSession(account);
-              sessionStorage.setItem(storageKeys.session, JSON.stringify(session));
-              const user = ensureOfflineOwner(state, account);
-              pendingAuthProfile = null;
-              state.currentUserId = user.id;
-              desktopEntitlementVerified = true;
-              offlineAccountReady = true;
-              offlineAccountEmail = account.email;
-              state.route = roleRoutes[user.role]?.[0] || "home";
-              query = "";
-              save();
-              render();
+              await signInOfflineDesktop(form);
               return;
             }
             if (!navigator.onLine && !isLocalShell()) throw new Error("An internet connection is required to sign in.");
             if (isLocalShell()) {
-              const session = await cloudflareSignIn();
-              if (isDesktopApp) await verifyDesktopEntitlement();
-              const user = await resolveAuthenticatedProfile(session);
-              if (!user) {
-                state.currentUserId = null;
-                save();
-                render();
-                return;
-              }
-              pendingAuthProfile = null;
-              state.currentUserId = user.id;
-              state.route = roleRoutes[user.role]?.[0] || "dispatch";
-              query = "";
-              save();
-              await Promise.all([loadCustomersFromApi(), loadOrdersFromApi(), loadInvoicesFromApi(), loadPaymentsFromApi(), loadExpensesFromApi(), loadEstimatesFromApi(), loadShiftEntriesFromApi(), loadJobClockEntriesFromApi(), loadPayrollEntriesFromApi(), loadShopEntities()]);
-              render();
+              await signInLocalShell();
               return;
             }
             const email = String(emailInput?.value || "").trim().toLowerCase();
             if (!email) throw new Error("Enter your work email to continue.");
-            const result = await requestMagicLinkSignIn(email, turnstile?.token() || "");
-            if (result?.redirecting) return;
-            if (result?.sent) {
-              if (sentEl) {
-                sentEl.textContent = isDesktopApp ? "Check your email and open the sign-in link. It opens in your browser; click Open ShopCrank there to finish signing in to this app. The link expires in 15 minutes." : result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
-                sentEl.hidden = false;
-              }
-              submitButton.disabled = false;
-              submitButton.textContent = "Resend sign-in link";
-              return;
-            }
-            throw new Error("Check your email for a sign-in link.");
+            await signInWithEmailLink(email, { sentEl, submitButton, turnstile });
           } catch (error) {
-            clearAuthSession();
-            pendingAuthProfile = null;
-            desktopEntitlementVerified = !isDesktopApp;
-            desktopLoginMessage = isDesktopApp ? error.message : "";
-            errorEl.textContent = error.message || "Sign-in failed.";
-            errorEl.hidden = false;
-            submitButton.disabled = false;
-            turnstile?.reset();
+            resetFailedSignIn(error, { errorEl, submitButton, turnstile });
           }
         });
       };
@@ -15444,7 +15475,7 @@ ${line}`.trim();
         openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} \xB7 <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} \xB7 <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damageHtml}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${recommendationsHtml}${photosHtml}${approvalHtml}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print inspection</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the inspection", autoPrint: true });
       };
       updateOrderWithInvoiceCore = updateOrderInApi;
-      updateOrderInApi = async function(record, options) {
+      updateOrderInApi = async function(record, options2) {
         if (["completed", "invoiced"].includes(record.status)) {
           try {
             await ensureInvoiceForOrder(record);
@@ -15454,7 +15485,7 @@ ${line}`.trim();
             throw error;
           }
         }
-        return updateOrderWithInvoiceCore(record, options);
+        return updateOrderWithInvoiceCore(record, options2);
       };
       sampleOrderIds = /* @__PURE__ */ new Set(["RO-1044", "RO-1046", "RO-1048", "RO-1049", "RO-1050", "RO-1051", "RO-1052"]);
       sampleInvoiceIds = /* @__PURE__ */ new Set(["INV-2032", "INV-2036", "INV-2040", "INV-2041"]);
@@ -15594,8 +15625,8 @@ ${line}`.trim();
         updateGrokVoiceUiControls();
       };
       apiFetchAssistantCore = apiFetch;
-      apiFetch = async function(path, options = {}) {
-        return apiFetchAssistantCore(path, options);
+      apiFetch = async function(path, options2 = {}) {
+        return apiFetchAssistantCore(path, options2);
       };
       if ("serviceWorker" in navigator && isSecureContext && !isDesktopApp) {
         window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch((error) => console.error("Service worker registration failed", error)));
@@ -15693,7 +15724,7 @@ ${line}`.trim();
         return shell(`${heading("Team access", "Employees", "Employee records, employment details, payroll rates, and login access.", false)}<div class="employee-actions"><div class="access-note">${icon("shield-check", 15)} Employee profiles are saved to this shop and remain available after sign-in or refresh.</div><button class="primary" id="new-employee">${icon("user-plus", 15)} Add employee</button></div><div class="data-panel"><table><thead><tr><th>Employee record</th><th>Role & department</th><th>Employment & pay</th><th>Contact & start</th><th>Access</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No employee profiles yet.</td></tr>`}</tbody></table></div>`);
       };
       openEmployee = function(existing = null) {
-        showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="displayName" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="jobTitle" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="accessRole">${["technician", "office", "service_writer", "admin"].map((role) => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map((value2) => `<option ${existing?.employmentType === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map((value2) => `<option ${existing?.payFrequency === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10))}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map((value2) => `<option ${existing?.taxStatus === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
+        showModal(`<form class="modal wide" id="employee-form"><div class="modal-head"><h2>${existing ? "Edit employee profile" : "Create employee profile"}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Identity & access</h3><div class="form-grid"><label>Employee name *<input name="displayName" required value="${employeeFormValue(existing, "name")}"/></label><label>Employee ID *<input name="employeeId" required value="${employeeFormValue(existing, "employeeId")}" placeholder="EMP-005"/></label><label>Job title<input name="jobTitle" value="${employeeFormValue(existing, "title")}"/></label><label>Department<input name="department" value="${employeeFormValue(existing, "department")}"/></label><label class="full">Email address *<input type="email" name="email" required value="${employeeFormValue(existing, "email")}" ${existing ? "readonly" : ""}/></label><label>Role<select name="accessRole">${["technician", "office", "service_writer", "admin"].map((role) => `<option value="${role}" ${(existing ? existing.role : "office") === role ? "selected" : ""}>${roleLabel[role]}</option>`).join("")}</select></label><label class="full">Technician dispatch name<input name="techName" value="${employeeFormValue(existing, "techName")}" placeholder="Required for technicians, e.g. Eli R."/></label></div><h3>Employment information</h3><div class="form-grid"><label>Employment type<select name="employmentType">${["Hourly", "Salary", "Contractor"].map((value2) => `<option ${existing?.employmentType === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Pay rate *<input name="payRate" type="number" min="0" step=".01" required value="${Number(existing?.payRate || 0)}"/></label><label>Pay frequency<select name="payFrequency">${["Weekly", "Biweekly", "Monthly"].map((value2) => `<option ${existing?.payFrequency === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Start date<input name="startDate" type="date" value="${employeeFormValue(existing, "startDate", localIsoDate())}"/></label><label>Tax status<select name="taxStatus">${["W-2", "1099 Contractor"].map((value2) => `<option ${existing?.taxStatus === value2 ? "selected" : ""}>${value2}</option>`).join("")}</select></label><label>Phone<input name="phone" type="tel" value="${employeeFormValue(existing, "phone")}"/></label><label class="full">Home address<input name="address" value="${employeeFormValue(existing, "address")}"/></label><label class="full">Emergency contact<input name="emergencyContact" value="${employeeFormValue(existing, "emergencyContact")}"/></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} ${existing ? "Save employee" : "Create profile"}</button></div></form>`);
         document.querySelector("#employee-form").onsubmit = async (event) => {
           event.preventDefault();
           const data = readFormValues(event.target);
@@ -16376,9 +16407,8 @@ ${line}`.trim();
         openNewWithDraft();
       };
       savedEstimates = function() {
-        const reference = `<section class="reference-template-card"><div><div class="eyebrow">Reusable shop template</div><h2>${REFERENCE_ESTIMATE.number}</h2><p>${escapeHtml(REFERENCE_ESTIMATE.customer.name)} \xB7 ${escapeHtml(REFERENCE_ESTIMATE.vehicle.description)}</p></div><strong>${money4(REFERENCE_ESTIMATE.total)}</strong><div><button class="secondary" data-preview-estimate="${REFERENCE_ESTIMATE.id}">${icon("file-text", 14)} View estimate</button><button class="primary" data-fill-estimate="${REFERENCE_ESTIMATE.id}">${icon("clipboard-plus", 14)} Fill new work order</button></div></section>`;
         const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge2(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
-        return `${reference}<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
+        return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
       };
       liveAssistant = function() {
         const rows = assistantConversation.map(assistantMessageMarkup).join("");
@@ -16935,7 +16965,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
 <label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
 <label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
 <label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
 <label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
 <label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
           }
@@ -17048,8 +17078,8 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         });
       };
       apiFetchShopAiNoticeCore = apiFetch;
-      apiFetch = async function(path, options = {}) {
-        const result = await apiFetchShopAiNoticeCore(path, options);
+      apiFetch = async function(path, options2 = {}) {
+        const result = await apiFetchShopAiNoticeCore(path, options2);
         if (String(path).startsWith("/ai/assistant") && result?.notice) {
           toast(result.notice);
           shopAiSettings = { ...shopAiSettings, loaded: false };
@@ -17079,20 +17109,20 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         return startLiveKeyJobLicenseCore(data);
       };
       apiFetchKeyLicenseCore = apiFetch;
-      apiFetch = async function(path, options = {}) {
-        if (path !== "/diagnostics/authorize" || !options.body) return apiFetchKeyLicenseCore(path, options);
+      apiFetch = async function(path, options2 = {}) {
+        if (path !== "/diagnostics/authorize" || !options2.body) return apiFetchKeyLicenseCore(path, options2);
         let body = null;
         try {
-          body = JSON.parse(options.body);
+          body = JSON.parse(options2.body);
         } catch {
           body = null;
         }
-        if (!requiresVehicleKeyLicense(body)) return apiFetchKeyLicenseCore(path, options);
+        if (!requiresVehicleKeyLicense(body)) return apiFetchKeyLicenseCore(path, options2);
         const stored = await loadStoredUnlock();
         if (!stored?.redeemedAt) throw new Error("This device is not unlocked for live key programming. Open Key programming and unlock it with your ShopCrank license.");
         const licenseUnlock = await authorizeUnlock(await keyLicenseDevice(), stored.token, body.procedure, String(body.vin || "").trim());
         try {
-          return await apiFetchKeyLicenseCore(path, { ...options, body: JSON.stringify({ ...body, licenseUnlock }) });
+          return await apiFetchKeyLicenseCore(path, { ...options2, body: JSON.stringify({ ...body, licenseUnlock }) });
         } catch (error) {
           keyLicenseView.loaded = false;
           throw error;
