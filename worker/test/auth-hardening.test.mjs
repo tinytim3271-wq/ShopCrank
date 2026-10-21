@@ -117,3 +117,53 @@ test('stored files never render as pages: unknown types download, all responses 
   assert.equal(photo.headers.get('Content-Disposition'), null);
   assert.equal(photo.headers.get('X-Content-Type-Options'), 'nosniff');
 });
+
+async function emailSignIn(env, body) {
+  const start = await worker.fetch(new Request(`${ORIGIN}/api/auth/magic-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.50' },
+    body: JSON.stringify(body),
+  }), env);
+  assert.equal(start.status, 200);
+  const emailToken = new URL((await start.json()).loginUrl).searchParams.get('token');
+  const confirm = await worker.fetch(new Request(`${ORIGIN}/api/auth/callback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: ORIGIN },
+    body: `token=${emailToken}`,
+  }), env);
+  return { emailToken, confirm };
+}
+
+test('email sign-in started in the desktop app hands the session back to the app', async () => {
+  const env = { DB: createD1(), AUTH_EXPOSE_LOGIN_LINK: '1' };
+  const { emailToken, confirm } = await emailSignIn(env, { email: 'desk@example.org', returnTo: '/', desktop: true });
+  // The browser that opened the email link gets an "Open ShopCrank" page, not a session.
+  assert.equal(confirm.status, 200);
+  assert.equal(confirm.headers.get('Set-Cookie'), null);
+  const html = await confirm.text();
+  const handoff = (html.match(/shopcrank:\/\/auth\?token=([a-f0-9]{32})/) || [])[1];
+  assert.ok(handoff, 'handoff deep link present');
+  assert.notEqual(handoff, emailToken);
+  assert.match(html, /Sign-in confirmed/);
+  // The emailed link is spent.
+  const reuse = await worker.fetch(new Request(`${ORIGIN}/api/auth/callback`, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: ORIGIN }, body: `token=${emailToken}`,
+  }), env);
+  assert.equal(reuse.status, 401);
+  // The app opens shopcrank://auth?token=… as GET /api/auth/callback and is signed in directly.
+  const app = await worker.fetch(new Request(`${ORIGIN}/api/auth/callback?token=${handoff}`), env);
+  assert.equal(app.status, 302);
+  assert.match(app.headers.get('Set-Cookie') || '', /^shopcrank_session=/);
+  assert.equal(new URL(app.headers.get('Location')).pathname, '/');
+  assert.doesNotMatch(app.headers.get('Location'), /desktop/);
+  // One use only.
+  const again = await worker.fetch(new Request(`${ORIGIN}/api/auth/callback?token=${handoff}`), env);
+  assert.equal(again.status, 401);
+});
+
+test('browser email sign-in still signs the browser in on confirm', async () => {
+  const env = { DB: createD1(), AUTH_EXPOSE_LOGIN_LINK: '1' };
+  const { confirm } = await emailSignIn(env, { email: 'web@example.org', returnTo: '/' });
+  assert.equal(confirm.status, 302);
+  assert.match(confirm.headers.get('Set-Cookie') || '', /^shopcrank_session=/);
+});

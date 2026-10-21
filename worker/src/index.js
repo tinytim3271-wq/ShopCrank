@@ -2421,14 +2421,18 @@ function normalizeSignupIntent({ planId, shopName, ownerName, email, name } = {}
 }
 
 /** Pack public signup fields into return_to so magic-link works before D1 columns exist. */
-function embedSignupIntent(returnTo, { planId, shopName, ownerName } = {}) {
+function embedSignupIntent(returnTo, { planId, shopName, ownerName, desktop, handoff } = {}) {
   const path = safeReturnPath(returnTo);
-  if (!planId && !shopName && !ownerName) return path;
+  if (!planId && !shopName && !ownerName && !desktop && !handoff) return path;
   try {
     const parsed = new URL(path, 'https://shopcrank.invalid');
     if (planId && isPublicPlan(planId)) parsed.searchParams.set('trialPlan', planId);
     if (shopName) parsed.searchParams.set('trialShop', shopName);
     if (ownerName) parsed.searchParams.set('trialOwner', ownerName);
+    // Sign-in started in the desktop app: finish it there, not in the browser.
+    if (desktop) parsed.searchParams.set('desktopApp', '1');
+    // One-time token handed to the desktop app through shopcrank://auth.
+    if (handoff) parsed.searchParams.set('desktopHandoff', '1');
     return safeReturnPath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
   } catch {
     return path;
@@ -2440,6 +2444,8 @@ function extractSignupIntent(returnTo, fallback = {}) {
     planId: fallback.planId || null,
     shopName: fallback.shopName || null,
     ownerName: fallback.ownerName || null,
+    desktop: false,
+    handoff: false,
   };
   let cleanPath = safeReturnPath(returnTo);
   try {
@@ -2450,9 +2456,13 @@ function extractSignupIntent(returnTo, fallback = {}) {
     if (planId && isPublicPlan(planId)) intent.planId = planId;
     if (shopName) intent.shopName = shopName;
     if (ownerName) intent.ownerName = ownerName;
+    intent.desktop = parsed.searchParams.get('desktopApp') === '1';
+    intent.handoff = parsed.searchParams.get('desktopHandoff') === '1';
     parsed.searchParams.delete('trialPlan');
     parsed.searchParams.delete('trialShop');
     parsed.searchParams.delete('trialOwner');
+    parsed.searchParams.delete('desktopApp');
+    parsed.searchParams.delete('desktopHandoff');
     cleanPath = safeReturnPath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
   } catch {
     // keep fallbacks
@@ -2583,7 +2593,7 @@ async function pkceChallenge(verifier) {
   return base64UrlEncode(new Uint8Array(digest));
 }
 
-function desktopHandoffPage(token) {
+function desktopHandoffPage(token, heading = 'Google sign-in succeeded') {
   const link = `${DESKTOP_AUTH_SCHEME}//auth?token=${encodeURIComponent(token)}`;
   return `<!doctype html>
 <html lang="en">
@@ -2600,7 +2610,7 @@ function desktopHandoffPage(token) {
 </head>
 <body>
   <main>
-    <h1>Google sign-in succeeded</h1>
+    <h1>${heading}</h1>
     <p>Open ShopCrank to finish signing in. If Windows asks which app to use, choose ShopCrank.</p>
     <a href="${link}">Open ShopCrank</a>
   </main>
@@ -2935,10 +2945,12 @@ async function handleMagicLink(request, env) {
   const signupPlanId = isPublicPlan(requestedPlan) ? requestedPlan : null;
   const signupShopName = String(body.shopName || body.shop_name || '').trim().slice(0, 120) || null;
   const signupOwnerName = String(body.ownerName || body.owner_name || '').trim().slice(0, 120) || null;
+  const desktop = body.desktop === true || body.desktop === '1' || body.desktop === 'true';
   const storedReturnTo = embedSignupIntent(returnTo, {
     planId: signupPlanId,
     shopName: signupShopName,
     ownerName: signupOwnerName,
+    desktop,
   });
   const exposeLoginLink = env.AUTH_EXPOSE_LOGIN_LINK === '1';
   const sendDirectly = canSendLoginEmail(env);
@@ -3028,9 +3040,11 @@ async function handleAuthCallback(request, env) {
   if (loginToken.used_at || new Date(loginToken.expires_at).getTime() <= Date.now()) {
     throw new HttpError(401, 'The sign-in link has expired');
   }
-  // Emailed links need a click on our confirm page; Google handoffs are server
-  // redirects (and desktop deep links) that no scanner sees, so they go straight through.
-  if (request.method === 'GET' && (loginToken.auth_method || 'magic_link') === 'magic_link') {
+  const signup = extractSignupIntent(loginToken.return_to);
+  // Emailed links need a click on our confirm page; Google handoffs and desktop
+  // handoff tokens are server redirects or shopcrank:// deep links that no
+  // scanner sees, so they go straight through.
+  if (request.method === 'GET' && (loginToken.auth_method || 'magic_link') === 'magic_link' && !signup.handoff) {
     return new Response(signInConfirmPage(token), {
       status: 200,
       headers: {
@@ -3045,7 +3059,6 @@ async function handleAuthCallback(request, env) {
     });
   }
   const email = String(loginToken.email || '').trim().toLowerCase();
-  const signup = extractSignupIntent(loginToken.return_to);
   const user = await ensureSaasUser(env, email, signup.ownerName || email.split('@')[0], {
     planId: signup.planId,
     shopName: signup.shopName,
@@ -3053,6 +3066,37 @@ async function handleAuthCallback(request, env) {
   });
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
+  }
+  if (signup.desktop && !signup.handoff) {
+    // The emailed link opened in the browser, but sign-in started in the desktop
+    // app. Swap the spent email token for a short-lived handoff token and give
+    // the browser an "Open ShopCrank" button; the app redeems it via shopcrank://.
+    const handoffToken = crypto.randomUUID().replaceAll('-', '');
+    const handoffReturnTo = embedSignupIntent(signup.returnTo, {
+      planId: signup.planId,
+      shopName: signup.shopName,
+      ownerName: signup.ownerName,
+      handoff: true,
+    });
+    await env.DB.prepare(`
+      UPDATE login_tokens SET token_hash = ?, return_to = ?, expires_at = ?, used_at = NULL, created_at = ?
+      WHERE id = ?
+    `).bind(
+      await hashValue(handoffToken),
+      handoffReturnTo,
+      new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+      new Date().toISOString(),
+      loginToken.id,
+    ).run();
+    return new Response(desktopHandoffPage(handoffToken, 'Sign-in confirmed'), {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      },
+    });
   }
   const sessionToken = crypto.randomUUID().replaceAll('-', '');
   const sessionId = crypto.randomUUID();

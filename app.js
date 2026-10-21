@@ -8301,7 +8301,7 @@ button{margin-top:12px;padding:8px 14px}
   async function requestMagicLinkSignIn(email, turnstileToken = "") {
     let response;
     try {
-      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken }) });
+      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken, ...isDesktopApp ? { desktop: true } : {} }) });
     } catch (error) {
       if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again.");
       throw error;
@@ -10112,7 +10112,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function loginScreen() {
     if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon });
     const googleUrl = `${cloudflareConfig2.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><p class="login-sent" id="login-sent" role="status" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
   }
   async function upgradeShopPlan() {
     const plans = [["shop", "Shop \xB7 $139/mo"], ["solo", "Solo \xB7 $69/mo"], ["shop_pro", "Shop Pro \xB7 $279/mo"], ["enterprise", "Enterprise \xB7 $559/mo"]];
@@ -10284,7 +10284,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function render() {
     const root = document.querySelector("#root");
     if (!currentUser()) {
-      root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } });
+      root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
       lucide.createIcons();
       bind();
       return;
@@ -15212,7 +15212,7 @@ ${line}`.trim();
             if (result?.redirecting) return;
             if (result?.sent) {
               if (sentEl) {
-                sentEl.textContent = result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
+                sentEl.textContent = isDesktopApp ? "Check your email and open the sign-in link. It opens in your browser; click Open ShopCrank there to finish signing in to this app. The link expires in 15 minutes." : result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
                 sentEl.hidden = false;
               }
               submitButton.disabled = false;
