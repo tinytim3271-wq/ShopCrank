@@ -87,6 +87,39 @@ public sealed class ObdOverMockedJ2534Tests
     const string Vin = "2C3CDXBG5MH000001";
     static readonly JsonSerializerOptions Camel = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
+    [Theory]
+    [InlineData("12345", 2)]
+    [InlineData("123456", 2)]
+    [InlineData("12345", 4)]
+    [InlineData("123456", 4)]
+    public void PinSecurityAccessRejectsPinSeedCombinationsThatWouldTruncate(string pin, int seedLength)
+    {
+        var provider = new PinSecurityAccessProvider(pin);
+
+        var error = Assert.Throws<InvalidOperationException>(() => provider.ComputeKey(1, new byte[seedLength], Vin));
+
+        Assert.Contains("will not truncate", error.Message);
+    }
+
+    [Fact]
+    public void PinSecurityAccessRejectsUnsupportedSeedLengths()
+    {
+        var provider = new PinSecurityAccessProvider("1234");
+
+        var error = Assert.Throws<InvalidOperationException>(() => provider.ComputeKey(1, new byte[3], Vin));
+
+        Assert.Contains("unsupported", error.Message);
+    }
+
+    [Fact]
+    public void PinSecurityAccessPreservesSupportedFourDigitEncodings()
+    {
+        var provider = new PinSecurityAccessProvider("1234");
+
+        Assert.Equal(new byte[] { 0x12, 0x34 }, provider.ComputeKey(1, new byte[2], Vin));
+        Assert.Equal(Encoding.ASCII.GetBytes("1234"), provider.ComputeKey(1, new byte[4], Vin));
+    }
+
     static ObdOverMockedJ2534Tests()
     {
         Environment.SetEnvironmentVariable("SHOP_CRANK_J2534_TOKEN", "test-host-token");
