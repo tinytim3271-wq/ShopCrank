@@ -5,9 +5,10 @@ const encoder = new TextEncoder();
 /**
  * Diagnostic/programming procedures the platform can authorize. `autoAuth`
  * procedures touch immobilizer/security-gateway or ECU firmware and, in LIVE
- * mode against real hardware, require licensed Stellantis AutoAuth credentials
- * configured for the shop. SIMULATE mode drives only the bench simulator and
- * is always available for development and training.
+ * mode against real hardware, require licensed OEM AutoAuth credentials
+ * configured for the shop. Nissan Maxima immobilizer jobs use the vehicle PIN
+ * instead of Stellantis AutoAuth. SIMULATE mode drives only the bench simulator
+ * and is always available for development and training.
  */
 export const DIAGNOSTIC_PROCEDURES = {
   clear_dtcs: { klass: 'dtc', mutating: true, autoAuth: false, ttlMs: 5 * 60 * 1000 },
@@ -24,6 +25,22 @@ export const PROGRAMMING_MODES = new Set(['simulate', 'live']);
 
 export function procedureSpec(procedure) {
   return DIAGNOSTIC_PROCEDURES[String(procedure || '').trim()] || null;
+}
+
+const NISSAN_MAXIMA_WMI = new Set(['1N4', 'JN1']);
+const NISSAN_MAXIMA_VDS = new Set(['AA', 'BA']);
+
+/** Nissan Maxima NATS / Intelligent Key registration uses the vehicle PIN, not Stellantis AutoAuth. */
+export function isNissanMaximaVin(vin) {
+  const value = String(vin || '').trim().toUpperCase();
+  if (value.length < 5) return false;
+  return NISSAN_MAXIMA_WMI.has(value.slice(0, 3)) && NISSAN_MAXIMA_VDS.has(value.slice(3, 5));
+}
+
+export function requiresAutoAuthLogin(spec, vin) {
+  if (!spec?.autoAuth) return false;
+  if (spec.klass === 'immobilizer' && isNissanMaximaVin(vin)) return false;
+  return true;
 }
 
 /**

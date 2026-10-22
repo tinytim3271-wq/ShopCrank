@@ -21,10 +21,10 @@ sealed class FakeJ2534Dll
     const uint Iso15765FirstFrame = 0x02;
 
     readonly Queue<PassThruMsg> _rx = new();
-    public List<byte[]> Requests { get; } = [];
+    public List<(uint CanId, byte[] Payload)> AddressedRequests { get; } = [];
     public uint Protocol { get; private set; }
     public uint Baud { get; private set; }
-    public Func<byte[], IEnumerable<byte[]>> Responder { get; set; } = request => [[0x7F, request[0], 0x11]];
+    public Func<uint, byte[], IEnumerable<byte[]>> Responder { get; set; } = (_, request) => [[0x7F, request[0], 0x11]];
 
     public PassThruLibrary CreateLibrary() => PassThruLibrary.FromDelegates(
         (IntPtr name, ref uint deviceId) => { deviceId = 1; return 0; },
@@ -47,12 +47,18 @@ sealed class FakeJ2534Dll
         var msg = Marshal.PtrToStructure<PassThruMsg>(pMsg);
         var canId = PassThruMsgHelper.ReadCanId(msg.Data);
         var payload = msg.Data.AsSpan(4, (int)msg.DataSize - 4).ToArray();
-        Requests.Add(payload);
+        AddressedRequests.Add((canId, payload));
         _rx.Enqueue(Message(canId, payload, TxMsgType)); // TX echo/indication
-        foreach (var response in Responder(payload))
+        var responseCanId = canId switch
         {
-            if (response.Length > 7) _rx.Enqueue(Message(canId + 8, [], Iso15765FirstFrame));
-            _rx.Enqueue(Message(canId + 8, response, 0));
+            0x743 => 0x763u,
+            0x745 => 0x765u,
+            _ => canId + 8,
+        };
+        foreach (var response in Responder(canId, payload))
+        {
+            if (response.Length > 7) _rx.Enqueue(Message(responseCanId, [], Iso15765FirstFrame));
+            _rx.Enqueue(Message(responseCanId, response, 0));
         }
         return 0;
     }
@@ -72,7 +78,8 @@ sealed class FakeJ2534Dll
         return msg;
     }
 
-    public bool SentService(byte service) => Requests.Any(r => r.Length > 0 && r[0] == service);
+    public bool SentService(byte service, uint? canId = null) =>
+        AddressedRequests.Any(r => r.Payload.Length > 0 && r.Payload[0] == service && (!canId.HasValue || r.CanId == canId));
 }
 
 public sealed class ObdOverMockedJ2534Tests
@@ -80,12 +87,45 @@ public sealed class ObdOverMockedJ2534Tests
     const string Vin = "2C3CDXBG5MH000001";
     static readonly JsonSerializerOptions Camel = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
+    [Theory]
+    [InlineData("12345", 2)]
+    [InlineData("123456", 2)]
+    [InlineData("12345", 4)]
+    [InlineData("123456", 4)]
+    public void PinSecurityAccessRejectsPinSeedCombinationsThatWouldTruncate(string pin, int seedLength)
+    {
+        var provider = new PinSecurityAccessProvider(pin);
+
+        var error = Assert.Throws<InvalidOperationException>(() => provider.ComputeKey(1, new byte[seedLength], Vin));
+
+        Assert.Contains("no key was sent", error.Message);
+    }
+
+    [Fact]
+    public void PinSecurityAccessRejectsUnsupportedSeedLengths()
+    {
+        var provider = new PinSecurityAccessProvider("1234");
+
+        var error = Assert.Throws<InvalidOperationException>(() => provider.ComputeKey(1, new byte[3], Vin));
+
+        Assert.Contains("no key was sent", error.Message);
+    }
+
+    [Fact]
+    public void PinSecurityAccessPreservesSupportedFourDigitEncodings()
+    {
+        var provider = new PinSecurityAccessProvider("1234");
+
+        Assert.Equal(new byte[] { 0x12, 0x34 }, provider.ComputeKey(1, new byte[2], Vin));
+        Assert.Equal(Encoding.ASCII.GetBytes("1234"), provider.ComputeKey(1, new byte[4], Vin));
+    }
+
     static ObdOverMockedJ2534Tests()
     {
         Environment.SetEnvironmentVariable("SHOP_CRANK_J2534_TOKEN", "test-host-token");
     }
 
-    static IEnumerable<byte[]> Car(byte[] request)
+    static IEnumerable<byte[]> Car(uint canId, byte[] request)
     {
         var key = Convert.ToHexString(request);
         return key switch
@@ -221,12 +261,12 @@ public sealed class ObdOverMockedJ2534Tests
 
         // Live programming requires an open immobilizer SecurityAccess session first.
         session.SecurityAccessProviderOverride = new SimulatorSecurityAccessProvider();
-        dll.Responder = request => request switch
+        dll.Responder = (_, request) => request switch
         {
             [0x10, 0x02] => [[0x50, 0x02]],
             [0x27, 0x03] => [[0x67, 0x03, 0xA1, 0xB2, 0xC3, 0xD4]],
             [0x27, 0x04, ..] => [[0x67, 0x04]],
-            _ => Car(request),
+            _ => Car(_, request),
         };
         await session.SecurityAccessAsync("immobilizer");
         await session.ProgramKeyAsync("add_key", Vin, "4321");
@@ -269,5 +309,73 @@ public sealed class ObdOverMockedJ2534Tests
         Assert.Equal("0x7E8", DiagnosticSession.ResponseId("0x7E0"));
         Assert.Equal("0x7E9", DiagnosticSession.ResponseId("0x7E1"));
         Assert.Equal("0x7EC", DiagnosticSession.ResponseId("0x7E4"));
+    }
+
+    const string MaximaVin = "1N4AA6AP1GC123456";
+
+    [Fact]
+    public void NissanMaximaLiveKeyProceduresRemainUnsupportedUntilGatewayAuthorizationIsAvailable()
+    {
+        Assert.True(NissanKeyProcedures.IsMaxima(MaximaVin));
+        Assert.False(NissanKeyProcedures.IsMaxima("1N4AL3AP1GC123456"));
+        var support = KeyProcedureCatalog.LiveVerified.Evaluate("add_key", MaximaVin, simulator: false);
+        Assert.False(support.Supported);
+        Assert.Contains("gateway authorization is supported", support.Reason);
+        Assert.False(KeyProcedureCatalog.LiveVerified.Evaluate("add_key", "1N4AL3AP1GC123456", simulator: false).Supported);
+        var identity = VehicleIdentity.FromVin(MaximaVin);
+        Assert.Equal("Nissan", identity.Make);
+        Assert.Equal("Maxima", identity.Model);
+        Assert.Equal("A36", identity.Platform);
+        Assert.Equal(2016, identity.Year);
+        Assert.NotEqual("Stellantis", identity.Make);
+        Assert.True(KeyProcedureCatalog.LiveVerified.Evaluate("add_key", Vin, simulator: false).Supported);
+    }
+
+    static IEnumerable<byte[]> NissanCar(uint canId, byte[] request)
+    {
+        var key = Convert.ToHexString(request);
+        if (canId == 0x7E0 && key == "0902")
+            return [[0x49, 0x02, 0x01, .. Encoding.ASCII.GetBytes(MaximaVin)]];
+        if (canId == 0x7E0 && key == "22F190")
+            return [[0x62, 0xF1, 0x90, .. Encoding.ASCII.GetBytes(MaximaVin)]];
+        return [[0x7F, request[0], 0x11]];
+    }
+
+    [Fact]
+    public async Task NissanMaximaGatewayUnlockAndKeyRegistrationFailClosedWithoutSecurityRequests()
+    {
+        var dll = new FakeJ2534Dll { Responder = NissanCar };
+        var session = new DiagnosticSession();
+        var device = PassThruDevice.Open(dll.CreateLibrary(), "PassThru464.dll", "Mock RLink");
+        session.AttachDevice(device, "registry-native-0404-topdon---rlink", "RLink", "PassThru464.dll");
+
+        var unlockError = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            session.SecurityAccessAsync("immobilizer"));
+        Assert.Contains("gateway authorization is not supported", unlockError.Message);
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
+        Assert.False(dll.SentService(0x10));
+        Assert.False(dll.SentService(0x27));
+        Assert.False(dll.SentService(0x31));
+    }
+
+    [Theory]
+    [InlineData("1234", 2, "1234")]
+    [InlineData("1234", 4, "31323334")]
+    public void PinSecurityAccessUsesOnlySupportedExactLengthEncodings(string pin, int seedLength, string expectedHex)
+    {
+        var key = new PinSecurityAccessProvider(pin).ComputeKey(1, new byte[seedLength], MaximaVin);
+        Assert.Equal(expectedHex, Convert.ToHexString(key));
+    }
+
+    [Theory]
+    [InlineData("123456", 2)]
+    [InlineData("123456", 4)]
+    [InlineData("1234", 3)]
+    public void PinSecurityAccessRejectsUnverifiedPinAndSeedCombinations(string pin, int seedLength)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new PinSecurityAccessProvider(pin).ComputeKey(1, new byte[seedLength], MaximaVin));
+        Assert.Contains("no verified encoding", ex.Message);
     }
 }
