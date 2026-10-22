@@ -46,7 +46,7 @@
     "build:windows:demo": "node scripts/build-offline-windows.mjs --demo",
     "test:j2534": "node diagnostics/j2534-host-node/test/host.test.js",
     "merge:open-prs": "bash scripts/merge-open-prs.sh",
-    "test:html": "TZ=America/Chicago node --test src/shared/html.test.mjs src/shared/form-fields.test.mjs src/shared/dates.test.mjs",
+    "test:html": "node --test src/shared/html.test.mjs src/shared/form-fields.test.mjs src/shared/dates.test.mjs",
     "test:chat": "node --test src/modules/chat/utils.test.mjs",
     "test:storage": "node --test src/modules/storage.test.mjs",
     "test:upload": "node --test src/modules/file-upload.test.mjs",
