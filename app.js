@@ -10711,14 +10711,6 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     document.querySelector("#accounting-export")?.addEventListener("click", exportLedger);
     document.querySelector("#record-expense")?.addEventListener("click", openExpense);
     document.querySelector("#journal-entry")?.addEventListener("click", openJournal);
-    document.querySelector("#tax-settings-form")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const data = readFormValues(event.target);
-      state.taxSettings = { state: data.state, taxId: data.taxId.trim(), rate: Number(data.rate) || 0, filingFrequency: data.filingFrequency };
-      save();
-      toast("Tax settings saved");
-      render();
-    });
     document.querySelector("#tax-report-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = readFormValues(event.target);
@@ -13746,6 +13738,53 @@ ${catRows}
       });
     }
   }
+  function bindTaxSettingsForm(taxSettingsForm) {
+    if (!taxSettingsForm || taxSettingsForm.dataset.filingEnhanced) return;
+    taxSettingsForm.dataset.filingEnhanced = "1";
+    const grid = taxSettingsForm.querySelector(".form-grid") || taxSettingsForm;
+    if (!taxSettingsForm.querySelector("[name=ein]")) {
+      grid.insertAdjacentHTML("beforeend", `
+<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || "")}" placeholder="XX-XXXXXXX"/></label>
+<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
+<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
+<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
+    }
+    taxSettingsForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = readFormValues(event.target);
+      let jurisdictions = null;
+      try {
+        jurisdictions = JSON.parse(data.jurisdictionsJson || "null");
+      } catch {
+        toast("Jurisdiction JSON is invalid");
+        return;
+      }
+      const rate = jurisdictions ? combinedSalesTaxRate(jurisdictions) : Number(data.rate) || 0;
+      const taxSettings = {
+        state: data.state,
+        taxId: String(data.taxId || "").trim(),
+        rate,
+        filingFrequency: data.filingFrequency,
+        ein: String(data.ein || "").trim(),
+        texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
+        webfileNumber: String(data.webfileNumber || "").trim(),
+        jurisdictions,
+        laborTaxable: data.laborTaxable === "on",
+        feesTaxable: data.feesTaxable === "on"
+      };
+      try {
+        await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });
+        state.taxSettings = taxSettings;
+        toast("Tax & e-file settings saved");
+        render();
+      } catch (error) {
+        toast(error.message || "Could not save tax settings");
+      }
+    }, { capture: true });
+  }
   function orderChoices() {
     return state.orders.map((order) => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} \xB7 ${escapeHtml(order.vehicle)} \xB7 ${escapeHtml(order.customer)}</option>`).join("");
   }
@@ -16273,29 +16312,6 @@ ${line}`.trim();
       bindDurableRecordsCore = bind;
       bind = function() {
         bindDurableRecordsCore();
-        document.querySelector("#tax-settings-form")?.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          const data = readFormValues(event.target);
-          const existing = state.shopSettingsRecords.find((item) => item.id === "tax");
-          const record = {
-            ...state.taxSettings,
-            state: data.state,
-            taxId: data.taxId.trim(),
-            rate: Number(data.rate) || 0,
-            filingFrequency: data.filingFrequency,
-            id: "tax",
-            updatedAt: existing?.updatedAt ? now() : void 0
-          };
-          try {
-            const saved = await saveShopEntity("shopsettings", record);
-            state.taxSettings = { ...state.taxSettings, ...saved };
-            toast("Tax settings saved");
-            render();
-          } catch (error) {
-            toast(error.message || "Tax settings could not be saved");
-          }
-        }, { capture: true });
         document.querySelector("#new-customer")?.addEventListener("click", () => openCustomerForm());
         document.querySelectorAll("[data-edit-order]").forEach((button) => {
           button.onclick = (event) => {
@@ -16998,54 +17014,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         document.querySelectorAll("[data-print-w2]").forEach((button) => {
           button.onclick = () => printEmployeeAnnualForm(button.dataset.printW2);
         });
-        const taxSettingsForm = document.querySelector("#tax-settings-form");
-        if (taxSettingsForm && !taxSettingsForm.dataset.filingEnhanced) {
-          taxSettingsForm.dataset.filingEnhanced = "1";
-          const grid = taxSettingsForm.querySelector(".form-grid") || taxSettingsForm;
-          if (!taxSettingsForm.querySelector("[name=ein]")) {
-            grid.insertAdjacentHTML("beforeend", `
-<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || "")}" placeholder="XX-XXXXXXX"/></label>
-<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
-<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
-<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
-<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
-<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
-          }
-          taxSettingsForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            const data = readFormValues(event.target);
-            let jurisdictions = null;
-            try {
-              jurisdictions = JSON.parse(data.jurisdictionsJson || "null");
-            } catch {
-              toast("Jurisdiction JSON is invalid");
-              return;
-            }
-            const rate = jurisdictions ? combinedSalesTaxRate(jurisdictions) : Number(data.rate) || 0;
-            const taxSettings = {
-              state: data.state,
-              taxId: String(data.taxId || "").trim(),
-              rate,
-              filingFrequency: data.filingFrequency,
-              ein: String(data.ein || "").trim(),
-              texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
-              webfileNumber: String(data.webfileNumber || "").trim(),
-              jurisdictions,
-              laborTaxable: data.laborTaxable === "on",
-              feesTaxable: data.feesTaxable === "on"
-            };
-            try {
-              await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });
-              state.taxSettings = taxSettings;
-              toast("Tax & e-file settings saved");
-              render();
-            } catch (error) {
-              toast(error.message || "Could not save tax settings");
-            }
-          }, { capture: true });
-        }
+        bindTaxSettingsForm(document.querySelector("#tax-settings-form"));
       };
       scanAiBusy = "";
       renderShopOsCore = render;

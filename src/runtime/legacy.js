@@ -1327,7 +1327,7 @@ function bindPaymentService() {
 }
 function bindLiveAssistant() { const form = document.querySelector("#assistant-form"); if (!form) return; const input = form.elements.message, sendButton = form.querySelector("button[type=submit]"), append = (role, content) => { assistantConversation.push({ role, content }); const list = document.querySelector("#assistant-messages"); list.innerHTML = assistantConversation.map(item => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join(""); list.scrollTop = list.scrollHeight }; form.onsubmit = async event => { event.preventDefault(); if (assistantPaused) return; const message = String(input.value || "").trim(); if (!message) return; input.value = ""; sendButton.disabled = true; append("user", message); try { const result = await apiFetch("/ai/assistant", { method: "POST", body: JSON.stringify({ message, sessionId: assistantSessionId || undefined, history: assistantConversation.slice(-10).map(item => ({ role: item.role === "assistant" ? "assistant" : "user", content: [{ text: item.content }] })) }) }); assistantSessionId = result.sessionId || assistantSessionId; const answer = result.message || "I could not answer that right now."; append("assistant", answer); if (!assistantPaused && "speechSynthesis" in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(answer)) } } catch (error) { append("assistant", error.message || "The live assistant is unavailable.") } finally { sendButton.disabled = assistantPaused } }; document.querySelector("#assistant-stop")?.addEventListener("click", () => speechSynthesis?.cancel()); document.querySelector("#assistant-mic")?.addEventListener("click", () => { if (assistantPaused) return; const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition; if (!Recognition) { toast("Voice input is not supported in this browser"); return } const recognition = new Recognition(); recognition.lang = "en-US"; recognition.interimResults = false; recognition.onstart = () => toast("Listening..."); recognition.onerror = () => toast("Microphone input could not be captured"); recognition.onresult = event => { input.value = event.results[0][0].transcript; form.requestSubmit() }; recognition.start() }) }
 function bindEstimateActions() { bindLiveAssistant(); document.querySelector("#save-ai-estimate")?.addEventListener("click", makeEstimate); document.querySelectorAll("[data-send-estimate]").forEach(button => button.onclick = () => sendEstimate(button.dataset.sendEstimate, button.dataset.channel)); document.querySelectorAll("[data-sign-estimate]").forEach(button => button.onclick = () => openSignature(button.dataset.signEstimate)); document.querySelectorAll("[data-message-customer]").forEach(button => button.onclick = event => { event.stopPropagation(); openCustomerMessage(decodeURIComponent(button.dataset.messageCustomer), decodeURIComponent(button.dataset.messagePhone), decodeURIComponent(button.dataset.messageEmail)) }); document.querySelectorAll("[data-open-customer]").forEach(el => { if (el.tagName === "BUTTON") el.onclick = event => { event.stopPropagation(); openCustomerRecord(decodeURIComponent(el.dataset.openCustomer)) }; else el.onclick = event => { if (event.target.closest("[data-message-customer]")) return; openCustomerRecord(decodeURIComponent(el.dataset.openCustomer)) } }); document.querySelectorAll("[data-pay-invoice]").forEach(button => button.onclick = () => startInvoiceCheckout(button.dataset.payInvoice)); document.querySelectorAll("[data-text-pay]").forEach(button => button.onclick = () => startInvoiceCheckout(button.dataset.textPay, true)); document.querySelectorAll("[data-record-payment]").forEach(button => button.onclick = () => recordPayment(button.dataset.recordPayment, button.dataset.method)); document.querySelectorAll("[data-edit-tax]").forEach(button => button.onclick = () => openInvoiceTax(button.dataset.editTax)) }
-function bind() { bindAttentionPanel(); document.querySelectorAll("[data-route]").forEach(x => x.onclick = async () => { state.route = x.dataset.route; save(); render(); if (x.dataset.route === "customers") { await loadCustomersFromApi(); render() } if (x.dataset.route === "shopops") { await loadShopEntities(); render() } if (["obd", "keys"].includes(x.dataset.route)) { await Promise.all([loadOrdersFromApi(), loadEstimatesFromApi(), loadShopEntities()]); render() } if (["home", "dispatch", "orders", "schedule"].includes(x.dataset.route)) { await loadOrdersFromApi(); if (x.dataset.route === "home") await Promise.all([loadInvoicesFromApi(), loadShopEntities()]); if (x.dataset.route === "schedule") await loadShopEntities(); render() } if (["invoices", "accounting", "reports"].includes(x.dataset.route)) { await Promise.all([loadInvoicesFromApi(), loadPaymentsFromApi(), loadExpensesFromApi()]); render() } if (x.dataset.route === "payments") { await loadStripePaymentStatus(); render() } if (x.dataset.route === "ai") { await loadEstimatesFromApi(); render() } if (x.dataset.route === "payroll") { await Promise.all([loadShiftEntriesFromApi(), loadJobClockEntriesFromApi(), loadPayrollEntriesFromApi()]); render() } }); document.querySelectorAll("[data-filter]").forEach(x => x.onclick = () => { filter = x.dataset.filter; render() }); document.querySelectorAll("[data-accounting-tab]").forEach(x => x.onclick = () => { accountingTab = x.dataset.accountingTab; render() }); document.querySelectorAll("[data-ai-tab]").forEach(x => x.onclick = () => { aiTab = x.dataset.aiTab; aiResult = null; render() }); document.querySelector("#ai-form")?.addEventListener("submit", event => { event.preventDefault(); const data = readFormValues(event.target); if (aiTab === "workflow") { const order = state.orders.find(item => item.id === data.workOrderId); if (!order) return; aiResult = workflowLocal(order) } else if (aiTab === "diagnostics") aiResult = diagnoseLocal(data.vehicle, data.symptoms, data.dtc); else if (aiTab === "estimate") aiResult = estimateLocal(data.vehicle, data.service, data.notes); else if (aiTab === "guide") aiResult = guideLocal(data.vehicle, data.repair); else aiResult = phoneLocal(data.transcript); render() }); document.querySelector("#apply-ai-workflow")?.addEventListener("click", () => { if (aiResult?.kind !== "workflow") return; const order = state.orders.find(item => item.id === aiResult.orderId); if (!order) return; order.aiWorkflow = { generatedAt: now(), probableCauses: aiResult.diagnostics.causes, diagnosticChecklist: aiResult.diagnostics.tests, repairSteps: aiResult.guide.steps, recommendedServices: aiResult.recommended, estimate: aiResult.estimate }; applyAiWorkflowEstimate(order, aiResult.estimate, { rate: shopMileageRate(), taxRate: state.taxSettings.rate }); order.notes = `${order.notes || ""}\nAI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.trim(); void updateOrderInApi(order); save(); toast(`${order.id} updated with AI workflow`); render() }); document.querySelectorAll("[data-order]").forEach(x => x.onclick = () => openOrder(x.dataset.order)); document.querySelector("#new-ro-button")?.addEventListener("click", openNew); document.querySelector("#new-employee")?.addEventListener("click", () => openEmployee()); document.querySelector("#user-menu-toggle")?.addEventListener("click", event => { event.stopPropagation(); const panel = document.querySelector("#user-menu-panel"), toggle = document.querySelector("#user-menu-toggle"); if (!panel || !toggle) return; const willOpen = panel.hidden; panel.hidden = !willOpen; toggle.setAttribute("aria-expanded", willOpen ? "true" : "false") }); document.querySelector("#user-menu-settings")?.addEventListener("click", () => { state.route = "settings"; save(); render() }); document.querySelector("#sign-out")?.addEventListener("click", () => { void signOutEverywhere() }); if (!userMenuDismissBound) { userMenuDismissBound = true; document.addEventListener("click", event => { const openPanel = document.querySelector("#user-menu-panel"), openToggle = document.querySelector("#user-menu-toggle"); if (!openPanel || openPanel.hidden || event.target.closest("#user-menu")) return; openPanel.hidden = true; openToggle?.setAttribute("aria-expanded", "false") }) } document.querySelector("#global-clock")?.addEventListener("click", toggleShift); document.querySelector("#job-clock")?.addEventListener("click", event => { const id = event.currentTarget.dataset.workOrderId; openJobClock(id) ? stopJobClock(id) : startJobClock(id) }); document.querySelectorAll("[data-toggle-user]").forEach(button => button.onclick = () => { const user = state.users.find(item => item.id === button.dataset.toggleUser); if (!user) return; user.active = !user.active; save(); toast(`${user.name} account ${user.active ? "activated" : "deactivated"}`); render() }); document.querySelector("#sync-payroll")?.addEventListener("click", () => { syncAllPayroll(); toast("Completed job labor synced to weekly payroll"); render() }); document.querySelector("#payroll-export")?.addEventListener("click", exportPayroll); document.querySelector("#export-button")?.addEventListener("click", exportCsv); document.querySelector("#accounting-export")?.addEventListener("click", exportLedger); document.querySelector("#record-expense")?.addEventListener("click", openExpense); document.querySelector("#journal-entry")?.addEventListener("click", openJournal); document.querySelector("#tax-settings-form")?.addEventListener("submit", event => { event.preventDefault(); const data = readFormValues(event.target); state.taxSettings = { state: data.state, taxId: data.taxId.trim(), rate: Number(data.rate) || 0, filingFrequency: data.filingFrequency }; save(); toast("Tax settings saved"); render() }); document.querySelector("#tax-report-form")?.addEventListener("submit", event => { event.preventDefault(); const data = readFormValues(event.target); taxReportResult = taxReport(data.from, data.to); render() }); document.querySelector("#print-tax-report")?.addEventListener("click", () => window.print()); document.querySelector("#menu-button")?.addEventListener("click", () => document.querySelector("#sidebar").classList.toggle("open")); document.querySelector(".settings-save")?.addEventListener("click", () => toast("Shop settings saved")); document.querySelectorAll("[data-template]").forEach(button => button.onclick = () => downloadTemplate(button.dataset.template)); document.querySelectorAll("[data-import-type]").forEach(button => button.onclick = () => { const input = document.querySelector("#csv-input"); input.dataset.type = button.dataset.importType; input.click() }); document.querySelector("#csv-input")?.addEventListener("change", async event => { const file = event.target.files[0]; if (!file) return; importPreview = prepareImport(event.target.dataset.type, await file.text()); render() }); document.querySelector("#cancel-import")?.addEventListener("click", () => { importPreview = null; render() }); document.querySelector("#confirm-import")?.addEventListener("click", applyImport);[document.querySelector("#global-search"), document.querySelector("#order-search")].filter(Boolean).forEach(x => x.oninput = e => { query = e.target.value; clearTimeout(window.searchTimer); window.searchTimer = setTimeout(render, 180) }); document.onkeydown = e => { if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { e.preventDefault(); document.querySelector("#global-search")?.focus() } if (e.key === "Escape") closeModal() } }
+function bind() { bindAttentionPanel(); document.querySelectorAll("[data-route]").forEach(x => x.onclick = async () => { state.route = x.dataset.route; save(); render(); if (x.dataset.route === "customers") { await loadCustomersFromApi(); render() } if (x.dataset.route === "shopops") { await loadShopEntities(); render() } if (["obd", "keys"].includes(x.dataset.route)) { await Promise.all([loadOrdersFromApi(), loadEstimatesFromApi(), loadShopEntities()]); render() } if (["home", "dispatch", "orders", "schedule"].includes(x.dataset.route)) { await loadOrdersFromApi(); if (x.dataset.route === "home") await Promise.all([loadInvoicesFromApi(), loadShopEntities()]); if (x.dataset.route === "schedule") await loadShopEntities(); render() } if (["invoices", "accounting", "reports"].includes(x.dataset.route)) { await Promise.all([loadInvoicesFromApi(), loadPaymentsFromApi(), loadExpensesFromApi()]); render() } if (x.dataset.route === "payments") { await loadStripePaymentStatus(); render() } if (x.dataset.route === "ai") { await loadEstimatesFromApi(); render() } if (x.dataset.route === "payroll") { await Promise.all([loadShiftEntriesFromApi(), loadJobClockEntriesFromApi(), loadPayrollEntriesFromApi()]); render() } }); document.querySelectorAll("[data-filter]").forEach(x => x.onclick = () => { filter = x.dataset.filter; render() }); document.querySelectorAll("[data-accounting-tab]").forEach(x => x.onclick = () => { accountingTab = x.dataset.accountingTab; render() }); document.querySelectorAll("[data-ai-tab]").forEach(x => x.onclick = () => { aiTab = x.dataset.aiTab; aiResult = null; render() }); document.querySelector("#ai-form")?.addEventListener("submit", event => { event.preventDefault(); const data = readFormValues(event.target); if (aiTab === "workflow") { const order = state.orders.find(item => item.id === data.workOrderId); if (!order) return; aiResult = workflowLocal(order) } else if (aiTab === "diagnostics") aiResult = diagnoseLocal(data.vehicle, data.symptoms, data.dtc); else if (aiTab === "estimate") aiResult = estimateLocal(data.vehicle, data.service, data.notes); else if (aiTab === "guide") aiResult = guideLocal(data.vehicle, data.repair); else aiResult = phoneLocal(data.transcript); render() }); document.querySelector("#apply-ai-workflow")?.addEventListener("click", () => { if (aiResult?.kind !== "workflow") return; const order = state.orders.find(item => item.id === aiResult.orderId); if (!order) return; order.aiWorkflow = { generatedAt: now(), probableCauses: aiResult.diagnostics.causes, diagnosticChecklist: aiResult.diagnostics.tests, repairSteps: aiResult.guide.steps, recommendedServices: aiResult.recommended, estimate: aiResult.estimate }; applyAiWorkflowEstimate(order, aiResult.estimate, { rate: shopMileageRate(), taxRate: state.taxSettings.rate }); order.notes = `${order.notes || ""}\nAI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.trim(); void updateOrderInApi(order); save(); toast(`${order.id} updated with AI workflow`); render() }); document.querySelectorAll("[data-order]").forEach(x => x.onclick = () => openOrder(x.dataset.order)); document.querySelector("#new-ro-button")?.addEventListener("click", openNew); document.querySelector("#new-employee")?.addEventListener("click", () => openEmployee()); document.querySelector("#user-menu-toggle")?.addEventListener("click", event => { event.stopPropagation(); const panel = document.querySelector("#user-menu-panel"), toggle = document.querySelector("#user-menu-toggle"); if (!panel || !toggle) return; const willOpen = panel.hidden; panel.hidden = !willOpen; toggle.setAttribute("aria-expanded", willOpen ? "true" : "false") }); document.querySelector("#user-menu-settings")?.addEventListener("click", () => { state.route = "settings"; save(); render() }); document.querySelector("#sign-out")?.addEventListener("click", () => { void signOutEverywhere() }); if (!userMenuDismissBound) { userMenuDismissBound = true; document.addEventListener("click", event => { const openPanel = document.querySelector("#user-menu-panel"), openToggle = document.querySelector("#user-menu-toggle"); if (!openPanel || openPanel.hidden || event.target.closest("#user-menu")) return; openPanel.hidden = true; openToggle?.setAttribute("aria-expanded", "false") }) } document.querySelector("#global-clock")?.addEventListener("click", toggleShift); document.querySelector("#job-clock")?.addEventListener("click", event => { const id = event.currentTarget.dataset.workOrderId; openJobClock(id) ? stopJobClock(id) : startJobClock(id) }); document.querySelectorAll("[data-toggle-user]").forEach(button => button.onclick = () => { const user = state.users.find(item => item.id === button.dataset.toggleUser); if (!user) return; user.active = !user.active; save(); toast(`${user.name} account ${user.active ? "activated" : "deactivated"}`); render() }); document.querySelector("#sync-payroll")?.addEventListener("click", () => { syncAllPayroll(); toast("Completed job labor synced to weekly payroll"); render() }); document.querySelector("#payroll-export")?.addEventListener("click", exportPayroll); document.querySelector("#export-button")?.addEventListener("click", exportCsv); document.querySelector("#accounting-export")?.addEventListener("click", exportLedger); document.querySelector("#record-expense")?.addEventListener("click", openExpense); document.querySelector("#journal-entry")?.addEventListener("click", openJournal); document.querySelector("#tax-report-form")?.addEventListener("submit", event => { event.preventDefault(); const data = readFormValues(event.target); taxReportResult = taxReport(data.from, data.to); render() }); document.querySelector("#print-tax-report")?.addEventListener("click", () => window.print()); document.querySelector("#menu-button")?.addEventListener("click", () => document.querySelector("#sidebar").classList.toggle("open")); document.querySelector(".settings-save")?.addEventListener("click", () => toast("Shop settings saved")); document.querySelectorAll("[data-template]").forEach(button => button.onclick = () => downloadTemplate(button.dataset.template)); document.querySelectorAll("[data-import-type]").forEach(button => button.onclick = () => { const input = document.querySelector("#csv-input"); input.dataset.type = button.dataset.importType; input.click() }); document.querySelector("#csv-input")?.addEventListener("change", async event => { const file = event.target.files[0]; if (!file) return; importPreview = prepareImport(event.target.dataset.type, await file.text()); render() }); document.querySelector("#cancel-import")?.addEventListener("click", () => { importPreview = null; render() }); document.querySelector("#confirm-import")?.addEventListener("click", applyImport);[document.querySelector("#global-search"), document.querySelector("#order-search")].filter(Boolean).forEach(x => x.oninput = e => { query = e.target.value; clearTimeout(window.searchTimer); window.searchTimer = setTimeout(render, 180) }); document.onkeydown = e => { if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { e.preventDefault(); document.querySelector("#global-search")?.focus() } if (e.key === "Escape") closeModal() } }
 let modalAutosaveFlush = null;
 function setModalAutosave(flushFn) { modalAutosaveFlush = typeof flushFn === "function" ? flushFn : null }
 function showModal(html) { closeModal(); const root = document.createElement("div"); root.id = "modal-root"; root.className = "modal-backdrop"; root.innerHTML = safeHtml(html); root.onclick = e => { if (e.target === root) closeModal() }; document.body.append(root); lucide.createIcons(); root.querySelectorAll("[data-close]").forEach(x => { if (!x.textContent.trim() && !x.getAttribute("aria-label")) x.setAttribute("aria-label", "Close"); if (!x.getAttribute("title") && !x.textContent.trim()) x.setAttribute("title", "Close"); x.onclick = closeModal }); root.querySelector("#job-clock")?.addEventListener("click", event => { const workOrderId = event.currentTarget.dataset.workOrderId; openJobClock(workOrderId) ? stopJobClock(workOrderId) : startJobClock(workOrderId) }) }
@@ -3256,29 +3256,6 @@ function readHelpSnapshot() {
 const bindDurableRecordsCore = bind;
 bind = function () {
   bindDurableRecordsCore();
-  document.querySelector("#tax-settings-form")?.addEventListener("submit", async event => {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const data = readFormValues(event.target);
-    const existing = state.shopSettingsRecords.find(item => item.id === "tax");
-    const record = {
-      ...state.taxSettings,
-      state: data.state,
-      taxId: data.taxId.trim(),
-      rate: Number(data.rate) || 0,
-      filingFrequency: data.filingFrequency,
-      id: "tax",
-      updatedAt: existing?.updatedAt ? now() : undefined,
-    };
-    try {
-      const saved = await saveShopEntity("shopsettings", record);
-      state.taxSettings = { ...state.taxSettings, ...saved };
-      toast("Tax settings saved");
-      render();
-    } catch (error) {
-      toast(error.message || "Tax settings could not be saved");
-    }
-  }, { capture: true });
   document.querySelector("#new-customer")?.addEventListener("click", () => openCustomerForm());
   document.querySelectorAll("[data-edit-order]").forEach(button => {
     button.onclick = event => {
@@ -4683,6 +4660,49 @@ openEmployee = function (existing = null) {
 };
 
 const bindFilingCore = bindExpandedFeatures;
+function bindTaxSettingsForm(taxSettingsForm) {
+  if (!taxSettingsForm || taxSettingsForm.dataset.filingEnhanced) return;
+  taxSettingsForm.dataset.filingEnhanced = '1';
+  const grid = taxSettingsForm.querySelector('.form-grid') || taxSettingsForm;
+  if (!taxSettingsForm.querySelector('[name=ein]')) {
+    grid.insertAdjacentHTML('beforeend', `
+<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || '')}" placeholder="XX-XXXXXXX"/></label>
+<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || '')}" placeholder="1-xxxxxxxxxx-x"/></label>
+<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || '')}" placeholder="RTxxxxxx"/></label>
+<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} — city/transit/county/SPD</small>
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || Filing.DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${Filing.needsLocalJurisdictions(state.taxSettings.jurisdictions) ? '<label class="full"><small class="ledger-note">Add your shop\'s local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>' : ''}
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? 'checked' : ''}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? 'checked' : ''}/> Charge sales tax on shop supplies and fees</label>`);
+  }
+  taxSettingsForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const data = readFormValues(event.target);
+    let jurisdictions = null;
+    try { jurisdictions = JSON.parse(data.jurisdictionsJson || 'null'); } catch { toast('Jurisdiction JSON is invalid'); return; }
+    const rate = jurisdictions ? Filing.combinedSalesTaxRate(jurisdictions) : (Number(data.rate) || 0);
+    const taxSettings = {
+      state: data.state,
+      taxId: String(data.taxId || '').trim(),
+      rate,
+      filingFrequency: data.filingFrequency,
+      ein: String(data.ein || '').trim(),
+      texasTaxpayerNumber: String(data.texasTaxpayerNumber || '').trim(),
+      webfileNumber: String(data.webfileNumber || '').trim(),
+      jurisdictions,
+      laborTaxable: data.laborTaxable === 'on',
+      feesTaxable: data.feesTaxable === 'on',
+    };
+    try {
+      await saveShopEntity('shopsettings', { ...taxSettings, id: 'tax', updatedAt: now() });
+      state.taxSettings = taxSettings;
+      toast('Tax & e-file settings saved');
+      render();
+    } catch (error) {
+      toast(error.message || 'Could not save tax settings');
+    }
+  }, { capture: true });
+}
+
 bindExpandedFeatures = function () {
   bindFilingCore();
   document.querySelectorAll('[data-tax-preset]').forEach(button => {
@@ -4760,49 +4780,7 @@ bindExpandedFeatures = function () {
     button.onclick = () => printEmployeeAnnualForm(button.dataset.printW2);
   });
 
-  const taxSettingsForm = document.querySelector('#tax-settings-form');
-  if (taxSettingsForm && !taxSettingsForm.dataset.filingEnhanced) {
-    taxSettingsForm.dataset.filingEnhanced = '1';
-    const grid = taxSettingsForm.querySelector('.form-grid') || taxSettingsForm;
-    if (!taxSettingsForm.querySelector('[name=ein]')) {
-      grid.insertAdjacentHTML('beforeend', `
-<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || '')}" placeholder="XX-XXXXXXX"/></label>
-<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || '')}" placeholder="1-xxxxxxxxxx-x"/></label>
-<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || '')}" placeholder="RTxxxxxx"/></label>
-<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} — city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || Filing.DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${Filing.needsLocalJurisdictions(state.taxSettings.jurisdictions) ? '<label class="full"><small class="ledger-note">Add your shop\'s local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>' : ''}
-<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? 'checked' : ''}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
-<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? 'checked' : ''}/> Charge sales tax on shop supplies and fees</label>`);
-    }
-    taxSettingsForm.addEventListener('submit', async event => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const data = readFormValues(event.target);
-      let jurisdictions = null;
-      try { jurisdictions = JSON.parse(data.jurisdictionsJson || 'null'); } catch { toast('Jurisdiction JSON is invalid'); return; }
-      const rate = jurisdictions ? Filing.combinedSalesTaxRate(jurisdictions) : (Number(data.rate) || 0);
-      const taxSettings = {
-        state: data.state,
-        taxId: String(data.taxId || '').trim(),
-        rate,
-        filingFrequency: data.filingFrequency,
-        ein: String(data.ein || '').trim(),
-        texasTaxpayerNumber: String(data.texasTaxpayerNumber || '').trim(),
-        webfileNumber: String(data.webfileNumber || '').trim(),
-        jurisdictions,
-        laborTaxable: data.laborTaxable === 'on',
-        feesTaxable: data.feesTaxable === 'on',
-      };
-      try {
-        await saveShopEntity('shopsettings', { ...taxSettings, id: 'tax', updatedAt: now() });
-        state.taxSettings = taxSettings;
-        toast('Tax & e-file settings saved');
-        render();
-      } catch (error) {
-        toast(error.message || 'Could not save tax settings');
-      }
-    }, { capture: true });
-  }
+  bindTaxSettingsForm(document.querySelector('#tax-settings-form'));
 };
 
 /* === SHOP_CRANK_FILING_OVERRIDES_END === */

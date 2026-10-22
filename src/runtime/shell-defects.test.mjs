@@ -126,6 +126,73 @@ test('filing reports and exports require the configured rate to match jurisdicti
   assert.match(functionSource('reports = function () {'), /const result = rateMatches \? taxReportResult : null/);
 });
 
+test('enhanced tax settings submit saves jurisdictions and their matching rate', async () => {
+  assert.doesNotMatch(
+    legacy,
+    /document\.querySelector\(["']#tax-settings-form["']\)\?\.addEventListener\(["']submit["']/,
+  );
+
+  const registrations = [];
+  const form = {
+    dataset: {},
+    data: {
+      state: 'TX',
+      taxId: '  TX-123  ',
+      rate: '8.25',
+      filingFrequency: 'Monthly',
+      ein: '  12-3456789 ',
+      texasTaxpayerNumber: '1-123456789-0',
+      webfileNumber: 'RT123456',
+      jurisdictionsJson: '[{"code":"4800001","name":"Texas","kind":"state","rate":6.25}]',
+      laborTaxable: 'off',
+      feesTaxable: 'on',
+    },
+    querySelector(selector) {
+      return selector === '[name=ein]' ? {} : null;
+    },
+    addEventListener(type, listener, options) {
+      registrations.push({ type, listener, options });
+    },
+  };
+  const saved = [];
+  const context = {
+    state: { taxSettings: {} },
+    Filing: {
+      combinedSalesTaxRate: jurisdictions => jurisdictions.reduce((total, item) => total + item.rate, 0),
+    },
+    readFormValues: target => target.data,
+    saveShopEntity: async (entity, record) => saved.push({ entity, record }),
+    now: () => '2026-10-22T10:00:00.000Z',
+    toast() {},
+    render() {},
+  };
+  const bindTaxSettingsForm = runInNewContext(`(${functionSource('function bindTaxSettingsForm(')})`, context);
+  bindTaxSettingsForm(form);
+
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].type, 'submit');
+  assert.equal(registrations[0].options.capture, true);
+  let prevented = false;
+  await registrations[0].listener({
+    target: form,
+    preventDefault() { prevented = true; },
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].entity, 'shopsettings');
+  assert.equal(saved[0].record.rate, 6.25);
+  assert.equal(saved[0].record.taxId, 'TX-123');
+  assert.deepEqual(JSON.parse(JSON.stringify(saved[0].record.jurisdictions)), [
+    { code: '4800001', name: 'Texas', kind: 'state', rate: 6.25 },
+  ]);
+  assert.equal(context.state.taxSettings.rate, saved[0].record.rate);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.state.taxSettings.jurisdictions)),
+    JSON.parse(JSON.stringify(saved[0].record.jurisdictions)),
+  );
+});
+
 test('every form whose handler looks up button[type=submit] has a typed submit button', () => {
   assert.deepEqual(submitButtonOffenders(legacy), []);
 });
