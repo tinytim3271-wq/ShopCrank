@@ -212,6 +212,45 @@ test('the bridge completes Twilio\'s handshake even when xAI rejects the upgrade
   assert.equal(twilioSide.closedWith?.code, 1011, 'the stream closes so Twilio plays the <Say> fallback');
 }));
 
+test('the bridge closes Twilio and aborts a stalled xAI initialization', () => withWorkersRuntime(async (pairs) => {
+  const pending = [];
+  let signal;
+  const response = await handleGrokTwilioBridge({
+    env: {},
+    state: { waitUntil: promise => pending.push(promise) },
+    shopId: 'reliable-auto-services',
+    apiKey: 'xai-test-key',
+    upstreamInitTimeoutMs: 5,
+    fetcher: async (_url, options) => {
+      signal = options.signal;
+      return new Promise(() => {});
+    },
+  });
+  assert.equal(response.status, 101);
+  await Promise.all(pending);
+  assert.equal(pairs[0][1].closedWith?.code, 1011);
+  assert.equal(signal.aborted, true);
+}));
+
+test('the bridge closes an xAI socket that arrives after initialization times out', () => withWorkersRuntime(async (pairs) => {
+  const pending = [];
+  let resolveUpstream;
+  const response = await handleGrokTwilioBridge({
+    env: {},
+    state: { waitUntil: promise => pending.push(promise) },
+    shopId: 'reliable-auto-services',
+    apiKey: 'xai-test-key',
+    upstreamInitTimeoutMs: 5,
+    fetcher: () => new Promise(resolve => { resolveUpstream = resolve; }),
+  });
+  assert.equal(response.status, 101);
+  await Promise.all(pending);
+  const upstream = new FakeSocket();
+  resolveUpstream({ status: 101, webSocket: upstream });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(upstream.closedWith?.code, 1011);
+}));
+
 test('the bridge greets the caller once Twilio starts and xAI is connected', () => withWorkersRuntime(async (pairs) => {
   const upstream = new FakeSocket();
   let releaseUpstream;

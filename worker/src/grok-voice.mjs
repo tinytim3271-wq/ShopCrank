@@ -39,6 +39,7 @@ const GROK_SAMPLE_RATE = 24000;
 const TWILIO_SAMPLE_RATE = 8000;
 const MAX_STARTUP_AUDIO_BUFFER_BYTES = 256 * 1024;
 const STREAM_TOKEN_TTL_MS = 15 * 60 * 1000;
+const GROK_UPSTREAM_INIT_TIMEOUT_MS = 15_000;
 
 const STANDARD_SHOP_OPERATIONS = Object.freeze([
   { pattern: /\b(front\s+)?brake\s*(pad|rotor|job|service|grind|squeak)/i, description: 'Front Brake Pads & Rotor Replacement', hours: 1.8, partsPrice: 265, partDescription: 'Ceramic Brake Pad & Rotor Kit (1 Axle)' },
@@ -1450,6 +1451,7 @@ export async function handleGrokTwilioBridge({
   callSid = '',
   apiKey = '',
   fetcher = fetch,
+  upstreamInitTimeoutMs = GROK_UPSTREAM_INIT_TIMEOUT_MS,
 }) {
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
@@ -1622,18 +1624,46 @@ export async function handleGrokTwilioBridge({
   };
 
   const connectUpstream = async () => {
+    let initializationTimedOut = false;
+    let pendingUpstreamResponse = null;
+    const abortController = new AbortController();
+    let timeoutId;
+    const timedFetcher = (url, options) => Promise.resolve()
+      .then(() => fetcher(url, { ...options, signal: abortController.signal }))
+      .then((response) => {
+        pendingUpstreamResponse = response;
+        if (initializationTimedOut) {
+          safeCloseSocket(response?.webSocket, 1011, 'Grok initialization timed out');
+        }
+        return response;
+      });
     try {
-      const [settings, pricing, callerContext, upstreamResponse] = await Promise.all([
+      const initialization = Promise.all([
         loadGrokShopSettings(env, shopId),
         loadShopPricing(env, shopId),
         callerPhone ? lookupCallerContext(env, shopId, callerPhone) : Promise.resolve(null),
-        fetcher(GROK_REALTIME_URL.replace(/^wss:/, 'https:'), {
+        timedFetcher(GROK_REALTIME_URL.replace(/^wss:/, 'https:'), {
           headers: {
             Upgrade: 'websocket',
             Authorization: `Bearer ${apiKey}`,
           },
         }),
       ]);
+      const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          initializationTimedOut = true;
+          abortController.abort();
+          safeCloseSocket(pendingUpstreamResponse?.webSocket, 1011, 'Grok initialization timed out');
+          reject(new Error('Grok realtime initialization timed out'));
+        }, upstreamInitTimeoutMs);
+      });
+      let initialized;
+      try {
+        initialized = await Promise.race([initialization, timeout]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      const [settings, pricing, callerContext, upstreamResponse] = initialized;
       const socket = upstreamResponse?.webSocket;
       if (!socket || upstreamResponse.status !== 101) {
         const detail = await upstreamResponse?.text?.().catch(() => '') || '';
