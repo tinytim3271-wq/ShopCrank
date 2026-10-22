@@ -353,8 +353,7 @@
     if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
       const [year, month, day] = text.split("-").map(Number);
       const parsed2 = new Date(year, month - 1, day);
-      if (Number.isNaN(parsed2.valueOf())) return "";
-      if (localIsoDate(parsed2) !== text) return "";
+      if (Number.isNaN(parsed2.valueOf()) || localIsoDate(parsed2) !== text) return "";
       return localIsoDate(parsed2);
     }
     const parsed = new Date(text);
