@@ -1530,7 +1530,6 @@ export async function handleGrokTwilioBridge({
 
   const onTwilioMedia = (payload) => {
     if (twilioClosed) return;
-    twilioInboundBytes += Math.floor((payload.length * 3) / 4);
     if (!upstreamOpen()) {
       if (upstream) return;
       if (startupAudioBufferBytes + payload.length > MAX_STARTUP_AUDIO_BUFFER_BYTES) {
@@ -1546,6 +1545,7 @@ export async function handleGrokTwilioBridge({
     const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
     if (pcm24kBase64) {
       upstream.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcm24kBase64 }));
+      twilioInboundBytes += Math.floor((payload.length * 3) / 4);
     }
   };
 
@@ -1695,6 +1695,7 @@ export async function handleGrokTwilioBridge({
         const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
         if (pcm24kBase64) {
           upstream.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcm24kBase64 }));
+          twilioInboundBytes += Math.floor((payload.length * 3) / 4);
         }
       }
       startupAudioBuffer.length = 0;

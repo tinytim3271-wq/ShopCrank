@@ -232,6 +232,39 @@ test('the bridge closes Twilio and aborts a stalled xAI initialization', () => w
   assert.equal(signal.aborted, true);
 }));
 
+test('startup audio that is not forwarded is excluded from xAI usage', () => withWorkersRuntime(async (pairs) => {
+  const pending = [];
+  const usageRows = [];
+  const env = {
+    DB: {
+      prepare: (query) => ({
+        bind: (...values) => ({
+          all: async () => ({ results: [] }),
+          run: async () => {
+            if (query.includes('INSERT INTO ai_usage_events')) usageRows.push(values);
+          },
+        }),
+      }),
+    },
+  };
+  const response = await handleGrokTwilioBridge({
+    env,
+    state: { waitUntil: promise => pending.push(promise) },
+    shopId: 'reliable-auto-services',
+    apiKey: 'xai-test-key',
+    fetcher: async () => new Response('upgrade failed', { status: 401 }),
+  });
+  assert.equal(response.status, 101);
+
+  pairs[0][1].emit('message', {
+    data: JSON.stringify({ event: 'media', media: { payload: 'f/9/' } }),
+  });
+  await Promise.all(pending);
+
+  assert.equal(usageRows.length, 1);
+  assert.equal(usageRows[0][8], 0, 'unforwarded startup audio is not metered');
+}));
+
 test('the bridge closes an xAI socket that arrives after initialization times out', () => withWorkersRuntime(async (pairs) => {
   const pending = [];
   let resolveUpstream;
