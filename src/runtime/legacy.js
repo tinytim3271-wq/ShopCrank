@@ -1446,7 +1446,7 @@ async function signInWithEmailLink(email, { sentEl, submitButton, turnstile }) {
   if (result?.redirecting) return;
   if (result?.sent) {
     if (sentEl) {
-      sentEl.textContent = result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
+      sentEl.textContent = isDesktopApp ? "Check your email and open the sign-in link. It opens in your browser; click Open ShopCrank there to finish signing in to this app. The link expires in 15 minutes." : (result.message || "Check your email for a sign-in link. It expires in 15 minutes.");
       sentEl.hidden = false;
     }
     submitButton.disabled = false;
