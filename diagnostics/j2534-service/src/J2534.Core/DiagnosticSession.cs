@@ -163,19 +163,19 @@ public sealed class DiagnosticSession : IDisposable
         var client = new UdsClient(CreateChannel());
         var addresses = new[]
         {
-            ("0x7E0", "Gateway (SGW)"),
-            ("0x7E1", "ECM"),
-            ("0x7E2", "TCM"),
-            ("0x7E3", "BCM"),
-            ("0x743", "BCM / immobilizer"),
-            ("0x745", "Intelligent Key"),
+            ("0x7E0", "0x7E8", "Gateway (SGW)"),
+            ("0x7E1", "0x7E9", "ECM"),
+            ("0x7E2", "0x7EA", "TCM"),
+            ("0x7E3", "0x7EB", "BCM"),
+            ("0x743", "0x763", "BCM / immobilizer"),
+            ("0x745", "0x765", "Intelligent Key"),
         };
         var ecus = new List<object>();
-        foreach (var (addr, name) in addresses)
+        foreach (var (addr, responseId, name) in addresses)
         {
             try
             {
-                var info = await client.ReadEcuIdentificationAsync(addr, ResponseId(addr));
+                var info = await client.ReadEcuIdentificationAsync(addr, responseId);
                 ecus.Add(new { logicalAddress = addr, name, partNumber = info.PartNumber, softwareVersion = info.SoftwareVersion, calibrationId = info.CalibrationId });
             }
             catch (Exception ex)

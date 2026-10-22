@@ -57,7 +57,6 @@ public static class NissanKeyProcedures
     [
         ("0x743", "0x763", "BCM"),
         ("0x745", "0x765", "Intelligent Key"),
-        ("0x7E0", "0x7E8", "ECM / gateway"),
     ];
 
     static ushort RoutineId(string procedure) => procedure switch
@@ -77,22 +76,24 @@ public static class NissanKeyProcedures
         if (pin.Length is < 4 or > 6 || !pin.All(char.IsDigit))
             throw new InvalidOperationException("Enter the 4- to 6-digit Nissan immobilizer PIN from CONSULT or the owner. Shop Crank does not recover or bypass that PIN.");
 
-        Exception? last = null;
+        var client = new UdsClient(context.Channel);
+        (string Tx, string Rx, string Name)? selectedEcu = null;
         foreach (var ecu in BcmAddresses)
         {
             try
             {
-                return RunOnEcu(context, procedure, pin, ecu.Tx, ecu.Rx, ecu.Name);
+                _ = client.ReadEcuIdentificationAsync(ecu.Tx, ecu.Rx).GetAwaiter().GetResult();
+                selectedEcu = ecu;
+                break;
             }
             catch (Exception ex)
             {
-                last = ex;
-                context.Log("rx", ecu.Rx, "", $"{ecu.Name} {ecu.Tx} rejected {procedure}: {ex.Message}");
+                context.Log("rx", ecu.Rx, "", $"{ecu.Name} {ecu.Tx} identification failed: {ex.Message}");
             }
         }
-        throw new InvalidOperationException(
-            last?.Message
-            ?? "Nissan BCM did not accept the key procedure. Confirm ignition ON, the immobilizer PIN, and a Nissan AutoAuth login on gateway-equipped years. Nothing else was written.");
+        if (selectedEcu is not { } target)
+            throw new InvalidOperationException("No compatible Nissan key module responded to read-only identification. No security or registration request was sent.");
+        return RunOnEcu(context, procedure, pin, target.Tx, target.Rx, target.Name);
     }
 
     static object RunOnEcu(KeyProcedureContext context, string procedure, string pin, string tx, string rx, string ecuName)
@@ -109,12 +110,20 @@ public static class NissanKeyProcedures
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                $"Nissan security access rejected the PIN on {ecuName}. Confirm the immobilizer PIN and ignition ON. Gateway-equipped years also need the shop Nissan AutoAuth login. {ex.Message}");
+                $"Nissan security access failed on {ecuName}; no registration routine was sent. Verify the vehicle state with Nissan CONSULT before retrying. {ex.Message}");
         }
         var routine = RoutineId(procedure);
         var pinBytes = System.Text.Encoding.ASCII.GetBytes(pin);
         context.Log("tx", tx, $"3101{routine:X4}", $"Register ID routine {procedure}");
-        client.StartRoutine(routine, pinBytes, tx, rx);
+        try
+        {
+            client.StartRoutine(routine, pinBytes, tx, rx);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Nissan key registration result is indeterminate on {ecuName}. Do not retry; verify key status with Nissan CONSULT before proceeding. {ex.Message}");
+        }
         return new
         {
             procedure,

@@ -16,18 +16,18 @@ public sealed class PinSecurityAccessProvider : ISecurityAccessProvider
     {
         if (seed is null || seed.Length == 0)
             throw new InvalidOperationException("The vehicle did not return a SecurityAccess seed.");
-        var digits = _pin.Where(char.IsDigit).Select(c => (byte)(c - '0')).ToArray();
-        if (digits.Length is < 4 or > 6)
+        if (_pin.Length is < 4 or > 6 || !_pin.All(c => c is >= '0' and <= '9'))
             throw new InvalidOperationException("Enter the 4- to 6-digit Nissan immobilizer PIN. Shop Crank does not recover or bypass that PIN.");
-        var key = new byte[seed.Length];
-        if (seed.Length == 2 && digits.Length >= 4)
+        if (seed.Length == 2 && _pin.Length == 4)
         {
+            var digits = _pin.Select(c => (byte)(c - '0')).ToArray();
+            var key = new byte[2];
             key[0] = (byte)((digits[0] << 4) | digits[1]);
             key[1] = (byte)((digits[2] << 4) | digits[3]);
             return key;
         }
-        var ascii = System.Text.Encoding.ASCII.GetBytes(_pin);
-        Array.Copy(ascii, key, Math.Min(ascii.Length, key.Length));
-        return key;
+        if (seed.Length == 4 && _pin.Length == 4)
+            return System.Text.Encoding.ASCII.GetBytes(_pin);
+        throw new InvalidOperationException("This Nissan PIN and SecurityAccess seed combination has no verified encoding; no key was sent.");
     }
 }
