@@ -3831,7 +3831,8 @@ export default {
       return response.status === 101 ? response : withCors(response, request, env);
     } catch (error) {
       const path = new URL(request.url).pathname
-        .replace(/^(\/api\/voice\/twilio\/stream\/[^/]+)\/[^/]+$/, '$1/[token]');
+        .replace(/\/+/g, '/')
+        .replace(/^(\/api\/voice\/twilio\/stream\/[^/]+)\/[^/]+/, '$1/[token]');
       const publicError = publicRequestError(error, path);
       const status = publicError instanceof HttpError ? publicError.status : 500;
       const requestId = request.headers.get('Cf-Ray') || crypto.randomUUID();
