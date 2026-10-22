@@ -41,6 +41,7 @@ async function setup() {
   DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .bind('high-plains', 'orders', 'RO-UNSIGNED', JSON.stringify({
       id: 'RO-UNSIGNED', vin: VIN, linesLockedAt: now,
+        estimateApproval: { status: 'approved', type: 'other', authorizationName: 'Dana Customer' },
       estimateApproval: { status: 'approved', type: 'other', authorizationName: 'Dana Customer' },
     }), 'owner-1', now, now).runSync();
   const call = async (email, method, path, body) => {

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import process from 'node:process';
 import {
   AFTER_MIDNIGHT_FEE_PRESET,
   afterMidnightFeeLine,
@@ -168,10 +169,16 @@ test('invoice carries approved estimate lines and signature provenance forward',
   assert.equal(invoice.due, '2026-10-16');
 });
 
-test('invoice date and due date are the shop\'s local calendar days, not UTC', () => {
+test('invoice date and due date are the shop\'s local calendar days, not UTC', (t) => {
   // An RO completed at 9:30 pm on the last day of October. In a US timezone
   // this is still 2026-10-31 locally, but UTC has already rolled to 2026-11-01,
-  // which put the sale in the wrong sales-tax period.
+  // which put the sale in the wrong sales-tax period. CI runners default to UTC.
+  const previousTz = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+  t.after(() => {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+  });
   const issuedAt = new Date('2026-10-31T21:30:00-05:00');
   const estimate = calculateEstimate([
     { id: 'labor', type: 'labor', description: 'Diagnosis', hours: 1, laborRate: 165 },

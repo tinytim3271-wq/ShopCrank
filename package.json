@@ -45,6 +45,7 @@
     "build:windows:offline": "node scripts/build-offline-windows.mjs",
     "build:windows:demo": "node scripts/build-offline-windows.mjs --demo",
     "test:j2534": "node diagnostics/j2534-host-node/test/host.test.js",
+    "test:licenses": "node --test src/modules/vehicle-key-license.test.mjs worker/test/licenses.test.mjs worker/test/license-worker-e2e.test.mjs",
     "merge:open-prs": "bash scripts/merge-open-prs.sh",
     "test:html": "node --test src/shared/html.test.mjs src/shared/form-fields.test.mjs src/shared/dates.test.mjs",
     "test:chat": "node --test src/modules/chat/utils.test.mjs",

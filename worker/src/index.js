@@ -83,6 +83,7 @@ import {
   handleGrokToolCall,
   handleGrokVoiceSettings,
   handleTwilioVoiceIncoming,
+  handleTwilioVoiceStatus,
   resolveGrokApiKey,
   verifyGrokStreamToken,
 } from './grok-voice.mjs';
@@ -1192,9 +1193,8 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
       }
     }
     // Live key programming also needs this device's vehicle-key license unlock,
-    // checked live against the license database on every job. Reuse the
-    // signedOrder validated above — it must not be redeclared in this block,
-    // or the audit record after it would lose orderId/authorizationName.
+    // checked against the license database on every job. Reuse the signedOrder
+    // validated above so the audit record retains its details.
     let vehicleKeyLicense = null;
     if (mode === 'live' && spec.klass === 'immobilizer') {
       vehicleKeyLicense = await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
@@ -1460,14 +1460,21 @@ async function handleVoiceSession(request, env, context) {
   return stub.fetch(new Request(request, { headers }));
 }
 
-async function handleTwilioVoiceStream(request, env, shopId) {
+async function handleTwilioVoiceStream(request, env, shopId, pathToken = '') {
   if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
     throw new HttpError(426, 'A WebSocket upgrade is required');
   }
   if (!shopId) throw new HttpError(400, 'Shop ID is required');
-  const token = new URL(request.url).searchParams.get('token') || '';
+  const token = pathToken || new URL(request.url).searchParams.get('token') || '';
   const verified = await verifyGrokStreamToken(env, token, shopId);
-  if (!verified) throw new HttpError(401, 'Invalid or expired Twilio stream token');
+  if (!verified) {
+    console.error(JSON.stringify({
+      message: 'twilio voice stream rejected',
+      shopId,
+      reason: token ? 'invalid_or_expired_token' : 'missing_token',
+    }));
+    throw new HttpError(401, 'Invalid or expired Twilio stream token');
+  }
   if (!env.AI_VOICE_SESSIONS) throw new HttpError(503, 'Voice AI sessions are not configured');
   const { apiKey } = await resolveGrokApiKey(env, shopId, getIntegrationSecret);
   if (!apiKey) throw new HttpError(503, 'Grok Voice is not configured for this shop');
@@ -3538,7 +3545,17 @@ async function route(request, env, analytics) {
     });
   }
   if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'stream') {
-    return handleTwilioVoiceStream(request, env, decodeURIComponent(segments[3] || ''));
+    return handleTwilioVoiceStream(
+      request,
+      env,
+      decodeURIComponent(segments[3] || ''),
+      decodeURIComponent(segments[4] || ''),
+    );
+  }
+  if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'status') {
+    return handleTwilioVoiceStatus(request, env, decodeURIComponent(segments[3] || ''), {
+      getSecret: getIntegrationSecret,
+    });
   }
   if (segments[0] === 'quickbooks' && segments[1] === 'callback') {
     return handleQuickBooksCallback(request, env, {
@@ -3765,17 +3782,19 @@ export default {
     try {
       const legacyRedirect = legacyToCanonicalRedirect(request);
       const requestUrl = new URL(request.url);
-      const legacyProviderCallback = (
+      // Providers do not follow redirects reliably (Twilio never follows one on a
+      // WebSocket upgrade), so their callbacks are answered on whatever host they hit.
+      const providerCallback = (
         request.method === 'POST'
-        && /^\/api\/(?:payments\/webhook\/[^/]+|billing\/webhook|agentphone\/webhook\/[^/]+|messaging\/twilio\/webhook\/[^/]+|voice\/twilio\/incoming\/[^/]+)$/.test(requestUrl.pathname)
+        && /^\/api\/(?:payments\/webhook\/[^/]+|billing\/webhook|agentphone\/webhook\/[^/]+|messaging\/twilio\/webhook\/[^/]+|voice\/twilio\/(?:incoming|status)\/[^/]+)$/.test(requestUrl.pathname)
       ) || (
         request.method === 'GET'
         && request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
-        && /^\/api\/voice\/twilio\/stream\/[^/]+$/.test(requestUrl.pathname)
+        && /^\/api\/voice\/twilio\/stream\/[^/]+(?:\/[^/]+)?$/.test(requestUrl.pathname)
       );
-      if (legacyRedirect && !legacyProviderCallback) return legacyRedirect;
+      if (legacyRedirect && !providerCallback) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
-      if (apexRedirect) return apexRedirect;
+      if (apexRedirect && !providerCallback) return apexRedirect;
       if (!isApiRequest(request)) {
         const download = await servePublicDownload(request, env);
         if (download) return download;
@@ -3791,7 +3810,9 @@ export default {
       const response = await route(request, env, analytics);
       return response.status === 101 ? response : withCors(response, request, env);
     } catch (error) {
-      const path = new URL(request.url).pathname;
+      const path = new URL(request.url).pathname
+        .replace(/\/+/g, '/')
+        .replace(/^(\/api\/voice\/twilio\/stream\/[^/]+)\/[^/]+/, '$1/[token]');
       const publicError = publicRequestError(error, path);
       const status = publicError instanceof HttpError ? publicError.status : 500;
       const requestId = request.headers.get('Cf-Ray') || crypto.randomUUID();
