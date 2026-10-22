@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toLocalIsoDate } from '../shared/dates.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
@@ -100,4 +101,13 @@ test('no invoice date is built with toISOString', () => {
     }
   }
   assert.deepEqual(offenders, [], `invoice dates still use UTC: ${offenders.join(', ')}`);
+});
+
+test('the invoice editor round-trips stored calendar dates unchanged', () => {
+  const invoiceDateValue = functionSource('function invoiceDateValue(');
+  assert.match(invoiceDateValue, /return toLocalIsoDate\(value\)/);
+
+  const invoice = { date: '2026-10-31', due: '2026-11-14' };
+  const editorValues = { date: toLocalIsoDate(invoice.date), due: toLocalIsoDate(invoice.due) };
+  assert.deepEqual(editorValues, invoice);
 });

@@ -346,6 +346,19 @@
     const day = String(date.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   }
+  function toLocalIsoDate(value2) {
+    if (value2 instanceof Date) return Number.isNaN(value2.valueOf()) ? "" : localIsoDate(value2);
+    const text = String(value2 ?? "").trim();
+    if (!text) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      const [year, month, day] = text.split("-").map(Number);
+      const parsed2 = new Date(year, month - 1, day);
+      if (Number.isNaN(parsed2.valueOf())) return "";
+      return localIsoDate(parsed2);
+    }
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.valueOf()) ? "" : localIsoDate(parsed);
+  }
   var init_dates = __esm({
     "src/shared/dates.js"() {
     }
@@ -605,26 +618,26 @@
   function defaultMutationId() {
     return globalThis.crypto?.randomUUID?.() || `mutation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
-  function withOptimisticConcurrencyHeaders(options2 = {}, expectedUpdatedAt = null) {
-    if (!expectedUpdatedAt) return options2;
+  function withOptimisticConcurrencyHeaders(options = {}, expectedUpdatedAt = null) {
+    if (!expectedUpdatedAt) return options;
     return {
-      ...options2,
+      ...options,
       headers: {
-        ...options2.headers || {},
+        ...options.headers || {},
         "If-Match": expectedUpdatedAt
       }
     };
   }
-  function prepareEntityMutation(path, options2, createMutationId = defaultMutationId) {
-    const method = String(options2.method || "GET").toUpperCase();
+  function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
+    const method = String(options.method || "GET").toUpperCase();
     const isEntityMutation = path.startsWith("/entities/") && ["POST", "PUT", "DELETE"].includes(method);
     const containsSensitiveEndpoint = path === "/agentphone/configure" || path === "/voice/grok/configure";
     const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !containsSensitiveEndpoint;
-    if (!queueable) return { path, options: options2, queueable: false };
+    if (!queueable) return { path, options, queueable: false };
     let body = null;
-    if (options2.body) {
+    if (options.body) {
       try {
-        body = JSON.parse(options2.body);
+        body = JSON.parse(options.body);
       } catch {
         body = null;
       }
@@ -635,7 +648,7 @@
     const entityKey = method === "POST" ? body && body.id ? `${path}/${body.id}` : `${path}/${createMutationId()}` : path;
     return {
       path,
-      options: { ...options2, method, body: body ? JSON.stringify(body) : void 0 },
+      options: { ...options, method, body: body ? JSON.stringify(body) : void 0 },
       queueable: Boolean(body) || method === "DELETE",
       expectedUpdatedAt: method === "PUT" ? body?.updatedAt : null,
       key: entityKey
@@ -3710,12 +3723,12 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
   function reviewStep(draft, users) {
     const check2 = canConvertIntake(draft);
     const techs = assignableTechnicians(users);
-    const options2 = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
+    const options = (role) => `<option value="">Unassigned</option>${techs.map((user) => {
       const selected = (draft.assignments || []).find((item) => item.role === role);
       return `<option value="${escapeAttr3(user.id)}" ${selected?.employeeId === user.id ? "selected" : ""}>${escapeHtml3(technicianName(user))}</option>`;
     }).join("")}`;
     return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
-<div class="form-grid"><label>Primary technician<select name="assign-primary">${options2("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options2("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options2("apprentice")}</select></label></div>
+<div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
 ${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ""}
 ${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
 ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not create the work order: ${escapeHtml3(draft.convertError)}</span></div>` : ""}
@@ -4710,8 +4723,8 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       status: next === "estimate_draft" ? "estimate" : next
     };
   }
-  function inspectionFindingsToEstimateLines(inspection = {}, options2 = {}) {
-    const laborRate = Math.max(0, Number(options2.laborRate) || 0);
+  function inspectionFindingsToEstimateLines(inspection = {}, options = {}) {
+    const laborRate = Math.max(0, Number(options.laborRate) || 0);
     const items = Array.isArray(inspection.items) ? inspection.items : [];
     const lines = [];
     let index = 0;
@@ -4743,25 +4756,25 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       catalogId: inspection.catalogId || null
     };
   }
-  function estimateFromInspection(inspection = {}, options2 = {}, at = /* @__PURE__ */ new Date()) {
-    const built = inspectionFindingsToEstimateLines(inspection, options2);
-    const taxRate = Math.max(0, Number(options2.taxRate) || 0);
-    const estimate = calculateEstimate(built.lines, taxRate, options2.fees || []);
+  function estimateFromInspection(inspection = {}, options = {}, at = /* @__PURE__ */ new Date()) {
+    const built = inspectionFindingsToEstimateLines(inspection, options);
+    const taxRate = Math.max(0, Number(options.taxRate) || 0);
+    const estimate = calculateEstimate(built.lines, taxRate, options.fees || []);
     return {
       ...estimate,
-      summary: built.recommendations || options2.summary || "",
+      summary: built.recommendations || options.summary || "",
       generatedAt: isoNow(at),
       sourceInspectionId: built.inspectionId,
       sourceCatalogId: built.catalogId,
       photoKeys: built.photoKeys
     };
   }
-  function applyEstimateFromInspection(order = {}, inspection = {}, options2 = {}, actor = {}, at = /* @__PURE__ */ new Date()) {
+  function applyEstimateFromInspection(order = {}, inspection = {}, options = {}, actor = {}, at = /* @__PURE__ */ new Date()) {
     const estimate = estimateFromInspection(inspection, {
-      laborRate: options2.laborRate ?? order.laborRate,
-      taxRate: options2.taxRate ?? order.estimate?.taxRate,
-      fees: options2.fees || order.estimate?.fees || [],
-      summary: options2.summary
+      laborRate: options.laborRate ?? order.laborRate,
+      taxRate: options.taxRate ?? order.estimate?.taxRate,
+      fees: options.fees || order.estimate?.fees || [],
+      summary: options.summary
     }, at);
     let next = {
       ...order,
@@ -5599,13 +5612,13 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       return false;
     }
   }
-  function openPrintDocument(html, options2 = {}) {
-    const target = options2.windowObject || globalThis;
-    const notify = options2.toast || (() => {
+  function openPrintDocument(html, options = {}) {
+    const target = options.windowObject || globalThis;
+    const notify = options.toast || (() => {
     });
-    const blockedMessage = options2.blockedMessage || "Allow pop-ups to print";
-    const autoPrint = options2.autoPrint !== false;
-    const schedule2 = options2.schedule || ((fn) => setTimeout(fn, 0));
+    const blockedMessage = options.blockedMessage || "Allow pop-ups to print";
+    const autoPrint = options.autoPrint !== false;
+    const schedule2 = options.schedule || ((fn) => setTimeout(fn, 0));
     const markup = withBaseHref(html, target);
     const blobAvailable = typeof target.Blob === "function" && typeof target.URL?.createObjectURL === "function";
     if (blobAvailable) {
@@ -7765,14 +7778,14 @@ button{margin-top:12px;padding:8px 14px}
     });
     const selected = model.selected;
     if (selected) posSelectedId = selected.targetId;
-    const options2 = model.choices.map((choice) => `<option value="${escapeAttr(choice.targetId)}" ${selected?.targetId === choice.targetId ? "selected" : ""}>${escapeHtml(choice.label)} \xB7 due ${money4(choice.balance)}</option>`).join("");
+    const options = model.choices.map((choice) => `<option value="${escapeAttr(choice.targetId)}" ${selected?.targetId === choice.targetId ? "selected" : ""}>${escapeHtml(choice.label)} \xB7 due ${money4(choice.balance)}</option>`).join("");
     const readerOptions = model.readers.map((reader) => `<option value="${escapeAttr(reader.id)}">${escapeHtml(reader.label)} \xB7 ${escapeHtml(reader.status)}</option>`).join("");
     const writeup = selected ? recoveryWriteup({ customer: selected.customer, vehicle: selected.vehicle }) : recoveryWriteup({});
     const chargeNote = posCharge ? `<p class="pos-status" data-phase="${escapeAttr(posCharge.phase || "")}">${escapeHtml(posCharge.message || "")}</p>` : "";
     const connection = posReaders === null ? "Checking the shop Stripe account\u2026" : model.configured ? model.readers.length ? `${model.readers.length} reader${model.readers.length === 1 ? "" : "s"} online in this Stripe account.` : "Stripe is connected. No card reader is registered yet. Add one in the Stripe Dashboard under Terminal, then refresh." : "Stripe is not connected. An owner saves the shop keys on the Payments page before this counter can take a card.";
     const identity = `<div class="full pos-identity"><span>Customer</span><strong>${escapeHtml(selected?.customer || "Select a work order")}</strong><span>Vehicle</span><strong>${escapeHtml(selected?.vehicle || "Vehicle comes from the work order")}</strong></div>`;
     const amountField = `<label>Amount<input name="amount" id="pos-amount" type="number" min="0.50" step="0.01" value="${selected && selected.balance >= 0.5 ? selected.balance.toFixed(2) : ""}" required/></label>`;
-    const orderField = `<label class="full">Work order<select name="orderId" id="pos-order" required>${options2 || `<option value="">No work orders</option>`}</select></label>`;
+    const orderField = `<label class="full">Work order<select name="orderId" id="pos-order" required>${options || `<option value="">No work orders</option>`}</select></label>`;
     const phoneNotice = posPhoneEntry ? "Type the card number, expiration, security code, and postal code from the phone call. Stripe collects the card. ShopCrank stores the approval on the work order." : "Add the Stripe publishable key on the Payments page first. It starts with pk_test_ or pk_live_ and must belong to the same account as the secret key.";
     const counter = posMode === "phone" ? `<form class="form-grid" id="pos-phone-form">${orderField}${identity}${amountField}<div class="full" id="pos-card-element"></div><p class="ai-disclaimer">${escapeHtml(phoneNotice)}</p><div class="full messaging-actions"><button class="primary" type="submit" id="pos-phone-prepare" ${!selected || selected.balance < 0.5 || !posPhoneEntry ? "disabled" : ""}>${icon("credit-card", 14)} Enter card</button><button class="primary" type="button" id="pos-phone-charge" hidden>${icon("check", 14)} Charge card</button></div><p class="pos-status" id="pos-phone-status" hidden></p></form>` : `<form class="form-grid" id="pos-form">${orderField}${identity}${amountField}<label>Reader<select name="readerId" id="pos-reader" required>${readerOptions || `<option value="">No reader</option>`}</select></label><div class="full messaging-actions"><button class="secondary" type="button" id="pos-refresh">${icon("refresh-cw", 14)} Refresh readers</button><button class="secondary" type="button" id="pos-cancel" ${posCharge ? "" : "disabled"}>${icon("x", 14)} Cancel on reader</button><button class="primary" type="submit" id="pos-charge" ${!selected || selected.balance < 0.5 || !model.readers.length ? "disabled" : ""}>${icon("credit-card", 14)} Charge card</button></div>${chargeNote}</form>`;
     return shell(`${heading("Front counter", "Card terminal", "Take a card on the reader, or type a card for a purchase made over the phone.", false)}<section class="messaging-panel pos-terminal"><div class="messaging-status ${model.configured ? "ready" : "idle"}">${icon("credit-card", 17)}<div><strong>${posMode === "phone" ? "Phone order" : model.configured ? "Card reader ready" : "Card reader not connected"}</strong><span>${escapeHtml(posMode === "phone" ? phoneNotice : connection)}</span></div></div><div class="accounting-tabs"><button class="tab ${posMode === "reader" ? "active" : ""}" type="button" data-pos-mode="reader">Card reader</button><button class="tab ${posMode === "phone" ? "active" : ""}" type="button" data-pos-mode="phone">Phone order</button></div>${counter}<section class="pos-writeup"><h2>Technician write-up</h2><p>The recovery note uses the customer and vehicle on the selected work order.</p><pre id="pos-writeup">${escapeHtml(writeup.ready ? writeup.text : "Select a work order that has both a customer name and a vehicle. Those details are written into the note. They are not filled in from memory.")}</pre><button class="secondary" type="button" id="pos-save-writeup" ${writeup.ready ? "" : "disabled"}>${icon("save", 14)} Save on work order</button></section></section>`);
@@ -7966,8 +7979,8 @@ button{margin-top:12px;padding:8px 14px}
       const panel = document.querySelector("#quickbooks-tax-settings");
       if (!panel) return;
       const modeLabel = { ast: "Automated Sales Tax (QuickBooks calculates tax)", manual: "Manual sales tax rate", global: "Tax codes per line (non-US company)", none: "Sales tax is off in QuickBooks" }[settings2.mode] || settings2.mode;
-      const options2 = (selected, taxable) => `<option value="">Choose\u2026</option>${(settings2.taxCodes || []).filter((code) => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map((code) => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`;
-      const pickers = settings2.mode === "manual" || settings2.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options2(settings2.taxCodeId, true)}</select></label>${settings2.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options2(settings2.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : "";
+      const options = (selected, taxable) => `<option value="">Choose\u2026</option>${(settings2.taxCodes || []).filter((code) => code.taxable === taxable && !["TAX", "NON"].includes(code.id)).map((code) => `<option value="${escapeAttr(code.id)}" ${code.id === selected ? "selected" : ""}>${escapeHtml(code.name)}</option>`).join("")}`;
+      const pickers = settings2.mode === "manual" || settings2.mode === "global" ? `<label>Sales tax rate for taxable lines<select name="taxCodeId">${options(settings2.taxCodeId, true)}</select></label>${settings2.mode === "global" ? `<label>Tax code for non-taxable lines<select name="exemptTaxCodeId">${options(settings2.exemptTaxCodeId, false)}</select></label>` : ""}<div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div>` : "";
       panel.innerHTML = `<form class="form-grid" id="quickbooks-tax-form"><p class="full ops-note"><b>${escapeHtml(modeLabel)}</b>${settings2.needsChoice ? " \xB7 choose a rate before syncing taxed invoices" : ""}</p>${pickers}</form>`;
       panel.querySelector("#quickbooks-tax-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -8038,8 +8051,8 @@ button{margin-top:12px;padding:8px 14px}
     return `<section class="ai-panel"><div class="statement-head"><div><div class="eyebrow">AI assistant</div><h2>${title}</h2><p>${description}</p></div>${icon("sparkles", 19)}</div><form class="form-grid" id="ai-form">${fields}<div class="full"><button class="primary" type="submit">${icon("sparkles", 15)} ${action}</button></div></form></section>`;
   }
   function aiWorkflowForm() {
-    const options2 = visibleOrders().map((order) => `<option value="${order.id}">${order.id} \xB7 ${escapeHtml(order.customer)} \xB7 ${escapeHtml(order.vehicle)}</option>`).join("");
-    return `${aiFormShell("Repair-order workflow", "Generate causes, labor, parts, diagnostics, repair steps, and recommended services for an existing work order.", `<label class="full">Work order<select name="workOrderId">${options2}</select></label>`, "Generate workflow")}${aiResult?.kind === "workflow" ? workflowResult(aiResult) : ""}`;
+    const options = visibleOrders().map((order) => `<option value="${order.id}">${order.id} \xB7 ${escapeHtml(order.customer)} \xB7 ${escapeHtml(order.vehicle)}</option>`).join("");
+    return `${aiFormShell("Repair-order workflow", "Generate causes, labor, parts, diagnostics, repair steps, and recommended services for an existing work order.", `<label class="full">Work order<select name="workOrderId">${options}</select></label>`, "Generate workflow")}${aiResult?.kind === "workflow" ? workflowResult(aiResult) : ""}`;
   }
   function aiDiagnosticsForm() {
     return `${aiFormShell("AI diagnostics", "Analyze symptoms and DTC codes into probable causes, tests, urgency, and labor time.", `<label>Vehicle<input name="vehicle" required placeholder="2018 Ford F-150 5.0L"/></label><label>DTC codes<input name="dtc" placeholder="P0300, P0171"/></label><label class="full">Symptoms / complaint<textarea name="symptoms" required placeholder="Rough idle, check engine light, hesitation on acceleration"></textarea></label>`, "Run diagnostics")}${aiResult?.kind === "diagnostics" ? diagnosticsResult(aiResult) : ""}`;
@@ -8379,8 +8392,8 @@ button{margin-top:12px;padding:8px 14px}
   function mutationId() {
     return globalThis.crypto?.randomUUID?.() || `mutation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
-  function prepareMutation(path, options2) {
-    return prepareEntityMutation(path, options2, mutationId);
+  function prepareMutation(path, options) {
+    return prepareEntityMutation(path, options, mutationId);
   }
   function queueEntityMutation(mutation, conflict = false) {
     const queue = readMutationQueue(), existingIndex = queue.findIndex((item2) => item2.key === mutation.key);
@@ -8394,11 +8407,11 @@ button{margin-top:12px;padding:8px 14px}
     else queue.push(item);
     writeMutationQueue(queue);
   }
-  async function authorizedApiRequest(path, options2 = {}) {
+  async function authorizedApiRequest(path, options = {}) {
     const session = authSession();
     if (!session) throw new Error("Not signed in");
     const localHeaders = isLocalShell() ? { "X-ShopCrank-Dev-Email": session.claims.email || "admin@example.com", "X-ShopCrank-Dev-Name": session.claims.name || "Local Developer", "X-ShopCrank-Dev-Sub": session.claims.sub || "local-development" } : {};
-    return fetch(`${cloudflareConfig2.apiUrl}${path}`, { ...options2, credentials: "include", headers: { "Content-Type": "application/json", ...localHeaders, ...options2.headers || {} } });
+    return fetch(`${cloudflareConfig2.apiUrl}${path}`, { ...options, credentials: "include", headers: { "Content-Type": "application/json", ...localHeaders, ...options.headers || {} } });
   }
   async function verifyDesktopEntitlement() {
     if (!isDesktopApp || isOfflineDesktop() || isLocalShell() && cloudflareConfig2.apiUrl.startsWith("/")) {
@@ -8453,14 +8466,14 @@ button{margin-top:12px;padding:8px 14px}
       flushingMutationQueue = false;
     }
   }
-  async function apiFetch(path, options2 = {}) {
+  async function apiFetch(path, options = {}) {
     if (isOfflineDesktop()) {
       if (String(path).startsWith("/ai/")) {
         const aiError = new Error("ShopCrank AI runs in the cloud. This offline copy keeps records on this computer only, so sign in to the online version at www.shopcrank.com to use the assistant.");
         aiError.retryable = false;
         throw aiError;
       }
-      const method = String(options2.method || "GET").toUpperCase();
+      const method = String(options.method || "GET").toUpperCase();
       if (method === "GET" || method === "HEAD") {
         const offlineError = new Error("This copy of ShopCrank keeps shop records on this computer.");
         offlineError.retryable = false;
@@ -8469,7 +8482,7 @@ button{margin-top:12px;padding:8px 14px}
       return { queued: true };
     }
     if (readMutationQueue().some((item) => !item.conflict) && navigator.onLine && !flushingMutationQueue) void flushMutationQueue();
-    const mutation = prepareMutation(path, options2);
+    const mutation = prepareMutation(path, options);
     try {
       const response = await authorizedApiRequest(path, withOptimisticConcurrencyHeaders(mutation.options, mutation.expectedUpdatedAt));
       if (!response.ok) {
@@ -8482,7 +8495,7 @@ button{margin-top:12px;padding:8px 14px}
     } catch (error) {
       if (mutation.queueable && (error.retryable || !navigator.onLine || error instanceof TypeError)) {
         queueEntityMutation(mutation);
-        if (!options2.silent) toast("Saved offline. ShopCrank will sync when the connection returns.");
+        if (!options.silent) toast("Saved offline. ShopCrank will sync when the connection returns.");
         return { queued: true };
       }
       throw error;
@@ -9026,8 +9039,8 @@ button{margin-top:12px;padding:8px 14px}
   function orderingTargetHtml() {
     const orders2 = ordersAcceptingEstimateLines(state.orders);
     if (!orders2.some((order) => order.id === orderingTargetOrderId)) orderingTargetOrderId = orders2[0]?.id || "";
-    const options2 = orders2.map((order) => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} \xB7 ${escapeHtml(order.customer || "")} \xB7 ${escapeHtml(order.vehicle || "")}</option>`).join("");
-    return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options2 || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
+    const options = orders2.map((order) => `<option value="${escapeAttr(order.id)}" ${order.id === orderingTargetOrderId ? "selected" : ""}>${escapeHtml(order.id)} \xB7 ${escapeHtml(order.customer || "")} \xB7 ${escapeHtml(order.vehicle || "")}</option>`).join("");
+    return `<section class="settings-panel ordering-target"><label class="full">Add quoted parts and labor to repair order<select id="ordering-target-order">${options || `<option value="">No open repair orders</option>`}</select></label><p class="ops-note">Added lines go on the RO estimate as pending customer approval.</p></section>`;
   }
   async function addLinesToTargetOrder(lines, label2, orderId = orderingTargetOrderId) {
     const order = state.orders.find((item) => item.id === orderId);
@@ -10145,8 +10158,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       }
     };
   }
-  async function platformApi(path, options2 = {}) {
-    const response = await authorizedApiRequest(path, options2);
+  async function platformApi(path, options = {}) {
+    const response = await authorizedApiRequest(path, options);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || payload.error || `Platform request failed (${response.status})`);
     return payload;
@@ -11518,8 +11531,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     };
   }
   function openJournal() {
-    const options2 = state.chartOfAccounts.map((x) => `<option value="${x.code}">${x.code} \xB7 ${x.name}</option>`).join("");
-    showModal(`<form class="modal" id="journal-form"><div class="modal-head"><h2>Journal entry</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="ledger-note">${icon("scale", 15)} Post equal debit and credit amounts for an adjustment.</div><div class="form-grid" style="margin-top:14px"><label>Date<input type="date" name="date" value="2026-08-14" required/></label><label>Amount *<input name="amount" type="number" step=".01" min=".01" required/></label><label class="full">Description *<input name="description" required placeholder="e.g. Owner contribution"/></label><label>Debit account<select name="debitAccount">${options2}</select></label><label>Credit account<select name="creditAccount">${options2}</select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("book-open-check", 14)} Post entry</button></div></form>`);
+    const options = state.chartOfAccounts.map((x) => `<option value="${x.code}">${x.code} \xB7 ${x.name}</option>`).join("");
+    showModal(`<form class="modal" id="journal-form"><div class="modal-head"><h2>Journal entry</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="ledger-note">${icon("scale", 15)} Post equal debit and credit amounts for an adjustment.</div><div class="form-grid" style="margin-top:14px"><label>Date<input type="date" name="date" value="2026-08-14" required/></label><label>Amount *<input name="amount" type="number" step=".01" min=".01" required/></label><label class="full">Description *<input name="description" required placeholder="e.g. Owner contribution"/></label><label>Debit account<select name="debitAccount">${options}</select></label><label>Credit account<select name="creditAccount">${options}</select></label></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary">${icon("book-open-check", 14)} Post entry</button></div></form>`);
     document.querySelector("#journal-form").onsubmit = (e) => {
       e.preventDefault();
       const d = readFormValues(e.target);
@@ -11770,8 +11783,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return invoice.id || invoice.number;
   }
   function invoiceDateValue(value2) {
-    const date = new Date(value2);
-    return Number.isNaN(date.valueOf()) ? "" : localIsoDate(date);
+    return toLocalIsoDate(value2);
   }
   function openInvoiceEditor(key) {
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
@@ -12061,9 +12073,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   function openAssignmentEditor(order) {
     const assignments = order.assignments?.length ? order.assignments : order.tech && order.tech !== "Unassigned" ? [{ name: order.tech, role: "primary", sharePercent: 100 }] : [];
     const techs = state.users.filter((user) => user.active !== false && classificationFor(user) === "technician" && (user.techName || user.name));
-    const options2 = (role) => `<option value="">Select technician</option>${techs.map((user) => `<option value="${escapeAttr(user.id)}" ${assignments.find((item) => item.role === role)?.employeeId === user.id ? "selected" : ""}>${escapeHtml(user.techName || user.name)}</option>`).join("")}`;
+    const options = (role) => `<option value="">Select technician</option>${techs.map((user) => `<option value="${escapeAttr(user.id)}" ${assignments.find((item) => item.role === role)?.employeeId === user.id ? "selected" : ""}>${escapeHtml(user.techName || user.name)}</option>`).join("")}`;
     const writeIn = assignments.find((item) => item.writeIn)?.name || "";
-    showModal(`<form class="modal" id="assignment-form"><div class="modal-head"><h2>Assigned technicians</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Primary technician<select name="primary">${options2("primary")}</select></label><label>Primary share %<input name="primaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "primary")?.sharePercent ?? 100}"/></label><label>Secondary technician<select name="secondary">${options2("secondary")}</select></label><label>Secondary share %<input name="secondaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "secondary")?.sharePercent ?? 0}"/></label><label>Apprentice<select name="apprentice">${options2("apprentice")}</select></label><label>Apprentice share %<input name="apprenticeShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "apprentice")?.sharePercent ?? 0}"/></label><label class="full">Temporary technician name<input name="writeIn" value="${escapeAttr(writeIn)}" placeholder="Subcontractor or temp"/></label></div><p class="form-help">Only technicians appear in the lists. A temporary name is stored on this work order without a payroll rate.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Save assignments</button></div></form>`);
+    showModal(`<form class="modal" id="assignment-form"><div class="modal-head"><h2>Assigned technicians</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Primary technician<select name="primary">${options("primary")}</select></label><label>Primary share %<input name="primaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "primary")?.sharePercent ?? 100}"/></label><label>Secondary technician<select name="secondary">${options("secondary")}</select></label><label>Secondary share %<input name="secondaryShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "secondary")?.sharePercent ?? 0}"/></label><label>Apprentice<select name="apprentice">${options("apprentice")}</select></label><label>Apprentice share %<input name="apprenticeShare" type="number" min="0" max="100" step="1" value="${assignments.find((item) => item.role === "apprentice")?.sharePercent ?? 0}"/></label><label class="full">Temporary technician name<input name="writeIn" value="${escapeAttr(writeIn)}" placeholder="Subcontractor or temp"/></label></div><p class="form-help">Only technicians appear in the lists. A temporary name is stored on this work order without a payroll rate.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Save assignments</button></div></form>`);
     document.querySelector("#assignment-form").onsubmit = async (event) => {
       event.preventDefault();
       const data = readFormValues(event.target);
@@ -12420,14 +12432,14 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       resultsElement.querySelectorAll("[data-customer-result]").forEach((button) => {
         button.onclick = () => selectCustomer(results[Number(button.dataset.customerResult)]);
         button.onkeydown = (event) => {
-          const options2 = [...resultsElement.querySelectorAll("[data-customer-result]")];
-          const index = options2.indexOf(button);
+          const options = [...resultsElement.querySelectorAll("[data-customer-result]")];
+          const index = options.indexOf(button);
           if (event.key === "ArrowDown") {
             event.preventDefault();
-            (options2[index + 1] || options2[0])?.focus();
+            (options[index + 1] || options[0])?.focus();
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            (options2[index - 1] || options2.at(-1))?.focus();
+            (options[index - 1] || options.at(-1))?.focus();
           } else if (event.key === "Escape") {
             event.preventDefault();
             hideResults();
@@ -12592,7 +12604,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     <div class="job-line-total"><span>Line total</span><b>${money4(item.total)}</b></div>
   </article>`;
   }
-  function estimateFromEditor(root, options2 = root?._estimateOptions || {}) {
+  function estimateFromEditor(root, options = root?._estimateOptions || {}) {
     const lines = [...root.querySelectorAll(".job-estimate-line")].map((row, index) => {
       const type = row.querySelector(".job-line-type").value;
       const quantity = Math.max(0, Number(row.querySelector(".job-line-quantity").value) || 0);
@@ -12615,8 +12627,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         amount: type === "fee" ? unitPrice : 0
       }, index);
     }).filter((line) => line.description && line.quantity > 0);
-    const fees = options2.fees ?? (lines.length ? [{ description: "Shop supplies", amount: 12 }] : []);
-    return calculateEstimate(lines, options2.taxRate ?? state.taxSettings.rate, fees);
+    const fees = options.fees ?? (lines.length ? [{ description: "Shop supplies", amount: 12 }] : []);
+    return calculateEstimate(lines, options.taxRate ?? state.taxSettings.rate, fees);
   }
   function refreshEstimateEditor(root) {
     root.querySelectorAll(".job-estimate-line").forEach((row) => {
@@ -12638,9 +12650,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const total = document.querySelector("#new-estimate-total");
     if (total && root.id === "new-estimate-lines") total.value = estimate.total.toFixed(2);
   }
-  function bindEstimateEditor(root, options2) {
+  function bindEstimateEditor(root, options) {
     if (!root) return;
-    if (options2) root._estimateOptions = options2;
+    if (options) root._estimateOptions = options;
     const bindRows = () => {
       root.querySelectorAll("input,textarea,select").forEach((control) => control.oninput = () => refreshEstimateEditor(root));
       root.querySelectorAll(".job-line-type").forEach((control) => control.onchange = () => {
@@ -13021,11 +13033,12 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const body = form.querySelector(".modal-body");
     if (!body || document.querySelector("#estimate-source-picker")) return;
     const sources = availableEstimateSources();
-    body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate\u2026</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
     const estimator = form.querySelector(".new-order-estimator");
     estimator?.insertAdjacentHTML("beforeend", `<div class="estimate-adjustments"><label>Shop supplies<input name="shopSupplies" type="number" min="0" step=".01" placeholder="Auto: 3% of labor, max $20"/></label><label>Discount %<input name="estimateDiscount" type="number" min="0" max="100" step=".1" value="0"/></label><label>Discount reason<input name="estimateDiscountReason" placeholder="Optional"/></label></div>`);
     form.querySelectorAll("[name=shopSupplies],[name=estimateDiscount],[name=estimateDiscountReason]").forEach((input) => input.addEventListener("input", () => refreshEstimateEditor(form.querySelector("#new-estimate-lines"))));
     if (!sources.length) return;
+    const options = sources.map((estimate) => `<option value="${escapeAttr(estimate.id)}">${escapeHtml(estimate.number || "Saved draft")} \xB7 ${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer || "Customer")}</option>`).join("");
+    body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate\u2026</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
     document.querySelector("#apply-estimate-source").onclick = () => {
       const estimate = estimateSourceById(document.querySelector("#estimate-source-picker").value);
       if (estimate) applyWorkOrderDraftToForm(form, workOrderDraftFromEstimate(normalizedEstimateSource(estimate)));
@@ -14992,6 +15005,7 @@ ${line}`.trim();
       init_estimate_templates();
       init_bay();
       init_estimate_approval();
+      init_dates();
       init_home();
       chatDerivedCache = null;
       posReaders = null;
@@ -15475,7 +15489,7 @@ ${line}`.trim();
         openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:12px/1.55 system-ui,sans-serif;max-width:900px;margin:auto;padding:22px;color:#172029}h2{color:var(--brand)}.summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.summary b{padding:7px 10px;border:1px solid #d6ddd7}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left}th{color:#fff;background:var(--brand)}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #d6ddd7}</style></head><body>${brand.header}<h2>Digital Inspection Report: ${escapeHtml(inspection.number)}</h2><p><b>Customer:</b> ${escapeHtml(inspection.customer)} \xB7 <b>Vehicle:</b> ${escapeHtml(inspection.vehicle)} \xB7 <b>Work order:</b> ${escapeHtml(inspection.workOrderId || "Unlinked")}</p><p><b>Date:</b> ${escapeHtml(new Date(inspection.createdAt).toLocaleString())}</p><div class="summary"><b>${counts.pass || 0} pass</b><b>${counts.attention || 0} attention</b><b>${counts.fail || 0} fail</b></div>${damageHtml}<table><thead><tr><th>Inspection point</th><th>Result</th><th>Note</th></tr></thead><tbody>${itemRows}</tbody></table>${recommendationsHtml}${photosHtml}${approvalHtml}<p>${escapeHtml(profile.invoiceFooter || "")}</p><button type="button">Print inspection</button></body></html>`, { toast, blockedMessage: "Allow pop-ups to print the inspection", autoPrint: true });
       };
       updateOrderWithInvoiceCore = updateOrderInApi;
-      updateOrderInApi = async function(record, options2) {
+      updateOrderInApi = async function(record, options) {
         if (["completed", "invoiced"].includes(record.status)) {
           try {
             await ensureInvoiceForOrder(record);
@@ -15485,7 +15499,7 @@ ${line}`.trim();
             throw error;
           }
         }
-        return updateOrderWithInvoiceCore(record, options2);
+        return updateOrderWithInvoiceCore(record, options);
       };
       sampleOrderIds = /* @__PURE__ */ new Set(["RO-1044", "RO-1046", "RO-1048", "RO-1049", "RO-1050", "RO-1051", "RO-1052"]);
       sampleInvoiceIds = /* @__PURE__ */ new Set(["INV-2032", "INV-2036", "INV-2040", "INV-2041"]);
@@ -15625,8 +15639,8 @@ ${line}`.trim();
         updateGrokVoiceUiControls();
       };
       apiFetchAssistantCore = apiFetch;
-      apiFetch = async function(path, options2 = {}) {
-        return apiFetchAssistantCore(path, options2);
+      apiFetch = async function(path, options = {}) {
+        return apiFetchAssistantCore(path, options);
       };
       if ("serviceWorker" in navigator && isSecureContext && !isDesktopApp) {
         window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch((error) => console.error("Service worker registration failed", error)));
@@ -17078,8 +17092,8 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         });
       };
       apiFetchShopAiNoticeCore = apiFetch;
-      apiFetch = async function(path, options2 = {}) {
-        const result = await apiFetchShopAiNoticeCore(path, options2);
+      apiFetch = async function(path, options = {}) {
+        const result = await apiFetchShopAiNoticeCore(path, options);
         if (String(path).startsWith("/ai/assistant") && result?.notice) {
           toast(result.notice);
           shopAiSettings = { ...shopAiSettings, loaded: false };
@@ -17109,20 +17123,20 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         return startLiveKeyJobLicenseCore(data);
       };
       apiFetchKeyLicenseCore = apiFetch;
-      apiFetch = async function(path, options2 = {}) {
-        if (path !== "/diagnostics/authorize" || !options2.body) return apiFetchKeyLicenseCore(path, options2);
+      apiFetch = async function(path, options = {}) {
+        if (path !== "/diagnostics/authorize" || !options.body) return apiFetchKeyLicenseCore(path, options);
         let body = null;
         try {
-          body = JSON.parse(options2.body);
+          body = JSON.parse(options.body);
         } catch {
           body = null;
         }
-        if (!requiresVehicleKeyLicense(body)) return apiFetchKeyLicenseCore(path, options2);
+        if (!requiresVehicleKeyLicense(body)) return apiFetchKeyLicenseCore(path, options);
         const stored = await loadStoredUnlock();
         if (!stored?.redeemedAt) throw new Error("This device is not unlocked for live key programming. Open Key programming and unlock it with your ShopCrank license.");
         const licenseUnlock = await authorizeUnlock(await keyLicenseDevice(), stored.token, body.procedure, String(body.vin || "").trim());
         try {
-          return await apiFetchKeyLicenseCore(path, { ...options2, body: JSON.stringify({ ...body, licenseUnlock }) });
+          return await apiFetchKeyLicenseCore(path, { ...options, body: JSON.stringify({ ...body, licenseUnlock }) });
         } catch (error) {
           keyLicenseView.loaded = false;
           throw error;
