@@ -15,18 +15,87 @@ const legacy = readFileSync(join(root, 'runtime', 'legacy.js'), 'utf8');
 
 /** Returns the source of the function whose definition starts with `prefix`. */
 function functionSource(prefix) {
-  const start = legacy.indexOf(prefix);
+  return sourceFunction(prefix, legacy);
+}
+
+function sourceFunction(prefix, source) {
+  const start = source.indexOf(prefix);
   if (start < 0) throw new Error(`not found: ${prefix}`);
   let depth = 0;
-  let i = legacy.indexOf('{', start);
-  for (; i < legacy.length; i += 1) {
-    if (legacy[i] === '{') depth += 1;
-    else if (legacy[i] === '}') {
+  let parentheses = 0;
+  let quote = '';
+  let escaped = false;
+  let bodyStart = -1;
+  for (let i = source.indexOf('(', start); i < source.length; i += 1) {
+    const char = source[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'" || char === '`') quote = char;
+    else if (char === '(') parentheses += 1;
+    else if (char === ')' && --parentheses === 0) {
+      bodyStart = source.indexOf('{', i + 1);
+      break;
+    }
+  }
+  let i = bodyStart;
+  for (; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
       depth -= 1;
       if (depth === 0) break;
     }
   }
-  return legacy.slice(start, i + 1);
+  return source.slice(start, i + 1);
+}
+
+function functionSources(source) {
+  const functions = [];
+  const declaration = /(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/g;
+  let match;
+  while ((match = declaration.exec(source)) !== null) {
+    const body = sourceFunction(match[0], source.slice(match.index));
+    functions.push(body);
+  }
+  return functions;
+}
+
+function blockAt(source, openingBrace) {
+  let depth = 0;
+  for (let i = openingBrace; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}' && --depth === 0) return source.slice(openingBrace, i + 1);
+  }
+  return '';
+}
+
+function handlerUsesSubmitButton(body, id) {
+  const selector = new RegExp(`querySelector\\(["']#${id}["']\\)`);
+  const selectedForm = selector.exec(body);
+  if (!selectedForm) return false;
+  const tail = body.slice(selectedForm.index, selectedForm.index + 1200);
+  const eventIndex = tail.search(/\.addEventListener\(\s*["']submit["']|\.onsubmit\s*=/);
+  if (eventIndex < 0) return false;
+  const arrow = tail.indexOf('=>', eventIndex);
+  const openingBrace = arrow < 0 ? -1 : tail.indexOf('{', arrow);
+  if (openingBrace < 0) return false;
+  return /querySelector\(["']button\[type=submit\]["']\)/.test(blockAt(tail, openingBrace));
+}
+
+function submitButtonOffenders(source) {
+  const offenders = new Set();
+  for (const body of functionSources(source)) {
+    const formRe = /<form[^>]*id="([a-z0-9-]+)"[\s\S]*?<\/form>/g;
+    let match;
+    while ((match = formRe.exec(body)) !== null) {
+      const id = match[1];
+      const buttons = [...match[0].matchAll(/<button[^>]*>/g)].map((button) => button[0]);
+      if (buttons.some((button) => button.includes('type="submit"'))) continue;
+      if (handlerUsesSubmitButton(body, id)) offenders.add(id);
+    }
+  }
+  return [...offenders].sort();
 }
 
 test('the vehicle form\'s save button is a typed submit button', () => {
@@ -43,31 +112,34 @@ test('the vehicle form\'s save button is a typed submit button', () => {
 });
 
 test('fresh-shop billing uses the default jurisdiction rate', () => {
-  assert.match(legacy, /taxSettings: \{ state: "TX", taxId: "", rate: Filing\.combinedSalesTaxRate\(Filing\.DEFAULT_TX_JURISDICTIONS\)/);
+  const initial = functionSource('function initialState(');
+  assert.match(initial, /base\.taxSettings\.rate = Filing\.combinedSalesTaxRate\(Filing\.DEFAULT_TX_JURISDICTIONS\)/);
+  assert.match(legacy, /loadShopEntities = async function \(\) \{[\s\S]*?rate: Number\(tax\.rate\) \|\| 0/);
 });
 
 test('filing reports and exports require the configured rate to match jurisdictions', () => {
-  assert.match(functionSource('function requireTaxRateMatch()'), /Filing\.matchesJurisdictionRate/);
-  assert.match(functionSource('async function generateTaxReportFromForm('), /if \(!requireTaxRateMatch\(\)\) return;/);
-  assert.match(functionSource('function exportSalesTaxCsv()'), /!requireTaxRateMatch\(\)/);
-  assert.match(functionSource('function exportTexasWebfilePackage()'), /!requireTaxRateMatch\(\)/);
-  assert.match(legacy, /document\.querySelector\('#print-tax-report'\)\?\.addEventListener\('click', event => \{\s*if \(!requireTaxRateMatch\(\)\)/);
+  assert.match(functionSource('function isFilingRateConsistent('), /Filing\.salesTaxRateMatchesJurisdictions/);
+  assert.match(functionSource('async function generateTaxReportFromForm('), /if \(!filingRateIsConsistent\(\)\) return;/);
+  assert.match(functionSource('function exportSalesTaxCsv()'), /!filingRateIsConsistent\(\)/);
+  assert.match(functionSource('function exportTexasWebfilePackage()'), /!filingRateIsConsistent\(\)/);
+  assert.match(legacy, /document\.querySelector\('#print-tax-report'\)\?\.addEventListener\('click', event => \{\s*if \(!filingRateIsConsistent\(\)\)/);
+  assert.match(functionSource('reports = function () {'), /const result = rateMatches \? taxReportResult : null/);
 });
 
 test('every form whose handler looks up button[type=submit] has a typed submit button', () => {
-  const offenders = [];
-  const formRe = /<form[^>]*id="([a-z0-9-]+)"[\s\S]*?<\/form>/g;
-  let match;
-  while ((match = formRe.exec(legacy)) !== null) {
-    const buttons = [...match[0].matchAll(/<button[^>]*>/g)].map((button) => button[0]);
-    if (buttons.some((button) => button.includes('type="submit"'))) continue;
-    // Find the handler statement that belongs to THIS form. A handler is one
-    // statement: "#form-id" up to the end of the expression it starts.
-    const id = match[1];
-    const handlerRe = new RegExp(`#${id}[^;]{0,1200}?button\\[type=submit\\]`);
-    if (handlerRe.test(legacy)) offenders.push(id);
-  }
-  assert.deepEqual(offenders, [], `these forms break their save handler: ${offenders.join(', ')}`);
+  assert.deepEqual(submitButtonOffenders(legacy), []);
+});
+
+test('cross-form submit detection catches broken forms after intervening statements', () => {
+  const broken = `function openVehicleForm() {
+    const html = '<form id="vehicle-form"><button>Save vehicle</button></form>';
+    document.querySelector("#vehicle-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const form = document.querySelector("#vehicle-form");
+      const button = form.querySelector("button[type=submit]");
+    });
+  }`;
+  assert.deepEqual(submitButtonOffenders(broken), ['vehicle-form']);
 });
 
 test('the work order estimate picker offers only the shop\'s own estimates', () => {
@@ -114,6 +186,12 @@ test('the sign-in handler is split into named functions', () => {
   assert.match(handler, /await signInLocalShell\(\)/);
   assert.match(handler, /await signInWithEmailLink\(/);
   assert.match(handler, /resetFailedSignIn\(/);
+});
+
+test('desktop email sign-in explains browser handoff and link expiry', () => {
+  const signIn = functionSource('async function signInWithEmailLink(');
+  assert.match(signIn, /isDesktopApp \? "Check your email and open the sign-in link\..*Open ShopCrank.*15 minutes\."/);
+  assert.match(signIn, /result\.message \|\| "Check your email for a sign-in link\. It expires in 15 minutes\."/);
 });
 
 test('no invoice date is built with toISOString', () => {

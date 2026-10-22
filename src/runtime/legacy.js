@@ -470,7 +470,7 @@ const seed = {
   messagingSettings: { enabled: false, endpoint: "", senderEmail: "", senderPhone: "", shopName: "" },
   billingSettings: { enabled: false, provider: "stripe", checkoutEndpoint: "", onboardingUrl: "", accountLabel: "", shopName: "", shopId: "", webhookUrl: "" },
   payments: [],
-  taxSettings: { state: "TX", taxId: "", rate: Filing.combinedSalesTaxRate(Filing.DEFAULT_TX_JURISDICTIONS), filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
+  taxSettings: { state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
   chartOfAccounts: [
     { code: "1000", name: "Operating Checking", type: "Asset" }, { code: "1010", name: "Cash on Hand", type: "Asset" }, { code: "1020", name: "Card Processor Clearing", type: "Asset" }, { code: "1100", name: "Accounts Receivable", type: "Asset" }, { code: "1200", name: "Parts Inventory", type: "Asset" }, { code: "2000", name: "Accounts Payable", type: "Liability" }, { code: "2100", name: "Sales Tax Payable", type: "Liability" }, { code: "2200", name: "Federal Income Tax Withheld", type: "Liability" }, { code: "2210", name: "FICA Payable (SS)", type: "Liability" }, { code: "2220", name: "Medicare Payable", type: "Liability" }, { code: "4000", name: "Service Revenue", type: "Income" }, { code: "5000", name: "Cost of Parts", type: "Expense" }, { code: "6100", name: "Shop Supplies", type: "Expense" }, { code: "6200", name: "Utilities", type: "Expense" }, { code: "6300", name: "Tools & Equipment", type: "Expense" }
   ],
@@ -495,7 +495,7 @@ function sanitizeUsers(users) { return users.map(({ password, ...user }) => user
 // localhost / offline-desktop demo only. A signed-in cloud shop starts empty, so no
 // fake records appear in (or get saved to) a real tenant. See .10x/adrs/002.
 function isDemoShell() { return isOfflineDesktop() || location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(location.hostname) }
-function initialState() { const base = structuredClone(seed); if (!isDemoShell()) for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = []; return base }
+function initialState() { const base = structuredClone(seed); if (!isDemoShell()) { for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = []; base.taxSettings.rate = Filing.combinedSalesTaxRate(Filing.DEFAULT_TX_JURISDICTIONS) } return base }
 function load() { try { const value = JSON.parse(localStorage.getItem(STORE)); if (value?.version !== LOCAL_PREFERENCES_VERSION) { localStorage.removeItem(STORE); return initialState() } const route = typeof value.route === "string" && /^[a-z-]+$/.test(value.route) ? value.route : seed.route; return { ...initialState(), route } } catch { localStorage.removeItem(STORE); return initialState() } }
 let saveTimer = 0, pendingStateSnapshot = null, persistedStateSnapshot = localStorage.getItem(STORE) || null;
 function invalidateDerivedCaches() { chatDerivedCache = null; financeDerivedCache = null; relationshipDerivedCache = null }
@@ -4067,13 +4067,6 @@ function shopFilingProfile() {
   };
 }
 
-function requireTaxRateMatch() {
-  const jurisdictions = Filing.normalizeJurisdictions(state.taxSettings?.jurisdictions);
-  if (Filing.matchesJurisdictionRate(state.taxSettings?.rate, jurisdictions)) return true;
-  toast('Configured tax rate must match the jurisdiction breakdown before filing');
-  return false;
-}
-
 taxReport = function (fromDate, toDate) {
   const from = new Date(fromDate);
   const to = new Date(toDate);
@@ -4122,12 +4115,14 @@ taxReportView = function (result, stateName, settings) {
 reports = function () {
   const t = state.taxSettings;
   const stateName = usStates.find(s => s.code === t.state)?.name || t.state;
-  const result = taxReportResult;
+  const rateMatches = isFilingRateConsistent();
+  const result = rateMatches ? taxReportResult : null;
   const presets = filingPeriodPresets();
   const fromVal = result?.from || presets.month.from;
   const toVal = result?.to || presets.month.to;
   return shell(`${heading('Performance', 'Reports', 'Sales tax filing report, jurisdiction matrix, and e-file packages for your CPA or state portal.', false)}${stats()}
 <section class="messaging-panel"><div class="messaging-status ready">${icon('landmark', 17)}<div><strong>Tax filing report — ${escapeHtml(stateName)}</strong><span>Cash-basis sales tax for ${escapeHtml(stateName)} ${escapeHtml(String(t.filingFrequency || '').toLowerCase())} filing. Includes nontaxable and local jurisdiction split.</span></div></div>
+${rateMatches ? '' : '<p class="ledger-note">Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.</p>'}
 <div class="payroll-period-controls no-print" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px">
 <button type="button" class="secondary" data-tax-preset="month">${presets.month.label}</button>
 <button type="button" class="secondary" data-tax-preset="quarter">${presets.quarter.label}</button>
@@ -4160,7 +4155,7 @@ function filingCenterMarkup() {
 }
 
 async function generateTaxReportFromForm(from, to) {
-  if (!requireTaxRateMatch()) return;
+  if (!filingRateIsConsistent()) return;
   try {
     if (navigator.onLine && !isLocalShell()) {
       const remote = await apiFetch(`/tax-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -4183,8 +4178,23 @@ async function generateTaxReportFromForm(from, to) {
   taxReportResult = taxReport(from, to);
 }
 
+function filingRateIsConsistent() {
+  if (isFilingRateConsistent()) return true;
+  toast('Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.');
+  return false;
+}
+
+function isFilingRateConsistent() {
+  const taxSettings = state.taxSettings || {};
+  const jurisdictions = Filing.normalizeJurisdictions(taxSettings.jurisdictions);
+  const rate = taxSettings.rate == null || taxSettings.rate === ''
+    ? Filing.combinedSalesTaxRate(jurisdictions)
+    : Number(taxSettings.rate);
+  return Filing.salesTaxRateMatchesJurisdictions(rate, jurisdictions);
+}
+
 function exportSalesTaxCsv() {
-  if (!taxReportResult || !requireTaxRateMatch()) return;
+  if (!taxReportResult || !filingRateIsConsistent()) return;
   const shop = shopFilingProfile();
   const rows = [
     ['Sales tax filing export'],
@@ -4208,7 +4218,7 @@ function exportSalesTaxCsv() {
 }
 
 function exportTexasWebfilePackage() {
-  if (!taxReportResult || !requireTaxRateMatch()) return;
+  if (!taxReportResult || !filingRateIsConsistent()) return;
   const shop = shopFilingProfile();
   const supplement = Filing.buildJurisdictionSupplement(taxReportResult.totals.taxable, shop.jurisdictions);
   const csv = Filing.texasListSupplementCsv(supplement, {
@@ -4700,7 +4710,7 @@ bindExpandedFeatures = function () {
   document.querySelector('#export-tax-csv')?.addEventListener('click', exportSalesTaxCsv);
   document.querySelector('#export-tx-webfile')?.addEventListener('click', exportTexasWebfilePackage);
   document.querySelector('#print-tax-report')?.addEventListener('click', event => {
-    if (!requireTaxRateMatch()) {
+    if (!filingRateIsConsistent()) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }

@@ -38,8 +38,10 @@ export function combinedSalesTaxRate(jurisdictions) {
   return roundCents((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
 }
 
-export function matchesJurisdictionRate(rate, jurisdictions) {
-  return roundCents(rate) === combinedSalesTaxRate(jurisdictions);
+export function salesTaxRateMatchesJurisdictions(rate, jurisdictions) {
+  const configuredRate = Number(rate);
+  return Number.isFinite(configuredRate)
+    && roundCents(configuredRate) === combinedSalesTaxRate(jurisdictions);
 }
 
 /**

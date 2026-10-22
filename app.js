@@ -5402,8 +5402,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function combinedSalesTaxRate(jurisdictions) {
     return roundCents2((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
   }
-  function matchesJurisdictionRate(rate, jurisdictions) {
-    return roundCents2(rate) === combinedSalesTaxRate(jurisdictions);
+  function salesTaxRateMatchesJurisdictions(rate, jurisdictions) {
+    const configuredRate = Number(rate);
+    return Number.isFinite(configuredRate) && roundCents2(configuredRate) === combinedSalesTaxRate(jurisdictions);
   }
   function buildJurisdictionSupplement(taxableSales, jurisdictions) {
     const taxable = roundCents2(taxableSales);
@@ -8266,7 +8267,10 @@ button{margin-top:12px;padding:8px 14px}
   }
   function initialState() {
     const base = structuredClone(seed);
-    if (!isDemoShell()) for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = [];
+    if (!isDemoShell()) {
+      for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = [];
+      base.taxSettings.rate = combinedSalesTaxRate(DEFAULT_TX_JURISDICTIONS);
+    }
     return base;
   }
   function load() {
@@ -13399,12 +13403,6 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       jurisdictions
     };
   }
-  function requireTaxRateMatch() {
-    const jurisdictions = normalizeJurisdictions(state.taxSettings?.jurisdictions);
-    if (matchesJurisdictionRate(state.taxSettings?.rate, jurisdictions)) return true;
-    toast("Configured tax rate must match the jurisdiction breakdown before filing");
-    return false;
-  }
   function filingCenterMarkup() {
     if (!filingCenterOpen) return "";
     const shop = shopFilingProfile();
@@ -13418,7 +13416,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
 </section>`;
   }
   async function generateTaxReportFromForm(from, to) {
-    if (!requireTaxRateMatch()) return;
+    if (!filingRateIsConsistent()) return;
     try {
       if (navigator.onLine && !isLocalShell()) {
         const remote = await apiFetch(`/tax-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -13440,8 +13438,19 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
     taxReportResult = taxReport(from, to);
   }
+  function filingRateIsConsistent() {
+    if (isFilingRateConsistent()) return true;
+    toast("Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.");
+    return false;
+  }
+  function isFilingRateConsistent() {
+    const taxSettings = state.taxSettings || {};
+    const jurisdictions = normalizeJurisdictions(taxSettings.jurisdictions);
+    const rate = taxSettings.rate == null || taxSettings.rate === "" ? combinedSalesTaxRate(jurisdictions) : Number(taxSettings.rate);
+    return salesTaxRateMatchesJurisdictions(rate, jurisdictions);
+  }
   function exportSalesTaxCsv() {
-    if (!taxReportResult || !requireTaxRateMatch()) return;
+    if (!taxReportResult || !filingRateIsConsistent()) return;
     const shop = shopFilingProfile();
     const rows = [
       ["Sales tax filing export"],
@@ -13473,7 +13482,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     toast("Sales tax CSV exported");
   }
   function exportTexasWebfilePackage() {
-    if (!taxReportResult || !requireTaxRateMatch()) return;
+    if (!taxReportResult || !filingRateIsConsistent()) return;
     const shop = shopFilingProfile();
     const supplement = buildJurisdictionSupplement(taxReportResult.totals.taxable, shop.jurisdictions);
     const csv = texasListSupplementCsv(supplement, {
@@ -15087,7 +15096,7 @@ ${line}`.trim();
         messagingSettings: { enabled: false, endpoint: "", senderEmail: "", senderPhone: "", shopName: "" },
         billingSettings: { enabled: false, provider: "stripe", checkoutEndpoint: "", onboardingUrl: "", accountLabel: "", shopName: "", shopId: "", webhookUrl: "" },
         payments: [],
-        taxSettings: { state: "TX", taxId: "", rate: combinedSalesTaxRate(DEFAULT_TX_JURISDICTIONS), filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
+        taxSettings: { state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
         chartOfAccounts: [
           { code: "1000", name: "Operating Checking", type: "Asset" },
           { code: "1010", name: "Cash on Hand", type: "Asset" },
@@ -16672,12 +16681,14 @@ ${line}`.trim();
       reports = function() {
         const t = state.taxSettings;
         const stateName = usStates.find((s) => s.code === t.state)?.name || t.state;
-        const result = taxReportResult;
+        const rateMatches = isFilingRateConsistent();
+        const result = rateMatches ? taxReportResult : null;
         const presets = filingPeriodPresets();
         const fromVal = result?.from || presets.month.from;
         const toVal = result?.to || presets.month.to;
         return shell(`${heading("Performance", "Reports", "Sales tax filing report, jurisdiction matrix, and e-file packages for your CPA or state portal.", false)}${stats()}
 <section class="messaging-panel"><div class="messaging-status ready">${icon("landmark", 17)}<div><strong>Tax filing report \u2014 ${escapeHtml(stateName)}</strong><span>Cash-basis sales tax for ${escapeHtml(stateName)} ${escapeHtml(String(t.filingFrequency || "").toLowerCase())} filing. Includes nontaxable and local jurisdiction split.</span></div></div>
+${rateMatches ? "" : '<p class="ledger-note">Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.</p>'}
 <div class="payroll-period-controls no-print" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px">
 <button type="button" class="secondary" data-tax-preset="month">${presets.month.label}</button>
 <button type="button" class="secondary" data-tax-preset="quarter">${presets.quarter.label}</button>
@@ -16931,7 +16942,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         document.querySelector("#export-tax-csv")?.addEventListener("click", exportSalesTaxCsv);
         document.querySelector("#export-tx-webfile")?.addEventListener("click", exportTexasWebfilePackage);
         document.querySelector("#print-tax-report")?.addEventListener("click", (event) => {
-          if (!requireTaxRateMatch()) {
+          if (!filingRateIsConsistent()) {
             event.preventDefault();
             event.stopImmediatePropagation();
           }
