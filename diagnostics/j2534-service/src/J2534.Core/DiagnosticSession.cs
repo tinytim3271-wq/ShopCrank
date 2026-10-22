@@ -226,12 +226,14 @@ public sealed class DiagnosticSession : IDisposable
         return new FailClosedSecurityAccessProvider();
     }
 
+    const string ImmobilizerScope = "immobilizer";
+
     static int SecurityLevel(string scope) => scope == "flash" ? 0x05 : 0x03;
 
     public async Task<object> SecurityAccessAsync(string scope)
     {
         RequireConnected();
-        var normalized = scope == "flash" ? "flash" : "immobilizer";
+        var normalized = scope == "flash" ? "flash" : ImmobilizerScope;
         var level = SecurityLevel(normalized);
         var provider = SecurityProvider();
         if (_simulator)
@@ -245,7 +247,7 @@ public sealed class DiagnosticSession : IDisposable
         {
             var vin = "";
             try { vin = await ReadConnectedVinAsync(); } catch { /* PIN path still proceeds after identify */ }
-            if (normalized == "immobilizer" && NissanKeyProcedures.IsMaxima(vin))
+            if (normalized == ImmobilizerScope && NissanKeyProcedures.IsMaxima(vin))
             {
                 Log("tx", "-", "", "Nissan Maxima immobilizer PIN SecurityAccess runs during the key procedure, not on the Stellantis gateway.");
                 _securityScope = normalized;
@@ -286,13 +288,13 @@ public sealed class DiagnosticSession : IDisposable
             var definition = _keyCatalog.Find(procedure, vin)!;
             if (definition.RequiresVehiclePin && string.IsNullOrWhiteSpace(pin))
                 throw new InvalidOperationException("This vehicle asks for its immobilizer PIN for this procedure. Enter the PIN to continue, or stop here. ShopCrank does not work around vehicle security.");
-            RequireSecurity("immobilizer");
+            RequireSecurity(ImmobilizerScope);
             Log("tx", "-", "", $"Live key procedure start: {procedure} for {vin}");
             var result = definition.Execute!(new KeyProcedureContext { Vin = vin, Procedure = procedure, Pin = pin, Log = Log, Channel = CreateChannel() });
             Log("rx", "-", "", $"Live key procedure finished: {procedure}");
             return Task.FromResult(result);
         }
-        RequireSecurity("immobilizer");
+        RequireSecurity(ImmobilizerScope);
         var routine = procedure switch
         {
             "add_key" => (Id: (ushort)0x0301, Label: "Program spare key"),

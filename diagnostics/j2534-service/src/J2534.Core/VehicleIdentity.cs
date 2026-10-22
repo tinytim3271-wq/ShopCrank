@@ -2,11 +2,13 @@ namespace ShopCrank.J2534.Core;
 
 public sealed class VehicleIdentity
 {
+    const string Unknown = "unknown";
+
     public string Make { get; init; } = "Unknown";
     public string Model { get; init; } = "";
-    public string Platform { get; init; } = "unknown";
+    public string Platform { get; init; } = Unknown;
     public int Year { get; init; }
-    public string IgnitionType { get; init; } = "unknown";
+    public string IgnitionType { get; init; } = Unknown;
 
     public static VehicleIdentity FromVin(string vin)
     {
@@ -16,7 +18,9 @@ public sealed class VehicleIdentity
         var wmi = vin[..3];
         if (NissanKeyProcedures.IsMaxima(vin))
         {
-            var platform = year >= 2016 ? "A36" : year >= 2009 ? "A35" : "A34";
+            var platform = "A34";
+            if (year >= 2016) platform = "A36";
+            else if (year >= 2009) platform = "A35";
             return new VehicleIdentity
             {
                 Make = "Nissan",
@@ -37,7 +41,7 @@ public sealed class VehicleIdentity
 
     static string PlatformFromRamVin(string vin)
     {
-        if (vin.Length < 4) return "unknown";
+        if (vin.Length < 4) return Unknown;
         return vin[3] switch
         {
             'R' => "DT",
@@ -45,7 +49,7 @@ public sealed class VehicleIdentity
             'C' => "LD",
             'J' => "JC",
             'U' => "DS",
-            _ => "unknown",
+            _ => Unknown,
         };
     }
 }

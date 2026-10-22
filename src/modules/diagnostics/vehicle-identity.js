@@ -33,13 +33,12 @@ export function decodeDiagnosticVin(vin) {
   const year = vinModelYear(value);
   const wmi = value.slice(0, 3);
   if (isNissanMaximaVin(value)) {
-    const platform = year >= 2016 ? 'A36' : year >= 2009 ? 'A35' : 'A34';
     return {
       make: 'Nissan',
       model: 'Maxima',
       year,
-      platform,
-      ignitionType: year >= 2016 ? 'push_button' : 'mechanical',
+      platform: maximaPlatform(year),
+      ignitionType: maximaIgnition(year),
     };
   }
   if (NISSAN_WMI.has(wmi)) {
@@ -51,6 +50,16 @@ export function decodeDiagnosticVin(vin) {
     return { make, model: '', year, platform, ignitionType: 'push_button' };
   }
   return { make: '', model: '', year, platform: 'unknown', ignitionType: 'unknown' };
+}
+
+function maximaPlatform(year) {
+  if (year >= 2016) return 'A36';
+  if (year >= 2009) return 'A35';
+  return 'A34';
+}
+
+function maximaIgnition(year) {
+  return year >= 2016 ? 'push_button' : 'mechanical';
 }
 
 export function matchCoverageRecord(bundle, vehicle = {}) {

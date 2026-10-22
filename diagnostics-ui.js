@@ -39,8 +39,11 @@ function platformFromVin(vin) {
   const wmi = value.slice(0, 3);
   const vds = value.slice(3, 5);
   if ((wmi === '1N4' || wmi === 'JN1') && (vds === 'AA' || vds === 'BA')) {
+    let platform = 'A34';
+    if (year >= 2016) platform = 'A36';
+    else if (year >= 2009) platform = 'A35';
     return {
-      platform: year >= 2016 ? 'A36' : year >= 2009 ? 'A35' : 'A34',
+      platform,
       make: 'Nissan',
       model: 'Maxima',
       year,
@@ -127,21 +130,10 @@ function matchCoverage(bundle, vehicle) {
   const records = bundle?.records || [];
   const year = Number(vehicle.modelYear || vehicle.year || 0);
   const platform = vehicle.platform || 'unknown';
-  const make = String(vehicle.make || '').trim().toLowerCase();
-  const model = String(vehicle.model || '').trim().toLowerCase();
-  const inYear = (record) => {
+  return records.find((record) => {
     const [start, end] = record.yearRange || [0, 9999];
-    return !year || (year >= start && year <= end);
-  };
-  return records.find((record) => record.platform === platform && inYear(record))
-    || records.find((record) => {
-      if (!make || !model) return false;
-      const recordModel = String(record.model || '').toLowerCase();
-      return String(record.make || '').toLowerCase() === make
-        && (recordModel === model || recordModel.includes(model) || model.includes(recordModel.split('/')[0]))
-        && inYear(record);
-    })
-    || records.find((record) => record.platform === platform);
+    return record.platform === platform && year >= start && year <= end;
+  }) || records.find((record) => record.platform === platform);
 }
 
 function normalizeOemAdapter(adapter) {
