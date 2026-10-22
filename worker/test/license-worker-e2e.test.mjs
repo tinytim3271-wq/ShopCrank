@@ -69,7 +69,6 @@ async function makeDevice() {
 }
 
 test('end to end through the Worker: request, approve, issue, live key authorize, revoke', async () => {
-  const { call } = await setup();
   const { env, call } = await setup();
   const connect = await call('owner@hpa.test', 'POST', '/diagnostics/autoauth', { accountId: 'hpa', apiKey: 'test-key' });
   assert.equal(connect.status, 201);

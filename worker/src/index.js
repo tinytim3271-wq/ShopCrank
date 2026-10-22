@@ -3794,7 +3794,6 @@ export default {
         && /^\/api\/voice\/twilio\/stream\/[^/]+(?:\/[^/]+)?$/.test(requestUrl.pathname)
       );
       if (legacyRedirect && !providerCallback) return legacyRedirect;
-      if (legacyRedirect && !legacyProviderCallback) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect && !providerCallback) return apexRedirect;
       if (!isApiRequest(request)) {
