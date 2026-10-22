@@ -270,4 +270,67 @@ public sealed class ObdOverMockedJ2534Tests
         Assert.Equal("0x7E9", DiagnosticSession.ResponseId("0x7E1"));
         Assert.Equal("0x7EC", DiagnosticSession.ResponseId("0x7E4"));
     }
+
+    const string MaximaVin = "1N4AA6AP1GC123456";
+
+    [Fact]
+    public void NissanMaximaLiveAddKeyIsInTheShippedCatalog()
+    {
+        Assert.True(NissanKeyProcedures.IsMaxima(MaximaVin));
+        Assert.False(NissanKeyProcedures.IsMaxima("1N4AL3AP1GC123456"));
+        var support = KeyProcedureCatalog.LiveVerified.Evaluate("add_key", MaximaVin, simulator: false);
+        Assert.True(support.Supported);
+        Assert.True(support.RequiresVehiclePin);
+        Assert.False(KeyProcedureCatalog.LiveVerified.Evaluate("add_key", "1N4AL3AP1GC123456", simulator: false).Supported);
+        var identity = VehicleIdentity.FromVin(MaximaVin);
+        Assert.Equal("Nissan", identity.Make);
+        Assert.Equal("Maxima", identity.Model);
+        Assert.Equal("A36", identity.Platform);
+        Assert.Equal(2016, identity.Year);
+        Assert.NotEqual("Stellantis", identity.Make);
+        Assert.True(KeyProcedureCatalog.LiveVerified.Evaluate("add_key", Vin, simulator: false).Supported);
+    }
+
+    static IEnumerable<byte[]> NissanCar(byte[] request)
+    {
+        var key = Convert.ToHexString(request);
+        if (key == "0902") return [[0x49, 0x02, 0x01, .. Encoding.ASCII.GetBytes(MaximaVin)]];
+        if (key == "22F190") return [[0x62, 0xF1, 0x90, .. Encoding.ASCII.GetBytes(MaximaVin)]];
+        if (key == "3E00") return [[0x7E, 0x00]];
+        if (key == "1003") return [[0x50, 0x03]];
+        if (key == "2701") return [[0x67, 0x01, 0xAA, 0xBB, 0xCC, 0xDD]];
+        if (key == "270231323334") return [[0x67, 0x02]];
+        if (key.StartsWith("31010202", StringComparison.Ordinal)) return [[0x71, 0x01, 0x02, 0x02]];
+        return [[0x7F, request[0], 0x11]];
+    }
+
+    [Fact]
+    public async Task NissanMaximaAddKeySendsSessionSecurityAndRegisterRoutine()
+    {
+        var dll = new FakeJ2534Dll { Responder = NissanCar };
+        var session = new DiagnosticSession();
+        var device = PassThruDevice.Open(dll.CreateLibrary(), "PassThru464.dll", "Mock RLink");
+        session.AttachDevice(device, "registry-native-0404-topdon---rlink", "RLink", "PassThru464.dll");
+
+        var support = await session.KeyProcedureSupportAsync("add_key");
+        Assert.True(support.Supported);
+        Assert.True(support.RequiresVehiclePin);
+        Assert.Equal(MaximaVin, support.Vin);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.ProgramKeyAsync("add_key", MaximaVin, null));
+        Assert.False(dll.SentService(0x10));
+        Assert.False(dll.SentService(0x27));
+        Assert.False(dll.SentService(0x31));
+
+        var unlocked = Json(await session.SecurityAccessAsync("immobilizer"));
+        Assert.True(unlocked.GetProperty("unlocked").GetBoolean());
+        Assert.Equal("vehicle-pin", unlocked.GetProperty("deferred").GetString());
+        Assert.False(dll.SentService(0x27));
+
+        var result = Json(await session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
+        Assert.True(result.GetProperty("completed").GetBoolean());
+        Assert.True(dll.SentService(0x10));
+        Assert.True(dll.SentService(0x27));
+        Assert.True(dll.SentService(0x31));
+    }
 }

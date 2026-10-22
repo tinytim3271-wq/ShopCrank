@@ -71,7 +71,7 @@ public sealed class DiagnosticSession : IDisposable
         _adapterId = adapterId;
         _protocol = "ISO15765";
         _simulator = false;
-        _keyCatalog = KeyProcedureCatalog.StellantisVerified;
+        _keyCatalog = KeyProcedureCatalog.LiveVerified;
         _device = device;
         _device.Connect(PassThruApi.PROTOCOL_ISO15765, baudRate);
         _adapterName = adapterName;
@@ -161,7 +161,15 @@ public sealed class DiagnosticSession : IDisposable
     {
         RequireConnected();
         var client = new UdsClient(CreateChannel());
-        var addresses = new[] { ("0x7E0", "Gateway (SGW)"), ("0x7E1", "ECM"), ("0x7E2", "TCM"), ("0x7E3", "BCM") };
+        var addresses = new[]
+        {
+            ("0x7E0", "Gateway (SGW)"),
+            ("0x7E1", "ECM"),
+            ("0x7E2", "TCM"),
+            ("0x7E3", "BCM"),
+            ("0x743", "BCM / immobilizer"),
+            ("0x745", "Intelligent Key"),
+        };
         var ecus = new List<object>();
         foreach (var (addr, name) in addresses)
         {
@@ -220,7 +228,7 @@ public sealed class DiagnosticSession : IDisposable
 
     static int SecurityLevel(string scope) => scope == "flash" ? 0x05 : 0x03;
 
-    public Task<object> SecurityAccessAsync(string scope)
+    public async Task<object> SecurityAccessAsync(string scope)
     {
         RequireConnected();
         var normalized = scope == "flash" ? "flash" : "immobilizer";
@@ -235,14 +243,23 @@ public sealed class DiagnosticSession : IDisposable
         }
         else
         {
+            var vin = "";
+            try { vin = await ReadConnectedVinAsync(); } catch { /* PIN path still proceeds after identify */ }
+            if (normalized == "immobilizer" && NissanKeyProcedures.IsMaxima(vin))
+            {
+                Log("tx", "-", "", "Nissan Maxima immobilizer PIN SecurityAccess runs during the key procedure, not on the Stellantis gateway.");
+                _securityScope = normalized;
+                _securityUnlockedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                return new { unlocked = true, scope = normalized, level, deferred = "vehicle-pin" };
+            }
             var client = new UdsClient(CreateChannel());
             client.DiagnosticSessionControl(0x02, "0x7E0", "0x7E8");
-            client.SecurityAccess(level, provider, "", "0x7E0", "0x7E8");
+            client.SecurityAccess(level, provider, vin, "0x7E0", "0x7E8");
             Log("tx", "0x7E0", $"27{level:X2}", $"SecurityAccess ({provider.Name})");
         }
         _securityScope = normalized;
         _securityUnlockedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return Task.FromResult<object>(new { unlocked = true, scope = normalized, level });
+        return new { unlocked = true, scope = normalized, level };
     }
 
     void RequireSecurity(string scope)
@@ -487,15 +504,17 @@ public sealed class DiagnosticSession : IDisposable
         RequireConnected();
         var vinResult = await ReadVinAsync();
         var vin = ((dynamic)vinResult).vin as string ?? "";
+        var identity = VehicleIdentity.FromVin(vin);
         var ecuResult = await IdentifyEcusAsync();
         return new
         {
             sessionId = $"diag-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             vin,
-            make = InferMake(vin),
-            modelYear = InferModelYear(vin),
-            platform = "unknown",
-            ignitionType = "push_button",
+            make = identity.Make,
+            model = identity.Model,
+            modelYear = identity.Year,
+            platform = identity.Platform,
+            ignitionType = identity.IgnitionType,
             ecus = ((dynamic)ecuResult).ecus,
             securityModules = ((dynamic)ecuResult).securityModules,
             networkTopology = ((dynamic)ecuResult).networkTopology,
@@ -514,22 +533,6 @@ public sealed class DiagnosticSession : IDisposable
         _simulator || _device is null
             ? new SimulatedIsoTpChannel(Log)
             : new J2534IsoTpChannel(_device, Log);
-
-    static string InferMake(string vin)
-    {
-        if (vin.Length < 3) return "Unknown";
-        var wmi = vin[..3].ToUpperInvariant();
-        return wmi is "1C6" or "3C6" ? "Ram" : wmi is "1D7" or "1B3" ? "Dodge" : "Stellantis";
-    }
-
-    static int InferModelYear(string vin)
-    {
-        if (vin.Length < 10) return 0;
-        var code = vin[9];
-        if (code is >= 'A' and <= 'Z') return 2010 + (code - 'A');
-        if (code is >= '0' and <= '9') return 2000 + (code - '0');
-        return 0;
-    }
 
     void RequireConnected()
     {

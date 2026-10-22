@@ -11,6 +11,8 @@ public sealed class KeyProcedureDefinition
     public string Procedure { get; init; } = "";
     /// <summary>VIN world manufacturer identifiers (first 3 characters) this applies to.</summary>
     public string[] Wmis { get; init; } = [];
+    /// <summary>Optional VIN positions 4-5 (VDS prefix). Empty means any model in the WMI/year range.</summary>
+    public string[] VdsPrefixes { get; init; } = [];
     public int MinModelYear { get; init; }
     public int MaxModelYear { get; init; }
     /// <summary>The vehicle itself asks for an immobilizer PIN during the procedure.</summary>
@@ -44,24 +46,32 @@ public sealed class KeyProcedureCatalog
 
     /// <summary>
     /// Empty catalog used by unit tests and explicit opt-out. Production live
-    /// sessions load <see cref="StellantisVerified"/> when connected to hardware.
+    /// sessions load <see cref="LiveVerified"/> when connected to hardware.
     /// </summary>
     public static KeyProcedureCatalog Default { get; } = new([]);
 
     /// <summary>Stellantis NA key procedures (Dodge / Ram / Chrysler) for live AutoAuth sessions.</summary>
     public static KeyProcedureCatalog StellantisVerified { get; } = StellantisKeyProcedures.Build();
 
+    /// <summary>Stellantis plus Nissan Maxima NATS/Intelligent Key PIN registration.</summary>
+    public static KeyProcedureCatalog LiveVerified { get; } = new(
+        StellantisVerified.All.Concat(NissanKeyProcedures.Definitions));
+
     readonly IReadOnlyList<KeyProcedureDefinition> _verified;
 
     public KeyProcedureCatalog(IEnumerable<KeyProcedureDefinition> verified) => _verified = verified.ToList();
 
+    public IReadOnlyList<KeyProcedureDefinition> All => _verified;
+
     public KeyProcedureDefinition? Find(string procedure, string vin)
     {
         var wmi = vin.Length >= 3 ? vin[..3].ToUpperInvariant() : "";
+        var vds = vin.Length >= 5 ? vin[3..5].ToUpperInvariant() : "";
         var year = ModelYear(vin);
         return _verified.FirstOrDefault(def =>
             def.Procedure == procedure
             && def.Wmis.Contains(wmi, StringComparer.OrdinalIgnoreCase)
+            && (def.VdsPrefixes.Length == 0 || def.VdsPrefixes.Contains(vds, StringComparer.OrdinalIgnoreCase))
             && (def.MinModelYear == 0 || year >= def.MinModelYear)
             && (def.MaxModelYear == 0 || year <= def.MaxModelYear));
     }

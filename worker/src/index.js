@@ -50,7 +50,7 @@ import {
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
 import { handleFiles as handleFileRoute } from './routes/files.mjs';
-import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, signedRepairOrderForKeys } from './diagnostics.mjs';
+import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, signedRepairOrderForKeys } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
@@ -1182,7 +1182,7 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
           signatureKey: signedOrder.signatureKey,
         });
       }
-    } else if (mode === 'live' && spec.autoAuth) {
+    } else if (mode === 'live' && requiresAutoAuthLogin(spec, vin)) {
       const login = await readAutoAuthLogin(env, context.shopId);
       if (!login) {
         return json({

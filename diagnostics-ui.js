@@ -23,14 +23,35 @@ function isOemDiagnosticsAvailable() {
   return Boolean(window.shopcrankDiagnostics);
 }
 
+function vinModelYearFromCode(vin) {
+  const value = String(vin || '').toUpperCase();
+  if (value.length < 10) return 0;
+  const codes = 'ABCDEFGHJKLMNPRSTVWXY123456789';
+  const index = codes.indexOf(value[9]);
+  if (index < 0) return 0;
+  const baseYear = 1980 + index;
+  return /[A-Z]/.test(value[6] || '') ? baseYear + 30 : baseYear;
+}
+
 function platformFromVin(vin) {
-  const year = Number(vin?.[9] ? (vin[9] >= 'A' ? 2010 + (vin.charCodeAt(9) - 65) : 2000 + Number(vin[9])) : 0);
-  const wmi = String(vin || '').slice(0, 3).toUpperCase();
-  if (!['1C6', '3C6', '1D7', '1B3'].includes(wmi)) return { platform: 'unknown', make: '', year };
-  const modelCode = vin[3];
+  const value = String(vin || '').toUpperCase();
+  const year = vinModelYearFromCode(value);
+  const wmi = value.slice(0, 3);
+  const vds = value.slice(3, 5);
+  if ((wmi === '1N4' || wmi === 'JN1') && (vds === 'AA' || vds === 'BA')) {
+    return {
+      platform: year >= 2016 ? 'A36' : year >= 2009 ? 'A35' : 'A34',
+      make: 'Nissan',
+      model: 'Maxima',
+      year,
+      ignitionType: year >= 2016 ? 'push_button' : 'mechanical',
+    };
+  }
+  if (['1N4', 'JN1', '3N1', '5N1'].includes(wmi)) return { platform: 'nissan', make: 'Nissan', model: '', year };
+  if (!['1C6', '3C6', '1D7', '1B3', '2C3'].includes(wmi)) return { platform: 'unknown', make: '', model: '', year };
   const platformMap = { R: 'DT', H: 'DJ', C: 'LD', J: 'JC', U: 'DS' };
   const make = wmi.startsWith('1C6') || wmi.startsWith('3C6') ? 'Ram' : 'Dodge';
-  return { platform: platformMap[modelCode] || 'unknown', make, year };
+  return { platform: platformMap[value[3]] || 'unknown', make, model: '', year };
 }
 
 function procedureLabel(key) {
@@ -106,10 +127,21 @@ function matchCoverage(bundle, vehicle) {
   const records = bundle?.records || [];
   const year = Number(vehicle.modelYear || vehicle.year || 0);
   const platform = vehicle.platform || 'unknown';
-  return records.find((record) => {
+  const make = String(vehicle.make || '').trim().toLowerCase();
+  const model = String(vehicle.model || '').trim().toLowerCase();
+  const inYear = (record) => {
     const [start, end] = record.yearRange || [0, 9999];
-    return record.platform === platform && year >= start && year <= end;
-  }) || records.find((record) => record.platform === platform);
+    return !year || (year >= start && year <= end);
+  };
+  return records.find((record) => record.platform === platform && inYear(record))
+    || records.find((record) => {
+      if (!make || !model) return false;
+      const recordModel = String(record.model || '').toLowerCase();
+      return String(record.make || '').toLowerCase() === make
+        && (recordModel === model || recordModel.includes(model) || model.includes(recordModel.split('/')[0]))
+        && inYear(record);
+    })
+    || records.find((record) => record.platform === platform);
 }
 
 function normalizeOemAdapter(adapter) {
@@ -168,7 +200,7 @@ function oemSecurityLoginCard(diag) {
       <h3>${icon('shield-check', 16)} Vehicle security access (this shop's login)</h3>
       <div class="messaging-status idle">${icon('lock', 17)}<div><strong>Not connected</strong><span>Sign in with your shop's vehicle security (AutoAuth) account to enable live programming.</span></div></div>
       <form id="oem-autoauth-form" class="form-grid">
-        <label>Provider<select name="provider"><option value="autoauth_stellantis">Stellantis AutoAuth</option><option value="autoauth_generic">Other AutoAuth</option></select></label>
+        <label>Provider<select name="provider"><option value="autoauth_stellantis">Stellantis AutoAuth</option><option value="autoauth_nissan">Nissan / Infiniti AutoAuth</option><option value="autoauth_generic">Other AutoAuth</option></select></label>
         <label>Account ID / username<input name="accountId" autocomplete="off" required /></label>
         <label>API key / password<input name="apiKey" type="password" autocomplete="off" required /></label>
         <button class="primary" type="submit">${icon('log-in', 14)} Connect account</button>
@@ -245,7 +277,7 @@ function oemDiagnosticsView() {
   const desktopNote = desktop
     ? ''
     : `<div class="ledger-note">${icon('monitor', 15)} The vehicle bus runs in the ShopCrank Windows app with a J2534 pass-thru. Connect the shop AutoAuth account here, then open OEM diagnostics on that PC and choose Live.</div>`;
-  return shell(`${heading('Stellantis OEM', 'Dodge / Ram diagnostics', 'Live OEM programming, module coding, and bidirectional controls on Shop Pro with AutoAuth and a J2534 pass-thru.', false)}
+  return shell(`${heading('OEM diagnostics', 'Dodge / Ram / Nissan diagnostics', 'Live OEM programming, module coding, and key registration on Shop Pro with AutoAuth and a J2534 pass-thru.', false)}
     ${desktopNote}
     <section class="oem-phase-notice">${icon('shield-alert', 16)}<span><strong>Authorized shop use only.</strong> Diagnostics and any programming-class work require a signed repair order, a licensed J2534 interface, and shop AutoAuth credentials for live mode. ShopCrank does not provide immobilizer bypass, key cloning, rolling-code attacks, or theft-unlock tools.</span></section>
     <section class="diagnostics-console oem-diagnostics">
@@ -273,7 +305,7 @@ function oemDiagnosticsView() {
         </section>
         <section class="oem-panel">
           <h3>${icon('fingerprint', 16)} Vehicle identification</h3>
-          ${vehicle ? `<dl class="oem-ident"><dt>VIN</dt><dd class="mono">${escapeHtml(vehicle.vin)}</dd><dt>Make / year</dt><dd>${escapeHtml(vehicle.make)} ${vehicle.modelYear}</dd><dt>Platform</dt><dd>${escapeHtml(vehicle.platform)}</dd><dt>Ignition</dt><dd>${escapeHtml(vehicle.ignitionType)}</dd></dl>` : '<p class="muted">Connect and identify vehicle to read VIN and ECU data.</p>'}
+          ${vehicle ? `<dl class="oem-ident"><dt>VIN</dt><dd class="mono">${escapeHtml(vehicle.vin)}</dd><dt>Make / year</dt><dd>${escapeHtml(vehicle.make)} ${escapeHtml(vehicle.model || '')} ${vehicle.modelYear}</dd><dt>Platform</dt><dd>${escapeHtml(vehicle.platform)}</dd><dt>Ignition</dt><dd>${escapeHtml(vehicle.ignitionType)}</dd></dl>` : '<p class="muted">Connect and identify vehicle to read VIN and ECU data.</p>'}
           <div class="ops-actions">
             <button class="primary" id="oem-identify" ${status.connected ? '' : 'disabled'}>${icon('scan', 14)} Identify vehicle</button>
           </div>
@@ -351,12 +383,15 @@ async function oemIdentifyVehicle() {
   const vehicle = await api.identifyVehicle();
   const decoded = platformFromVin(vehicle.vin);
   vehicle.make = vehicle.make || decoded.make;
+  vehicle.model = vehicle.model || decoded.model || '';
   vehicle.modelYear = vehicle.modelYear || decoded.year;
-  vehicle.platform = vehicle.platform === 'unknown' ? decoded.platform : vehicle.platform;
+  vehicle.platform = !vehicle.platform || vehicle.platform === 'unknown' ? decoded.platform : vehicle.platform;
+  if (decoded.ignitionType) vehicle.ignitionType = vehicle.ignitionType || decoded.ignitionType;
   let nhtsa = null;
   try {
     nhtsa = await apiFetch(`/vehicles/decode/${encodeURIComponent(vehicle.vin)}`);
     if (nhtsa?.make) vehicle.make = nhtsa.make;
+    if (nhtsa?.model) vehicle.model = nhtsa.model;
     if (nhtsa?.year) vehicle.modelYear = Number(nhtsa.year) || vehicle.modelYear;
   } catch { /* offline or unauthenticated — use on-vehicle data */ }
   const bundle = await fetchCoverageBundle();
