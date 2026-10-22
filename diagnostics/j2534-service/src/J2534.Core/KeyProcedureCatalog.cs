@@ -53,9 +53,9 @@ public sealed class KeyProcedureCatalog
     /// <summary>Stellantis NA key procedures (Dodge / Ram / Chrysler) for live AutoAuth sessions.</summary>
     public static KeyProcedureCatalog StellantisVerified { get; } = StellantisKeyProcedures.Build();
 
-    /// <summary>Stellantis plus Nissan Maxima NATS/Intelligent Key PIN registration.</summary>
+    /// <summary>Procedures with verified live security handshakes.</summary>
     static readonly Lazy<KeyProcedureCatalog> LiveCatalog = new(() =>
-        new KeyProcedureCatalog(StellantisVerified.All.Concat(NissanKeyProcedures.Definitions)));
+        new KeyProcedureCatalog(StellantisVerified.All));
     public static KeyProcedureCatalog LiveVerified => LiveCatalog.Value;
 
     readonly IReadOnlyList<KeyProcedureDefinition> _verified;

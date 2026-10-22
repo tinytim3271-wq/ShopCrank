@@ -314,13 +314,12 @@ public sealed class ObdOverMockedJ2534Tests
     const string MaximaVin = "1N4AA6AP1GC123456";
 
     [Fact]
-    public void NissanMaximaLiveAddKeyIsInTheShippedCatalog()
+    public void NissanMaximaLiveAddKeyIsNotInTheShippedCatalog()
     {
         Assert.True(NissanKeyProcedures.IsMaxima(MaximaVin));
         Assert.False(NissanKeyProcedures.IsMaxima("1N4AL3AP1GC123456"));
         var support = KeyProcedureCatalog.LiveVerified.Evaluate("add_key", MaximaVin, simulator: false);
-        Assert.True(support.Supported);
-        Assert.True(support.RequiresVehiclePin);
+        Assert.False(support.Supported);
         Assert.False(KeyProcedureCatalog.LiveVerified.Evaluate("add_key", "1N4AL3AP1GC123456", simulator: false).Supported);
         var identity = VehicleIdentity.FromVin(MaximaVin);
         Assert.Equal("Nissan", identity.Make);
@@ -352,7 +351,7 @@ public sealed class ObdOverMockedJ2534Tests
     }
 
     [Fact]
-    public async Task NissanMaximaAddKeySendsSessionSecurityAndRegisterRoutine()
+    public async Task NissanMaximaKeyProgrammingFailsClosedUntilGatewayAuthenticationIsSupported()
     {
         var dll = new FakeJ2534Dll { Responder = NissanCar };
         var session = new DiagnosticSession();
@@ -360,113 +359,15 @@ public sealed class ObdOverMockedJ2534Tests
         session.AttachDevice(device, "registry-native-0404-topdon---rlink", "RLink", "PassThru464.dll");
 
         var support = await session.KeyProcedureSupportAsync("add_key");
-        Assert.True(support.Supported);
-        Assert.True(support.RequiresVehiclePin);
+        Assert.False(support.Supported);
         Assert.Equal(MaximaVin, support.Vin);
         var ecus = Json(await session.IdentifyEcusAsync()).GetProperty("ecus").EnumerateArray().ToArray();
         Assert.Equal("BCM", ecus.Single(e => e.GetProperty("logicalAddress").GetString() == "0x743").GetProperty("partNumber").GetString());
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => session.ProgramKeyAsync("add_key", MaximaVin, null));
+        await Assert.ThrowsAsync<NotSupportedException>(() => session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
+        await Assert.ThrowsAsync<NotSupportedException>(() => session.SecurityAccessAsync("immobilizer"));
         Assert.False(dll.SentService(0x10));
         Assert.False(dll.SentService(0x27));
-        Assert.False(dll.SentService(0x31));
-
-        var unlocked = Json(await session.SecurityAccessAsync("immobilizer"));
-        Assert.True(unlocked.GetProperty("unlocked").GetBoolean());
-        Assert.Equal("vehicle-pin", unlocked.GetProperty("deferred").GetString());
-        Assert.False(dll.SentService(0x27));
-
-        var result = Json(await session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
-        Assert.True(result.GetProperty("completed").GetBoolean());
-        Assert.Equal("0x743", result.GetProperty("ecu").GetString());
-        Assert.Equal("BCM", result.GetProperty("ecuName").GetString());
-        Assert.True(dll.SentService(0x10));
-        Assert.True(dll.SentService(0x27));
-        Assert.True(dll.SentService(0x31));
-        Assert.True(dll.SentService(0x31, 0x743));
-        Assert.False(dll.SentService(0x31, 0x7E0));
-
-        var entries = Json(session.PollLiveLog(0)).GetProperty("entries").EnumerateArray().ToArray();
-        var unredactedCredentials = entries
-            .Select(entry => entry.GetProperty("data").GetString()!)
-            .Where(data => data.Contains("270231323334", StringComparison.Ordinal)
-                || data.Contains("3101020231323334", StringComparison.Ordinal))
-            .ToArray();
-        Assert.Empty(unredactedCredentials);
-        Assert.Contains(entries, entry => entry.GetProperty("data").GetString() == "2702[REDACTED]");
-        Assert.Contains(entries, entry => entry.GetProperty("data").GetString() == "31010202[REDACTED]");
-    }
-
-    [Fact]
-    public async Task NissanMaximaDoesNotTryAnotherModuleAfterSecurityAccessFails()
-    {
-        var dll = new FakeJ2534Dll
-        {
-            Responder = (canId, request) =>
-            {
-                var key = Convert.ToHexString(request);
-                if (canId == 0x743 && key == "2701") return [[0x7F, 0x27, 0x35]];
-                if (canId == 0x745 && request.Length == 3 && request[0] == 0x22)
-                    return [[0x62, request[1], request[2], .. Encoding.ASCII.GetBytes("Intelligent Key")]];
-                if (canId == 0x745 && key == "1003") return [[0x50, 0x03]];
-                if (canId == 0x745 && key == "2701") return [[0x67, 0x01, 0xAA, 0xBB, 0xCC, 0xDD]];
-                if (canId == 0x745 && key == "270231323334") return [[0x67, 0x02]];
-                if (canId == 0x745 && key.StartsWith("31010202", StringComparison.Ordinal))
-                    return [[0x71, 0x01, 0x02, 0x02]];
-                return NissanCar(canId, request);
-            },
-        };
-        var session = new DiagnosticSession();
-        var device = PassThruDevice.Open(dll.CreateLibrary(), "PassThru464.dll", "Mock RLink");
-        session.AttachDevice(device, "registry-native-0404-topdon---rlink", "RLink", "PassThru464.dll");
-        await session.SecurityAccessAsync("immobilizer");
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
-
-        Assert.Contains("no registration routine was sent", ex.Message);
-        Assert.Contains(dll.AddressedRequests, r => r.CanId == 0x743 && r.Payload.SequenceEqual(new byte[] { 0x27, 0x01 }));
-        Assert.DoesNotContain(dll.AddressedRequests, r => r.CanId == 0x745 && r.Payload[0] is 0x10 or 0x27 or 0x31);
-    }
-
-    [Fact]
-    public async Task NissanMaximaDoesNotRetryRegistrationOnAnotherModuleAfterAnUncertainResult()
-    {
-        var dll = new FakeJ2534Dll
-        {
-            Responder = (canId, request) =>
-            {
-                if (canId == 0x743 && request[0] == 0x31) return [[0x7F, 0x31, 0x22]];
-                return canId == 0x745 ? NissanCar(0x743, request) : NissanCar(canId, request);
-            },
-        };
-        var session = new DiagnosticSession();
-        var device = PassThruDevice.Open(dll.CreateLibrary(), "PassThru464.dll", "Mock RLink");
-        session.AttachDevice(device, "registry-native-0404-topdon---rlink", "RLink", "PassThru464.dll");
-        await session.SecurityAccessAsync("immobilizer");
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
-
-        Assert.Contains("result is indeterminate", ex.Message);
-        Assert.Contains(dll.AddressedRequests, r => r.CanId == 0x743 && r.Payload[0] == 0x31);
-        Assert.DoesNotContain(dll.AddressedRequests, r => r.CanId == 0x745 && r.Payload[0] is 0x10 or 0x27 or 0x31);
-    }
-
-    [Fact]
-    public async Task NissanMaximaDoesNotSendAnUnsupportedSecurityKey()
-    {
-        var dll = new FakeJ2534Dll { Responder = NissanCar };
-        var session = new DiagnosticSession();
-        var device = PassThruDevice.Open(dll.CreateLibrary(), "PassThru464.dll", "Mock RLink");
-        session.AttachDevice(device, "registry-native-0404-topdon---rlink", "RLink", "PassThru464.dll");
-        await session.SecurityAccessAsync("immobilizer");
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            session.ProgramKeyAsync("add_key", MaximaVin, "123456"));
-
-        Assert.Contains(dll.AddressedRequests, r => r.CanId == 0x743 && r.Payload.SequenceEqual(new byte[] { 0x27, 0x01 }));
-        Assert.DoesNotContain(dll.AddressedRequests, r => r.Payload.Length > 1 && r.Payload[0] == 0x27 && r.Payload[1] == 0x02);
         Assert.False(dll.SentService(0x31));
     }
 
