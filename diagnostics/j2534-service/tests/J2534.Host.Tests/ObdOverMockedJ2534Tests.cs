@@ -314,12 +314,13 @@ public sealed class ObdOverMockedJ2534Tests
     const string MaximaVin = "1N4AA6AP1GC123456";
 
     [Fact]
-    public void NissanMaximaLiveAddKeyIsNotInTheShippedCatalog()
+    public void NissanMaximaLiveKeyProceduresRemainUnsupportedUntilGatewayAuthorizationIsAvailable()
     {
         Assert.True(NissanKeyProcedures.IsMaxima(MaximaVin));
         Assert.False(NissanKeyProcedures.IsMaxima("1N4AL3AP1GC123456"));
         var support = KeyProcedureCatalog.LiveVerified.Evaluate("add_key", MaximaVin, simulator: false);
         Assert.False(support.Supported);
+        Assert.Contains("gateway authorization is supported", support.Reason);
         Assert.False(KeyProcedureCatalog.LiveVerified.Evaluate("add_key", "1N4AL3AP1GC123456", simulator: false).Supported);
         var identity = VehicleIdentity.FromVin(MaximaVin);
         Assert.Equal("Nissan", identity.Make);
@@ -337,35 +338,22 @@ public sealed class ObdOverMockedJ2534Tests
             return [[0x49, 0x02, 0x01, .. Encoding.ASCII.GetBytes(MaximaVin)]];
         if (canId == 0x7E0 && key == "22F190")
             return [[0x62, 0xF1, 0x90, .. Encoding.ASCII.GetBytes(MaximaVin)]];
-        if (canId != 0x743) return [[0x7F, request[0], 0x11]];
-        if (key == "0902") return [[0x49, 0x02, 0x01, .. Encoding.ASCII.GetBytes(MaximaVin)]];
-        if (key == "22F190") return [[0x62, 0xF1, 0x90, .. Encoding.ASCII.GetBytes(MaximaVin)]];
-        if (key == "3E00") return [[0x7E, 0x00]];
-        if (request.Length == 3 && request[0] == 0x22)
-            return [[0x62, request[1], request[2], .. Encoding.ASCII.GetBytes("BCM")]];
-        if (key == "1003") return [[0x50, 0x03]];
-        if (key == "2701") return [[0x67, 0x01, 0xAA, 0xBB, 0xCC, 0xDD]];
-        if (key == "270231323334") return [[0x67, 0x02]];
-        if (key.StartsWith("31010202", StringComparison.Ordinal)) return [[0x71, 0x01, 0x02, 0x02]];
         return [[0x7F, request[0], 0x11]];
     }
 
     [Fact]
-    public async Task NissanMaximaKeyProgrammingFailsClosedUntilGatewayAuthenticationIsSupported()
+    public async Task NissanMaximaGatewayUnlockAndKeyRegistrationFailClosedWithoutSecurityRequests()
     {
         var dll = new FakeJ2534Dll { Responder = NissanCar };
         var session = new DiagnosticSession();
         var device = PassThruDevice.Open(dll.CreateLibrary(), "PassThru464.dll", "Mock RLink");
         session.AttachDevice(device, "registry-native-0404-topdon---rlink", "RLink", "PassThru464.dll");
 
-        var support = await session.KeyProcedureSupportAsync("add_key");
-        Assert.False(support.Supported);
-        Assert.Equal(MaximaVin, support.Vin);
-        var ecus = Json(await session.IdentifyEcusAsync()).GetProperty("ecus").EnumerateArray().ToArray();
-        Assert.Equal("BCM", ecus.Single(e => e.GetProperty("logicalAddress").GetString() == "0x743").GetProperty("partNumber").GetString());
-
-        await Assert.ThrowsAsync<NotSupportedException>(() => session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
-        await Assert.ThrowsAsync<NotSupportedException>(() => session.SecurityAccessAsync("immobilizer"));
+        var unlockError = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            session.SecurityAccessAsync("immobilizer"));
+        Assert.Contains("gateway authorization is not supported", unlockError.Message);
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            session.ProgramKeyAsync("add_key", MaximaVin, "1234"));
         Assert.False(dll.SentService(0x10));
         Assert.False(dll.SentService(0x27));
         Assert.False(dll.SentService(0x31));

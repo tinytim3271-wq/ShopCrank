@@ -53,9 +53,8 @@ public sealed class KeyProcedureCatalog
     /// <summary>Stellantis NA key procedures (Dodge / Ram / Chrysler) for live AutoAuth sessions.</summary>
     public static KeyProcedureCatalog StellantisVerified { get; } = StellantisKeyProcedures.Build();
 
-    /// <summary>Procedures with verified live security handshakes.</summary>
-    static readonly Lazy<KeyProcedureCatalog> LiveCatalog = new(() =>
-        new KeyProcedureCatalog(StellantisVerified.All));
+    /// <summary>Nissan Maxima procedures remain unsupported until licensed gateway authorization is available.</summary>
+    static readonly Lazy<KeyProcedureCatalog> LiveCatalog = new(() => new KeyProcedureCatalog(StellantisVerified.All));
     public static KeyProcedureCatalog LiveVerified => LiveCatalog.Value;
 
     readonly IReadOnlyList<KeyProcedureDefinition> _verified;
@@ -87,6 +86,16 @@ public sealed class KeyProcedureCatalog
             return new KeyProcedureSupport { Supported = true, Simulator = true, Procedure = procedure, Vin = vin, Reason = "Bench simulator. Nothing is written to a vehicle." };
         if (vin.Length != 17)
             return new KeyProcedureSupport { Supported = false, Procedure = procedure, Vin = vin, Reason = "Could not read a 17-character VIN from the vehicle. Check the adapter connection and ignition." };
+        if (NissanKeyProcedures.IsMaxima(vin))
+        {
+            return new KeyProcedureSupport
+            {
+                Supported = false,
+                Procedure = procedure,
+                Vin = vin,
+                Reason = "Nissan Maxima live key procedures are unavailable until licensed gateway authorization is supported. Nothing was written.",
+            };
+        }
         var definition = Find(procedure, vin);
         if (definition is null)
         {

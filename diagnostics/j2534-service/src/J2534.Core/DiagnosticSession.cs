@@ -249,7 +249,8 @@ public sealed class DiagnosticSession : IDisposable
             try { vin = await ReadConnectedVinAsync(); } catch { /* PIN path still proceeds after identify */ }
             if (normalized == ImmobilizerScope && NissanKeyProcedures.IsMaxima(vin))
             {
-                throw new NotSupportedException("Nissan Maxima key programming is unavailable until the required gateway authentication is implemented and verified.");
+                throw new NotSupportedException(
+                    "Nissan Maxima immobilizer gateway authorization is not supported; no security request was sent.");
             }
             var client = new UdsClient(CreateChannel());
             client.DiagnosticSessionControl(0x02, "0x7E0", "0x7E8");
