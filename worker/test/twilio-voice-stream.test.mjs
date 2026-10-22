@@ -241,8 +241,13 @@ test('the bridge greets the caller once Twilio starts and xAI is connected', () 
   await Promise.all(pending);
 
   const sentTypes = upstream.sent.map(item => JSON.parse(item).type);
-  assert.equal(sentTypes[0], 'session.update');
-  assert.deepEqual(sentTypes.slice(1), ['conversation.item.create', 'response.create']);
+  assert.deepEqual(sentTypes, [
+    'session.update',
+    'input_audio_buffer.append',
+    'conversation.item.create',
+    'response.create',
+  ]);
+  assert.ok(JSON.parse(upstream.sent[1]).audio, 'buffered startup audio is forwarded to xAI');
 
   upstream.emit('message', { data: JSON.stringify({ type: 'response.output_audio.delta', delta: Buffer.alloc(12).toString('base64') }) });
   const toTwilio = twilioSide.sent.map(item => JSON.parse(item));
@@ -267,4 +272,22 @@ test('the bridge greets the caller once Twilio starts and xAI is connected', () 
 
   twilioSide.emit('message', { data: JSON.stringify({ event: 'stop' }) });
   assert.equal(upstream.readyState, 3, 'hanging up closes the xAI session');
+}));
+
+test('the bridge closes Twilio when startup audio exceeds the buffer limit', () => withWorkersRuntime(async (pairs) => {
+  const pending = [];
+  const response = await handleGrokTwilioBridge({
+    env: {},
+    state: { waitUntil: promise => pending.push(promise) },
+    shopId: 'reliable-auto-services',
+    apiKey: 'xai-test-key',
+    fetcher: () => new Promise(() => {}),
+  });
+  assert.equal(response.status, 101);
+
+  const twilioSide = pairs[0][1];
+  twilioSide.emit('message', {
+    data: JSON.stringify({ event: 'media', media: { payload: 'A'.repeat(256 * 1024 + 1) } }),
+  });
+  assert.equal(twilioSide.closedWith?.code, 1011, 'Twilio plays the fallback after the startup buffer limit');
 }));

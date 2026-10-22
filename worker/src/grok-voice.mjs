@@ -37,6 +37,7 @@ export const DEFAULT_GROK_VOICE = 'eve';
 
 const GROK_SAMPLE_RATE = 24000;
 const TWILIO_SAMPLE_RATE = 8000;
+const MAX_STARTUP_AUDIO_BUFFER_BYTES = 256 * 1024;
 const STREAM_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 const STANDARD_SHOP_OPERATIONS = Object.freeze([
@@ -1461,6 +1462,8 @@ export async function handleGrokTwilioBridge({
   let currentCaller = callerPhone;
   let currentCallSid = callSid;
   let twilioInboundBytes = 0;
+  let startupAudioBufferBytes = 0;
+  const startupAudioBuffer = [];
   let greetingSent = false;
   let finalized = false;
   const transcriptLines = [];
@@ -1524,8 +1527,20 @@ export async function handleGrokTwilioBridge({
   };
 
   const onTwilioMedia = (payload) => {
+    if (twilioClosed) return;
     twilioInboundBytes += Math.floor((payload.length * 3) / 4);
-    if (!upstreamOpen()) return;
+    if (!upstreamOpen()) {
+      if (upstream) return;
+      if (startupAudioBufferBytes + payload.length > MAX_STARTUP_AUDIO_BUFFER_BYTES) {
+        twilioClosed = true;
+        state?.waitUntil?.(finalizeCall('grok_unavailable'));
+        safeCloseSocket(server, 1011, 'Grok startup audio buffer limit exceeded');
+        return;
+      }
+      startupAudioBuffer.push(payload);
+      startupAudioBufferBytes += payload.length;
+      return;
+    }
     const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
     if (pcm24kBase64) {
       upstream.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcm24kBase64 }));
@@ -1646,6 +1661,14 @@ export async function handleGrokTwilioBridge({
         callerPhone: currentCaller,
         callerContext,
       })));
+      for (const payload of startupAudioBuffer) {
+        const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
+        if (pcm24kBase64) {
+          upstream.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcm24kBase64 }));
+        }
+      }
+      startupAudioBuffer.length = 0;
+      startupAudioBufferBytes = 0;
       triggerInitialGreeting();
     } catch (error) {
       console.error(JSON.stringify({
