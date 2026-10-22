@@ -63,7 +63,7 @@
     "test:labor-web": "node --test worker/test/labor-web-estimate.test.mjs",
     "test:quickbooks": "node --test src/modules/quickbooks.test.mjs",
     "test:revrec": "node --test src/modules/revenue-recognition.test.mjs",
-    "test:estimate": "node --test src/modules/tax-policy.test.mjs src/modules/estimate-approval.test.mjs src/modules/estimate-workflow.test.mjs src/modules/estimate-templates.test.mjs src/modules/work-order-editor.test.mjs",
+    "test:estimate": "TZ=America/Chicago node --test src/modules/tax-policy.test.mjs src/modules/estimate-approval.test.mjs src/modules/estimate-workflow.test.mjs src/modules/estimate-templates.test.mjs src/modules/work-order-editor.test.mjs",
     "test:payments": "node --test src/modules/payments.test.mjs",
     "test:market": "node --test scripts/market-pages.test.mjs",
     "test:mileage": "node --test src/modules/mileage.test.mjs",
