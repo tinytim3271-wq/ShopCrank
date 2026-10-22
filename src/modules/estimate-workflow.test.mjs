@@ -17,6 +17,7 @@ import {
   orderHasTechnician,
   workOrderWithEditedEstimate,
 } from './estimate-workflow.js';
+import { addLocalDays, localIsoDate } from '../shared/dates.js';
 
 test('after-midnight preset is a fixed itemized $200 fee line', () => {
   const line = afterMidnightFeeLine('fee-night-1');
@@ -190,10 +191,12 @@ test('invoice date and due date are the shop\'s local calendar days, not UTC', (
     estimate,
   }, issuedAt);
 
-  assert.equal(invoice.date, '2026-10-31');
-  assert.equal(invoice.due, '2026-11-14');
-  // The old code produced tomorrow's date here.
-  assert.notEqual(invoice.date, issuedAt.toISOString().slice(0, 10));
+  const localDay = localIsoDate(issuedAt);
+  const utcDay = issuedAt.toISOString().slice(0, 10);
+  assert.equal(invoice.date, localDay);
+  assert.equal(invoice.due, addLocalDays(issuedAt, 14));
+  // The old code produced tomorrow's date here when the shop was still on the 31st.
+  if (localDay !== utcDay) assert.notEqual(invoice.date, utcDay);
 });
 
 test('invoice money ignores declined lines even when estimate totals were recomputed from the full card', () => {

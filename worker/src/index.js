@@ -50,7 +50,7 @@ import {
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
 import { handleFiles as handleFileRoute } from './routes/files.mjs';
-import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, signedRepairOrderForKeys } from './diagnostics.mjs';
+import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, signedRepairOrderForKeys } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
@@ -1183,7 +1183,7 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
           signatureKey: signedOrder.signatureKey,
         });
       }
-    } else if (mode === 'live' && spec.autoAuth) {
+    } else if (mode === 'live' && requiresAutoAuthLogin(spec, vin)) {
       const login = await readAutoAuthLogin(env, context.shopId);
       if (!login) {
         return json({
@@ -1217,6 +1217,11 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
       if (signedOrder.signatureKey) {
         await verifyOrderApprovalSignature(env, context, signedOrder);
       }
+    // checked live against the license database on every job. Reuse the
+    // signedOrder validated above — it must not be redeclared in this block,
+    // or the audit record after it would lose orderId/authorizationName.
+    let vehicleKeyLicense = null;
+    if (mode === 'live' && spec.klass === 'immobilizer') {
       vehicleKeyLicense = await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
     }
     const { token, payload } = await mintCapabilityToken(env, {
@@ -3813,6 +3818,7 @@ export default {
         && /^\/api\/voice\/twilio\/stream\/[^/]+(?:\/[^/]+)?$/.test(requestUrl.pathname)
       );
       if (legacyRedirect && !providerCallback) return legacyRedirect;
+      if (legacyRedirect && !legacyProviderCallback) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect && !providerCallback) return apexRedirect;
       if (!isApiRequest(request)) {
