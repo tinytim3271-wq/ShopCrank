@@ -3515,13 +3515,12 @@ function addEstimateSourceControls(form) {
   const body = form.querySelector(".modal-body");
   if (!body || document.querySelector("#estimate-source-picker")) return;
   const sources = availableEstimateSources();
-  body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate…</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
   const estimator = form.querySelector(".new-order-estimator");
   estimator?.insertAdjacentHTML("beforeend", `<div class="estimate-adjustments"><label>Shop supplies<input name="shopSupplies" type="number" min="0" step=".01" placeholder="Auto: 3% of labor, max $20"/></label><label>Discount %<input name="estimateDiscount" type="number" min="0" max="100" step=".1" value="0"/></label><label>Discount reason<input name="estimateDiscountReason" placeholder="Optional"/></label></div>`);
   form.querySelectorAll("[name=shopSupplies],[name=estimateDiscount],[name=estimateDiscountReason]").forEach(input => input.addEventListener("input", () => refreshEstimateEditor(form.querySelector("#new-estimate-lines"))));
-  // Only offer the fill panel when the shop has estimates to fill from. An
-  // empty picker just shows "Select an estimate…" with nothing to select.
   if (!sources.length) return;
+  const options = sources.map(estimate => `<option value="${escapeAttr(estimate.id)}">${escapeHtml(estimate.number || "Saved draft")} · ${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer || "Customer")}</option>`).join("");
+  body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate…</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
   document.querySelector("#apply-estimate-source").onclick = () => {
     const estimate = estimateSourceById(document.querySelector("#estimate-source-picker").value);
     if (estimate) applyWorkOrderDraftToForm(form, workOrderDraftFromEstimate(normalizedEstimateSource(estimate)));
