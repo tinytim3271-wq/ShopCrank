@@ -1666,8 +1666,7 @@ export async function handleGrokTwilioBridge({
       const [settings, pricing, callerContext, upstreamResponse] = initialized;
       const socket = upstreamResponse?.webSocket;
       if (!socket || upstreamResponse.status !== 101) {
-        const detail = await upstreamResponse?.text?.().catch(() => '') || '';
-        throw new Error(`xAI realtime upgrade failed with HTTP ${upstreamResponse?.status ?? 'none'} ${String(detail).slice(0, 200)}`.trim());
+        throw new Error(`xAI realtime upgrade failed with HTTP ${upstreamResponse?.status ?? 'none'}`);
       }
       socket.accept();
       if (twilioClosed) {
