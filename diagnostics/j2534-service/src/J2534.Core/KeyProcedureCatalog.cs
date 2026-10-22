@@ -54,8 +54,9 @@ public sealed class KeyProcedureCatalog
     public static KeyProcedureCatalog StellantisVerified { get; } = StellantisKeyProcedures.Build();
 
     /// <summary>Stellantis plus Nissan Maxima NATS/Intelligent Key PIN registration.</summary>
-    public static KeyProcedureCatalog LiveVerified { get; } = new(
-        StellantisVerified.All.Concat(NissanKeyProcedures.Definitions));
+    static readonly Lazy<KeyProcedureCatalog> LiveCatalog = new(() =>
+        new KeyProcedureCatalog(StellantisVerified.All.Concat(NissanKeyProcedures.Definitions)));
+    public static KeyProcedureCatalog LiveVerified => LiveCatalog.Value;
 
     readonly IReadOnlyList<KeyProcedureDefinition> _verified;
 
