@@ -16930,6 +16930,12 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         }
         document.querySelector("#export-tax-csv")?.addEventListener("click", exportSalesTaxCsv);
         document.querySelector("#export-tx-webfile")?.addEventListener("click", exportTexasWebfilePackage);
+        document.querySelector("#print-tax-report")?.addEventListener("click", (event) => {
+          if (!requireTaxRateMatch()) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, { capture: true });
         document.querySelector("#open-filing-center")?.addEventListener("click", () => {
           filingCenterOpen = true;
           render();

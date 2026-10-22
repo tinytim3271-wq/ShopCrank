@@ -51,6 +51,7 @@ test('filing reports and exports require the configured rate to match jurisdicti
   assert.match(functionSource('async function generateTaxReportFromForm('), /if \(!requireTaxRateMatch\(\)\) return;/);
   assert.match(functionSource('function exportSalesTaxCsv()'), /!requireTaxRateMatch\(\)/);
   assert.match(functionSource('function exportTexasWebfilePackage()'), /!requireTaxRateMatch\(\)/);
+  assert.match(legacy, /document\.querySelector\('#print-tax-report'\)\?\.addEventListener\('click', event => \{\s*if \(!requireTaxRateMatch\(\)\)/);
 });
 
 test('every form whose handler looks up button[type=submit] has a typed submit button', () => {

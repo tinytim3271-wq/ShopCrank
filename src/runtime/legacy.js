@@ -4699,6 +4699,12 @@ bindExpandedFeatures = function () {
   }
   document.querySelector('#export-tax-csv')?.addEventListener('click', exportSalesTaxCsv);
   document.querySelector('#export-tx-webfile')?.addEventListener('click', exportTexasWebfilePackage);
+  document.querySelector('#print-tax-report')?.addEventListener('click', event => {
+    if (!requireTaxRateMatch()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, { capture: true });
   document.querySelector('#open-filing-center')?.addEventListener('click', () => { filingCenterOpen = true; render(); });
   document.querySelector('#close-filing-center')?.addEventListener('click', () => { filingCenterOpen = false; render(); });
   document.querySelectorAll('[data-taxpkg-preset]').forEach(button => {
