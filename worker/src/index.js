@@ -1193,9 +1193,8 @@ async function handleDiagnostics(request, env, context, segments, analytics) {
       }
     }
     // Live key programming also needs this device's vehicle-key license unlock,
-    // checked live against the license database on every job. Reuse the
-    // signedOrder validated above — it must not be redeclared in this block,
-    // or the audit record after it would lose orderId/authorizationName.
+    // checked against the license database on every job. Reuse the signedOrder
+    // validated above so the audit record retains its details.
     let vehicleKeyLicense = null;
     if (mode === 'live' && spec.klass === 'immobilizer') {
       vehicleKeyLicense = await requireVehicleKeyUnlock(env, context, body.licenseUnlock, { procedure, vin, request });
