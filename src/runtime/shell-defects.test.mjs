@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import process from 'node:process';
+import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toLocalIsoDate } from '../shared/dates.js';
@@ -62,6 +64,16 @@ test('the work order estimate picker offers only the shop\'s own estimates', () 
   assert.match(sources, /state\.estimates/);
 });
 
+test('work order picker is conditional while estimate adjustments remain available', () => {
+  const controls = functionSource('function addEstimateSourceControls(');
+  const adjustments = controls.indexOf('estimate-adjustments');
+  const emptySources = controls.indexOf('if (!sources.length) return;');
+  const options = controls.indexOf('const options = sources.map');
+  const panel = controls.indexOf('body.insertAdjacentHTML');
+  assert.ok(adjustments >= 0 && adjustments < emptySources);
+  assert.ok(emptySources < options && options < panel);
+});
+
 test('the estimate register does not advertise the reference sample', () => {
   const register = functionSource('savedEstimates = function () {');
   assert.doesNotMatch(register, /REFERENCE_ESTIMATE/);
@@ -103,11 +115,20 @@ test('no invoice date is built with toISOString', () => {
   assert.deepEqual(offenders, [], `invoice dates still use UTC: ${offenders.join(', ')}`);
 });
 
-test('the invoice editor round-trips stored calendar dates unchanged', () => {
-  const invoiceDateValue = functionSource('function invoiceDateValue(');
-  assert.match(invoiceDateValue, /return toLocalIsoDate\(value\)/);
-
-  const invoice = { date: '2026-10-31', due: '2026-11-14' };
-  const editorValues = { date: toLocalIsoDate(invoice.date), due: toLocalIsoDate(invoice.due) };
-  assert.deepEqual(editorValues, invoice);
+test('invoice editor round-trips date-only values in America/Chicago', () => {
+  const previous = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+  try {
+    const invoiceDateValue = runInNewContext(`(${functionSource('function invoiceDateValue(')})`, { toLocalIsoDate });
+    const invoice = { date: '2026-10-31', due: '2026-11-14' };
+    const formValues = {
+      date: invoiceDateValue(invoice.date),
+      due: invoiceDateValue(invoice.due),
+    };
+    assert.deepEqual({ ...invoice, ...formValues }, invoice);
+    assert.match(functionSource('function openInvoiceEditor('), /date: data\.date, due: data\.due/);
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
 });

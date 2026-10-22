@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import process from 'node:process';
+import { toLocalIsoDate } from '../shared/dates.js';
 import {
   AFTER_MIDNIGHT_FEE_PRESET,
   afterMidnightFeeLine,
@@ -168,25 +170,32 @@ test('invoice carries approved estimate lines and signature provenance forward',
 });
 
 test('invoice date and due date are the shop\'s local calendar days, not UTC', () => {
-  // An RO completed at 9:30 pm on the last day of October. In a US timezone
-  // this is still 2026-10-31 locally, but UTC has already rolled to 2026-11-01,
-  // which put the sale in the wrong sales-tax period.
-  const issuedAt = new Date('2026-10-31T21:30:00-05:00');
-  const estimate = calculateEstimate([
-    { id: 'labor', type: 'labor', description: 'Diagnosis', hours: 1, laborRate: 165 },
-  ], 8.25);
-  const invoice = invoiceRecordForOrder({
-    id: 'RO-1102',
-    customer: 'Customer',
-    vehicle: '2020 Example',
-    total: estimate.total,
-    estimate,
-  }, issuedAt);
+  const previous = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+  try {
+    // An RO completed at 9:30 pm on the last day of October. In America/Chicago
+    // this is still 2026-10-31 locally, but UTC has rolled to 2026-11-01.
+    const issuedAt = new Date('2026-10-31T21:30:00-05:00');
+    const estimate = calculateEstimate([
+      { id: 'labor', type: 'labor', description: 'Diagnosis', hours: 1, laborRate: 165 },
+    ], 8.25);
+    const invoice = invoiceRecordForOrder({
+      id: 'RO-1102',
+      customer: 'Customer',
+      vehicle: '2020 Example',
+      total: estimate.total,
+      estimate,
+    }, issuedAt);
 
-  assert.equal(invoice.date, '2026-10-31');
-  assert.equal(invoice.due, '2026-11-14');
-  // The old code produced tomorrow's date here.
-  assert.notEqual(invoice.date, issuedAt.toISOString().slice(0, 10));
+    assert.equal(invoice.date, '2026-10-31');
+    assert.equal(invoice.due, '2026-11-14');
+    // The old code produced tomorrow's date here.
+    assert.notEqual(invoice.date, issuedAt.toISOString().slice(0, 10));
+    assert.equal(toLocalIsoDate(invoice.date), invoice.date);
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
 });
 
 test('invoice money ignores declined lines even when estimate totals were recomputed from the full card', () => {
