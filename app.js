@@ -14964,7 +14964,6 @@ ${line}`.trim();
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
-      init_dates();
       init_html();
       init_form_fields();
       init_detect();

@@ -1,6 +1,5 @@
 /* global DOMPurify */
 import { storageKeys } from '../shared/config.js';
-import { toLocalIsoDate } from '../shared/dates.js';
 import { escapeAttr, escapeHtml } from '../shared/html.js';
 import { readFormValues } from '../shared/form-fields.js';
 import { DESKTOP_ENTITLEMENT_INTERVAL, isDesktopApp } from '../modules/platform/detect.js';
