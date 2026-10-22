@@ -38,6 +38,10 @@ export function combinedSalesTaxRate(jurisdictions) {
   return roundCents((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
 }
 
+export function matchesJurisdictionRate(rate, jurisdictions) {
+  return roundCents(rate) === combinedSalesTaxRate(jurisdictions);
+}
+
 /**
  * Allocate taxable sales across jurisdictions for a Texas list-filer style supplement.
  * Local tax applies to the same taxable base (subject to local caps in real returns —

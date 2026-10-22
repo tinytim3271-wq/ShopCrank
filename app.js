@@ -5402,6 +5402,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function combinedSalesTaxRate(jurisdictions) {
     return roundCents2((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
   }
+  function matchesJurisdictionRate(rate, jurisdictions) {
+    return roundCents2(rate) === combinedSalesTaxRate(jurisdictions);
+  }
   function buildJurisdictionSupplement(taxableSales, jurisdictions) {
     const taxable = roundCents2(taxableSales);
     const rows = (jurisdictions || []).map((j) => {
@@ -11305,7 +11308,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     if (result?.redirecting) return;
     if (result?.sent) {
       if (sentEl) {
-        sentEl.textContent = result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
+        sentEl.textContent = isDesktopApp ? "Check your email and open the sign-in link. It opens in your browser; click Open ShopCrank there to finish signing in to this app. The link expires in 15 minutes." : result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
         sentEl.hidden = false;
       }
       submitButton.disabled = false;
@@ -13396,6 +13399,12 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       jurisdictions
     };
   }
+  function requireTaxRateMatch() {
+    const jurisdictions = normalizeJurisdictions(state.taxSettings?.jurisdictions);
+    if (matchesJurisdictionRate(state.taxSettings?.rate, jurisdictions)) return true;
+    toast("Configured tax rate must match the jurisdiction breakdown before filing");
+    return false;
+  }
   function filingCenterMarkup() {
     if (!filingCenterOpen) return "";
     const shop = shopFilingProfile();
@@ -13409,6 +13418,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
 </section>`;
   }
   async function generateTaxReportFromForm(from, to) {
+    if (!requireTaxRateMatch()) return;
     try {
       if (navigator.onLine && !isLocalShell()) {
         const remote = await apiFetch(`/tax-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -13431,7 +13441,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     taxReportResult = taxReport(from, to);
   }
   function exportSalesTaxCsv() {
-    if (!taxReportResult) return;
+    if (!taxReportResult || !requireTaxRateMatch()) return;
     const shop = shopFilingProfile();
     const rows = [
       ["Sales tax filing export"],
@@ -13463,7 +13473,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     toast("Sales tax CSV exported");
   }
   function exportTexasWebfilePackage() {
-    if (!taxReportResult) return;
+    if (!taxReportResult || !requireTaxRateMatch()) return;
     const shop = shopFilingProfile();
     const supplement = buildJurisdictionSupplement(taxReportResult.totals.taxable, shop.jurisdictions);
     const csv = texasListSupplementCsv(supplement, {
@@ -15077,7 +15087,7 @@ ${line}`.trim();
         messagingSettings: { enabled: false, endpoint: "", senderEmail: "", senderPhone: "", shopName: "" },
         billingSettings: { enabled: false, provider: "stripe", checkoutEndpoint: "", onboardingUrl: "", accountLabel: "", shopName: "", shopId: "", webhookUrl: "" },
         payments: [],
-        taxSettings: { state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
+        taxSettings: { state: "TX", taxId: "", rate: combinedSalesTaxRate(DEFAULT_TX_JURISDICTIONS), filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
         chartOfAccounts: [
           { code: "1000", name: "Operating Checking", type: "Asset" },
           { code: "1010", name: "Cash on Hand", type: "Asset" },

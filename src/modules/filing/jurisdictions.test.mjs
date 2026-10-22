@@ -4,6 +4,7 @@ import {
   DEFAULT_TX_JURISDICTIONS,
   buildJurisdictionSupplement,
   combinedSalesTaxRate,
+  matchesJurisdictionRate,
   needsLocalJurisdictions,
   normalizeJurisdictions,
 } from './jurisdictions.js';
@@ -23,6 +24,15 @@ test('a new shop starts with the state line only, not placeholder local district
 
 test('the default jurisdiction rate is the state rate, not 8.25', () => {
   assert.equal(combinedSalesTaxRate(DEFAULT_TX_JURISDICTIONS), 6.25);
+});
+
+test('configured tax rate must match the jurisdiction breakdown', () => {
+  assert.equal(matchesJurisdictionRate(6.25, DEFAULT_TX_JURISDICTIONS), true);
+  assert.equal(matchesJurisdictionRate(8.25, DEFAULT_TX_JURISDICTIONS), false);
+  assert.equal(matchesJurisdictionRate(8.25, [
+    ...DEFAULT_TX_JURISDICTIONS,
+    { code: '2060000', name: 'Lubbock', kind: 'city', rate: 2.0 },
+  ]), true);
 });
 
 test('normalizeJurisdictions falls back to the state line only', () => {

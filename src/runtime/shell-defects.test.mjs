@@ -42,6 +42,17 @@ test('the vehicle form\'s save button is a typed submit button', () => {
   assert.match(form, /querySelector\("button\[type=submit\]"\)/);
 });
 
+test('fresh-shop billing uses the default jurisdiction rate', () => {
+  assert.match(legacy, /taxSettings: \{ state: "TX", taxId: "", rate: Filing\.combinedSalesTaxRate\(Filing\.DEFAULT_TX_JURISDICTIONS\)/);
+});
+
+test('filing reports and exports require the configured rate to match jurisdictions', () => {
+  assert.match(functionSource('function requireTaxRateMatch()'), /Filing\.matchesJurisdictionRate/);
+  assert.match(functionSource('async function generateTaxReportFromForm('), /if \(!requireTaxRateMatch\(\)\) return;/);
+  assert.match(functionSource('function exportSalesTaxCsv()'), /!requireTaxRateMatch\(\)/);
+  assert.match(functionSource('function exportTexasWebfilePackage()'), /!requireTaxRateMatch\(\)/);
+});
+
 test('every form whose handler looks up button[type=submit] has a typed submit button', () => {
   const offenders = [];
   const formRe = /<form[^>]*id="([a-z0-9-]+)"[\s\S]*?<\/form>/g;

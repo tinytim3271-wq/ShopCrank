@@ -470,7 +470,7 @@ const seed = {
   messagingSettings: { enabled: false, endpoint: "", senderEmail: "", senderPhone: "", shopName: "" },
   billingSettings: { enabled: false, provider: "stripe", checkoutEndpoint: "", onboardingUrl: "", accountLabel: "", shopName: "", shopId: "", webhookUrl: "" },
   payments: [],
-  taxSettings: { state: "TX", taxId: "", rate: 8.25, filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
+  taxSettings: { state: "TX", taxId: "", rate: Filing.combinedSalesTaxRate(Filing.DEFAULT_TX_JURISDICTIONS), filingFrequency: "Monthly", ein: "", texasTaxpayerNumber: "", webfileNumber: "", jurisdictions: null },
   chartOfAccounts: [
     { code: "1000", name: "Operating Checking", type: "Asset" }, { code: "1010", name: "Cash on Hand", type: "Asset" }, { code: "1020", name: "Card Processor Clearing", type: "Asset" }, { code: "1100", name: "Accounts Receivable", type: "Asset" }, { code: "1200", name: "Parts Inventory", type: "Asset" }, { code: "2000", name: "Accounts Payable", type: "Liability" }, { code: "2100", name: "Sales Tax Payable", type: "Liability" }, { code: "2200", name: "Federal Income Tax Withheld", type: "Liability" }, { code: "2210", name: "FICA Payable (SS)", type: "Liability" }, { code: "2220", name: "Medicare Payable", type: "Liability" }, { code: "4000", name: "Service Revenue", type: "Income" }, { code: "5000", name: "Cost of Parts", type: "Expense" }, { code: "6100", name: "Shop Supplies", type: "Expense" }, { code: "6200", name: "Utilities", type: "Expense" }, { code: "6300", name: "Tools & Equipment", type: "Expense" }
   ],
@@ -4067,6 +4067,13 @@ function shopFilingProfile() {
   };
 }
 
+function requireTaxRateMatch() {
+  const jurisdictions = Filing.normalizeJurisdictions(state.taxSettings?.jurisdictions);
+  if (Filing.matchesJurisdictionRate(state.taxSettings?.rate, jurisdictions)) return true;
+  toast('Configured tax rate must match the jurisdiction breakdown before filing');
+  return false;
+}
+
 taxReport = function (fromDate, toDate) {
   const from = new Date(fromDate);
   const to = new Date(toDate);
@@ -4153,6 +4160,7 @@ function filingCenterMarkup() {
 }
 
 async function generateTaxReportFromForm(from, to) {
+  if (!requireTaxRateMatch()) return;
   try {
     if (navigator.onLine && !isLocalShell()) {
       const remote = await apiFetch(`/tax-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -4176,7 +4184,7 @@ async function generateTaxReportFromForm(from, to) {
 }
 
 function exportSalesTaxCsv() {
-  if (!taxReportResult) return;
+  if (!taxReportResult || !requireTaxRateMatch()) return;
   const shop = shopFilingProfile();
   const rows = [
     ['Sales tax filing export'],
@@ -4200,7 +4208,7 @@ function exportSalesTaxCsv() {
 }
 
 function exportTexasWebfilePackage() {
-  if (!taxReportResult) return;
+  if (!taxReportResult || !requireTaxRateMatch()) return;
   const shop = shopFilingProfile();
   const supplement = Filing.buildJurisdictionSupplement(taxReportResult.totals.taxable, shop.jurisdictions);
   const csv = Filing.texasListSupplementCsv(supplement, {
