@@ -4186,6 +4186,7 @@ function filingRateIsConsistent() {
 
 function isFilingRateConsistent() {
   const taxSettings = state.taxSettings || {};
+  if (taxSettings.state && taxSettings.state !== 'TX') return true;
   const jurisdictions = Filing.normalizeJurisdictions(taxSettings.jurisdictions);
   const rate = taxSettings.rate == null || taxSettings.rate === ''
     ? Filing.combinedSalesTaxRate(jurisdictions)
