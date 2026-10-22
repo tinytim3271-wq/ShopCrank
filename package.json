@@ -79,7 +79,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^7.0.0",
-    "electron": "^41.10.3",
+    "electron": "^42.11.3",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
