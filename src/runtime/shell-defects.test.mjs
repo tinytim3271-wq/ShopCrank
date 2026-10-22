@@ -126,6 +126,24 @@ test('filing reports and exports require the configured rate to match jurisdicti
   assert.match(functionSource('reports = function () {'), /const result = rateMatches \? taxReportResult : null/);
 });
 
+test('Texas filing consistency checks do not block other states', () => {
+  const checkRate = (taxSettings) => runInNewContext(
+    `(${functionSource('function isFilingRateConsistent(')})`,
+    {
+      state: { taxSettings },
+      Filing: {
+        normalizeJurisdictions: () => [],
+        combinedSalesTaxRate: () => 6.25,
+        salesTaxRateMatchesJurisdictions: (rate) => rate === 6.25,
+      },
+    },
+  )();
+
+  assert.equal(checkRate({ state: 'OR', rate: 0, jurisdictions: null }), true);
+  assert.equal(checkRate({ state: 'CA', rate: 7.25, jurisdictions: null }), true);
+  assert.equal(checkRate({ state: 'TX', rate: 8.25, jurisdictions: null }), false);
+});
+
 test('enhanced tax settings submit saves jurisdictions and their matching rate', async () => {
   assert.doesNotMatch(
     legacy,
