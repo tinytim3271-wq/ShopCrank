@@ -98,7 +98,7 @@ public sealed class ObdOverMockedJ2534Tests
 
         var error = Assert.Throws<InvalidOperationException>(() => provider.ComputeKey(1, new byte[seedLength], Vin));
 
-        Assert.Contains("will not truncate", error.Message);
+        Assert.Contains("no key was sent", error.Message);
     }
 
     [Fact]
@@ -108,7 +108,7 @@ public sealed class ObdOverMockedJ2534Tests
 
         var error = Assert.Throws<InvalidOperationException>(() => provider.ComputeKey(1, new byte[3], Vin));
 
-        Assert.Contains("unsupported", error.Message);
+        Assert.Contains("no key was sent", error.Message);
     }
 
     [Fact]
