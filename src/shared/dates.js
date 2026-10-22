@@ -49,6 +49,7 @@ export function toLocalIsoDate(value) {
     const [year, month, day] = text.split('-').map(Number);
     const parsed = new Date(year, month - 1, day);
     if (Number.isNaN(parsed.valueOf())) return '';
+    if (localIsoDate(parsed) !== text) return '';
     return localIsoDate(parsed);
   }
   const parsed = new Date(text);

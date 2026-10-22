@@ -354,6 +354,7 @@
       const [year, month, day] = text.split("-").map(Number);
       const parsed2 = new Date(year, month - 1, day);
       if (Number.isNaN(parsed2.valueOf())) return "";
+      if (localIsoDate(parsed2) !== text) return "";
       return localIsoDate(parsed2);
     }
     const parsed = new Date(text);
@@ -13445,6 +13446,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function isFilingRateConsistent() {
     const taxSettings = state.taxSettings || {};
+    if (taxSettings.state && taxSettings.state !== "TX") return true;
     const jurisdictions = normalizeJurisdictions(taxSettings.jurisdictions);
     const rate = taxSettings.rate == null || taxSettings.rate === "" ? combinedSalesTaxRate(jurisdictions) : Number(taxSettings.rate);
     return salesTaxRateMatchesJurisdictions(rate, jurisdictions);

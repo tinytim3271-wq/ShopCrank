@@ -46,6 +46,8 @@ test('toLocalIsoDate normalises dates and rejects unusable values', () => {
   inTimezone('America/Chicago', () => {
     assert.equal(toLocalIsoDate(EVENING), '2026-10-31');
     assert.equal(toLocalIsoDate('2026-10-31'), '2026-10-31');
+    assert.equal(toLocalIsoDate('2026-13-01'), '');
+    assert.equal(toLocalIsoDate('2026-02-30'), '');
     assert.equal(toLocalIsoDate(''), '');
     assert.equal(toLocalIsoDate('not a date'), '');
     assert.equal(toLocalIsoDate(new Date('nope')), '');
