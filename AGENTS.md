@@ -25,6 +25,8 @@ python3 -m http.server 3000 --bind 127.0.0.1   # then open http://127.0.0.1:3000
 
 Serving the root still only requires a browser refresh. When editing source under `src/`, run `npm run build:web` first. The service worker caches aggressively; hard-reload or clear the `shopcrank-dispatch-v1` service-worker cache if edits don't appear.
 
+Cloud Agent boots run `.cursor/start.sh`. It serves this PWA at `http://127.0.0.1:3000/` and the offline Worker at `http://127.0.0.1:8787/` through `npm run dev:worker`. Plain `wrangler dev` needs a Cloudflare login because the Workers AI and email bindings are remote; the offline script removes those bindings. Local API calls use `X-ShopCrank-Dev-Email` while `DEV_AUTH_BYPASS=1` is set in the gitignored `.dev.vars`.
+
 ### OEM Diagnostics (J2534 / Windows)
 
 - **J2534 native host** lives in `diagnostics/j2534-service/`. Build with .NET 8: `./diagnostics/j2534-service/scripts/publish-win-x64.sh` (or `publish-win-x64.ps1` on Windows). Output: `diagnostics/j2534-service/publish/win-x64/J2534.Host.exe`.
