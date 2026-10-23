@@ -10,7 +10,7 @@ This repository has three independent parts:
 
 ### Toolchain / non-obvious gotchas
 
-- Use Node 24, matching `.github/workflows/cloudflare-pages.yml` and `package.json` `engines`.
+- Use Node 24, matching `.github/workflows/cloudflare-pages.yml` and `package.json` `engines`. On Cloud Agents, `/exec-daemon/node` is ahead of nvm on `PATH` and is not v24. `.cursor/install.sh` prepends the nvm Node 24 directory and writes `/etc/profile.d/shopcrank-node24.sh` so login shells do the same.
 - Android/Capacitor flows require Java 21+; `npm run sync` and `npm run build:android` enforce this via `npm run check:java` (`scripts/require-java21.mjs`).
 - `wrangler.jsonc` already contains the production D1 `database_id`. CI may override it with GitHub variable `CLOUDFLARE_D1_DATABASE_ID` when set; leave the committed ID as the source of truth for local/remote CLI deploys.
 - Copy `.dev.vars.example` to `.dev.vars` for local Worker secrets (`wrangler dev`). Never commit `.dev.vars`.

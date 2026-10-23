@@ -10,6 +10,9 @@ if [ -f "$NVM_DIR/nvm.sh" ]; then
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
   nvm use 24 >/dev/null
+  NODE24_BIN="$(dirname "$(nvm which 24)")"
+  export PATH="$NODE24_BIN:$PATH"
+  hash -r
 fi
 
 if ! command -v tmux >/dev/null 2>&1; then
@@ -48,7 +51,7 @@ else
   if tmux has-session -t worker-api 2>/dev/null; then
     tmux kill-session -t worker-api
   fi
-  tmux new-session -d -s worker-api -c "$ROOT" -- bash -lc 'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; if [ -f "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; fi; exec npm run dev:worker -- --ip 127.0.0.1 --port 8787'
+  tmux new-session -d -s worker-api -c "$ROOT" -- bash -lc 'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; if [ -f "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; NODE24_BIN="$(dirname "$(nvm which 24)")"; export PATH="$NODE24_BIN:$PATH"; hash -r; fi; exec npm run dev:worker -- --ip 127.0.0.1 --port 8787'
   echo "started worker-api"
 fi
 
