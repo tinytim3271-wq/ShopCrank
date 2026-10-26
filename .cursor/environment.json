@@ -1,18 +1,7 @@
 {
   "name": "Shop Crank Dispatch",
   "install": "bash .cursor/install.sh",
-  "terminals": [
-    {
-      "name": "frontend",
-      "command": "python3 -m http.server 3000 --bind 127.0.0.1",
-      "description": "Serves the local-first PWA at http://127.0.0.1:3000/ (repo root)."
-    },
-    {
-      "name": "worker-api",
-      "command": "export NVM_DIR=\"$HOME/.nvm\"; . \"$NVM_DIR/nvm.sh\"; nvm use 24 >/dev/null; exec npx wrangler dev --local --ip 127.0.0.1 --port 8787",
-      "description": "Cloudflare Worker API (local miniflare + local D1) at http://127.0.0.1:8787/. Send X-ShopCrank-Dev-Email with DEV_AUTH_BYPASS for local auth."
-    }
-  ],
+  "start": "bash .cursor/start.sh",
   "ports": [
     { "name": "frontend", "port": 3000 },
     { "name": "worker-api", "port": 8787 }
