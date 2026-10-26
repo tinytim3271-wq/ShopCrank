@@ -13761,7 +13761,8 @@ ${catRows}
         toast("Jurisdiction JSON is invalid");
         return;
       }
-      const rate = data.state === "TX" && jurisdictions ? combinedSalesTaxRate(jurisdictions) : Number(data.rate) || 0;
+      if (data.state === "TX") jurisdictions = normalizeJurisdictions(jurisdictions);
+      const rate = data.state === "TX" ? combinedSalesTaxRate(jurisdictions) : Number(data.rate) || 0;
       const taxSettings = {
         state: data.state,
         taxId: String(data.taxId || "").trim(),

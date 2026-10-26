@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toLocalIsoDate } from '../shared/dates.js';
+import { combinedSalesTaxRate, normalizeJurisdictions } from '../modules/filing/jurisdictions.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
@@ -176,7 +177,8 @@ test('enhanced tax settings submit saves jurisdictions and their matching rate',
   const context = {
     state: { taxSettings: {} },
     Filing: {
-      combinedSalesTaxRate: jurisdictions => jurisdictions.reduce((total, item) => total + item.rate, 0),
+      combinedSalesTaxRate,
+      normalizeJurisdictions,
     },
     readFormValues: target => target.data,
     saveShopEntity: async (entity, record) => saved.push({ entity, record }),
@@ -202,13 +204,22 @@ test('enhanced tax settings submit saves jurisdictions and their matching rate',
   assert.equal(saved[0].record.rate, 6.25);
   assert.equal(saved[0].record.taxId, 'TX-123');
   assert.deepEqual(JSON.parse(JSON.stringify(saved[0].record.jurisdictions)), [
-    { code: '4800001', name: 'Texas', kind: 'state', rate: 6.25 },
+    { code: '4800001', name: 'Texas', kind: 'state', rate: 6.25, required: false },
   ]);
   assert.equal(context.state.taxSettings.rate, saved[0].record.rate);
   assert.deepEqual(
     JSON.parse(JSON.stringify(context.state.taxSettings.jurisdictions)),
     JSON.parse(JSON.stringify(saved[0].record.jurisdictions)),
   );
+
+  form.data.jurisdictionsJson = '[]';
+  await registrations[0].listener({ target: form, preventDefault() {} });
+
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].record.rate, 6.25);
+  assert.deepEqual(JSON.parse(JSON.stringify(saved[1].record.jurisdictions)), [
+    { code: '2001000', name: 'State of Texas', kind: 'state', rate: 6.25, required: true },
+  ]);
 });
 
 test('every form whose handler looks up button[type=submit] has a typed submit button', () => {

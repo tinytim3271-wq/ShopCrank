@@ -4679,7 +4679,8 @@ function bindTaxSettingsForm(taxSettingsForm) {
     const data = readFormValues(event.target);
     let jurisdictions = null;
     try { jurisdictions = JSON.parse(data.jurisdictionsJson || 'null'); } catch { toast('Jurisdiction JSON is invalid'); return; }
-    const rate = data.state === 'TX' && jurisdictions ? Filing.combinedSalesTaxRate(jurisdictions) : (Number(data.rate) || 0);
+    if (data.state === 'TX') jurisdictions = Filing.normalizeJurisdictions(jurisdictions);
+    const rate = data.state === 'TX' ? Filing.combinedSalesTaxRate(jurisdictions) : (Number(data.rate) || 0);
     const taxSettings = {
       state: data.state,
       taxId: String(data.taxId || '').trim(),
