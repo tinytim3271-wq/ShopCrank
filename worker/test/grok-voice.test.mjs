@@ -203,9 +203,11 @@ test('Twilio incoming voice webhook returns Connect Stream TwiML with verifiable
   assert.equal(res.status, 200);
   const xml = await res.text();
   assert.match(xml, /<Connect>/);
-  assert.match(xml, /wss:\/\/www\.shopcrank\.com\/api\/voice\/twilio\/stream\/shop-test\?token=/);
-  const tokenMatch = xml.match(/token=([^"&<]+)/);
-  assert.ok(tokenMatch);
+  const streamUrl = xml.match(/<Stream url="([^"]+)"/)?.[1];
+  assert.ok(streamUrl);
+  assert.doesNotMatch(streamUrl, /\?/, 'Twilio drops query strings from <Stream url>');
+  const tokenMatch = streamUrl.match(/^wss:\/\/www\.shopcrank\.com\/api\/voice\/twilio\/stream\/shop-test\/([^/]+)$/);
+  assert.ok(tokenMatch, streamUrl);
   const token = decodeURIComponent(tokenMatch[1]);
   const verified = await verifyGrokStreamToken(env, token, 'shop-test');
   assert.equal(verified.shopId, 'shop-test');

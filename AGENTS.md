@@ -10,7 +10,7 @@ This repository has three independent parts:
 
 ### Toolchain / non-obvious gotchas
 
-- Use Node 24, matching `.github/workflows/cloudflare-pages.yml` and `package.json` `engines`.
+- Use Node 24, matching `.github/workflows/cloudflare-pages.yml` and `package.json` `engines`. On Cloud Agents, `/exec-daemon/node` is ahead of nvm on `PATH` and is not v24. `.cursor/install.sh` prepends the nvm Node 24 directory and writes `/etc/profile.d/shopcrank-node24.sh` so login shells do the same.
 - Android/Capacitor flows require Java 21+; `npm run sync` and `npm run build:android` enforce this via `npm run check:java` (`scripts/require-java21.mjs`).
 - `wrangler.jsonc` already contains the production D1 `database_id`. CI may override it with GitHub variable `CLOUDFLARE_D1_DATABASE_ID` when set; leave the committed ID as the source of truth for local/remote CLI deploys.
 - Copy `.dev.vars.example` to `.dev.vars` for local Worker secrets (`wrangler dev`). Never commit `.dev.vars`.
@@ -24,6 +24,8 @@ python3 -m http.server 3000 --bind 127.0.0.1   # then open http://127.0.0.1:3000
 ```
 
 Serving the root still only requires a browser refresh. When editing source under `src/`, run `npm run build:web` first. The service worker caches aggressively; hard-reload or clear the `shopcrank-dispatch-v1` service-worker cache if edits don't appear.
+
+Cloud Agent boots run `.cursor/start.sh`. It serves this PWA at `http://127.0.0.1:3000/` and the offline Worker at `http://127.0.0.1:8787/` through `npm run dev:worker`. Plain `wrangler dev` needs a Cloudflare login because the Workers AI and email bindings are remote; the offline script removes those bindings. Local API calls use `X-ShopCrank-Dev-Email` while `DEV_AUTH_BYPASS=1` is set in the gitignored `.dev.vars`.
 
 ### OEM Diagnostics (J2534 / Windows)
 

@@ -67,7 +67,6 @@ test('the pre-cutover host redirects to the canonical host, keeping path and que
   assert.equal(page.headers.get('location'), `${CANONICAL_ORIGIN}/pricing/`);
 });
 
-<<<<<<< Updated upstream
 test('legacy Stripe webhook POSTs reach signature validation instead of redirecting', async () => {
   const response = await worker.fetch(new Request(
     `https://${LEGACY_HOST}/api/payments/webhook/shop-1`,
@@ -95,6 +94,14 @@ test('legacy provider callbacks reach their existing authentication checks', asy
     [new Request(`https://${LEGACY_HOST}/api/voice/twilio/stream/shop-1`, {
       headers: { Upgrade: 'websocket' },
     }), {}, 401],
+    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/stream/shop-1/not-a-token`, {
+      headers: { Upgrade: 'websocket' },
+    }), {}, 401],
+    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/status/shop-1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '',
+    }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
   ];
 
   for (const [request, env, expectedStatus] of requests) {
@@ -127,12 +134,10 @@ test('legacy Twilio voice callbacks return a stream URL on the legacy host', asy
   assert.equal(response.headers.get('location'), null);
   assert.match(
     await response.text(),
-    /wss:\/\/www\.yourcarguy806\.com\/api\/voice\/twilio\/stream\/shop-1\?token=/,
+    /<Stream url="wss:\/\/www\.yourcarguy806\.com\/api\/voice\/twilio\/stream\/shop-1\/[^"?/]+"/,
   );
 });
 
-=======
->>>>>>> Stashed changes
 test('the canonical host is never redirected', async () => {
   const response = await worker.fetch(new Request(`${CANONICAL_ORIGIN}/api/healthz`), {});
   assert.equal(response.status, 200);

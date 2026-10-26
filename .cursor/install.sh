@@ -9,13 +9,39 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 if [ -f "$NVM_DIR/nvm.sh" ]; then
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
-  nvm install 24 >/dev/null
-  nvm alias default 24 >/dev/null
-  nvm use 24 >/dev/null
+  nvm install 24
+  nvm alias default 24
+  nvm use 24
+  # /exec-daemon/node is ahead of nvm on Cloud Agent PATH and is not Node 24.
+  NODE24_BIN="$(dirname "$(nvm which 24)")"
+  export PATH="$NODE24_BIN:$PATH"
+  hash -r
 else
-  echo "nvm not found at $NVM_DIR/nvm.sh; using existing Node on PATH"
+  echo "nvm not found at $NVM_DIR/nvm.sh; using existing Node on PATH" >&2
 fi
 echo "Using Node $(node -v) / npm $(npm -v)"
+node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+if [ "$node_major" -lt 24 ]; then
+  echo "ShopCrank requires Node 24 or newer; found $(node -v)" >&2
+  exit 1
+fi
+
+# Login shells (install/start use bash -l) otherwise keep resolving node to
+# /exec-daemon/node. Failure here is non-fatal: this script already prepends.
+if [ -n "${NODE24_BIN:-}" ] && sudo -n tee /etc/profile.d/shopcrank-node24.sh >/dev/null <<'EOF'
+# Prefer the Node 24 installed by .cursor/install.sh over /exec-daemon/node.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$NVM_DIR/nvm.sh"
+  nvm use 24 >/dev/null
+  NODE24_BIN="$(dirname "$(nvm which 24)")"
+  export PATH="$NODE24_BIN:$PATH"
+fi
+EOF
+then
+  echo "Installed /etc/profile.d/shopcrank-node24.sh"
+fi
 
 # Install dependencies and refresh the committed web bundle (app.js) from src/.
 npm ci
@@ -42,6 +68,7 @@ fi
 if [ ! -f .dev.vars ]; then
   cat > .dev.vars <<EOF
 DEV_AUTH_BYPASS=1
+AUTH_EXPOSE_LOGIN_LINK=1
 ACCESS_ADMIN_EMAILS=admin@demo-shop.com
 INTEGRATION_ENCRYPTION_KEY=$(openssl rand -hex 24)
 DIAGNOSTICS_CAPABILITY_SECRET=$(openssl rand -hex 24)
@@ -52,6 +79,10 @@ fi
 if ! grep -q '^LICENSE_TOKEN_SECRET=' .dev.vars; then
   echo "LICENSE_TOKEN_SECRET=$(openssl rand -hex 32)" >> .dev.vars
   echo "Added a local LICENSE_TOKEN_SECRET to .dev.vars"
+fi
+if ! grep -q '^AUTH_EXPOSE_LOGIN_LINK=' .dev.vars; then
+  echo "AUTH_EXPOSE_LOGIN_LINK=1" >> .dev.vars
+  echo "Enabled local AUTH_EXPOSE_LOGIN_LINK in .dev.vars"
 fi
 
 # Apply D1 migrations to the local (miniflare) database used by `wrangler dev`.

@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import coverageBundle from '../data/coverage.json' with { type: 'json' };
 import {
   DIAGNOSTIC_PROCEDURES,
   PROGRAMMING_MODES,
+  isNissanMaximaVin,
   mintCapabilityToken,
   procedureSpec,
+  requiresAutoAuthLogin,
   signedRepairOrderForKeys,
 } from '../src/diagnostics.mjs';
 
@@ -18,6 +21,18 @@ async function generateKeyEnv() {
   const spki = Buffer.from(await crypto.subtle.exportKey('spki', pair.publicKey)).toString('base64');
   return { pkcs8, spki };
 }
+
+test('Nissan Maxima PIN procedures do not require Stellantis AutoAuth', () => {
+  const maxima = '1N4AA6AP1GC123456';
+  assert.equal(isNissanMaximaVin(maxima), true);
+  assert.equal(isNissanMaximaVin('1N4AL3AP1GC123456'), false);
+  assert.equal(requiresAutoAuthLogin(procedureSpec('add_key'), maxima), false);
+  assert.equal(requiresAutoAuthLogin(procedureSpec('add_key'), '1C6SRFHT0LN123456'), true);
+  assert.equal(requiresAutoAuthLogin(procedureSpec('module_flash'), maxima), true);
+  const maximaCoverage = coverageBundle.records.filter((record) => record.make === 'Nissan' && record.model === 'Maxima');
+  assert.ok(maximaCoverage.length >= 2);
+  assert.equal(maximaCoverage.every((record) => record.procedures.add_key.supported), true);
+});
 
 test('procedure specs cover programming + flash', () => {
   assert.ok(procedureSpec('clear_dtcs'));
