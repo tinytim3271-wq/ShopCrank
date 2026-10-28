@@ -3624,9 +3624,9 @@
     return { ok: problems.length === 0, problems };
   }
   function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
-    const badge3 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    const badge2 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
     const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
-    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge3}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
+    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge2}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
   }
   function aiAcceptBanner(draft, prefix) {
     const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
@@ -3672,8 +3672,8 @@
   function concernStep(draft) {
     const concern = draft.concern;
     const ai = draft.aiFilledFields || {};
-    const badge3 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
-    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge3}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
+    const badge2 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge2}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
 <div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
   }
   function diagnosisStep(draft) {
@@ -4871,236 +4871,6 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
-  // src/shared/license-proof.js
-  function deviceProofMessage({ purpose, subject, signedAt, nonce }) {
-    const parts = [DEVICE_PROOF_PREFIX, String(purpose), String(subject), String(signedAt)];
-    if (nonce !== void 0) parts.push(String(nonce));
-    return parts.join("\n");
-  }
-  function authorizePurpose(procedure, vin) {
-    return `authorize:${String(procedure || "")}:${String(vin || "").toUpperCase()}`;
-  }
-  async function sha256Hex(value2) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value2)));
-    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  }
-  function base64UrlFromBytes(bytes) {
-    let binary = "";
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-  async function deviceIdForPublicKey(spkiBase64) {
-    const bytes = Uint8Array.from(atob(String(spkiBase64 || "")), (character) => character.charCodeAt(0));
-    return base64UrlFromBytes(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
-  }
-  var DEVICE_PROOF_PREFIX, DEVICE_PROOF_MAX_SKEW_MS;
-  var init_license_proof = __esm({
-    "src/shared/license-proof.js"() {
-      DEVICE_PROOF_PREFIX = "shopcrank-license-device";
-      DEVICE_PROOF_MAX_SKEW_MS = 5 * 60 * 1e3;
-    }
-  });
-
-  // src/modules/vehicle-key-license.js
-  function requiresVehicleKeyLicense(body) {
-    return body?.mode === "live" && LIVE_KEY_PROCEDURES.has(String(body?.procedure || ""));
-  }
-  function openStore() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, 1);
-      request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-  }
-  async function storeOp(mode, run) {
-    const db = await openStore();
-    try {
-      return await new Promise((resolve, reject) => {
-        const request = run(db.transaction(STORE, mode).objectStore(STORE));
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    } finally {
-      db.close();
-    }
-  }
-  async function loadDeviceIdentity() {
-    const existing = await readRecord("device");
-    if (existing?.privateKey && existing.publicKey && existing.deviceId) return existing;
-    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
-    const spki = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
-    const publicKey = btoa(String.fromCharCode(...spki));
-    const candidate = { privateKey: pair.privateKey, publicKey, deviceId: await deviceIdForPublicKey(publicKey), createdAt: (/* @__PURE__ */ new Date()).toISOString() };
-    const db = await openStore();
-    try {
-      return await new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE, "readwrite");
-        const store = transaction.objectStore(STORE);
-        let identity;
-        const request = store.get("device");
-        request.onsuccess = () => {
-          const saved = request.result;
-          identity = saved?.privateKey && saved.publicKey && saved.deviceId ? saved : candidate;
-          if (identity === candidate) store.put(candidate, "device");
-        };
-        request.onerror = () => transaction.abort();
-        transaction.oncomplete = () => resolve(identity);
-        transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error || request.error);
-      });
-    } finally {
-      db.close();
-    }
-  }
-  function base64Url(bytes) {
-    let binary = "";
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-  async function signDeviceProof(identity, purpose, subject, signedAt = Date.now(), nonce) {
-    const signature = await crypto.subtle.sign(
-      { name: "ECDSA", hash: "SHA-256" },
-      identity.privateKey,
-      new TextEncoder().encode(deviceProofMessage({ purpose, subject, signedAt, nonce }))
-    );
-    return { signedAt, signature: base64Url(new Uint8Array(signature)) };
-  }
-  async function issueRequestBody(identity, label2) {
-    return { publicKey: identity.publicKey, deviceId: identity.deviceId, label: label2, ...await signDeviceProof(identity, "issue", identity.deviceId) };
-  }
-  async function redeemRequestBody(identity, token) {
-    return { token, deviceId: identity.deviceId, ...await signDeviceProof(identity, "redeem", await sha256Hex(token)) };
-  }
-  async function authorizeUnlock(identity, token, procedure, vin) {
-    const nonce = crypto.randomUUID();
-    return { token, deviceId: identity.deviceId, nonce, ...await signDeviceProof(identity, authorizePurpose(procedure, vin), await sha256Hex(token), Date.now(), nonce) };
-  }
-  async function uploadProof(file, { apiFetch: apiFetch2, fetchImpl }) {
-    if (!PROOF_TYPES.has(file.type)) throw new Error("Upload the proof as a PDF, PNG, JPEG, or WebP file");
-    return uploadFileToStorage(file, "license-proof", file.type, { apiFetch: apiFetch2, fetchImpl });
-  }
-  function parseUnlockInput(value2) {
-    const text = String(value2 || "").trim();
-    let candidate = text;
-    const hashIndex = text.indexOf("#");
-    if (hashIndex >= 0) candidate = new URLSearchParams(text.slice(hashIndex + 1)).get("token") || "";
-    candidate = decodeURIComponent(candidate);
-    return TOKEN_PATTERN.test(candidate) ? candidate : null;
-  }
-  function unlockTokenClaims(token) {
-    try {
-      const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-      return JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, "=")));
-    } catch {
-      return null;
-    }
-  }
-  function storedUnlockState(stored, license, deviceId) {
-    if (!stored?.token) return "none";
-    const claims = unlockTokenClaims(stored.token);
-    if (!claims || !license || claims.lid !== license.id || claims.did !== deviceId) return "stale";
-    if (license.status !== "active" || license.expired || license.thisDevice?.status !== "active") return "blocked";
-    if (claims.tv !== license.tokenVersion || claims.exp * 1e3 > Date.parse(license.expiresAt) || claims.exp * 1e3 <= Date.now()) return "stale";
-    return stored.redeemedAt ? "unlocked" : "issued";
-  }
-  function formatDate(value2) {
-    return value2 ? new Date(value2).toLocaleDateString(void 0, { year: "numeric", month: "short", day: "numeric" }) : "";
-  }
-  function formatDateTime(value2) {
-    return value2 ? new Date(value2).toLocaleString() : "";
-  }
-  function badge(status, label2 = status, escapeHtml4) {
-    return `<span class="badge ${STATUS_BADGE[status] || ""}">${escapeHtml4(label2)}</span>`;
-  }
-  function requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, previous) {
-    return `<form class="form-grid" id="key-license-request-form"><label>Contact name *<input name="contactName" required maxlength="120" value="${escapeHtml4(previous?.contactName || "")}"></label><label>Business name *<input name="businessName" required maxlength="160" value="${escapeHtml4(previous?.businessName || "")}"></label><label>License or registration number<input name="licenseNumber" maxlength="120" placeholder="e.g. NASTF VSP LSID or state locksmith license" value="${escapeHtml4(previous?.licenseNumber || "")}"></label><label>Computers to license<input name="requestedDevices" type="number" min="1" max="100" value="${escapeHtml4(previous?.requestedDevices || 1)}"></label><label class="full">Proof of licensing *<textarea name="proofDetails" rows="3" required minlength="10" maxlength="4000" placeholder="Issuing body, license number, expiry, and anything ShopCrank should verify">${escapeHtml4(previous?.proofDetails || "")}</textarea></label><label class="full">Proof document (PDF or image, optional)<input name="proofFile" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><div class="full"><button class="primary" type="submit">${icon2("send", 14)} Submit license request</button></div></form>`;
-  }
-  function keyLicensePanelHtml(view, { escapeHtml: escapeHtml4, icon: icon2 }) {
-    const head = `<div class="eyebrow">Vehicle key license</div>`;
-    if (!view || view.loading) return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}<p>Checking this device's key license\u2026</p></section>`;
-    const refresh = `<button class="secondary" type="button" id="key-license-refresh">${icon2("refresh-cw", 14)} Refresh</button>`;
-    if (view.error) return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}<p>${escapeHtml4(view.error)}</p>${refresh}</section>`;
-    const { license, requests = [], canRequest } = view.status || {};
-    const latest = requests[0];
-    const deviceLine = view.deviceId ? `<p class="ledger-note">This device: <span class="mono">${escapeHtml4(view.deviceId.slice(0, 12))}\u2026</span></p>` : "";
-    let body = "";
-    if (!license || license.status === "revoked") {
-      const revoked = license?.status === "revoked" ? `<div class="messaging-status idle">${icon2("shield-x", 17)}<div><strong>License revoked</strong><span>Live key programming is locked. Submit a new request if you have renewed proof of licensing.</span></div></div>` : "";
-      if (latest?.status === "pending") {
-        body = `${revoked}<div class="messaging-status idle">${icon2("hourglass", 17)}<div><strong>Request under review</strong><span>Submitted ${escapeHtml4(formatDate(latest.createdAt))} for ${escapeHtml4(latest.businessName)}. ShopCrank reviews your proof and sets the license expiry.</span></div></div>`;
-      } else {
-        const denied = latest?.status === "denied" ? `<div class="messaging-status idle">${icon2("circle-x", 17)}<div><strong>Last request denied</strong><span>${escapeHtml4(latest.decisionNote || "No reason given")}</span></div></div>` : "";
-        body = `${revoked}${denied}<p>Live key programming on this shop needs a vehicle key license from ShopCrank. Send proof that your shop is licensed for key and immobilizer work.</p>${canRequest ? requestForm({ escapeHtml: escapeHtml4, icon: icon2 }, view.draft || latest) : '<p class="ledger-note">Ask your shop owner or admin to submit the license request.</p>'}`;
-      }
-    } else {
-      const stateLabel = license.status === "suspended" ? "Suspended" : license.expired ? "Expired" : "Active";
-      const summary = `<dl class="detail-list"><dt>License</dt><dd>${badge(license.expired ? "revoked" : license.status, stateLabel, escapeHtml4)}</dd><dt>Expires</dt><dd>${escapeHtml4(formatDate(license.expiresAt))}</dd><dt>Licensed computers</dt><dd>${license.activeDevices} of ${license.maxDevices}</dd></dl>`;
-      const unlockState = view.unlockState;
-      const redeemForm = `<form class="form-grid" id="key-license-redeem-form"><label class="full">Redeem unlock link<input name="unlockLink" autocomplete="off" placeholder="Paste the unlock link or token for this device"></label><div class="full"><button class="secondary" type="submit">${icon2("lock-open", 14)} Unlock this device</button></div></form>`;
-      if (license.status !== "active" || license.expired) {
-        body = `${summary}<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>Live key programming is locked</strong><span>${license.status === "suspended" ? "ShopCrank suspended this license." : "This license has expired."} Contact ShopCrank to restore it.</span></div></div>`;
-      } else if (unlockState === "unlocked") {
-        body = `${summary}<div class="messaging-status idle">${icon2("lock-open", 17)}<div><strong>This device is unlocked for live key programming</strong><span>Until ${escapeHtml4(formatDate(license.expiresAt))}. Each key job is checked with ShopCrank and still needs a signed repair order and your confirmation.</span></div></div>`;
-      } else if (unlockState === "issued") {
-        body = `${summary}<div class="messaging-status idle">${icon2("link", 17)}<div><strong>Unlock link ready</strong><span>Opening the link does nothing by itself. Confirm below to unlock this device.</span></div></div><label class="full">Unlock link (works only on this device)<input readonly class="mono" id="key-license-url" value="${escapeHtml4(view.unlockUrl || "")}"></label><div class="messaging-actions"><button class="primary" type="button" id="key-license-redeem">${icon2("lock-open", 14)} Unlock this device</button><button class="secondary" type="button" id="key-license-copy">${icon2("copy", 14)} Copy link</button></div>`;
-      } else {
-        const stale = unlockState === "stale" ? `<p class="ledger-note">ShopCrank replaced or changed this device's unlock link. Get a new one.</p>` : "";
-        const blocked = unlockState === "blocked" || license.thisDevice?.status === "revoked";
-        body = blocked ? `${summary}<div class="messaging-status idle">${icon2("lock", 17)}<div><strong>This device was removed from the license</strong><span>Contact ShopCrank to license this computer again.</span></div></div>` : `${summary}${stale}<div class="messaging-actions"><button class="primary" type="button" id="key-license-issue">${icon2("key-round", 14)} Get unlock link for this device</button></div>${redeemForm}`;
-      }
-    }
-    const busy = view.busy ? `<p class="ledger-note">${escapeHtml4(view.busy)}</p>` : "";
-    const failure = view.lastError ? `<p class="login-error" role="alert">${escapeHtml4(view.lastError)}</p>` : "";
-    return `<section class="settings-panel key-license-panel" id="key-license-panel">${head}${refresh}${failure}${body}${deviceLine}${busy}</section>`;
-  }
-  function shortId(value2) {
-    return value2 ? `${String(value2).slice(0, 10)}\u2026` : "";
-  }
-  function auditDetail(detail = {}) {
-    return Object.entries(detail).map(([key, value2]) => `${key}: ${typeof value2 === "object" ? JSON.stringify(value2) : value2}`).join(", ");
-  }
-  function licenseAdminHtml(data, { escapeHtml: escapeHtml4, icon: icon2 }) {
-    if (!data) return `<p>Loading licenses\u2026</p>`;
-    const { licenses = [], requests = [], events = [], auditLicenseId = "" } = data;
-    const pending = requests.filter((item) => item.status === "pending");
-    const decided = requests.filter((item) => item.status !== "pending");
-    const active = licenses.filter((item) => item.status === "active" && !item.expired).length;
-    const uses = licenses.reduce((sum, item) => sum + item.useCount, 0);
-    const kpis = `<div class="platform-kpis"><article><span>Pending requests</span><strong>${pending.length}</strong></article><article><span>Active licenses</span><strong>${active}</strong></article><article><span>Suspended / revoked</span><strong>${licenses.filter((item) => item.status !== "active").length}</strong></article><article><span>Total unlock uses</span><strong>${uses}</strong></article></div>`;
-    const pendingRows = pending.map((item) => `<tr><td><b>${escapeHtml4(item.businessName)}</b><small class="mono">${escapeHtml4(item.shopId)}</small></td><td><b>${escapeHtml4(item.contactName)}</b><small>${escapeHtml4(item.requesterEmail || "")}</small></td><td>${escapeHtml4(item.proofDetails || "")}${item.licenseNumber ? `<small>License #: ${escapeHtml4(item.licenseNumber)}</small>` : ""}${item.hasProofFile ? `<small><button class="mini-action" type="button" data-license-proof="${escapeHtml4(item.id)}" data-file-name="${escapeHtml4(item.proofFileName || "license-proof")}">${icon2("file-down", 13)} ${escapeHtml4(item.proofFileName || "Proof file")}</button></small>` : ""}</td><td>${item.requestedDevices}<small>${escapeHtml4(formatDate(item.createdAt))}</small></td><td><div class="platform-row-actions"><button class="mini-action" type="button" data-license-approve="${escapeHtml4(item.id)}" data-business="${escapeHtml4(item.businessName)}" data-devices="${item.requestedDevices}">${icon2("badge-check", 13)} Approve</button><button class="mini-action" type="button" data-license-deny="${escapeHtml4(item.id)}" data-business="${escapeHtml4(item.businessName)}">${icon2("circle-x", 13)} Deny</button></div></td></tr>`).join("");
-    const licenseRows = licenses.map((item) => {
-      const label2 = item.status === "active" && item.expired ? "Expired" : item.status;
-      const devices = item.devices.map((device) => `<small><span class="mono">${escapeHtml4(shortId(device.deviceId))}</span> ${escapeHtml4(device.label || "")} \xB7 ${escapeHtml4(device.status)} \xB7 ${device.useCount} use${device.useCount === 1 ? "" : "s"}${device.status === "active" && item.status !== "revoked" ? ` <button class="mini-action" type="button" data-license-device-revoke="${escapeHtml4(item.id)}" data-device="${escapeHtml4(device.deviceId)}">${icon2("unplug", 12)} Remove</button>` : ""}</small>`).join("");
-      const statusAction = item.status === "active" ? `<button class="mini-action" type="button" data-license-action="suspend" data-license="${escapeHtml4(item.id)}" data-name="${escapeHtml4(item.customerName)}">${icon2("pause", 13)} Suspend</button>` : item.status === "suspended" ? `<button class="mini-action" type="button" data-license-action="reactivate" data-license="${escapeHtml4(item.id)}" data-name="${escapeHtml4(item.customerName)}">${icon2("play", 13)} Reactivate</button>` : "";
-      const actions = item.status === "revoked" ? "" : `<button class="mini-action" type="button" data-license-edit="${escapeHtml4(item.id)}">${icon2("calendar-clock", 13)} Edit expiry</button>${statusAction}<button class="mini-action" type="button" data-license-action="reissue" data-license="${escapeHtml4(item.id)}" data-name="${escapeHtml4(item.customerName)}">${icon2("rotate-cw", 13)} Reissue token</button><button class="mini-action" type="button" data-license-action="revoke" data-license="${escapeHtml4(item.id)}" data-name="${escapeHtml4(item.customerName)}">${icon2("shield-x", 13)} Revoke</button>`;
-      return `<tr><td><b>${escapeHtml4(item.customerName)}</b><small class="mono">${escapeHtml4(item.shopId)}</small></td><td>${badge(item.expired && item.status === "active" ? "revoked" : item.status, label2, escapeHtml4)}<small>Token v${item.tokenVersion}</small></td><td><b>${escapeHtml4(formatDate(item.expiresAt))}</b><small>${escapeHtml4(item.expiresAt)}</small></td><td>${item.activeDevices} of ${item.maxDevices}${devices}</td><td><b>${item.useCount}</b><small>${item.lastUsedAt ? `Last ${escapeHtml4(formatDateTime(item.lastUsedAt))}` : "Never used"}</small></td><td><div class="platform-row-actions">${actions}<button class="mini-action" type="button" data-license-audit="${escapeHtml4(item.id)}">${icon2("scroll-text", 13)} Audit</button></div></td></tr>`;
-    }).join("");
-    const decidedRows = decided.slice(0, 25).map((item) => `<tr><td><b>${escapeHtml4(item.businessName)}</b><small class="mono">${escapeHtml4(item.shopId)}</small></td><td>${badge(item.status, item.status, escapeHtml4)}</td><td>${escapeHtml4(item.decisionNote || "")}<small>${escapeHtml4(item.decidedBy || "")} \xB7 ${escapeHtml4(formatDateTime(item.decidedAt))}</small></td></tr>`).join("");
-    const eventRows = events.map((item) => `<tr><td class="mono">${escapeHtml4(formatDateTime(item.createdAt))}</td><td><b>${escapeHtml4(item.event)}</b></td><td class="mono">${escapeHtml4(item.shopId || "")}<small>${escapeHtml4(shortId(item.licenseId || item.requestId))}</small></td><td class="mono">${escapeHtml4(shortId(item.deviceId))}</td><td>${escapeHtml4(item.actorEmail || "")}</td><td>${escapeHtml4(auditDetail(item.detail))}</td></tr>`).join("");
-    return `${kpis}<div class="access-note platform-security">${icon2("shield-check", 15)} Only platform owners can approve, edit, suspend, revoke, or reissue vehicle key licenses. Unlock tokens carry the license expiry, work until then, and are checked here on every use.</div><div class="platform-action-buttons"><button class="primary" type="button" id="license-grant">${icon2("key-round", 15)} Grant license directly</button></div><h2>Pending requests</h2><div class="data-panel"><table><thead><tr><th>Shop</th><th>Contact</th><th>Proof</th><th>Computers</th><th>Decision</th></tr></thead><tbody>${pendingRows || '<tr><td colspan="5">No requests waiting for review.</td></tr>'}</tbody></table></div><h2>Licenses</h2><div class="data-panel"><table><thead><tr><th>Customer</th><th>Status</th><th>Expires</th><th>Devices</th><th>Uses</th><th>Actions</th></tr></thead><tbody>${licenseRows || '<tr><td colspan="6">No licenses yet.</td></tr>'}</tbody></table></div><h2>Audit log${auditLicenseId ? ` \xB7 <span class="mono">${escapeHtml4(shortId(auditLicenseId))}</span> <button class="mini-action" type="button" id="license-audit-all">Show all</button>` : ""}</h2><div class="data-panel"><table><thead><tr><th>Time</th><th>Event</th><th>Shop / record</th><th>Device</th><th>By</th><th>Detail</th></tr></thead><tbody>${eventRows || '<tr><td colspan="6">No events.</td></tr>'}</tbody></table></div>${decidedRows ? `<h2>Decided requests</h2><div class="data-panel"><table><thead><tr><th>Shop</th><th>Decision</th><th>Note</th></tr></thead><tbody>${decidedRows}</tbody></table></div>` : ""}`;
-  }
-  function expiryInputValue(iso) {
-    return iso ? String(iso).slice(0, 10) : "";
-  }
-  var LIVE_KEY_PROCEDURES, TOKEN_PATTERN, DB_NAME, STORE, readRecord, writeRecord, loadStoredUnlock, saveStoredUnlock, PROOF_TYPES, STATUS_BADGE;
-  var init_vehicle_key_license = __esm({
-    "src/modules/vehicle-key-license.js"() {
-      init_license_proof();
-      init_file_upload();
-      LIVE_KEY_PROCEDURES = /* @__PURE__ */ new Set(["add_key", "all_keys_lost", "program_remote", "erase_keys"]);
-      TOKEN_PATTERN = /^sck1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-      DB_NAME = "shopcrank-license-device";
-      STORE = "records";
-      readRecord = (key) => storeOp("readonly", (store) => store.get(key));
-      writeRecord = (key, value2) => storeOp("readwrite", (store) => store.put(value2, key));
-      loadStoredUnlock = () => readRecord("unlock").then((value2) => value2 || null);
-      saveStoredUnlock = (value2) => writeRecord("unlock", value2);
-      PROOF_TYPES = /* @__PURE__ */ new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
-      STATUS_BADGE = { active: "paid", suspended: "estimate", revoked: "overdue", pending: "estimate", approved: "paid", denied: "overdue" };
-    }
-  });
-
   // src/modules/customer-intake.js
   function normalizeCustomerSearch(value2) {
     return String(value2 || "").trim().replace(/\s+/g, " ");
@@ -5904,7 +5674,7 @@ button{margin-top:12px;padding:8px 14px}
       measurement: String(form.elements[`measure-${item.id}`]?.value || "")
     }));
   }
-  function readRecord2(form, catalog, existing, app) {
+  function readRecord(form, catalog, existing, app) {
     const data = new FormData(form);
     let photoKeys = [];
     try {
@@ -6106,7 +5876,7 @@ button{margin-top:12px;padding:8px 14px}
     form.onsubmit = async (event) => {
       event.preventDefault();
       const intent = event.submitter?.dataset.intent || "draft";
-      const record = readRecord2(form, catalog, existing, app);
+      const record = readRecord(form, catalog, existing, app);
       if (intent === "close") {
         const issues = closeInspectionIssues({ ...record, photoKeys: [...record.photoKeys, ...form.elements.photos?.files?.length ? ["pending"] : []] });
         if (issues.length) {
@@ -7110,7 +6880,7 @@ button{margin-top:12px;padding:8px 14px}
     };
   }
   function liveKeyProcedureFor(operation) {
-    return LIVE_KEY_PROCEDURES2[operation] || null;
+    return LIVE_KEY_PROCEDURES[operation] || null;
   }
   function normalizeVin(value2) {
     return String(value2 || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -7387,7 +7157,7 @@ button{margin-top:12px;padding:8px 14px}
       readAt: (/* @__PURE__ */ new Date()).toISOString()
     };
   }
-  var KEY_OPERATIONS, FORBIDDEN_KEY_REQUEST, LIVE_KEY_PROCEDURES2, ELM_SNAPSHOT_PIDS;
+  var KEY_OPERATIONS, FORBIDDEN_KEY_REQUEST, LIVE_KEY_PROCEDURES, ELM_SNAPSHOT_PIDS;
   var init_bay = __esm({
     "src/modules/shop-os/bay.js"() {
       KEY_OPERATIONS = [
@@ -7398,7 +7168,7 @@ button{margin-top:12px;padding:8px 14px}
         { id: "test", label: "Test" }
       ];
       FORBIDDEN_KEY_REQUEST = /bypass|clon(?:e|ing)|rolling[-\s]?code|stolen|immobilizer\s+bypass|\bfrp\b/i;
-      LIVE_KEY_PROCEDURES2 = Object.freeze({
+      LIVE_KEY_PROCEDURES = Object.freeze({
         add: "add_key",
         program: "program_remote",
         all_keys_lost: "all_keys_lost"
@@ -7529,10 +7299,10 @@ button{margin-top:12px;padding:8px 14px}
     if (normalized.type === "other") return normalized.customLabel || "Other";
     return ESTIMATE_APPROVAL_TYPES.find((option) => option.value === normalized.type)?.label || "Signature";
   }
-  function approvalSummary(approval, formatDate2 = (value2) => new Date(value2).toLocaleString()) {
+  function approvalSummary(approval, formatDate = (value2) => new Date(value2).toLocaleString()) {
     const normalized = normalizeEstimateApproval(approval);
     if (!normalized || normalized.status !== "approved") return "";
-    const when = normalized.approvedAt ? formatDate2(normalized.approvedAt) : "";
+    const when = normalized.approvedAt ? formatDate(normalized.approvedAt) : "";
     if (normalized.type === "signature") {
       return [`Signed by ${normalized.authorizationName || "customer"}`, when].filter(Boolean).join(" \u2014 ");
     }
@@ -8003,16 +7773,11 @@ button{margin-top:12px;padding:8px 14px}
       }
     });
   }
-  function toggleGlobalLiveAssistant() {
-    if (assistantPaused && !activeGrokSession?.isActive()) toggleAssistantPause();
-    startOrStopGrokVoice({ target: "global" });
+  function openGlobalAssistant() {
+    showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>ShopCrank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`);
+    bindLiveAssistant();
   }
   function toggleAssistantPause() {
-    if (activeGrokSession?.isActive()) {
-      startOrStopGrokVoice();
-      toast("Live AI ended");
-      return;
-    }
     assistantPaused = !assistantPaused;
     if (assistantPaused) {
       window.speechSynthesis?.cancel();
@@ -8255,15 +8020,15 @@ button{margin-top:12px;padding:8px 14px}
   }
   function load() {
     try {
-      const value2 = JSON.parse(localStorage.getItem(STORE2));
+      const value2 = JSON.parse(localStorage.getItem(STORE));
       if (value2?.version !== LOCAL_PREFERENCES_VERSION) {
-        localStorage.removeItem(STORE2);
+        localStorage.removeItem(STORE);
         return initialState();
       }
       const route = typeof value2.route === "string" && /^[a-z-]+$/.test(value2.route) ? value2.route : seed.route;
       return { ...initialState(), route };
     } catch {
-      localStorage.removeItem(STORE2);
+      localStorage.removeItem(STORE);
       return initialState();
     }
   }
@@ -8274,7 +8039,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function flushStateSave() {
     if (pendingStateSnapshot == null || pendingStateSnapshot === persistedStateSnapshot) return;
-    localStorage.setItem(STORE2, pendingStateSnapshot);
+    localStorage.setItem(STORE, pendingStateSnapshot);
     persistedStateSnapshot = pendingStateSnapshot;
     pendingStateSnapshot = null;
   }
@@ -8316,7 +8081,7 @@ button{margin-top:12px;padding:8px 14px}
   async function requestMagicLinkSignIn(email, turnstileToken = "") {
     let response;
     try {
-      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken, ...isDesktopApp ? { desktop: true } : {} }) });
+      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken }) });
     } catch (error) {
       if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again.");
       throw error;
@@ -8825,7 +8590,7 @@ button{margin-top:12px;padding:8px 14px}
   function label(status) {
     return { estimate: "Estimate", approved: "Approved", in_progress: "In progress", waiting_parts: "Waiting parts", completed: "Completed", invoiced: "Invoiced", paid: "Paid", sent: "Sent", overdue: "Overdue" }[status] || status;
   }
-  function badge2(status) {
+  function badge(status) {
     return `<span class="badge ${status}">${label(status)}</span>`;
   }
   function toast(message) {
@@ -8912,7 +8677,7 @@ button{margin-top:12px;padding:8px 14px}
     return shell(`${heading(shopDayLabel(), "Dispatch board", "Live shop workload, technician assignments, and promise times.")}${stats()}${toolbar()}<div class="board">${lanes}</div>`);
   }
   function orders() {
-    const rows = filtered().map((x) => `<tr data-order="${x.id}"><td class="mono strong">${x.id}</td><td><b>${escapeHtml(x.customer)}</b><small>${escapeHtml(x.phone)}</small></td><td><b>${escapeHtml(x.vehicle)}</b><small class="mono">${escapeHtml(x.vin)}</small></td><td>${badge2(x.status)}</td><td>${escapeHtml(x.tech)}<small>${escapeHtml(x.bay)}</small></td><td>${escapeHtml(x.promise)}</td><td><b>${money4(x.total)}</b></td></tr>`).join("");
+    const rows = filtered().map((x) => `<tr data-order="${x.id}"><td class="mono strong">${x.id}</td><td><b>${escapeHtml(x.customer)}</b><small>${escapeHtml(x.phone)}</small></td><td><b>${escapeHtml(x.vehicle)}</b><small class="mono">${escapeHtml(x.vin)}</small></td><td>${badge(x.status)}</td><td>${escapeHtml(x.tech)}<small>${escapeHtml(x.bay)}</small></td><td>${escapeHtml(x.promise)}</td><td><b>${money4(x.total)}</b></td></tr>`).join("");
     return shell(`${heading("Operations", "Work orders", "Every estimate, repair, and completed job in one searchable queue.")}${toolbar()}<div class="data-panel"><table><thead><tr><th>RO number</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Assignment</th><th>Promise</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("No matching work orders")}</div>`);
   }
   function schedule() {
@@ -8976,8 +8741,8 @@ button{margin-top:12px;padding:8px 14px}
   }
   function operationsInspections() {
     const rows = [...state.inspections].reverse().map((item) => {
-      const counts = (item.items || []).reduce((total, row) => (total[row.status] = (total[row.status] || 0) + 1, total), {}), results = item.catalogId ? `<span class="inspection-count fail">${counts.critical || 0} safety</span> <span class="inspection-count warn">${counts.soon || 0} soon</span> <span class="inspection-count good">${counts.ok || 0} ok</span>` : `<span class="inspection-count good">${counts.pass || 0} pass</span> <span class="inspection-count warn">${counts.attention || 0} attention</span> <span class="inspection-count fail">${counts.fail || 0} fail</span>`, badge3 = item.recordStatus === "closed" ? `<span class="badge paid">Closed</span>` : item.catalogId ? `<span class="badge estimate">Draft</span>` : item.approvalStatus === "approved" ? `<span class="badge paid">Approved</span>` : item.approvalStatus === "rejected" ? `<span class="badge overdue">Rejected</span>` : `<span class="badge estimate">Pending</span>`;
-      return `<tr><td><b>${escapeHtml(item.number)}</b><small>${escapeHtml(item.inspectionName || "Checklist")} \xB7 ${new Date(item.createdAt).toLocaleDateString()}</small></td><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.workOrderId || "Unlinked")}</td><td>${results}</td><td>${badge3}</td><td><button class="mini-action" data-edit-inspection="${item.id}">${icon("clipboard-check", 13)} Open</button><button class="mini-action" data-estimate-from-inspection="${item.id}">${icon("file-text", 13)} Estimate</button></td></tr>`;
+      const counts = (item.items || []).reduce((total, row) => (total[row.status] = (total[row.status] || 0) + 1, total), {}), results = item.catalogId ? `<span class="inspection-count fail">${counts.critical || 0} safety</span> <span class="inspection-count warn">${counts.soon || 0} soon</span> <span class="inspection-count good">${counts.ok || 0} ok</span>` : `<span class="inspection-count good">${counts.pass || 0} pass</span> <span class="inspection-count warn">${counts.attention || 0} attention</span> <span class="inspection-count fail">${counts.fail || 0} fail</span>`, badge2 = item.recordStatus === "closed" ? `<span class="badge paid">Closed</span>` : item.catalogId ? `<span class="badge estimate">Draft</span>` : item.approvalStatus === "approved" ? `<span class="badge paid">Approved</span>` : item.approvalStatus === "rejected" ? `<span class="badge overdue">Rejected</span>` : `<span class="badge estimate">Pending</span>`;
+      return `<tr><td><b>${escapeHtml(item.number)}</b><small>${escapeHtml(item.inspectionName || "Checklist")} \xB7 ${new Date(item.createdAt).toLocaleDateString()}</small></td><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.workOrderId || "Unlinked")}</td><td>${results}</td><td>${badge2}</td><td><button class="mini-action" data-edit-inspection="${item.id}">${icon("clipboard-check", 13)} Open</button><button class="mini-action" data-estimate-from-inspection="${item.id}">${icon("file-text", 13)} Estimate</button></td></tr>`;
     }).join("");
     return `<div class="ops-actions"><span class="ops-note">Lubbock flat rates. Repairs, parts, and disassembly are quoted separately.</span><button class="secondary" id="manage-templates">${icon("list-plus", 14)} Templates</button><button class="secondary" id="add-inspection">${icon("clipboard-check", 14)} Custom checklist</button></div><div class="inspection-catalog">${inspectionMenuHtml(escapeHtml)}</div><div class="data-panel"><table><thead><tr><th>Inspection</th><th>Customer & vehicle</th><th>Work order</th><th>Results</th><th>Status</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6">No inspections yet. Start one from the menu above.</td></tr>`}</tbody></table></div>`;
   }
@@ -10027,7 +9792,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function invoices() {
     const q = query.toLowerCase(), rows = state.invoices.filter((x) => !q || Object.values(x).join(" ").toLowerCase().includes(q)).map((x) => {
       const paid = invoicePaid(x), balance = invoiceBalance(x), bd = invoiceTaxBreakdown(x);
-      return `<tr><td class="mono"><b>${x.number}</b></td><td class="mono">${x.ro}</td><td><b>${x.customer}</b></td><td>${x.date}</td><td>${x.due}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(x.status)}</td><td><b>${money4(x.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments">${balance > 0 ? `<button class="mini-action" data-record-payment="${x.number}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${x.number}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${x.number}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${x.number}">${icon("message-square", 13)} Text to pay</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${x.number}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
+      return `<tr><td class="mono"><b>${x.number}</b></td><td class="mono">${x.ro}</td><td><b>${x.customer}</b></td><td>${x.date}</td><td>${x.due}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge(x.status)}</td><td><b>${money4(x.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments">${balance > 0 ? `<button class="mini-action" data-record-payment="${x.number}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${x.number}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${x.number}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${x.number}">${icon("message-square", 13)} Text to pay</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${x.number}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
     }).join("");
     return shell(`${heading("Accounts receivable", "Invoices", "Track open balances, invoice tax, and record cash or processor payments.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   }
@@ -10127,7 +9892,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function loginScreen() {
     if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon });
     const googleUrl = `${cloudflareConfig2.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. This window signs you in when ShopCrank opens. If the browser stays on Open ShopCrank, click that button once." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><p class="login-sent" id="login-sent" role="status" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
   }
   async function upgradeShopPlan() {
     const plans = [["shop", "Shop \xB7 $139/mo"], ["solo", "Solo \xB7 $69/mo"], ["shop_pro", "Shop Pro \xB7 $279/mo"], ["enterprise", "Enterprise \xB7 $559/mo"]];
@@ -10299,7 +10064,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function render() {
     const root = document.querySelector("#root");
     if (!currentUser()) {
-      root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
+      root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } });
       lucide.createIcons();
       bind();
       return;
@@ -10982,7 +10747,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const item = state.inventory.find((record) => record.id === line.inventoryId || line.inventorySku && record.sku === line.inventorySku);
       return `<p><b>${escapeHtml(item?.sku || line.inventorySku || "Unknown SKU")}</b> \xB7 ${escapeHtml(item?.name || line.service)} \xB7 ${Number(line.committedQuantity || 0)} committed</p>`;
     }).join("")}${x.inventoryDeducted ? `<small>Deducted ${new Date(x.inventoryCommittedAt).toLocaleString()}</small>` : ""}</section>` : "", assignment = canManage ? `<label>Assigned technician<select id="detail-tech"><option>Unassigned</option>${technicians.map((t) => `<option ${t === x.tech ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select></label><label>Labor hours<select id="detail-hours">${[0, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8].map((h) => `<option value="${h}" ${Number(x.laborHours ?? 0) === h ? "selected" : ""}>${h === 0 ? "Not set" : h.toFixed(2) + " hours"}</option>`).join("")}</select></label>` : `<section><h3>Assignment</h3><p>${escapeHtml(x.tech)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} labor hours</p></section>`;
-    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge2(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button><button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
+    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button><button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
     bindWorkOrderMileage(".modal");
     if (canManage) {
       const baySelect = document.querySelector("#detail-bay");
@@ -11137,7 +10902,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const customer = state.customers.find((c) => c.name === name);
     if (!customer) return;
     const vehicles = state.vehicles.filter((v) => v.customer === name), orders2 = state.orders.filter((o) => o.customer === name), invs = state.invoices.filter((i) => i.customer === name), payments2 = state.payments.filter((p) => p.customer === name), balance = customerBalance(name);
-    showModal(`<div class="modal wide" id="customer-detail"><div class="modal-head"><h2>${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="customer-detail-top"><div class="avatar">${initials(customer.name)}</div><div><p>${escapeHtml(customer.phone || "")} \xB7 ${escapeHtml(customer.email || "")}</p><p class="customer-balance ${balance > 0 ? "has-balance" : ""}">Account balance: <b>${money4(balance)}</b></p></div><div class="customer-detail-actions"><button class="secondary" id="cd-message">${icon("send", 14)} Message</button><button class="secondary" id="cd-statement">${icon("printer", 14)} Statement</button></div></div><div class="form-grid"><label>Billing address<textarea name="billingAddress" rows="2">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes" rows="2">${escapeHtml(customer.billingNotes || "")}</textarea></label><div class="full"><button class="mini-action" id="cd-save-billing">${icon("save", 13)} Save billing</button></div></div><h3>Vehicles (${vehicles.length})</h3><table class="mini-table"><thead><tr><th>Vehicle</th><th>VIN</th><th>Mileage</th></tr></thead><tbody>${vehicles.map((v) => `<tr class="clickable-row" data-cd-vehicle="${v.id}"><td><b>${escapeHtml(vehicleLabel3(v))}</b></td><td class="mono">${escapeHtml(v.vin || "")}</td><td>${v.mileage || ""}</td></tr>`).join("") || `<tr><td colspan="3">No vehicles linked</td></tr>`}</tbody></table><h3>Work Orders (${orders2.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Total</th></tr></thead><tbody>${orders2.slice(0, 10).map((o) => `<tr><td class="mono">${o.id}</td><td>${badge2(o.status)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="3">No work orders</td></tr>`}</tbody></table><h3>Invoices (${invs.length})</h3><table class="mini-table"><thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invs.map((i) => `<tr><td class="mono">${i.number}</td><td>${badge2(i.status)}</td><td>${money4(i.amount)}</td><td>${money4(invoiceBalance(i))}</td></tr>`).join("") || `<tr><td colspan="4">No invoices</td></tr>`}</tbody></table><h3>Payments (${payments2.length})</h3><table class="mini-table"><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${payments2.slice(0, 10).map((p) => `<tr><td>${p.receivedAt || ""}</td><td>${p.method || ""}</td><td>${money4(p.amount)}</td><td class="mono">${p.invoiceNumber || ""}</td></tr>`).join("") || `<tr><td colspan="4">No payments</td></tr>`}</tbody></table></div></div>`);
+    showModal(`<div class="modal wide" id="customer-detail"><div class="modal-head"><h2>${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="customer-detail-top"><div class="avatar">${initials(customer.name)}</div><div><p>${escapeHtml(customer.phone || "")} \xB7 ${escapeHtml(customer.email || "")}</p><p class="customer-balance ${balance > 0 ? "has-balance" : ""}">Account balance: <b>${money4(balance)}</b></p></div><div class="customer-detail-actions"><button class="secondary" id="cd-message">${icon("send", 14)} Message</button><button class="secondary" id="cd-statement">${icon("printer", 14)} Statement</button></div></div><div class="form-grid"><label>Billing address<textarea name="billingAddress" rows="2">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes" rows="2">${escapeHtml(customer.billingNotes || "")}</textarea></label><div class="full"><button class="mini-action" id="cd-save-billing">${icon("save", 13)} Save billing</button></div></div><h3>Vehicles (${vehicles.length})</h3><table class="mini-table"><thead><tr><th>Vehicle</th><th>VIN</th><th>Mileage</th></tr></thead><tbody>${vehicles.map((v) => `<tr class="clickable-row" data-cd-vehicle="${v.id}"><td><b>${escapeHtml(vehicleLabel3(v))}</b></td><td class="mono">${escapeHtml(v.vin || "")}</td><td>${v.mileage || ""}</td></tr>`).join("") || `<tr><td colspan="3">No vehicles linked</td></tr>`}</tbody></table><h3>Work Orders (${orders2.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Total</th></tr></thead><tbody>${orders2.slice(0, 10).map((o) => `<tr><td class="mono">${o.id}</td><td>${badge(o.status)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="3">No work orders</td></tr>`}</tbody></table><h3>Invoices (${invs.length})</h3><table class="mini-table"><thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invs.map((i) => `<tr><td class="mono">${i.number}</td><td>${badge(i.status)}</td><td>${money4(i.amount)}</td><td>${money4(invoiceBalance(i))}</td></tr>`).join("") || `<tr><td colspan="4">No invoices</td></tr>`}</tbody></table><h3>Payments (${payments2.length})</h3><table class="mini-table"><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${payments2.slice(0, 10).map((p) => `<tr><td>${p.receivedAt || ""}</td><td>${p.method || ""}</td><td>${money4(p.amount)}</td><td class="mono">${p.invoiceNumber || ""}</td></tr>`).join("") || `<tr><td colspan="4">No payments</td></tr>`}</tbody></table></div></div>`);
     document.querySelector("#cd-message")?.addEventListener("click", () => {
       closeModal();
       openCustomerMessage(customer.name, customer.phone, customer.email);
@@ -11169,7 +10934,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const vehicle = state.vehicles.find((v) => v.id === id);
     if (!vehicle) return;
     const history = linkedOrders(vehicle), photos = vehicle.photoKeys || [];
-    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge2(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions"><button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
+    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions"><button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
     document.querySelector("#vd-edit")?.addEventListener("click", () => {
       closeModal();
       openVehicleForm(vehicle);
@@ -11485,7 +11250,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return `<div class="finance-kpis"><article><span>Cash received</span><strong>${money4(data.income)}</strong><small>Paid invoices and posted income</small></article><article><span>Operating expenses</span><strong>${money4(data.expenses)}</strong><small>${state.expenses.length} recorded expenses</small></article><article class="${data.net >= 0 ? "positive" : "negative"}"><span>Net income</span><strong>${money4(data.net)}</strong><small>Cash-basis operating result</small></article><article><span>Accounts receivable</span><strong>${money4(data.receivable)}</strong><small>${money4(data.overdue)} overdue</small></article><article><span>Sales tax payable</span><strong>${money4(data.tax)}</strong><small>From paid work orders</small></article></div><div class="accounting-grid"><section class="statement"><div class="statement-head"><div><div class="eyebrow">Profit & loss</div><h2>Current activity</h2></div><span class="badge paid">Cash basis</span></div><div class="statement-line"><span>Service revenue</span><b>${money4(data.income)}</b></div><div class="statement-line"><span>Operating expenses</span><b>(${money4(data.expenses)})</b></div><div class="statement-line total"><span>Net income</span><b>${money4(data.net)}</b></div></section><section class="statement"><div class="statement-head"><div><div class="eyebrow">Controls</div><h2>Month-end checklist</h2></div>${icon("list-checks", 18)}</div><p>Review overdue receivables, reconcile the operating account, and set aside sales tax before filing.</p><small>Financial reporting is generated from records stored in this application.</small></section></div>`;
   }
   function arView(data) {
-    const rows = data.open.map((x) => `<tr><td class="mono"><b>${x.number}</b></td><td>${x.customer}</td><td>${x.due}</td><td>${badge2(x.status)}</td><td><b>${money4(x.amount)}</b></td></tr>`).join("");
+    const rows = data.open.map((x) => `<tr><td class="mono"><b>${x.number}</b></td><td>${x.customer}</td><td>${x.due}</td><td>${badge(x.status)}</td><td><b>${money4(x.amount)}</b></td></tr>`).join("");
     return `<div class="accounting-summary"><span>${data.open.length} open invoices</span><strong>${money4(data.receivable)} outstanding</strong></div><div class="data-panel"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Due</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No open receivables.</td></tr>`}</tbody></table></div>`;
   }
   function expenseView() {
@@ -11853,7 +11618,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const detail = item.type === "overdue" ? `${item.detail.split(" \xB7 ")[0]} \xB7 ${money4(item.amount || 0)}` : item.detail;
       return `<button class="home-row ${tone}" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : `data-route="invoices"`}><span class="home-row-icon">${icon(item.type === "overdue" ? "clock-alert" : item.type === "parts" ? "package" : "user-plus", 16)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail)}</small></span>${icon("chevron-right", 14)}</button>`;
     }).join("");
-    const todayJobs = model.todayJobs.map((order) => `<button class="home-job" type="button" data-order="${escapeHtml(order.id)}"><div><span class="mono">${escapeHtml(order.id)}</span>${badge2(order.status)}</div><strong>${escapeHtml(order.customer)}</strong><small>${escapeHtml(order.vehicle)}</small><span class="home-job-meta">${icon("clock-3", 12)}${escapeHtml(order.promise || "Unscheduled")} \xB7 ${escapeHtml(order.tech || "Unassigned")}</span></button>`).join("");
+    const todayJobs = model.todayJobs.map((order) => `<button class="home-job" type="button" data-order="${escapeHtml(order.id)}"><div><span class="mono">${escapeHtml(order.id)}</span>${badge(order.status)}</div><strong>${escapeHtml(order.customer)}</strong><small>${escapeHtml(order.vehicle)}</small><span class="home-job-meta">${icon("clock-3", 12)}${escapeHtml(order.promise || "Unscheduled")} \xB7 ${escapeHtml(order.tech || "Unassigned")}</span></button>`).join("");
     const appointments = model.todaysAppointments.map((item) => `<article class="home-appointment"><strong>${escapeHtml(item.time)} \xB7 ${escapeHtml(item.customer)}</strong><small>${escapeHtml(item.service)} \xB7 ${escapeHtml(item.bay || "Unassigned")}</small></article>`).join("");
     const activity = model.activity.map((item) => `<button class="home-row" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : 'data-route="invoices"'}><span class="home-row-icon muted">${icon("activity", 15)}</span><span><strong>${escapeHtml(item.title)} \xB7 ${escapeHtml(item.customer || "")}</strong><small>${escapeHtml(item.vehicle || item.meta || "")} \xB7 ${escapeHtml(label(item.status))}</small></span></button>`).join("");
     const start = model.isEmpty ? `<section class="home-start"><div><div class="eyebrow">Get started</div><h2>Your shop dashboard is ready</h2><p>Create a work order, book a visit, or open the dispatch board. Metrics, today's jobs, and recent activity fill in as soon as records land.</p></div><div class="home-start-actions"><button class="primary" type="button" data-open-new>${icon("plus", 15)} New work order</button>${canAccess("dispatch") ? `<button class="secondary" type="button" data-route="dispatch">${icon("layout-dashboard", 15)} Open dispatch</button>` : ""}</div></section>` : "";
@@ -14508,256 +14273,6 @@ ${line}`.trim();
     }
     if (state.route === "settings") render();
   }
-  function keyLicenseDeviceLabel() {
-    return `${isDesktopApp ? "ShopCrank Desktop" : "Browser"} \xB7 ${navigator.platform || "device"}`.slice(0, 80);
-  }
-  async function keyLicenseDevice() {
-    if (!keyLicenseIdentity) keyLicenseIdentity = await loadDeviceIdentity();
-    return keyLicenseIdentity;
-  }
-  async function loadKeyLicense(force = false) {
-    if (keyLicenseView.refreshing || keyLicenseView.loaded && !force) return;
-    keyLicenseView.refreshing = true;
-    try {
-      const identity = await keyLicenseDevice();
-      const status = await apiFetch(`/licenses/status?deviceId=${encodeURIComponent(identity.deviceId)}`);
-      const stored = await loadStoredUnlock();
-      keyLicenseView = { ...keyLicenseView, loaded: true, error: "", status, deviceId: identity.deviceId, unlockState: storedUnlockState(stored, status.license, identity.deviceId), unlockUrl: stored?.unlockUrl || "" };
-    } catch (error) {
-      keyLicenseView = { ...keyLicenseView, loaded: true, error: error.message || "Could not check the vehicle key license" };
-    } finally {
-      keyLicenseView.refreshing = false;
-    }
-    if (state.route === "keys") render();
-  }
-  async function withKeyLicenseBusy(message, task) {
-    keyLicenseView.busy = message;
-    keyLicenseView.lastError = "";
-    render();
-    try {
-      await task();
-    } catch (error) {
-      keyLicenseView.lastError = error.message || "Vehicle key license request failed";
-      toast(keyLicenseView.lastError);
-    }
-    keyLicenseView.busy = "";
-    await loadKeyLicense(true);
-  }
-  async function redeemKeyLicense(token, unlockUrl = "") {
-    const identity = await keyLicenseDevice();
-    const result = await apiFetch("/licenses/unlock/redeem", { method: "POST", body: JSON.stringify(await redeemRequestBody(identity, token)) });
-    const stored = await loadStoredUnlock();
-    await saveStoredUnlock({ ...stored?.token === token ? stored : {}, token, unlockUrl: unlockUrl || (stored?.token === token ? stored.unlockUrl : ""), licenseId: result.licenseId, expiresAt: result.expiresAt, redeemedAt: now() });
-    toast("This device is unlocked for live key programming");
-  }
-  function bindKeyLicensePanel() {
-    document.querySelector("#key-license-refresh")?.addEventListener("click", () => {
-      keyLicenseView.loaded = false;
-      render();
-    });
-    document.querySelector("#key-license-request-form")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const form = new FormData(event.target), file = form.get("proofFile");
-      const draft = { contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1) };
-      keyLicenseView.draft = draft;
-      void withKeyLicenseBusy("Sending your license request\u2026", async () => {
-        const proofFileKey = file && file.size ? await uploadProof(file, { apiFetch, fetchImpl: (url, init) => authorizedApiRequest(url.replace(/^\/api(?=\/)/, ""), init) }) : "";
-        await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ ...draft, proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
-        keyLicenseView.draft = null;
-        toast("License request sent to ShopCrank for review");
-      });
-    });
-    document.querySelector("#key-license-issue")?.addEventListener("click", () => void withKeyLicenseBusy("Requesting an unlock link for this device\u2026", async () => {
-      const identity = await keyLicenseDevice();
-      const issued = await apiFetch("/licenses/unlock/issue", { method: "POST", body: JSON.stringify(await issueRequestBody(identity, keyLicenseDeviceLabel())) });
-      await saveStoredUnlock({ token: issued.token, unlockUrl: issued.unlockUrl, licenseId: issued.licenseId, expiresAt: issued.expiresAt, tokenVersion: issued.tokenVersion, issuedAt: now() });
-      toast("Unlock link ready. Confirm to unlock this device.");
-    }));
-    document.querySelector("#key-license-redeem")?.addEventListener("click", () => void withKeyLicenseBusy("Unlocking this device\u2026", async () => {
-      const stored = await loadStoredUnlock();
-      if (!stored?.token) throw new Error("Get an unlock link for this device first");
-      await redeemKeyLicense(stored.token, stored.unlockUrl);
-    }));
-    document.querySelector("#key-license-redeem-form")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const input = String(new FormData(event.target).get("unlockLink") || "").trim();
-      const token = parseUnlockInput(input);
-      if (!token) {
-        toast("That is not a ShopCrank unlock link");
-        return;
-      }
-      void withKeyLicenseBusy("Unlocking this device\u2026", () => redeemKeyLicense(token, input.includes("#") ? input : ""));
-    });
-    document.querySelector("#key-license-copy")?.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(document.querySelector("#key-license-url")?.value || "");
-        toast("Unlock link copied");
-      } catch {
-        toast("Select the link and copy it");
-      }
-    });
-  }
-  async function loadLicenseAdmin() {
-    if (licenseAdminLoading) return;
-    licenseAdminLoading = true;
-    try {
-      const auditQuery = licenseAuditFilter ? `&licenseId=${encodeURIComponent(licenseAuditFilter)}` : "";
-      const [overview, audit] = await Promise.all([platformApi("/admin/licenses"), platformApi(`/admin/licenses/audit?limit=100${auditQuery}`)]);
-      licenseAdminData = { ...overview, events: audit.events || [], auditLicenseId: licenseAuditFilter };
-    } catch (error) {
-      licenseAdminData = { licenses: [], requests: [], events: [] };
-      toast(error.message || "Could not load licenses");
-    } finally {
-      licenseAdminLoading = false;
-    }
-    if (state.route === "licenses") render();
-  }
-  function licenseAdminView() {
-    if (licenseAdminData === null) void loadLicenseAdmin();
-    return platformShell(`${heading("Platform control", "Key licenses", "Review proof of licensing, approve with an expiration date, and suspend, revoke, or reissue vehicle key unlocks at any time.", false)}${licenseAdminHtml(licenseAdminData, { escapeHtml, icon })}`);
-  }
-  function reloadLicenseAdmin() {
-    licenseAdminData = null;
-    render();
-  }
-  function licenseFormModal({ id, title, summary = "", fields, note = "", submitLabel, onSubmit }) {
-    showModal(`<form class="modal" id="${id}"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${summary ? `<div class="estimate-sign-summary">${summary}</div>` : ""}<div class="form-grid">${fields}</div>${note ? `<div class="ledger-note">${note}</div>` : ""}<p class="login-error" id="${id}-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${submitLabel}</button></div></form>`);
-    const form = document.querySelector(`#${id}`);
-    form.onsubmit = async (event) => {
-      event.preventDefault();
-      const button = form.querySelector("button[type=submit]"), error = document.querySelector(`#${id}-error`);
-      button.disabled = true;
-      error.hidden = true;
-      try {
-        await onSubmit(readFormValues(form));
-        closeModal();
-        reloadLicenseAdmin();
-      } catch (requestError) {
-        error.textContent = requestError.message;
-        error.hidden = false;
-        button.disabled = false;
-      }
-    };
-  }
-  function licenseExpiryField(value2 = "") {
-    const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-    const latest = new Date(Date.now() + 3650 * 864e5).toISOString().slice(0, 10);
-    return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" max="${latest}" value="${escapeHtml(value2)}"/></label>`;
-  }
-  function openLicenseApprove(requestId, business, devices) {
-    licenseFormModal({
-      id: "license-approve-form",
-      title: "Approve license",
-      summary: `<span>${escapeHtml(business)}</span><strong>Set the expiration date</strong>`,
-      fields: `${licenseExpiryField()}<label>Licensed computers<input name="maxDevices" type="number" min="1" max="100" value="${escapeHtml(devices || "1")}"/></label><label class="full">Customer name<input name="customerName" value="${escapeHtml(business)}"/></label><label class="full">Note (shown to the customer)<input name="notes" maxlength="2000"/></label>`,
-      note: LICENSE_EXPIRY_NOTE,
-      submitLabel: `${icon("badge-check", 14)} Approve license`,
-      onSubmit: (data) => platformApi(`/admin/licenses/requests/${encodeURIComponent(requestId)}/approve`, { method: "POST", body: JSON.stringify(data) }).then(() => toast(`${business} licensed`))
-    });
-  }
-  function openLicenseDeny(requestId, business) {
-    licenseFormModal({
-      id: "license-deny-form",
-      title: "Deny license request",
-      summary: `<span>${escapeHtml(business)}</span><strong>Tell the customer why</strong>`,
-      fields: `<label class="full">Reason *<textarea name="reason" rows="3" required maxlength="1000"></textarea></label>`,
-      submitLabel: `${icon("circle-x", 14)} Deny request`,
-      onSubmit: (data) => platformApi(`/admin/licenses/requests/${encodeURIComponent(requestId)}/deny`, { method: "POST", body: JSON.stringify(data) }).then(() => toast("Request denied"))
-    });
-  }
-  function openLicenseEdit(license) {
-    if (!license) return;
-    licenseFormModal({
-      id: "license-edit-form",
-      title: "Edit license",
-      summary: `<span>${escapeHtml(license.customerName)}</span><strong>${escapeHtml(license.shopId)}</strong>`,
-      fields: `${licenseExpiryField(expiryInputValue(license.expiresAt))}<label>Licensed computers<input name="maxDevices" type="number" min="1" max="100" value="${license.maxDevices}"/></label><label class="full">Customer name<input name="customerName" required value="${escapeHtml(license.customerName)}"/></label><label class="full">Notes<input name="notes" maxlength="2000" value="${escapeHtml(license.notes || "")}"/></label>`,
-      note: `${LICENSE_EXPIRY_NOTE} Moving the date earlier stops existing unlock links immediately.`,
-      submitLabel: `${icon("save", 14)} Save license`,
-      onSubmit: (data) => platformApi(`/admin/licenses/${encodeURIComponent(license.id)}`, { method: "PUT", body: JSON.stringify(data) }).then(() => toast("License updated"))
-    });
-  }
-  function openLicenseGrant() {
-    licenseFormModal({
-      id: "license-grant-form",
-      title: "Grant license directly",
-      summary: "<span>No request on file</span><strong>Use only after verifying proof</strong>",
-      fields: `<label>Shop ID *<input name="shopId" required pattern="[a-z0-9][a-z0-9-]{2,63}"/></label><label>Customer name *<input name="customerName" required/></label>${licenseExpiryField()}<label>Licensed computers<input name="maxDevices" type="number" min="1" max="100" value="1"/></label><label class="full">Notes<input name="notes" maxlength="2000"/></label>`,
-      note: LICENSE_EXPIRY_NOTE,
-      submitLabel: `${icon("key-round", 14)} Grant license`,
-      onSubmit: (data) => platformApi("/admin/licenses", { method: "POST", body: JSON.stringify(data) }).then(() => toast("License granted"))
-    });
-  }
-  async function runLicenseAction(button) {
-    const { licenseAction: action, license, name } = button.dataset;
-    if (!confirm(LICENSE_ACTION_PROMPTS[action](name))) return;
-    button.disabled = true;
-    try {
-      await platformApi(`/admin/licenses/${encodeURIComponent(license)}/${action}`, { method: "POST", body: "{}" });
-      toast(`License ${action === "reissue" ? "token reissued" : `${action}d`}`);
-      reloadLicenseAdmin();
-    } catch (error) {
-      toast(error.message);
-      button.disabled = false;
-    }
-  }
-  async function downloadLicenseProof(requestId, fileName) {
-    try {
-      const response = await authorizedApiRequest(`/admin/licenses/requests/${encodeURIComponent(requestId)}/proof`);
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Could not open the proof file");
-      const url = URL.createObjectURL(await response.blob());
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName || "license-proof";
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 3e4);
-    } catch (error) {
-      toast(error.message);
-    }
-  }
-  function bindLicenseAdmin() {
-    document.querySelector("#refresh-platform")?.addEventListener("click", reloadLicenseAdmin);
-    document.querySelector("#license-grant")?.addEventListener("click", openLicenseGrant);
-    document.querySelector("#license-audit-all")?.addEventListener("click", () => {
-      licenseAuditFilter = "";
-      reloadLicenseAdmin();
-    });
-    document.querySelectorAll("[data-license-approve]").forEach((button) => {
-      button.onclick = () => openLicenseApprove(button.dataset.licenseApprove, button.dataset.business, button.dataset.devices);
-    });
-    document.querySelectorAll("[data-license-deny]").forEach((button) => {
-      button.onclick = () => openLicenseDeny(button.dataset.licenseDeny, button.dataset.business);
-    });
-    document.querySelectorAll("[data-license-edit]").forEach((button) => {
-      button.onclick = () => openLicenseEdit(licenseAdminData?.licenses?.find((item) => item.id === button.dataset.licenseEdit));
-    });
-    document.querySelectorAll("[data-license-action]").forEach((button) => {
-      button.onclick = () => void runLicenseAction(button);
-    });
-    document.querySelectorAll("[data-license-audit]").forEach((button) => {
-      button.onclick = () => {
-        licenseAuditFilter = button.dataset.licenseAudit;
-        reloadLicenseAdmin();
-      };
-    });
-    document.querySelectorAll("[data-license-proof]").forEach((button) => {
-      button.onclick = () => void downloadLicenseProof(button.dataset.licenseProof, button.dataset.fileName);
-    });
-    document.querySelectorAll("[data-license-device-revoke]").forEach((button) => {
-      button.onclick = async () => {
-        if (!confirm("Remove this computer from the license? Its unlock link stops working immediately.")) return;
-        button.disabled = true;
-        try {
-          await platformApi(`/admin/licenses/${encodeURIComponent(button.dataset.licenseDeviceRevoke)}/devices/${encodeURIComponent(button.dataset.device)}/revoke`, { method: "POST", body: "{}" });
-          toast("Device removed");
-          reloadLicenseAdmin();
-        } catch (error) {
-          toast(error.message);
-          button.disabled = false;
-        }
-      };
-    });
-  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -14817,15 +14332,6 @@ ${line}`.trim();
     const srStatus = document.querySelector("#assistant-voice-sr-status");
     if (srStatus) {
       srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
-    }
-    const floatBtn = document.querySelector("#global-assistant");
-    if (floatBtn) {
-      floatBtn.classList.toggle("is-live", isLive);
-      floatBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
-      floatBtn.setAttribute("aria-label", isLive ? `End live AI (${placeholder || "Live"})` : "Start live AI");
-      floatBtn.title = isLive ? "Click to end the live AI session" : "Talk to ShopCrank AI (live voice)";
-      floatBtn.innerHTML = isLive ? `${grokWaveformButtonIcon(true, phase)}<span class="assistant-float-label">${escapeHtml(placeholder || "Live")}</span>` : `${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span>`;
-      if (!isLive) globalThis.lucide?.createIcons?.();
     }
     const phoneBtn = document.querySelector("#grok-phone-live-btn");
     if (phoneBtn) {
@@ -14948,7 +14454,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -14972,7 +14478,6 @@ ${line}`.trim();
       init_repair_order_flow();
       init_file_upload();
       init_ai_workflow();
-      init_vehicle_key_license();
       init_customer_intake();
       init_mileage();
       init_filing();
@@ -15010,7 +14515,7 @@ ${line}`.trim();
       assistantPaused = false;
       assistantSessionId = "";
       assistantActiveProvider = "gemini";
-      STORE2 = storageKeys.dispatch;
+      STORE = storageKeys.dispatch;
       seed = {
         route: "home",
         orders: [
@@ -15118,7 +14623,7 @@ ${line}`.trim();
       usStates = [{ code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" }, { code: "AZ", name: "Arizona" }, { code: "AR", name: "Arkansas" }, { code: "CA", name: "California" }, { code: "CO", name: "Colorado" }, { code: "CT", name: "Connecticut" }, { code: "DE", name: "Delaware" }, { code: "DC", name: "District of Columbia" }, { code: "FL", name: "Florida" }, { code: "GA", name: "Georgia" }, { code: "HI", name: "Hawaii" }, { code: "ID", name: "Idaho" }, { code: "IL", name: "Illinois" }, { code: "IN", name: "Indiana" }, { code: "IA", name: "Iowa" }, { code: "KS", name: "Kansas" }, { code: "KY", name: "Kentucky" }, { code: "LA", name: "Louisiana" }, { code: "ME", name: "Maine" }, { code: "MD", name: "Maryland" }, { code: "MA", name: "Massachusetts" }, { code: "MI", name: "Michigan" }, { code: "MN", name: "Minnesota" }, { code: "MS", name: "Mississippi" }, { code: "MO", name: "Missouri" }, { code: "MT", name: "Montana" }, { code: "NE", name: "Nebraska" }, { code: "NV", name: "Nevada" }, { code: "NH", name: "New Hampshire" }, { code: "NJ", name: "New Jersey" }, { code: "NM", name: "New Mexico" }, { code: "NY", name: "New York" }, { code: "NC", name: "North Carolina" }, { code: "ND", name: "North Dakota" }, { code: "OH", name: "Ohio" }, { code: "OK", name: "Oklahoma" }, { code: "OR", name: "Oregon" }, { code: "PA", name: "Pennsylvania" }, { code: "RI", name: "Rhode Island" }, { code: "SC", name: "South Carolina" }, { code: "SD", name: "South Dakota" }, { code: "TN", name: "Tennessee" }, { code: "TX", name: "Texas" }, { code: "UT", name: "Utah" }, { code: "VT", name: "Vermont" }, { code: "VA", name: "Virginia" }, { code: "WA", name: "Washington" }, { code: "WV", name: "West Virginia" }, { code: "WI", name: "Wisconsin" }, { code: "WY", name: "Wyoming" }];
       saveTimer = 0;
       pendingStateSnapshot = null;
-      persistedStateSnapshot = localStorage.getItem(STORE2) || null;
+      persistedStateSnapshot = localStorage.getItem(STORE) || null;
       window.addEventListener("pagehide", flushStateSave);
       window.addEventListener("beforeunload", flushStateSave);
       cloudflareConfig2 = (window.__SHOP_CRANK_CONFIG__ || window.__MECHPRO_CONFIG__).cloudflare;
@@ -15272,22 +14777,7 @@ ${line}`.trim();
             }
             const email = String(emailInput?.value || "").trim().toLowerCase();
             if (!email) throw new Error("Enter your work email to continue.");
-<<<<<<< Updated upstream
-            const result = await requestMagicLinkSignIn(email, turnstile?.token() || "");
-            if (result?.redirecting) return;
-            if (result?.sent) {
-              if (sentEl) {
-                sentEl.textContent = isDesktopApp ? "Check your email and open the sign-in link. It opens in your browser; click Open ShopCrank there to finish signing in to this app. The link expires in 15 minutes." : result.message || "Check your email for a sign-in link. It expires in 15 minutes.";
-                sentEl.hidden = false;
-              }
-              submitButton.disabled = false;
-              submitButton.textContent = "Resend sign-in link";
-              return;
-            }
-            throw new Error("Check your email for a sign-in link.");
-=======
             await signInWithEmailLink(email, { sentEl, submitButton, turnstile });
->>>>>>> Stashed changes
           } catch (error) {
             resetFailedSignIn(error, { errorEl, submitButton, turnstile });
           }
@@ -15431,7 +14921,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${escapeHtml(invoice.number)}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${escapeHtml(invoice.number)}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Track open balances, invoice tax, payments, and branded print copies.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows}</tbody></table></div>`);
       };
@@ -15517,7 +15007,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice), key = escapeHtml(invoiceRecordKey(invoice));
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button><button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button><button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Edit invoice details and safely remove invoices without payment history.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows || `<tr><td colspan="7">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
@@ -15634,11 +15124,10 @@ ${line}`.trim();
           return;
         }
         if (existing) return;
-        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Talk to ShopCrank AI (live voice)" aria-label="Start live AI" aria-pressed="false">${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
-        document.querySelector("#global-assistant").onclick = toggleGlobalLiveAssistant;
+        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
+        document.querySelector("#global-assistant").onclick = openGlobalAssistant;
         document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
         lucide.createIcons();
-        updateGrokVoiceUiControls();
       };
       apiFetchAssistantCore = apiFetch;
       apiFetch = async function(path, options = {}) {
@@ -15857,7 +15346,7 @@ ${line}`.trim();
         };
       };
       orders = function() {
-        const rows = filtered().map((order) => `<tr data-order="${escapeAttr(order.id)}"><td class="mono strong">${escapeHtml(order.id)}</td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "")}</small></td><td><b>${escapeHtml(order.vehicle)}</b><small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${badge2(order.status)}</td><td>${escapeHtml(assignmentSummary(order, state.users))}<small>${escapeHtml(order.bay || "Unassigned")}</small></td><td>${escapeHtml(order.promise || "Unscheduled")}</td><td><b>${money4(order.total)}</b></td><td><button class="mini-action" type="button" data-edit-order="${escapeAttr(order.id)}">${icon("pencil", 13)} Edit</button></td></tr>`).join("");
+        const rows = filtered().map((order) => `<tr data-order="${escapeAttr(order.id)}"><td class="mono strong">${escapeHtml(order.id)}</td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "")}</small></td><td><b>${escapeHtml(order.vehicle)}</b><small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${badge(order.status)}</td><td>${escapeHtml(assignmentSummary(order, state.users))}<small>${escapeHtml(order.bay || "Unassigned")}</small></td><td>${escapeHtml(order.promise || "Unscheduled")}</td><td><b>${money4(order.total)}</b></td><td><button class="mini-action" type="button" data-edit-order="${escapeAttr(order.id)}">${icon("pencil", 13)} Edit</button></td></tr>`).join("");
         return shell(`${heading("Operations", "Work orders", "Open and edit customer, vehicle, assignment, status, and service details.")}${toolbar()}<div class="data-panel"><table><thead><tr><th>RO number</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Assignment</th><th>Promise</th><th>Total</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("No matching work orders")}</div>`);
       };
       updateOrderInApi = async function(record) {
@@ -16001,7 +15490,7 @@ ${line}`.trim();
         const editor = canEditEstimate && !paidInvoice ? `<section class="job-editor"><div class="job-section-head"><div><h3>Edit line items</h3><p>${terminalOrder ? "After-midnight fee changes are locked after completion or invoicing. Reopen the work order before adding or replacing that fee." : editNotice}</p></div><div><button class="secondary" id="job-add-after-midnight-fee" type="button" ${terminalOrder ? `disabled title="Reopen this work order before adding the after-midnight fee"` : ""}>${icon("moon-star", 14)} Add after-midnight fee</button><button class="secondary" id="job-add-labor" type="button">${icon("wrench", 14)} Add labor</button><button class="secondary" id="job-add-part" type="button">${icon("package-plus", 14)} Add part</button></div></div><div id="job-estimate-editor" data-shop-supplies="${Number(estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount ?? "")}" data-discount-percent="${Number(estimate.discountPercent || 0)}" data-discount-reason="${escapeAttr(estimate.discountReason || "")}" data-exclusions="${escapeAttr(JSON.stringify(estimate.exclusions || []))}" data-insurance="${escapeAttr(JSON.stringify(estimate.insurance || {}))}">${estimate.lines.map((line, index) => estimateEditorLine(line, index)).join("")}</div><div class="job-estimate-summary"></div><button class="primary" id="save-job-lines" type="button">${icon("save", 14)} Save line items</button></section>` : "";
         const approvalActions = (order.status === "estimate" || order.estimateRevisionPending) && canManage && !["completed", "invoiced"].includes(order.status) ? `<div class="job-actions"><button class="secondary" data-send-job-estimate="email">${icon("mail", 14)} Email link</button><button class="secondary" data-send-job-estimate="sms">${icon("message-square", 14)} Text link</button>${canApprove ? `<button class="primary" id="sign-job-estimate">${icon("circle-check", 14)} Record approval</button>` : ""}</div>` : "";
         const workActions = canManage && order.status === "approved" ? `<div class="job-actions"><button class="primary" id="start-job-work">${icon("play", 14)} Start work</button></div>` : canManage && ["in_progress", "waiting_parts"].includes(order.status) ? `<div class="job-actions"><button class="primary" id="complete-job-card">${icon("circle-check", 14)} Complete job & generate invoice</button></div>` : "";
-        const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge2(invoice.status)} \xB7 ${money4(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
+        const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge(invoice.status)} \xB7 ${money4(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
         const assignments = canManage ? laborAssignmentPanel(order, estimate) : "";
         showModal(`<div class="modal wide job-card-modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Job card</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body">${jobWorkflowSteps(order, invoice)}${detailsEditor}${estimatePresentation(order, estimate, { locked: false })}${assignments}${editor}${approvalActions}${workActions}${invoiceCard}</div><div class="modal-actions"><button class="secondary" type="button" id="print-job-card">${icon("printer", 14)} Print job card</button><button class="secondary" data-close>Close</button></div></div>`);
         const editorRoot = document.querySelector("#job-estimate-editor");
@@ -16207,7 +15696,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Balance ${money4(balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Balance ${money4(balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Review the completed job, capture a mobile signature, and collect payment.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`);
       };
@@ -16423,14 +15912,8 @@ ${line}`.trim();
         openNewWithDraft();
       };
       savedEstimates = function() {
-<<<<<<< Updated upstream
-        const reference = `<section class="reference-template-card"><div><div class="eyebrow">Reusable shop template</div><h2>${REFERENCE_ESTIMATE.number}</h2><p>${escapeHtml(REFERENCE_ESTIMATE.customer.name)} \xB7 ${escapeHtml(REFERENCE_ESTIMATE.vehicle.description)}</p></div><strong>${money4(REFERENCE_ESTIMATE.total)}</strong><div><button class="secondary" data-preview-estimate="${REFERENCE_ESTIMATE.id}">${icon("file-text", 14)} View estimate</button><button class="primary" data-fill-estimate="${REFERENCE_ESTIMATE.id}">${icon("clipboard-plus", 14)} Fill new work order</button></div></section>`;
-        const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge2(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
-        return `${reference}<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
-=======
         const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
         return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
->>>>>>> Stashed changes
       };
       liveAssistant = function() {
         const rows = assistantConversation.map(assistantMessageMarkup).join("");
@@ -16554,7 +16037,7 @@ ${line}`.trim();
         const rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const summary = invoicePaymentSummary(invoice);
           const bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge2(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Record partial or full payments, monitor remaining balances, and review collection history.", false)}${receivableStats()}<div class="data-panel invoice-register"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Closeout</th><th>Status</th><th>Total</th><th>Payments</th></tr></thead><tbody>${rows || `<tr><td colspan="8">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
@@ -16579,7 +16062,7 @@ ${line}`.trim();
         });
         document.querySelector("#edit-assignments")?.addEventListener("click", () => openAssignmentEditor(order));
         const summary = workOrderPaymentSummary(order);
-        modalBody.insertAdjacentHTML("beforeend", `<section class="work-order-payments"><div class="job-section-head"><div><h3>Payments</h3><p>Record deposits or partial collections against this work order.</p></div>${summary.balance > 0 ? `<button class="primary" type="button" id="record-work-order-payment">${icon("badge-dollar-sign", 14)} Record payment</button>` : ""}</div><div class="payment-balance-grid"><div><span>Total</span><b>${money4(summary.total)}</b></div><div><span>Paid</span><b>${money4(summary.paid)}</b></div><div><span>Remaining</span><b>${money4(summary.balance)}</b></div><div><span>Status</span>${badge2(summary.status)}</div></div>${paymentHistoryMarkup(summary)}</section>`);
+        modalBody.insertAdjacentHTML("beforeend", `<section class="work-order-payments"><div class="job-section-head"><div><h3>Payments</h3><p>Record deposits or partial collections against this work order.</p></div>${summary.balance > 0 ? `<button class="primary" type="button" id="record-work-order-payment">${icon("badge-dollar-sign", 14)} Record payment</button>` : ""}</div><div class="payment-balance-grid"><div><span>Total</span><b>${money4(summary.total)}</b></div><div><span>Paid</span><b>${money4(summary.paid)}</b></div><div><span>Remaining</span><b>${money4(summary.balance)}</b></div><div><span>Status</span>${badge(summary.status)}</div></div>${paymentHistoryMarkup(summary)}</section>`);
         document.querySelector("#record-work-order-payment")?.addEventListener("click", () => recordTargetPayment("work_order", order.id));
         lucide.createIcons();
       };
@@ -17107,85 +16590,6 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           shopAiSettings = { ...shopAiSettings, loaded: false };
         }
         return result;
-      };
-      keyLicenseView = { loaded: false, refreshing: false, status: null, deviceId: "", unlockState: "none", unlockUrl: "", busy: "", error: "" };
-      keyLicenseIdentity = null;
-      keyProgrammingBayLicenseCore = keyProgrammingBay;
-      keyProgrammingBay = function() {
-        const page = keyProgrammingBayLicenseCore();
-        if (isOfflineDesktop()) return page;
-        if (!keyLicenseView.loaded) void loadKeyLicense();
-        const panel = keyLicensePanelHtml({ ...keyLicenseView, loading: !keyLicenseView.loaded }, { escapeHtml, icon });
-        return page.replace('<form class="form-grid" id="key-job-form">', (match) => `${panel}${match}`);
-      };
-      startLiveKeyJobLicenseCore = startLiveKeyJob;
-      startLiveKeyJob = async function(data) {
-        if (liveKeyProcedureFor(data.operation)) {
-          const stored = await loadStoredUnlock().catch(() => null);
-          if (!stored?.redeemedAt) {
-            toast("Unlock this device with your ShopCrank vehicle key license first");
-            document.querySelector("#key-license-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
-            return;
-          }
-        }
-        return startLiveKeyJobLicenseCore(data);
-      };
-      apiFetchKeyLicenseCore = apiFetch;
-      apiFetch = async function(path, options = {}) {
-        if (path !== "/diagnostics/authorize" || !options.body) return apiFetchKeyLicenseCore(path, options);
-        let body = null;
-        try {
-          body = JSON.parse(options.body);
-        } catch {
-          body = null;
-        }
-        if (!requiresVehicleKeyLicense(body)) return apiFetchKeyLicenseCore(path, options);
-        const stored = await loadStoredUnlock();
-        if (!stored?.redeemedAt) throw new Error("This device is not unlocked for live key programming. Open Key programming and unlock it with your ShopCrank license.");
-        const licenseUnlock = await authorizeUnlock(await keyLicenseDevice(), stored.token, body.procedure, String(body.vin || "").trim());
-        try {
-          return await apiFetchKeyLicenseCore(path, { ...options, body: JSON.stringify({ ...body, licenseUnlock }) });
-        } catch (error) {
-          keyLicenseView.loaded = false;
-          throw error;
-        }
-      };
-      window.apiFetch = apiFetch;
-      if (!roleRoutes.super_admin.includes("licenses")) roleRoutes.super_admin.push("licenses");
-      licenseAdminData = null;
-      licenseAdminLoading = false;
-      licenseAuditFilter = "";
-      platformShellLicenseCore = platformShell;
-      platformShell = function(content) {
-        const shopsNav = nav("superadmin", "building-2", "Customer shops");
-        return platformShellLicenseCore(content).replace(shopsNav, `${shopsNav}${nav("licenses", "key-round", "Key licenses")}`);
-      };
-      LICENSE_EXPIRY_NOTE = `${icon("calendar-clock", 15)} Unlocks stop at the end of this day (UTC). The customer's unlock token carries this date as its expiry.`;
-      LICENSE_ACTION_PROMPTS = {
-        suspend: (name) => `Suspend ${name}? Live key programming stops right away on every device. After reactivation each device needs a new unlock link.`,
-        reactivate: (name) => `Reactivate ${name}? Devices will need a new unlock link.`,
-        revoke: (name) => `Revoke ${name}? This is permanent and stops every unlock link immediately.`,
-        reissue: (name) => `Reissue the unlock token for ${name}? Every existing unlock link stops working; licensed devices must get a new link.`
-      };
-      bindKeyLicenseCore = bind;
-      bind = function() {
-        bindKeyLicenseCore();
-        const user = currentUser();
-        if (!user) return;
-        if (state.route === "keys" && !isOfflineDesktop()) bindKeyLicensePanel();
-        if (state.route === "licenses" && user.role === "super_admin") bindLicenseAdmin();
-      };
-      renderKeyLicenseCore = render;
-      render = function() {
-        if (currentUser()?.role === "super_admin" && state.route === "licenses") {
-          const root = document.querySelector("#root");
-          root.innerHTML = safeHtml(licenseAdminView());
-          lucide.createIcons();
-          bind();
-          bindPlatformAdmin();
-          return;
-        }
-        renderKeyLicenseCore();
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
       activeGrokSession = null;
