@@ -37,6 +37,7 @@ const SHOP = 'Smoke Test Garage';
 const results = [];
 const children = [];
 let server;
+let tempWorkDir = '';
 
 function record(name, pass, detail = '') {
   results.push({ name, pass, detail: String(detail).slice(0, 300) });
@@ -151,6 +152,7 @@ function photoFixture(dir) {
 async function main() {
   mkdirSync(artifactsDir, { recursive: true });
   const work = await startStack();
+  tempWorkDir = work;
   const photo = photoFixture(work);
   const browser = await chromium.launch({
     executablePath: process.env.SMOKE_CHROMIUM_PATH || undefined,
@@ -306,7 +308,6 @@ async function main() {
   } finally {
     if (results.some(result => !result.pass)) await page.screenshot({ path: join(artifactsDir, 'failure.png'), fullPage: true }).catch(() => {});
     await browser.close();
-    rmSync(work, { recursive: true, force: true });
   }
 }
 
@@ -322,6 +323,13 @@ main()
       } catch { /* already gone */ }
     }
     rmSync(join(root, LOCAL_WRANGLER_CONFIG), { force: true });
+    if (tempWorkDir) {
+      try {
+        rmSync(tempWorkDir, { recursive: true, force: true });
+      } catch {
+        // workerd can keep file handles briefly on Windows; cleanup is best effort.
+      }
+    }
     const failed = results.filter(result => !result.pass);
     console.log(`\n${results.length - failed.length}/${results.length} smoke checks passed`);
     setTimeout(() => process.exit(failed.length ? 1 : 0), 500);
