@@ -9,22 +9,28 @@
   "theme_color": "#074251",
   "icons": [
     {
-      "src": "./assets/brand/logo-icon-192.png",
+      "src": "c:/Users/secon/OneDrive/Reliable Automotive Services/logos/manifest-icon-192.maskable.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./assets/brand/logo-icon-512.png",
-      "sizes": "512x512",
+      "src": "c:/Users/secon/OneDrive/Reliable Automotive Services/logos/manifest-icon-192.maskable.png",
+      "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     },
     {
-      "src": "./shopcrank-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "c:/Users/secon/OneDrive/Reliable Automotive Services/logos/manifest-icon-512.maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "c:/Users/secon/OneDrive/Reliable Automotive Services/logos/manifest-icon-512.maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

@@ -26,7 +26,6 @@ import { revenueRecognitionPanelHtml } from '../modules/revenue-recognition.js';
 import { applyEstimateFromInspection } from '../modules/repair-order-flow.js';
 import { uploadFailureMessage, uploadFileToStorage } from '../modules/file-upload.js';
 import { applyAiWorkflowEstimate } from '../modules/ai-workflow.js';
-import * as KeyLicense from '../modules/vehicle-key-license.js';
 import {
   CUSTOMER_SEARCH_DEBOUNCE_MS,
   CUSTOMER_SEARCH_MIN_LENGTH,
@@ -379,10 +378,7 @@ function bindIntegrations() {
 }
 let assistantConversation = [], assistantPaused = false, assistantSessionId = "", assistantActiveProvider = "gemini";
 function openGlobalAssistant() { showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>ShopCrank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`); bindLiveAssistant(); }
-// The floating Assistant button goes straight to the live voice AI: one click
-// starts listening, the next click (or the pause button) ends the session.
-function toggleGlobalLiveAssistant() { if (assistantPaused && !activeGrokSession?.isActive()) toggleAssistantPause(); startOrStopGrokVoice({ target: "global" }) }
-function toggleAssistantPause() { if (activeGrokSession?.isActive()) { startOrStopGrokVoice(); toast("Live AI ended"); return } assistantPaused = !assistantPaused; if (assistantPaused) { window.speechSynthesis?.cancel(); toast("Assistant paused") } else toast("Assistant resumed"); document.querySelectorAll("[data-assistant-pause]").forEach(button => { button.title = assistantPaused ? "Resume assistant" : "Pause assistant"; button.innerHTML = icon(assistantPaused ? "play" : "pause", 15) }); document.querySelectorAll("#assistant-form textarea,#assistant-form button").forEach(control => { control.disabled = assistantPaused }) }
+function toggleAssistantPause() { assistantPaused = !assistantPaused; if (assistantPaused) { window.speechSynthesis?.cancel(); toast("Assistant paused") } else toast("Assistant resumed"); document.querySelectorAll("[data-assistant-pause]").forEach(button => { button.title = assistantPaused ? "Resume assistant" : "Pause assistant"; button.innerHTML = icon(assistantPaused ? "play" : "pause", 15) }); document.querySelectorAll("#assistant-form textarea,#assistant-form button").forEach(control => { control.disabled = assistantPaused }) }
 function liveAssistant() { const rows = assistantConversation.map(item => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join(""); return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Live voice assistant</div><h2>Ask ShopCrank anything</h2><p>Talk or type questions about shop operations, vehicles, work orders, invoices, and repair decisions.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Your live assistant is ready. Ask a question to begin.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Ask about a customer, repair, invoice, or shop task..."></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Speak to ShopCrank">${icon("mic", 15)} Speak</button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div></form></section>` }
 function aiWorkbench() { const tabs = [["workflow", "RO workflow"], ["diagnostics", "Diagnostics"], ["estimate", "Estimator"], ["saved-estimates", "Estimates"], ["guide", "Repair guide"], ["phone", "Phone intake"]], body = { workflow: aiWorkflowForm(), diagnostics: aiDiagnosticsForm(), estimate: aiEstimateForm(), "saved-estimates": savedEstimates(), guide: aiGuideForm(), phone: aiPhoneForm() }[aiTab]; return shell(`${heading("Service intelligence", "AI Workbench", "Diagnostics, estimates, repair planning, and live conversation in one workspace.", false)}${liveAssistant()}<div class="ai-notice">${icon("sparkles", 16)}<span>AI outputs are recommendations. Verify safety-critical work and customer-impacting changes before acting.</span></div><div class="accounting-tabs">${tabs.map(tab => `<button class="tab ${aiTab === tab[0] ? "active" : ""}" data-ai-tab="${tab[0]}">${tab[1]}</button>`).join("")}</div>${body}`) }
 function aiFormShell(title, description, fields, action) { return `<section class="ai-panel"><div class="statement-head"><div><div class="eyebrow">AI assistant</div><h2>${title}</h2><p>${description}</p></div>${icon("sparkles", 19)}</div><form class="form-grid" id="ai-form">${fields}<div class="full"><button class="primary" type="submit">${icon("sparkles", 15)} ${action}</button></div></form></section>` }
@@ -522,7 +518,7 @@ function isLocalShell() {
   return location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(location.hostname)
 }
 async function cloudflareAccessSignIn() { if (isOfflineDesktop()) throw new Error("Sign in with the password saved on this computer."); if (isLocalShell()) return localAccessSession(); const response = await fetch(`${cloudflareConfig.apiUrl}/auth/session`, { credentials: "include", cache: "no-store", headers: { Accept: "application/json" } }); const session = await response.json().catch(() => ({})); if (!response.ok || !session.claims) throw new Error(session.message || "Cloudflare Access authentication failed"); sessionStorage.setItem(storageKeys.session, JSON.stringify(session)); return session }
-async function requestMagicLinkSignIn(email, turnstileToken = "") { let response; try { response = await fetch(`${cloudflareConfig.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken, ...(isDesktopApp ? { desktop: true } : {}) }) }) } catch (error) { if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again."); throw error } const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || "Could not start sign-in"); const loginUrl = payload.loginUrl || payload.login_url || payload.url; if (loginUrl) { location.assign(loginUrl); return { redirecting: true, email } }; return { sent: true, email, message: payload.message || "Check your email for a sign-in link. It expires in 15 minutes. Look in spam if it is not in your inbox." } }
+async function requestMagicLinkSignIn(email, turnstileToken = "") { let response; try { response = await fetch(`${cloudflareConfig.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken }) }) } catch (error) { if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again."); throw error } const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || "Could not start sign-in"); const loginUrl = payload.loginUrl || payload.login_url || payload.url; if (loginUrl) { location.assign(loginUrl); return { redirecting: true, email } }; return { sent: true, email, message: payload.message || "Check your email for a sign-in link. It expires in 15 minutes. Look in spam if it is not in your inbox." } }
 const cloudflareSignIn = cloudflareAccessSignIn;
 function authSession() { try { const raw = sessionStorage.getItem(storageKeys.session) || localStorage.getItem(storageKeys.session); const session = JSON.parse(raw || "null"); if (!session?.claims) return null; const expiresAt = Number(session.expiresAt || session.claims.exp * 1000 || 0); if (!expiresAt || expiresAt <= Date.now()) { clearAuthSession(); return null } if (localStorage.getItem(storageKeys.session)) { sessionStorage.setItem(storageKeys.session, JSON.stringify(session)); localStorage.removeItem(storageKeys.session) } return session } catch { clearAuthSession(); return null } }
 function clearAuthSession() { sessionStorage.removeItem(storageKeys.session); localStorage.removeItem(storageKeys.session) }
@@ -1113,7 +1109,7 @@ async function startInvoiceCheckout(number, textToPay = false) {
 function reports() { const t = state.taxSettings, stateName = usStates.find(s => s.code === t.state)?.name || t.state, result = taxReportResult; return shell(`${heading("Performance", "Reports", "A concise operational snapshot and state tax filing report based on current shop records.", false)}${stats()}<section class="messaging-panel"><div class="messaging-status ready">${icon("landmark", 17)}<div><strong>Tax filing report — ${stateName}</strong><span>Sales tax collected, formatted for ${stateName}'s ${t.filingFrequency.toLowerCase()} filing. Change the subscribing state in Shop settings.</span></div></div><form class="form-grid" id="tax-report-form"><label>From date *<input type="date" name="from" value="${result?.from || "2026-08-01"}" required/></label><label>To date *<input type="date" name="to" value="${result?.to || "2026-08-14"}" required/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("file-text", 14)} Generate report</button>${result ? `<button class="secondary" type="button" id="print-tax-report">${icon("printer", 14)} Print report</button>` : ""}</div></form>${result ? taxReportView(result, stateName, t) : ""}</section>`) }
 function taxReportView(result, stateName, settings) { const rows = result.rows.map(row => `<tr><td>${row.date}</td><td class="mono">${row.invoiceNumber}</td><td>${escapeHtml(row.customer)}</td><td>${money(row.gross)}</td><td>${money(row.taxable)}</td><td><b>${money(row.tax)}</b></td></tr>`).join(""); return `<div class="tax-report-print" id="tax-report-printable"><div class="statement-head"><div><div class="eyebrow">${stateName} sales tax filing</div><h2>Period ${result.from} to ${result.to}</h2><small>Tax ID: ${settings.taxId || "Not set"} · Filing frequency: ${settings.filingFrequency}</small></div></div><div class="finance-kpis"><article><span>Gross receipts</span><strong>${money(result.totals.gross)}</strong></article><article><span>Taxable sales</span><strong>${money(result.totals.taxable)}</strong></article><article><span>Tax collected</span><strong>${money(result.totals.tax)}</strong></article></div><div class="data-panel"><table><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th>Gross receipt</th><th>Taxable sales</th><th>Tax collected</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No payments were recorded in this period.</td></tr>`}</tbody></table></div></div>` }
 function settings() { const t = state.taxSettings, stateOptions = usStates.map(s => `<option value="${s.code}" ${t.state === s.code ? "selected" : ""}>${s.name}</option>`).join(""); return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout ShopCrank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="${escapeAttr(shopDisplayName())}"/></label><label>Phone<input value="${escapeAttr(shopProfile().phone)}"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`) }
-function loginScreen() { if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon }); const googleUrl = `${cloudflareConfig.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`; return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. This window signs you in when ShopCrank opens. If the browser stays on Open ShopCrank, click that button once." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><p class="login-sent" id="login-sent" role="status" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>` }
+function loginScreen() { if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon }); const googleUrl = `${cloudflareConfig.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`; return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>` }
 
 
 async function upgradeShopPlan() { const plans = [["shop", "Shop · $139/mo"], ["solo", "Solo · $69/mo"], ["shop_pro", "Shop Pro · $279/mo"], ["enterprise", "Enterprise · $559/mo"]]; showModal(`<form class="modal" id="upgrade-plan-form"><div class="modal-head"><h2>Choose a plan</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Plan<select name="planId">${plans.map(([id, name]) => `<option value="${id}">${name}</option>`).join("")}</select></label><label>Billing<select name="interval"><option value="monthly">Monthly</option><option value="annual">Annual · 2 months free</option></select></label><p>Unlimited users on every plan. Live OEM programming is Shop Pro and Enterprise.</p><p class="login-error" id="upgrade-plan-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Continue</button></div></form>`); document.querySelector("#upgrade-plan-form").onsubmit = async event => { event.preventDefault(); const data = readFormValues(event.target), error = document.querySelector("#upgrade-plan-error"); try { const result = await platformApi("/billing/checkout", { method: "POST", body: JSON.stringify({ planId: data.planId, interval: data.interval, successUrl: `${location.origin}/?billing=success`, cancelUrl: `${location.origin}/?billing=cancelled` }) }); toast("Opening secure subscription checkout"); if (result.url && (String(result.url).startsWith("http") || String(result.url).startsWith("/"))) location.assign(result.url) } catch (requestError) { error.textContent = requestError.message || "Could not start upgrade"; error.hidden = false } } }
@@ -1163,7 +1159,7 @@ function openPasswordReset() { showModal(`<div class="modal"><div class="modal-h
 function render() {
   const root = document.querySelector("#root");
   if (!currentUser()) {
-    root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
+    root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } });
     lucide.createIcons();
     bind();
     return;
@@ -1765,7 +1761,7 @@ settings = function () { const page = settingsAppsBillingCore(); if (!["admin", 
 const bindAgentPhoneSettingsCore = bindExpandedFeatures;
 bindExpandedFeatures = function () { bindAgentPhoneSettingsCore(); document.querySelector("#agentphone-config-form")?.addEventListener("submit", async event => { event.preventDefault(); const form = event.target, data = readFormValues(form), button = form.querySelector("button[type=submit]"); button.disabled = true; try { const result = await apiFetch("/agentphone/configure", { method: "POST", body: JSON.stringify({ apiKey: data.apiKey, agentId: data.agentId, contextLimit: Number(data.contextLimit), timeout: Number(data.timeout) }) }); form.reset(); toast(`AgentPhone connected for ${result.agentId}`); render() } catch (error) { toast(error.message || "AgentPhone could not be connected"); button.disabled = false } }) };
 const bindAssistantGlobalCore = bind;
-bind = function () { bindAssistantGlobalCore(); const existing = document.querySelector("#global-assistant-controls"); if (!currentUser()) { existing?.remove(); return } if (existing) return; document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Talk to ShopCrank AI (live voice)" aria-label="Start live AI" aria-pressed="false">${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`); document.querySelector("#global-assistant").onclick = toggleGlobalLiveAssistant; document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause; lucide.createIcons(); updateGrokVoiceUiControls() };
+bind = function () { bindAssistantGlobalCore(); const existing = document.querySelector("#global-assistant-controls"); if (!currentUser()) { existing?.remove(); return } if (existing) return; document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`); document.querySelector("#global-assistant").onclick = openGlobalAssistant; document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause; lucide.createIcons() };
 const apiFetchAssistantCore = apiFetch;
 apiFetch = async function (path, options = {}) { return apiFetchAssistantCore(path, options) };
 if ("serviceWorker" in navigator && isSecureContext && !isDesktopApp) { window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch(error => console.error("Service worker registration failed", error))) }
@@ -3496,6 +3492,8 @@ function addEstimateSourceControls(form) {
   const estimator = form.querySelector(".new-order-estimator");
   estimator?.insertAdjacentHTML("beforeend", `<div class="estimate-adjustments"><label>Shop supplies<input name="shopSupplies" type="number" min="0" step=".01" placeholder="Auto: 3% of labor, max $20"/></label><label>Discount %<input name="estimateDiscount" type="number" min="0" max="100" step=".1" value="0"/></label><label>Discount reason<input name="estimateDiscountReason" placeholder="Optional"/></label></div>`);
   form.querySelectorAll("[name=shopSupplies],[name=estimateDiscount],[name=estimateDiscountReason]").forEach(input => input.addEventListener("input", () => refreshEstimateEditor(form.querySelector("#new-estimate-lines"))));
+  // Only offer the fill panel when the shop has estimates to fill from. An
+  // empty picker just shows "Select an estimate…" with nothing to select.
   if (!sources.length) return;
   const options = sources.map(estimate => `<option value="${escapeAttr(estimate.id)}">${escapeHtml(estimate.number || "Saved draft")} · ${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer || "Customer")}</option>`).join("");
   body.insertAdjacentHTML("afterbegin", `<section class="estimate-fill-panel"><div><div class="eyebrow">Optional estimate fill</div><h3>Start from a completed estimate</h3><p>A blank order stays blank. Choose an estimate and apply it only when it belongs to this customer.</p></div><div><select id="estimate-source-picker"><option value="">Select an estimate…</option>${options}</select><button type="button" class="secondary" id="apply-estimate-source">${icon("clipboard-plus", 14)} Fill fields</button></div></section>`);
@@ -5132,7 +5130,7 @@ function keyProgrammingBay() {
   const operationOptions = KEY_OPERATIONS.map(item => `<option value="${item.id}">${item.label}</option>`).join("");
   const fallbackOrderOption = '<option value="">No repair orders</option>';
   const submitLabel = hostReady || live ? "Start key job" : "Record key job";
-  return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live jobs need AutoAuth, a matching VIN, and confirmation before anything is written. Bench simulator runs the same authorize → unlock → program path safely. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
+  return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live Nissan Maxima jobs need the immobilizer PIN and a matching VIN. Gateway-equipped years need Nissan AutoAuth. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
 }
 
 async function rememberBayRecord(type, collection, record) {
@@ -5658,253 +5656,6 @@ bind = function () {
 const apiFetchShopAiNoticeCore = apiFetch;
 apiFetch = async function (path, options = {}) { const result = await apiFetchShopAiNoticeCore(path, options); if (String(path).startsWith("/ai/assistant") && result?.notice) { toast(result.notice); shopAiSettings = { ...shopAiSettings, loaded: false } } return result };
 
-// --- Vehicle key licensing: key app panel (Key programming) and platform console Licenses ---
-let keyLicenseView = { loaded: false, refreshing: false, status: null, deviceId: "", unlockState: "none", unlockUrl: "", busy: "", error: "" };
-let keyLicenseIdentity = null;
-function keyLicenseDeviceLabel() { return `${isDesktopApp ? "ShopCrank Desktop" : "Browser"} · ${navigator.platform || "device"}`.slice(0, 80) }
-async function keyLicenseDevice() { if (!keyLicenseIdentity) keyLicenseIdentity = await KeyLicense.loadDeviceIdentity(); return keyLicenseIdentity }
-async function loadKeyLicense(force = false) {
-  if (keyLicenseView.refreshing || (keyLicenseView.loaded && !force)) return;
-  keyLicenseView.refreshing = true;
-  try {
-    const identity = await keyLicenseDevice();
-    const status = await apiFetch(`/licenses/status?deviceId=${encodeURIComponent(identity.deviceId)}`);
-    const stored = await KeyLicense.loadStoredUnlock();
-    keyLicenseView = { ...keyLicenseView, loaded: true, error: "", status, deviceId: identity.deviceId, unlockState: KeyLicense.storedUnlockState(stored, status.license, identity.deviceId), unlockUrl: stored?.unlockUrl || "" };
-  } catch (error) {
-    keyLicenseView = { ...keyLicenseView, loaded: true, error: error.message || "Could not check the vehicle key license" };
-  } finally {
-    keyLicenseView.refreshing = false;
-  }
-  if (state.route === "keys") render();
-}
-async function withKeyLicenseBusy(message, task) {
-  keyLicenseView.busy = message;
-  keyLicenseView.lastError = "";
-  render();
-  try { await task() } catch (error) { keyLicenseView.lastError = error.message || "Vehicle key license request failed"; toast(keyLicenseView.lastError) }
-  keyLicenseView.busy = "";
-  await loadKeyLicense(true);
-}
-async function redeemKeyLicense(token, unlockUrl = "") {
-  const identity = await keyLicenseDevice();
-  const result = await apiFetch("/licenses/unlock/redeem", { method: "POST", body: JSON.stringify(await KeyLicense.redeemRequestBody(identity, token)) });
-  const stored = await KeyLicense.loadStoredUnlock();
-  await KeyLicense.saveStoredUnlock({ ...(stored?.token === token ? stored : {}), token, unlockUrl: unlockUrl || (stored?.token === token ? stored.unlockUrl : ""), licenseId: result.licenseId, expiresAt: result.expiresAt, redeemedAt: now() });
-  toast("This device is unlocked for live key programming");
-}
-const keyProgrammingBayLicenseCore = keyProgrammingBay;
-keyProgrammingBay = function () {
-  const page = keyProgrammingBayLicenseCore();
-  if (isOfflineDesktop()) return page;
-  if (!keyLicenseView.loaded) void loadKeyLicense();
-  const panel = KeyLicense.keyLicensePanelHtml({ ...keyLicenseView, loading: !keyLicenseView.loaded }, { escapeHtml, icon });
-  return page.replace('<form class="form-grid" id="key-job-form">', match => `${panel}${match}`);
-};
-function bindKeyLicensePanel() {
-  document.querySelector("#key-license-refresh")?.addEventListener("click", () => { keyLicenseView.loaded = false; render() });
-  document.querySelector("#key-license-request-form")?.addEventListener("submit", event => {
-    event.preventDefault();
-    const form = new FormData(event.target), file = form.get("proofFile");
-    const draft = { contactName: form.get("contactName"), businessName: form.get("businessName"), licenseNumber: form.get("licenseNumber"), proofDetails: form.get("proofDetails"), requestedDevices: Number(form.get("requestedDevices") || 1) };
-    keyLicenseView.draft = draft;
-    void withKeyLicenseBusy("Sending your license request…", async () => {
-      const proofFileKey = file && file.size ? await KeyLicense.uploadProof(file, { apiFetch, fetchImpl: (url, init) => authorizedApiRequest(url.replace(/^\/api(?=\/)/, ""), init) }) : "";
-      await apiFetch("/licenses/requests", { method: "POST", body: JSON.stringify({ ...draft, proofFileKey, proofFileName: file && file.size ? file.name : "" }) });
-      keyLicenseView.draft = null;
-      toast("License request sent to ShopCrank for review");
-    });
-  });
-  document.querySelector("#key-license-issue")?.addEventListener("click", () => void withKeyLicenseBusy("Requesting an unlock link for this device…", async () => {
-    const identity = await keyLicenseDevice();
-    const issued = await apiFetch("/licenses/unlock/issue", { method: "POST", body: JSON.stringify(await KeyLicense.issueRequestBody(identity, keyLicenseDeviceLabel())) });
-    await KeyLicense.saveStoredUnlock({ token: issued.token, unlockUrl: issued.unlockUrl, licenseId: issued.licenseId, expiresAt: issued.expiresAt, tokenVersion: issued.tokenVersion, issuedAt: now() });
-    toast("Unlock link ready. Confirm to unlock this device.");
-  }));
-  document.querySelector("#key-license-redeem")?.addEventListener("click", () => void withKeyLicenseBusy("Unlocking this device…", async () => {
-    const stored = await KeyLicense.loadStoredUnlock();
-    if (!stored?.token) throw new Error("Get an unlock link for this device first");
-    await redeemKeyLicense(stored.token, stored.unlockUrl);
-  }));
-  document.querySelector("#key-license-redeem-form")?.addEventListener("submit", event => {
-    event.preventDefault();
-    const input = String(new FormData(event.target).get("unlockLink") || "").trim();
-    const token = KeyLicense.parseUnlockInput(input);
-    if (!token) { toast("That is not a ShopCrank unlock link"); return }
-    void withKeyLicenseBusy("Unlocking this device…", () => redeemKeyLicense(token, input.includes("#") ? input : ""));
-  });
-  document.querySelector("#key-license-copy")?.addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(document.querySelector("#key-license-url")?.value || ""); toast("Unlock link copied") } catch { toast("Select the link and copy it") }
-  });
-}
-const startLiveKeyJobLicenseCore = startLiveKeyJob;
-startLiveKeyJob = async function (data) {
-  if (liveKeyProcedureFor(data.operation)) {
-    const stored = await KeyLicense.loadStoredUnlock().catch(() => null);
-    if (!stored?.redeemedAt) {
-      toast("Unlock this device with your ShopCrank vehicle key license first");
-      document.querySelector("#key-license-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-  }
-  return startLiveKeyJobLicenseCore(data);
-};
-const apiFetchKeyLicenseCore = apiFetch;
-apiFetch = async function (path, options = {}) {
-  if (path !== "/diagnostics/authorize" || !options.body) return apiFetchKeyLicenseCore(path, options);
-  let body = null;
-  try { body = JSON.parse(options.body) } catch { body = null }
-  if (!KeyLicense.requiresVehicleKeyLicense(body)) return apiFetchKeyLicenseCore(path, options);
-  const stored = await KeyLicense.loadStoredUnlock();
-  if (!stored?.redeemedAt) throw new Error("This device is not unlocked for live key programming. Open Key programming and unlock it with your ShopCrank license.");
-  const licenseUnlock = await KeyLicense.authorizeUnlock(await keyLicenseDevice(), stored.token, body.procedure, String(body.vin || "").trim());
-  try {
-    return await apiFetchKeyLicenseCore(path, { ...options, body: JSON.stringify({ ...body, licenseUnlock }) });
-  } catch (error) {
-    keyLicenseView.loaded = false;
-    throw error;
-  }
-};
-window.apiFetch = apiFetch;
-
-if (!roleRoutes.super_admin.includes("licenses")) roleRoutes.super_admin.push("licenses");
-let licenseAdminData = null, licenseAdminLoading = false, licenseAuditFilter = "";
-const platformShellLicenseCore = platformShell;
-platformShell = function (content) {
-  const shopsNav = nav("superadmin", "building-2", "Customer shops");
-  return platformShellLicenseCore(content).replace(shopsNav, `${shopsNav}${nav("licenses", "key-round", "Key licenses")}`);
-};
-async function loadLicenseAdmin() {
-  if (licenseAdminLoading) return;
-  licenseAdminLoading = true;
-  try {
-    const auditQuery = licenseAuditFilter ? `&licenseId=${encodeURIComponent(licenseAuditFilter)}` : "";
-    const [overview, audit] = await Promise.all([platformApi("/admin/licenses"), platformApi(`/admin/licenses/audit?limit=100${auditQuery}`)]);
-    licenseAdminData = { ...overview, events: audit.events || [], auditLicenseId: licenseAuditFilter };
-  } catch (error) {
-    licenseAdminData = { licenses: [], requests: [], events: [] };
-    toast(error.message || "Could not load licenses");
-  } finally {
-    licenseAdminLoading = false;
-  }
-  if (state.route === "licenses") render();
-}
-function licenseAdminView() {
-  if (licenseAdminData === null) void loadLicenseAdmin();
-  return platformShell(`${heading("Platform control", "Key licenses", "Review proof of licensing, approve with an expiration date, and suspend, revoke, or reissue vehicle key unlocks at any time.", false)}${KeyLicense.licenseAdminHtml(licenseAdminData, { escapeHtml, icon })}`);
-}
-function reloadLicenseAdmin() { licenseAdminData = null; render() }
-function licenseFormModal({ id, title, summary = "", fields, note = "", submitLabel, onSubmit }) {
-  showModal(`<form class="modal" id="${id}"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${summary ? `<div class="estimate-sign-summary">${summary}</div>` : ""}<div class="form-grid">${fields}</div>${note ? `<div class="ledger-note">${note}</div>` : ""}<p class="login-error" id="${id}-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${submitLabel}</button></div></form>`);
-  const form = document.querySelector(`#${id}`);
-  form.onsubmit = async event => {
-    event.preventDefault();
-    const button = form.querySelector("button[type=submit]"), error = document.querySelector(`#${id}-error`);
-    button.disabled = true;
-    error.hidden = true;
-    try { await onSubmit(readFormValues(form)); closeModal(); reloadLicenseAdmin() } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false }
-  };
-}
-function licenseExpiryField(value = "") {
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  const latest = new Date(Date.now() + 3650 * 86400000).toISOString().slice(0, 10);
-  return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" max="${latest}" value="${escapeHtml(value)}"/></label>`;
-}
-const LICENSE_EXPIRY_NOTE = `${icon("calendar-clock", 15)} Unlocks stop at the end of this day (UTC). The customer's unlock token carries this date as its expiry.`;
-function openLicenseApprove(requestId, business, devices) {
-  licenseFormModal({
-    id: "license-approve-form", title: "Approve license", summary: `<span>${escapeHtml(business)}</span><strong>Set the expiration date</strong>`,
-    fields: `${licenseExpiryField()}<label>Licensed computers<input name="maxDevices" type="number" min="1" max="100" value="${escapeHtml(devices || "1")}"/></label><label class="full">Customer name<input name="customerName" value="${escapeHtml(business)}"/></label><label class="full">Note (shown to the customer)<input name="notes" maxlength="2000"/></label>`,
-    note: LICENSE_EXPIRY_NOTE, submitLabel: `${icon("badge-check", 14)} Approve license`,
-    onSubmit: data => platformApi(`/admin/licenses/requests/${encodeURIComponent(requestId)}/approve`, { method: "POST", body: JSON.stringify(data) }).then(() => toast(`${business} licensed`)),
-  });
-}
-function openLicenseDeny(requestId, business) {
-  licenseFormModal({
-    id: "license-deny-form", title: "Deny license request", summary: `<span>${escapeHtml(business)}</span><strong>Tell the customer why</strong>`,
-    fields: `<label class="full">Reason *<textarea name="reason" rows="3" required maxlength="1000"></textarea></label>`, submitLabel: `${icon("circle-x", 14)} Deny request`,
-    onSubmit: data => platformApi(`/admin/licenses/requests/${encodeURIComponent(requestId)}/deny`, { method: "POST", body: JSON.stringify(data) }).then(() => toast("Request denied")),
-  });
-}
-function openLicenseEdit(license) {
-  if (!license) return;
-  licenseFormModal({
-    id: "license-edit-form", title: "Edit license", summary: `<span>${escapeHtml(license.customerName)}</span><strong>${escapeHtml(license.shopId)}</strong>`,
-    fields: `${licenseExpiryField(KeyLicense.expiryInputValue(license.expiresAt))}<label>Licensed computers<input name="maxDevices" type="number" min="1" max="100" value="${license.maxDevices}"/></label><label class="full">Customer name<input name="customerName" required value="${escapeHtml(license.customerName)}"/></label><label class="full">Notes<input name="notes" maxlength="2000" value="${escapeHtml(license.notes || "")}"/></label>`,
-    note: `${LICENSE_EXPIRY_NOTE} Moving the date earlier stops existing unlock links immediately.`, submitLabel: `${icon("save", 14)} Save license`,
-    onSubmit: data => platformApi(`/admin/licenses/${encodeURIComponent(license.id)}`, { method: "PUT", body: JSON.stringify(data) }).then(() => toast("License updated")),
-  });
-}
-function openLicenseGrant() {
-  licenseFormModal({
-    id: "license-grant-form", title: "Grant license directly", summary: "<span>No request on file</span><strong>Use only after verifying proof</strong>",
-    fields: `<label>Shop ID *<input name="shopId" required pattern="[a-z0-9][a-z0-9-]{2,63}"/></label><label>Customer name *<input name="customerName" required/></label>${licenseExpiryField()}<label>Licensed computers<input name="maxDevices" type="number" min="1" max="100" value="1"/></label><label class="full">Notes<input name="notes" maxlength="2000"/></label>`,
-    note: LICENSE_EXPIRY_NOTE, submitLabel: `${icon("key-round", 14)} Grant license`,
-    onSubmit: data => platformApi("/admin/licenses", { method: "POST", body: JSON.stringify(data) }).then(() => toast("License granted")),
-  });
-}
-const LICENSE_ACTION_PROMPTS = {
-  suspend: name => `Suspend ${name}? Live key programming stops right away on every device. After reactivation each device needs a new unlock link.`,
-  reactivate: name => `Reactivate ${name}? Devices will need a new unlock link.`,
-  revoke: name => `Revoke ${name}? This is permanent and stops every unlock link immediately.`,
-  reissue: name => `Reissue the unlock token for ${name}? Every existing unlock link stops working; licensed devices must get a new link.`,
-};
-async function runLicenseAction(button) {
-  const { licenseAction: action, license, name } = button.dataset;
-  if (!confirm(LICENSE_ACTION_PROMPTS[action](name))) return;
-  button.disabled = true;
-  try { await platformApi(`/admin/licenses/${encodeURIComponent(license)}/${action}`, { method: "POST", body: "{}" }); toast(`License ${action === "reissue" ? "token reissued" : `${action}d`}`); reloadLicenseAdmin() } catch (error) { toast(error.message); button.disabled = false }
-}
-async function downloadLicenseProof(requestId, fileName) {
-  try {
-    const response = await authorizedApiRequest(`/admin/licenses/requests/${encodeURIComponent(requestId)}/proof`);
-    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Could not open the proof file");
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName || "license-proof";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  } catch (error) { toast(error.message) }
-}
-function bindLicenseAdmin() {
-  document.querySelector("#refresh-platform")?.addEventListener("click", reloadLicenseAdmin);
-  document.querySelector("#license-grant")?.addEventListener("click", openLicenseGrant);
-  document.querySelector("#license-audit-all")?.addEventListener("click", () => { licenseAuditFilter = ""; reloadLicenseAdmin() });
-  document.querySelectorAll("[data-license-approve]").forEach(button => { button.onclick = () => openLicenseApprove(button.dataset.licenseApprove, button.dataset.business, button.dataset.devices) });
-  document.querySelectorAll("[data-license-deny]").forEach(button => { button.onclick = () => openLicenseDeny(button.dataset.licenseDeny, button.dataset.business) });
-  document.querySelectorAll("[data-license-edit]").forEach(button => { button.onclick = () => openLicenseEdit(licenseAdminData?.licenses?.find(item => item.id === button.dataset.licenseEdit)) });
-  document.querySelectorAll("[data-license-action]").forEach(button => { button.onclick = () => void runLicenseAction(button) });
-  document.querySelectorAll("[data-license-audit]").forEach(button => { button.onclick = () => { licenseAuditFilter = button.dataset.licenseAudit; reloadLicenseAdmin() } });
-  document.querySelectorAll("[data-license-proof]").forEach(button => { button.onclick = () => void downloadLicenseProof(button.dataset.licenseProof, button.dataset.fileName) });
-  document.querySelectorAll("[data-license-device-revoke]").forEach(button => {
-    button.onclick = async () => {
-      if (!confirm("Remove this computer from the license? Its unlock link stops working immediately.")) return;
-      button.disabled = true;
-      try { await platformApi(`/admin/licenses/${encodeURIComponent(button.dataset.licenseDeviceRevoke)}/devices/${encodeURIComponent(button.dataset.device)}/revoke`, { method: "POST", body: "{}" }); toast("Device removed"); reloadLicenseAdmin() } catch (error) { toast(error.message); button.disabled = false }
-    };
-  });
-}
-const bindKeyLicenseCore = bind;
-bind = function () {
-  bindKeyLicenseCore();
-  const user = currentUser();
-  if (!user) return;
-  if (state.route === "keys" && !isOfflineDesktop()) bindKeyLicensePanel();
-  if (state.route === "licenses" && user.role === "super_admin") bindLicenseAdmin();
-};
-const renderKeyLicenseCore = render;
-render = function () {
-  if (currentUser()?.role === "super_admin" && state.route === "licenses") {
-    const root = document.querySelector("#root");
-    root.innerHTML = safeHtml(licenseAdminView());
-    lucide.createIcons();
-    bind();
-    bindPlatformAdmin();
-    return;
-  }
-  renderKeyLicenseCore();
-};
 // --- Grok Realtime Voice & Phone Call Forwarding ---
 let grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
 let activeGrokSession = null;
@@ -5974,19 +5725,6 @@ function updateGrokVoiceUiControls() {
   const srStatus = document.querySelector("#assistant-voice-sr-status");
   if (srStatus) {
     srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
-  }
-
-  // Floating Assistant button (live voice control)
-  const floatBtn = document.querySelector("#global-assistant");
-  if (floatBtn) {
-    floatBtn.classList.toggle("is-live", isLive);
-    floatBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
-    floatBtn.setAttribute("aria-label", isLive ? `End live AI (${placeholder || "Live"})` : "Start live AI");
-    floatBtn.title = isLive ? "Click to end the live AI session" : "Talk to ShopCrank AI (live voice)";
-    floatBtn.innerHTML = isLive
-      ? `${grokWaveformButtonIcon(true, phase)}<span class="assistant-float-label">${escapeHtml(placeholder || "Live")}</span>`
-      : `${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span>`;
-    if (!isLive) globalThis.lucide?.createIcons?.();
   }
 
   // Phone intake tab button
