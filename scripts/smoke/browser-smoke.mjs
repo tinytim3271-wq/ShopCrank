@@ -265,12 +265,13 @@ async function main() {
       await page.waitForTimeout(2500);
       await page.evaluate(() => document.querySelector('#modal-root')?.remove());
     });
-    await check('invoice taxes parts and supplies only (Texas default) and payments mark it paid', async () => {
+    await check('invoice taxes parts and supplies only (Texas state-only default) and payments mark it paid', async () => {
       await route('invoices');
       const row = page.locator('tr:has-text("Maria Gonzalez")').first();
       const before = await row.innerText();
-      // 1.8 h labor + 3% supplies ($7.56) at 8.25%: only the supplies are taxed.
-      if (!/Tax \$0\.62/.test(before)) throw new Error(`unexpected tax: ${before.replace(/\s+/g, ' ').slice(0, 160)}`);
+      // 1.8 h labor + 3% supplies ($7.56) at the 6.25% state-only rate:
+      // only the supplies are taxed, before the shop configures local districts.
+      if (!/Tax \$0\.47/.test(before)) throw new Error(`unexpected tax: ${before.replace(/\s+/g, ' ').slice(0, 160)}`);
       const remaining = () => row.innerText().then(text => Number((text.match(/Remaining \$([\d,.]+)/) || [])[1]?.replace(/,/g, '')));
       for (const [amount, method] of [['100', 'Cash'], [null, 'Check']]) {
         await row.locator('button:has-text("Record payment")').click();
@@ -326,4 +327,3 @@ main()
     console.log(`\n${results.length - failed.length}/${results.length} smoke checks passed`);
     setTimeout(() => process.exit(failed.length ? 1 : 0), 500);
   });
-
