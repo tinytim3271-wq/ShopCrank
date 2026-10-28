@@ -274,16 +274,35 @@ async function main() {
       // 1.8 h labor + 3% supplies ($7.56) at 8.25%: only the supplies are taxed.
       if (!/Tax \$0\.62/.test(before)) throw new Error(`unexpected tax: ${before.replace(/\s+/g, ' ').slice(0, 160)}`);
       const remaining = () => row.innerText().then(text => Number((text.match(/Remaining \$([\d,.]+)/) || [])[1]?.replace(/,/g, '')));
-      for (const [amount, method] of [['100', 'Cash'], [null, 'Check']]) {
+      for (const [index, [amount, method]] of [['100', 'Cash'], [null, 'Check']].entries()) {
         await row.locator('button:has-text("Record payment")').click();
         await page.fill('.modal [name=amount]', amount || String(await remaining()));
         await page.locator('.modal [name=paymentMethod]').selectOption({ label: method });
+        // Wait for the payment request itself, not a fixed delay: on a loaded CI
+        // runner the POST can land after a fixed wait, and the row read below
+        // would then be stale (the pre-payment balance), which silently
+        // rejected the second payment and failed this check.
+        const recorded = page.waitForResponse(
+          (response) => response.url().includes('/payments/record') && response.request().method() === 'POST',
+          { timeout: 30_000 },
+        );
         await page.locator('.modal button[type=submit]:has-text("Record payment")').click();
-        await page.waitForTimeout(1800);
+        const response = await recorded;
+        if (response.status() !== 201) {
+          throw new Error(`payment ${index + 1} rejected: ${response.status()} ${(await response.text()).slice(0, 160)}`);
+        }
+        // The app closes the modal and re-renders the row once the payment is
+        // applied. Wait for the payment history counter instead of a fixed
+        // delay, so the next iteration reads a fresh remaining balance.
+        await page.waitForFunction((expected) => {
+          const head = document.querySelector('.payment-history-head span');
+          return Boolean(head) && head.textContent.trim() === expected;
+        }, `${index + 1} payment${index === 0 ? '' : 's'}`, { timeout: 30_000 });
         if (toasts.some(text => /Unsupported payment method/.test(text))) throw new Error('payment rejected');
       }
       const after = await row.innerText();
-      if (!/PAID/.test(after) || !/2 payments/.test(after)) throw new Error(after.replace(/\s+/g, ' ').slice(0, 200));
+      if (!/2 payments/.test(after)) throw new Error(`expected 2 payments: ${after.replace(/\s+/g, ' ').slice(0, 200)}`);
+      if (/PARTIALLY PAID|Remaining \$(?!0\.00)/.test(after)) throw new Error(`invoice not fully paid: ${after.replace(/\s+/g, ' ').slice(0, 200)}`);
     });
     for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
       await check(`every module renders on ${label} with no errors or sideways scroll`, async () => {
