@@ -40,6 +40,7 @@ import * as KeyLicense from '../modules/vehicle-key-license.js';
 import * as SmsInbox from '../modules/sms-inbox.js';
 import * as InspectionRatings from '../modules/inspection-ratings.js';
 import * as CallLog from '../modules/call-log.js';
+import * as GrowthSettings from '../modules/growth-settings.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -6016,6 +6017,50 @@ const bindDeclinedWorkCore = bind;
 bind = function () {
   bindDeclinedWorkCore();
   if (state.route === "shopops" && shopOpsTab === "declined") bindDeclinedWork();
+};
+
+// --- Online booking, service reminders and review requests (Settings) ---
+function sessionShopId() { try { return JSON.parse(sessionStorage.getItem(storageKeys.session) || "null")?.claims?.["custom:shopId"] || "" } catch { return "" } }
+function growthSettingsRecord(id) { return state.shopSettingsRecords.find(item => item.id === id) || {} }
+const settingsGrowthCore = settings;
+settings = function () {
+  const page = settingsGrowthCore();
+  if (isOfflineDesktop()) return page;
+  const panel = GrowthSettings.growthSettingsHtml({ booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups"), shopId: sessionShopId(), origin: location.origin, canSave: currentUser()?.role === "admin" }, { escapeHtml, escapeAttr, icon });
+  return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+};
+function bindGrowthSettings() {
+  document.querySelector("#growth-settings-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.target.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      const { booking, followups } = GrowthSettings.growthSettingsRecords(readFormValues(event.target), { booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups") });
+      await saveShopEntity("shopsettings", { ...growthSettingsRecord("booking"), ...booking });
+      await saveShopEntity("shopsettings", { ...growthSettingsRecord("followups"), ...followups });
+      toast("Booking and follow-up settings saved");
+      render();
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "Settings could not be saved");
+    }
+  });
+  document.querySelector("#growth-run-now")?.addEventListener("click", async event => {
+    event.currentTarget.disabled = true;
+    try {
+      const report = await apiFetch("/followups/run", { method: "POST", body: "{}" });
+      toast(`Sent ${report.remindersSent} reminder(s) and ${report.reviewRequestsSent} review request(s)${report.skipped ? ` · ${report.skipped} skipped (no texting number, opted out, or missing phone)` : ""}`);
+    } catch (error) { toast(error.message || "Follow-ups could not run") }
+    event.currentTarget.disabled = false;
+  });
+  document.querySelector("#booking-link-copy")?.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(document.querySelector("#booking-link")?.value || ""); toast("Booking link copied") } catch { toast("Select the link and copy it") }
+  });
+}
+const bindGrowthSettingsCore = bind;
+bind = function () {
+  bindGrowthSettingsCore();
+  if (state.route === "settings") bindGrowthSettings();
 };
 
 // --- Grok Realtime Voice & Phone Call Forwarding ---

@@ -649,8 +649,8 @@
   });
 
   // src/modules/imports.js
-  function parseCsv(text) {
-    const source = String(text || "").replace(/^\uFEFF/, "");
+  function parseCsv(text2) {
+    const source = String(text2 || "").replace(/^\uFEFF/, "");
     const rows = [];
     const current = [];
     let cell = "";
@@ -680,8 +680,8 @@
     if (current.some(Boolean)) rows.push(current.slice());
     return rows;
   }
-  function rowData(text) {
-    const rows = parseCsv(text);
+  function rowData(text2) {
+    const rows = parseCsv(text2);
     if (rows.length < 2) return [];
     const headers = rows.shift().map((header) => header.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
     return rows.map((row) => Object.fromEntries(headers.map((key, index) => [key, row[index] || ""])));
@@ -690,9 +690,9 @@
     return keys.map((key) => row[key]).find((item) => item !== void 0 && item !== "") || "";
   }
   function cleanText(raw, max = 240) {
-    let text = String(raw || "").replace(/\s+/g, " ").trim();
-    if (/^[=@]/.test(text) || /^[+-](?!\d)/.test(text)) text = text.replace(/^[=+@-]+/, "");
-    return text.slice(0, max);
+    let text2 = String(raw || "").replace(/\s+/g, " ").trim();
+    if (/^[=@]/.test(text2) || /^[+-](?!\d)/.test(text2)) text2 = text2.replace(/^[=+@-]+/, "");
+    return text2.slice(0, max);
   }
   function moneyAmount(raw) {
     if (raw === void 0 || raw === null || String(raw).trim() === "") return null;
@@ -701,13 +701,13 @@
     return Math.round(amount * 100) / 100;
   }
   function isoDate(raw) {
-    const text = String(raw || "").trim();
-    if (!text) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-      const parsed2 = /* @__PURE__ */ new Date(`${text}T00:00:00Z`);
-      return Number.isNaN(parsed2.valueOf()) || parsed2.toISOString().slice(0, 10) !== text ? "" : text;
+    const text2 = String(raw || "").trim();
+    if (!text2) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) {
+      const parsed2 = /* @__PURE__ */ new Date(`${text2}T00:00:00Z`);
+      return Number.isNaN(parsed2.valueOf()) || parsed2.toISOString().slice(0, 10) !== text2 ? "" : text2;
     }
-    const parsed = new Date(text);
+    const parsed = new Date(text2);
     if (Number.isNaN(parsed.valueOf())) return "";
     return localIsoDate(parsed);
   }
@@ -751,9 +751,9 @@
   function emptyResult(type, errors = [], skipped = 0) {
     return { type, records: [], errors, skipped };
   }
-  function prepareImportRecords(type, text, existing = {}) {
+  function prepareImportRecords(type, text2, existing = {}) {
     if (!IMPORT_TYPES[type]) return emptyResult(type, ["Choose a supported import type."]);
-    const rows = rowData(text);
+    const rows = rowData(text2);
     if (!rows.length) return emptyResult(type, ["The file needs a header row and at least one data row."]);
     const customers2 = existing.customers || [];
     const vehicles = existing.vehicles || [];
@@ -1225,23 +1225,23 @@
     return `<svg class="repair-diagram" viewBox="0 0 360 210" role="img" aria-label="${label2}" xmlns="http://www.w3.org/2000/svg"><rect width="360" height="210" rx="8" fill="#e7efe9"/><text x="16" y="24" fill="#1c3a32" font-family="sans-serif" font-size="13" font-weight="700">${label2}</text>${body}</svg>`;
   }
   function repairFamily(repair) {
-    const text = String(repair || "").toLowerCase();
-    if (/brake fluid|fluid flush/.test(text) && /brake|fluid/.test(text)) return "brake-flush";
-    if (/no-start|no start|won't start|wont start|crank/.test(text)) return "nostart";
-    if (/brake|rotor|pad|caliper/.test(text)) return "brakes";
-    if (/water pump|thermostat|coolant|radiator/.test(text)) return "cooling";
-    if (/transmission|atf/.test(text)) return "transmission";
-    if (/differential|gear oil/.test(text)) return "differential";
-    if (/spark plug|ignition coil|tune-up|tune up/.test(text)) return "ignition";
-    if (/serpentine|drive belt/.test(text) || /\bbelt\b/.test(text) && !/seat/.test(text)) return "belt";
-    if (/cabin|pollen/.test(text)) return "cabin-filter";
-    if (/air filter/.test(text)) return "air-filter";
-    if (/wiper/.test(text)) return "wipers";
-    if (/rotat/.test(text) && /tire|wheel/.test(text)) return "rotation";
-    if (/battery/.test(text)) return "battery";
-    if (/injector|fuel system|induction/.test(text)) return "fuel";
-    if (/oil/.test(text)) return "oil";
-    if (/call-out|call out|no-access|no access/.test(text)) return "callout";
+    const text2 = String(repair || "").toLowerCase();
+    if (/brake fluid|fluid flush/.test(text2) && /brake|fluid/.test(text2)) return "brake-flush";
+    if (/no-start|no start|won't start|wont start|crank/.test(text2)) return "nostart";
+    if (/brake|rotor|pad|caliper/.test(text2)) return "brakes";
+    if (/water pump|thermostat|coolant|radiator/.test(text2)) return "cooling";
+    if (/transmission|atf/.test(text2)) return "transmission";
+    if (/differential|gear oil/.test(text2)) return "differential";
+    if (/spark plug|ignition coil|tune-up|tune up/.test(text2)) return "ignition";
+    if (/serpentine|drive belt/.test(text2) || /\bbelt\b/.test(text2) && !/seat/.test(text2)) return "belt";
+    if (/cabin|pollen/.test(text2)) return "cabin-filter";
+    if (/air filter/.test(text2)) return "air-filter";
+    if (/wiper/.test(text2)) return "wipers";
+    if (/rotat/.test(text2) && /tire|wheel/.test(text2)) return "rotation";
+    if (/battery/.test(text2)) return "battery";
+    if (/injector|fuel system|induction/.test(text2)) return "fuel";
+    if (/oil/.test(text2)) return "oil";
+    if (/call-out|call out|no-access|no access/.test(text2)) return "callout";
     return "general";
   }
   function youtubeSearchUrl(query2) {
@@ -3653,11 +3653,11 @@
     return { ...priced, disclaimer: INTAKE_DISCLAIMER, lines };
   }
   function localDiagnosticChecklist(draft = {}) {
-    const text = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
+    const text2 = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
     const causes = [];
-    if (/misfire|stall|p030/.test(text)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
-    if (/p0171|lean|vacuum/.test(text)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
-    if (/p0420|catalyst/.test(text)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
+    if (/misfire|stall|p030/.test(text2)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
+    if (/p0171|lean|vacuum/.test(text2)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
+    if (/p0420|catalyst/.test(text2)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
     if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
     return {
       source: "shop-checklist",
@@ -4387,8 +4387,8 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       }
       setPhase("idle");
     };
-    const sendTextTurn = (text) => {
-      const clean2 = String(text || "").trim();
+    const sendTextTurn = (text2) => {
+      const clean2 = String(text2 || "").trim();
       if (!clean2 || !ws || ws.readyState !== globalThis.WebSocket.OPEN) return false;
       stopPlayback();
       ws.send(JSON.stringify({
@@ -4948,12 +4948,12 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   // src/modules/file-upload.js
   async function uploadErrorMessage(response) {
     const fallback = `Upload to storage failed (${response.status})`;
-    const text = await response.text().catch(() => "");
-    if (!text) return fallback;
+    const text2 = await response.text().catch(() => "");
+    if (!text2) return fallback;
     try {
-      return JSON.parse(text).message || fallback;
+      return JSON.parse(text2).message || fallback;
     } catch {
-      return text.trim() || fallback;
+      return text2.trim() || fallback;
     }
   }
   function uploadFailureMessage(error, fallback) {
@@ -5185,10 +5185,10 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     return uploadFileToStorage(file, "license-proof", file.type, { apiFetch: apiFetch2, fetchImpl });
   }
   function parseUnlockInput(value2) {
-    const text = String(value2 || "").trim();
-    let candidate = text;
-    const hashIndex = text.indexOf("#");
-    if (hashIndex >= 0) candidate = new URLSearchParams(text.slice(hashIndex + 1)).get("token") || "";
+    const text2 = String(value2 || "").trim();
+    let candidate = text2;
+    const hashIndex = text2.indexOf("#");
+    if (hashIndex >= 0) candidate = new URLSearchParams(text2.slice(hashIndex + 1)).get("token") || "";
     candidate = decodeURIComponent(candidate);
     return TOKEN_PATTERN.test(candidate) ? candidate : null;
   }
@@ -5393,6 +5393,59 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         status_check: { label: "Status check", badge: "sent" },
         info: { label: "Question", badge: "sent" }
       });
+    }
+  });
+
+  // src/modules/growth-settings.js
+  function text(value2, max = 300) {
+    return String(value2 ?? "").trim().slice(0, max);
+  }
+  function bookingUrl(origin, shopId) {
+    return shopId ? `${String(origin || "").replace(/\/$/, "")}/api/book/${encodeURIComponent(shopId)}` : "";
+  }
+  function growthSettingsHtml({ booking = {}, followups = {}, shopId = "", origin = "", canSave = false }, { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, icon: icon2 = () => "" } = {}) {
+    const review = followups.reviewRequests || {};
+    const reminders = followups.serviceReminders || {};
+    const link = bookingUrl(origin, shopId);
+    const disabled = canSave ? "" : "disabled";
+    const checked = (value2) => value2 !== false ? "checked" : "";
+    return `<section class="settings-panel growth-settings"><div class="statement-head"><div><div class="eyebrow">Included on every plan</div><h2>Online booking, reminders &amp; reviews</h2><p>Customers book on your calendar, get service reminders by text, and are asked for a Google review after they pay.</p></div>${icon2("calendar-check", 20)}</div>
+  <form id="growth-settings-form" class="form-grid">
+    <label class="toggle-field full"><input type="checkbox" name="bookingEnabled" ${checked(booking.enabled)} ${disabled}/><span>Online booking page is on</span></label>
+    ${link ? `<label class="full">Booking link (put it on your website and Google profile)<input id="booking-link" readonly value="${escapeAttr4(link)}"/></label>` : ""}
+    <label class="full">Booking hours<input name="bookingHours" maxlength="300" placeholder="Monday\u2013Friday 8:00 AM \u2013 5:30 PM; Saturday 9 AM \u2013 1 PM" value="${escapeAttr4(booking.hours || "")}" ${disabled}/></label>
+    <label>Appointments per time slot<input name="bookingCapacity" type="number" min="1" max="20" value="${escapeAttr4(booking.capacity || 2)}" ${disabled}/></label>
+    <label>Minimum notice (minutes)<input name="bookingLeadMinutes" type="number" min="0" max="10080" value="${escapeAttr4(booking.leadMinutes ?? 60)}" ${disabled}/></label>
+    <label class="full">Services customers can pick (comma separated)<input name="bookingServices" maxlength="1000" value="${escapeAttr4((booking.services || []).join(", "))}" placeholder="Oil change, Brakes, Check engine light, Tires" ${disabled}/></label>
+    <label class="toggle-field full"><input type="checkbox" name="reviewEnabled" ${checked(review.enabled)} ${disabled}/><span>Text a Google review request after an invoice is paid</span></label>
+    <label class="full">Google review link or Place ID<input name="googleReviewUrl" maxlength="500" placeholder="https://g.page/r/\u2026/review or ChIJ\u2026" value="${escapeAttr4(review.googleReviewUrl || "")}" ${disabled}/></label>
+    <label class="toggle-field full"><input type="checkbox" name="remindersAutoSend" ${checked(reminders.autoSend)} ${disabled}/><span>Create service reminders from completed work and text them when due</span></label>
+    ${canSave ? `<div class="full"><button class="primary" type="submit">${icon2("save", 14)} Save</button> <button class="secondary" type="button" id="growth-run-now">${icon2("send", 14)} Send due follow-ups now</button>${link ? ` <button class="secondary" type="button" id="booking-link-copy">${icon2("copy", 14)} Copy booking link</button>` : ""}</div>` : '<p class="ops-note full">Ask an owner or admin to change these settings.</p>'}
+  </form></section>`;
+  }
+  function growthSettingsRecords(values = {}, current = {}) {
+    const services = text(values.bookingServices, 1e3).split(",").map((item) => text(item, 80)).filter(Boolean).slice(0, 30);
+    const capacity = Math.min(20, Math.max(1, Math.round(Number(values.bookingCapacity) || 2)));
+    const leadMinutes = Math.min(10080, Math.max(0, Math.round(Number(values.bookingLeadMinutes) || 0)));
+    const booking = {
+      ...current.booking || {},
+      id: "booking",
+      enabled: values.bookingEnabled === "on",
+      hours: text(values.bookingHours, 300),
+      capacity,
+      leadMinutes,
+      services
+    };
+    const followups = {
+      ...current.followups || {},
+      id: "followups",
+      reviewRequests: { ...current.followups?.reviewRequests || {}, enabled: values.reviewEnabled === "on", googleReviewUrl: text(values.googleReviewUrl, 500) },
+      serviceReminders: { ...current.followups?.serviceReminders || {}, enabled: true, autoCreate: values.remindersAutoSend === "on", autoSend: values.remindersAutoSend === "on" }
+    };
+    return { booking, followups };
+  }
+  var init_growth_settings = __esm({
+    "src/modules/growth-settings.js"() {
     }
   });
 
@@ -6219,8 +6272,8 @@ button{margin-top:12px;padding:8px 14px}
         recognition.lang = "en-US";
         recognition.interimResults = false;
         recognition.onresult = (event) => {
-          const text = [...event.results].map((result) => result[0]?.transcript || "").join(" ").trim();
-          if (text) field2.value = `${field2.value} ${text}`.trim();
+          const text2 = [...event.results].map((result) => result[0]?.transcript || "").join(" ").trim();
+          if (text2) field2.value = `${field2.value} ${text2}`.trim();
         };
         recognition.onerror = () => toast2("Dictation stopped. Type the note.");
         recognition.onend = () => {
@@ -6525,7 +6578,7 @@ button{margin-top:12px;padding:8px 14px}
         text: ""
       };
     }
-    const text = [
+    const text2 = [
       `Customer: ${name}`,
       `Vehicle: ${unit}`,
       `Date: ${when}`,
@@ -6536,7 +6589,7 @@ button{margin-top:12px;padding:8px 14px}
       "",
       `Result: Released the ${unit}. ${name} drove away.`
     ].join("\n");
-    return { ready: true, missing: [], text };
+    return { ready: true, missing: [], text: text2 };
   }
   function recoveryOrder(orders2) {
     return (orders2 || []).find((order) => /mud|winch|bogged|stuck/i.test(`${order.complaint || ""} ${order.notes || ""}`)) || null;
@@ -7232,9 +7285,9 @@ button{margin-top:12px;padding:8px 14px}
   }
   function isAfterMidnightFeeLine(line = {}) {
     if (line.code === "after-midnight") return true;
-    const text = normalizedFeeText(`${line.description || line.service || ""} ${line.notes || line.explanation || ""}`);
-    const hasTime = /\bmidnight\b|\bovernight\b|\blate night\b|\bafter 12(?: 00)? a?m\b/.test(text);
-    const hasCharge = /\bfee\b|\bsurcharge\b|\bdifferen(?:tial|tail)\b|\bdifferentail\b/.test(text);
+    const text2 = normalizedFeeText(`${line.description || line.service || ""} ${line.notes || line.explanation || ""}`);
+    const hasTime = /\bmidnight\b|\bovernight\b|\blate night\b|\bafter 12(?: 00)? a?m\b/.test(text2);
+    const hasCharge = /\bfee\b|\bsurcharge\b|\bdifferen(?:tial|tail)\b|\bdifferentail\b/.test(text2);
     return line.type !== "part" && hasTime && hasCharge;
   }
   function isLegacyAfterMidnightLine(line = {}) {
@@ -7410,14 +7463,14 @@ button{margin-top:12px;padding:8px 14px}
     return bytes;
   }
   function parseElmPayload(raw, command = "") {
-    const text = String(raw ?? "").trim();
-    const upper = text.toUpperCase();
+    const text2 = String(raw ?? "").trim();
+    const upper = text2.toUpperCase();
     const noData = /\bNO\s*DATA\b/.test(upper);
     const adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || "";
-    const lines = text.replace(/>/g, "\n").split(/[\r\n]+/);
+    const lines = text2.replace(/>/g, "\n").split(/[\r\n]+/);
     const frames = lines.map((line) => elmFrameBytes(line, command)).filter((frame) => frame.length);
     const bytes = frames.flat();
-    return { raw: text, noData, adapterError, frames, bytes };
+    return { raw: text2, noData, adapterError, frames, bytes };
   }
   function findServiceReply(bytes, responseService, pid) {
     for (let index = 0; index < bytes.length; index++) {
@@ -8273,8 +8326,8 @@ button{margin-top:12px;padding:8px 14px}
   function aiPhoneForm() {
     return `${aiFormShell("AI phone intake", "Turn a customer call transcript into service recommendations, questions, and booking guidance.", `<label class="full">Call transcript<textarea name="transcript" required placeholder="Customer: My 2016 Camry has a check engine light and shakes at stop lights..."></textarea></label>`, "Analyze call")}${aiResult?.kind === "phone" ? phoneResult(aiResult) : ""}`;
   }
-  function aiKeywords(text) {
-    return String(text || "").toLowerCase();
+  function aiKeywords(text2) {
+    return String(text2 || "").toLowerCase();
   }
   function estimateLocal(vehicle, service, notes = "") {
     const source = aiKeywords(`${service} ${notes}`), laborRate = Number(shopProfile().laborRate ?? 140), brake = /brake|rotor|pad/.test(source), oil = /oil|lube/.test(source), ac = /a\/c|air.?condition/.test(source), lines = brake ? [{ service: "Front brake pads and rotor service", hours: 2, parts: 285, notes: "Includes hardware inspection and brake bedding road test." }] : oil ? [{ service: "Synthetic oil and filter service", hours: 0.5, parts: 68, notes: "Includes multipoint inspection and fluid top-off." }] : ac ? [{ service: "A/C performance diagnosis", hours: 1.5, parts: 35, notes: "Pressure test and airflow inspection; repair parts quoted after diagnosis." }] : [{ service, hours: 1.5, parts: 110, notes: "Preliminary estimate; verify condition and part fitment before approval." }];
@@ -8285,7 +8338,7 @@ button{margin-top:12px;padding:8px 14px}
     return buildRepairGuide(vehicle, repair);
   }
   function phoneLocal(transcript) {
-    const text = aiKeywords(transcript), vehicle = (transcript.match(/(?:19|20)\d{2}\s+[A-Za-z]+(?:\s+[A-Za-z0-9-]+){0,2}/) || ["Vehicle not confirmed"])[0], urgent = /brake|smoke|overheat|stall|no.?start/.test(text), service = /brake/.test(text) ? "Brake system inspection" : /a\/c|warm/.test(text) ? "A/C performance inspection" : /check engine|rough|shake/.test(text) ? "Check-engine diagnostic" : /oil/.test(text) ? "Oil service and inspection" : "Diagnostic inspection";
+    const text2 = aiKeywords(transcript), vehicle = (transcript.match(/(?:19|20)\d{2}\s+[A-Za-z]+(?:\s+[A-Za-z0-9-]+){0,2}/) || ["Vehicle not confirmed"])[0], urgent = /brake|smoke|overheat|stall|no.?start/.test(text2), service = /brake/.test(text2) ? "Brake system inspection" : /a\/c|warm/.test(text2) ? "A/C performance inspection" : /check engine|rough|shake/.test(text2) ? "Check-engine diagnostic" : /oil/.test(text2) ? "Oil service and inspection" : "Diagnostic inspection";
     return { kind: "phone", vehicle, symptoms: transcript.slice(0, 260), service, urgency: urgent ? "Immediate" : "Soon", response: urgent ? "For safety, please avoid driving the vehicle until we can inspect it. We can prioritize an appointment today." : "We can schedule a diagnostic appointment so a technician can verify the concern and provide an accurate estimate.", questions: ["What warning lights are currently on?", "When did the concern begin and does it happen consistently?", "What is the current mileage and have there been recent repairs?"], booking: true };
   }
   function detailedDiagnosticPlan(vehicle, symptoms, dtc) {
@@ -8304,8 +8357,8 @@ button{margin-top:12px;padding:8px 14px}
     const diagnostics = detailedDiagnosticPlan(order.vehicle, order.complaint, ""), estimate = estimateLocal(order.vehicle, order.complaint, order.notes), guide = detailedGuide(order.vehicle, estimate.lines[0].service);
     return { kind: "workflow", orderId: order.id, order: { customer: order.customer, vehicle: order.vehicle, vin: order.vin || "VIN pending", complaint: order.complaint, technician: order.tech || "Unassigned", bay: order.bay || "Unassigned", promise: order.promise || "Not scheduled", notes: order.notes || "" }, diagnostics, estimate, guide, recommended: [{ service: "Multipoint inspection", reason: "Confirm related wear items while the vehicle is in service.", cost: 0 }, { service: "Fluid and maintenance review", reason: "Check manufacturer interval items during the repair visit.", cost: 45 }] };
   }
-  function worksheetCheck(label2, text) {
-    return `<li><span class="print-check">&#9633;</span><div><b>${escapeHtml(label2)}</b><p>${escapeHtml(text)}</p></div></li>`;
+  function worksheetCheck(label2, text2) {
+    return `<li><span class="print-check">&#9633;</span><div><b>${escapeHtml(label2)}</b><p>${escapeHtml(text2)}</p></div></li>`;
   }
   function workflowResult(result) {
     const order = result.order || {}, causes = result.diagnostics.causes.map((cause) => `<article class="cause-card"><div class="cause-title"><h3>${escapeHtml(cause.cause)}</h3><span class="ai-tag ${cause.likelihood.toLowerCase()}">${cause.likelihood}</span></div><p>${escapeHtml(cause.explanation)}</p><small><b>Evidence that raises likelihood:</b> ${escapeHtml(cause.evidence)}</small><div class="cause-tools"><b>Tools:</b> ${cause.tools.map(escapeHtml).join(" \xB7 ")}</div>${cause.tests.map((test, index) => `<section class="test-procedure"><h4>Test ${index + 1}: ${escapeHtml(test.name)}</h4><ol>${test.procedure.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol><div class="expected-readings"><p><b>Pass / normal:</b> ${escapeHtml(test.good)}</p><p><b>Fail / supports cause:</b> ${escapeHtml(test.bad)}</p></div><div class="worksheet-reading">Actual reading / observation: ______________________________________________</div></section>`).join("")}<h4>Repair options after confirmation</h4><ul class="repair-options">${cause.repairs.map((option) => worksheetCheck("Option", option)).join("")}</ul></article>`).join(""), parts = result.estimate.lines.map((line) => `<tr><td>${escapeHtml(line.service)}</td><td>${line.hours.toFixed(2)}</td><td>${money4(line.parts)}</td><td><b>${money4(line.total)}</b></td></tr>`).join(""), steps = result.guide.steps.map((step, index) => worksheetCheck(`Step ${index + 1}`, stepText(step))).join(""), safety = result.guide.safety.map((item) => `<li>${escapeHtml(item)}</li>`).join(""), qc = result.guide.postRepair.map((item, index) => worksheetCheck(`QC ${index + 1}`, item)).join("");
@@ -9055,10 +9108,10 @@ button{margin-top:12px;padding:8px 14px}
     document.querySelector("#toast-region").append(node);
     setTimeout(() => node.remove(), 2600);
   }
-  function nav(route, iconName, text, count = "") {
+  function nav(route, iconName, text2, count = "") {
     if (!canAccess(route)) return "";
     const current = state.route === route;
-    return `<button class="nav-button ${current ? "active" : ""}" data-route="${route}"${current ? ' aria-current="page"' : ""}>${icon(iconName)}<span>${text}</span>${count !== "" && count !== "0" ? `<span class="count">${count}</span>` : ""}</button>`;
+    return `<button class="nav-button ${current ? "active" : ""}" data-route="${route}"${current ? ' aria-current="page"' : ""}>${icon(iconName)}<span>${text2}</span>${count !== "" && count !== "0" ? `<span class="count">${count}</span>` : ""}</button>`;
   }
   function sidebarNavigation() {
     const counts = { active: visibleOrders().filter((x) => !["completed", "invoiced"].includes(x.status)).length, orders: visibleOrders().length, overdue: state.invoices.filter((x) => x.status === "overdue").length, unread: state.conversations.reduce((sum, item) => sum + chatUnread(item), 0) };
@@ -9237,7 +9290,7 @@ button{margin-top:12px;padding:8px 14px}
       const status = reminderStatus(item), vehicle = reminderVehicle(item), statusLabel3 = status === "upcoming" ? "Upcoming" : status[0].toUpperCase() + status.slice(1), statusClass = status === "sent" ? "paid" : status === "overdue" ? "overdue" : status === "due" ? "approved" : "estimate";
       return `<tr class="clickable-row" data-edit-reminder="${item.id}"><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.service)}${item.parentReminderId ? `<small>Follow-up reminder</small>` : ""}</td><td>${item.dueDate || "Date pending"}<small>${item.dueMileage ? `${item.dueMileage} miles${vehicle?.mileage ? ` \xB7 current ${vehicle.mileage}` : ""}` : "No mileage trigger"}</small></td><td><span class="badge ${statusClass}">${statusLabel3}</span>${item.sentAt ? `<small>${new Date(item.sentAt).toLocaleString()}</small>` : ""}</td><td><div class="reminder-actions"><button class="mini-action" data-edit-reminder-button="${item.id}">${icon("pencil", 13)} Edit</button>${item.sentAt ? `<button class="mini-action" data-follow-up-reminder="${item.id}">${icon("calendar-plus", 13)} Follow up</button>` : `<button class="mini-action" data-send-reminder="${item.id}">${icon("send", 13)} Send</button>`}</div></td></tr>`;
     }).join("");
-    return `<div class="ops-actions reminder-toolbar"><div class="tabs reminder-filters">${filters.map(([value2, text]) => `<button class="tab ${reminderFilter === value2 ? "active" : ""}" data-reminder-filter="${value2}">${text}</button>`).join("")}</div><button class="primary" id="add-reminder">${icon("bell-plus", 14)} Add reminder</button></div><div class="data-panel reminder-table"><table><thead><tr><th>Customer & vehicle</th><th>Service</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No ${reminderFilter === "all" ? "maintenance" : reminderFilter} reminders.</td></tr>`}</tbody></table></div>`;
+    return `<div class="ops-actions reminder-toolbar"><div class="tabs reminder-filters">${filters.map(([value2, text2]) => `<button class="tab ${reminderFilter === value2 ? "active" : ""}" data-reminder-filter="${value2}">${text2}</button>`).join("")}</div><button class="primary" id="add-reminder">${icon("bell-plus", 14)} Add reminder</button></div><div class="data-panel reminder-table"><table><thead><tr><th>Customer & vehicle</th><th>Service</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No ${reminderFilter === "all" ? "maintenance" : reminderFilter} reminders.</td></tr>`}</tbody></table></div>`;
   }
   function operationsDiagnostics() {
     const output = state.elmOutput || "Connect an ELM327 for generic OBD-II data. OEM programming, module coding, and bidirectional controls are in OEM diagnostics.", friendly = typeof output === "string" ? output : output.friendly, raw = typeof output === "object" ? output.raw : "";
@@ -9484,15 +9537,15 @@ button{margin-top:12px;padding:8px 14px}
     win.document.close();
   }
   function shareInspectionReport(inspection) {
-    const counts = (inspection.items || []).reduce((t, r) => (t[r.status] = (t[r.status] || 0) + 1, t), {}), text = `Inspection ${inspection.number} \xB7 ${inspection.vehicle} \xB7 ${inspection.customer}
+    const counts = (inspection.items || []).reduce((t, r) => (t[r.status] = (t[r.status] || 0) + 1, t), {}), text2 = `Inspection ${inspection.number} \xB7 ${inspection.vehicle} \xB7 ${inspection.customer}
 Results: ${counts.pass || 0} pass, ${counts.attention || 0} attention, ${counts.fail || 0} fail
 ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
 ` : ""}Date: ${new Date(inspection.createdAt).toLocaleDateString()}`;
     if (navigator.share) {
-      navigator.share({ title: `Inspection ${inspection.number}`, text }).catch(() => {
+      navigator.share({ title: `Inspection ${inspection.number}`, text: text2 }).catch(() => {
       });
     } else {
-      navigator.clipboard.writeText(text).then(() => toast("Report copied to clipboard")).catch(() => toast("Could not copy report"));
+      navigator.clipboard.writeText(text2).then(() => toast("Report copied to clipboard")).catch(() => toast("Could not copy report"));
     }
   }
   function openInspectionApproval(inspection) {
@@ -9695,8 +9748,8 @@ ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
     return bytes;
   }
   function normalizeElmResponse(raw, command = "") {
-    const text = String(raw ?? "").trim(), upper = text.toUpperCase(), noData = /\bNO\s*DATA\b/.test(upper), adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || "", lines = text.replace(/>/g, "\n").split(/[\r\n]+/), frames = lines.map((line) => elmLineBytes(line, command)).filter((frame) => frame.length), bytes = frames.flat();
-    return { raw: text, noData, adapterError, frames, bytes };
+    const text2 = String(raw ?? "").trim(), upper = text2.toUpperCase(), noData = /\bNO\s*DATA\b/.test(upper), adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || "", lines = text2.replace(/>/g, "\n").split(/[\r\n]+/), frames = lines.map((line) => elmLineBytes(line, command)).filter((frame) => frame.length), bytes = frames.flat();
+    return { raw: text2, noData, adapterError, frames, bytes };
   }
   function findElmReply(bytes, mode, pid) {
     for (let index = 0; index < bytes.length; index++) {
@@ -11765,8 +11818,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const p = importPreview, rows = p.records.slice(0, 5).map((record, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(Object.values(record).slice(0, 4).join(" \xB7 "))}</td></tr>`).join("");
     return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} records</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>`;
   }
-  function prepareImport(type, text) {
-    return prepareImportRecords(type, text, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
+  function prepareImport(type, text2) {
+    return prepareImportRecords(type, text2, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
   }
   function downloadTemplate(type) {
     const link = document.createElement("a"), file = importTypes[type];
@@ -13898,8 +13951,8 @@ ${catRows}
       };
     });
     const w2Employees = employees2.filter((e) => !String(e.taxStatus || "").includes("1099"));
-    const text = buildEfw2Text({ ein: shop.ein, name: shop.shopName, address: shop.address }, w2Employees, year);
-    downloadTextFile(`shopcrank-efw2-${year}.txt`, text, "text/plain;charset=utf-8");
+    const text2 = buildEfw2Text({ ein: shop.ein, name: shop.shopName, address: shop.address }, w2Employees, year);
+    downloadTextFile(`shopcrank-efw2-${year}.txt`, text2, "text/plain;charset=utf-8");
     toast("SSA EFW2 package downloaded");
   }
   function printEmployeeAnnualForm(userId) {
@@ -15093,6 +15146,51 @@ ${line}`.trim();
       };
     });
   }
+  function sessionShopId() {
+    try {
+      return JSON.parse(sessionStorage.getItem(storageKeys.session) || "null")?.claims?.["custom:shopId"] || "";
+    } catch {
+      return "";
+    }
+  }
+  function growthSettingsRecord(id) {
+    return state.shopSettingsRecords.find((item) => item.id === id) || {};
+  }
+  function bindGrowthSettings() {
+    document.querySelector("#growth-settings-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.target.querySelector("button[type=submit]");
+      button.disabled = true;
+      try {
+        const { booking, followups } = growthSettingsRecords(readFormValues(event.target), { booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups") });
+        await saveShopEntity("shopsettings", { ...growthSettingsRecord("booking"), ...booking });
+        await saveShopEntity("shopsettings", { ...growthSettingsRecord("followups"), ...followups });
+        toast("Booking and follow-up settings saved");
+        render();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Settings could not be saved");
+      }
+    });
+    document.querySelector("#growth-run-now")?.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        const report = await apiFetch("/followups/run", { method: "POST", body: "{}" });
+        toast(`Sent ${report.remindersSent} reminder(s) and ${report.reviewRequestsSent} review request(s)${report.skipped ? ` \xB7 ${report.skipped} skipped (no texting number, opted out, or missing phone)` : ""}`);
+      } catch (error) {
+        toast(error.message || "Follow-ups could not run");
+      }
+      event.currentTarget.disabled = false;
+    });
+    document.querySelector("#booking-link-copy")?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(document.querySelector("#booking-link")?.value || "");
+        toast("Booking link copied");
+      } catch {
+        toast("Select the link and copy it");
+      }
+    });
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -15191,22 +15289,22 @@ ${line}`.trim();
         activeGrokPhase = nextPhase;
         updateGrokVoiceUiControls();
       },
-      onUserTranscript: (text, { final }) => {
+      onUserTranscript: (text2, { final }) => {
         if (liveUserMsgIndex < 0 || assistantConversation[liveUserMsgIndex]?.role !== "user") {
           liveUserMsgIndex = assistantConversation.length;
-          assistantConversation.push({ role: "user", content: text });
+          assistantConversation.push({ role: "user", content: text2 });
         } else {
-          assistantConversation[liveUserMsgIndex].content = text;
+          assistantConversation[liveUserMsgIndex].content = text2;
         }
         if (final) liveUserMsgIndex = -1;
         refreshAssistantList();
       },
-      onAssistantTranscript: (text, { final }) => {
+      onAssistantTranscript: (text2, { final }) => {
         if (liveAssistantMsgIndex < 0 || assistantConversation[liveAssistantMsgIndex]?.role !== "assistant") {
           liveAssistantMsgIndex = assistantConversation.length;
-          assistantConversation.push({ role: "assistant", content: text, actions: [] });
+          assistantConversation.push({ role: "assistant", content: text2, actions: [] });
         } else {
-          assistantConversation[liveAssistantMsgIndex].content = text;
+          assistantConversation[liveAssistantMsgIndex].content = text2;
         }
         if (final) liveAssistantMsgIndex = -1;
         refreshAssistantList();
@@ -15274,7 +15372,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15303,6 +15401,7 @@ ${line}`.trim();
       init_sms_inbox();
       init_inspection_ratings();
       init_call_log();
+      init_growth_settings();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -17527,6 +17626,18 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         bindDeclinedWorkCore();
         if (state.route === "shopops" && shopOpsTab === "declined") bindDeclinedWork();
       };
+      settingsGrowthCore = settings;
+      settings = function() {
+        const page = settingsGrowthCore();
+        if (isOfflineDesktop()) return page;
+        const panel = growthSettingsHtml({ booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups"), shopId: sessionShopId(), origin: location.origin, canSave: currentUser()?.role === "admin" }, { escapeHtml, escapeAttr, icon });
+        return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+      };
+      bindGrowthSettingsCore = bind;
+      bind = function() {
+        bindGrowthSettingsCore();
+        if (state.route === "settings") bindGrowthSettings();
+      };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
       activeGrokSession = null;
       activeGrokPhase = "idle";
@@ -17557,16 +17668,16 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
             if (activeGrokSession?.isActive()) {
               event.preventDefault();
               const input = form.elements.message;
-              const text = String(input?.value || "").trim();
-              if (!text) return;
+              const text2 = String(input?.value || "").trim();
+              if (!text2) return;
               input.value = "";
-              assistantConversation.push({ role: "user", content: text });
+              assistantConversation.push({ role: "user", content: text2 });
               const list = document.querySelector("#assistant-messages");
               if (list) {
                 list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
                 list.scrollTop = list.scrollHeight;
               }
-              activeGrokSession.sendTextTurn(text);
+              activeGrokSession.sendTextTurn(text2);
               return;
             }
             if (typeof origSubmit === "function") return origSubmit.call(form, event);

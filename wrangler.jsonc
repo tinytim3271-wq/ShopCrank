@@ -81,6 +81,10 @@
       "new_sqlite_classes": ["AiChatSession"]
     }
   ],
+  // Daily customer follow-ups (service reminders, Google review requests); see FOLLOWUP_CRON.
+  "triggers": {
+    "crons": ["0 15 * * *"]
+  },
   "observability": {
     "enabled": true,
     "logs": {

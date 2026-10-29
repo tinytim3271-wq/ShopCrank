@@ -293,6 +293,16 @@ async function main() {
       if (!/Declined work/.test(await main())) throw new Error('declined work tab missing');
       if (pageErrors.length) throw new Error(pageErrors.join(' | '));
     });
+    await check('settings links a public booking page that a new trial shop can use', async () => {
+      await route('settings');
+      const link = await page.inputValue('#booking-link');
+      if (!/\/api\/book\/shop-/.test(link)) throw new Error(`booking link missing: ${link}`);
+      const booking = await context.newPage();
+      await booking.goto(link, { waitUntil: 'networkidle' });
+      const text = await booking.evaluate(() => document.body.innerText);
+      await booking.close();
+      if (!text.includes(SHOP) || !/Book appointment/.test(text)) throw new Error(`booking page: ${text.slice(0, 160)}`);
+    });
     for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
       await check(`every module renders on ${label} with no errors or sideways scroll`, async () => {
         await page.setViewportSize(viewport);
