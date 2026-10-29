@@ -277,11 +277,13 @@ async function main() {
         await page.fill('.modal [name=amount]', amount || String(await remaining()));
         await page.locator('.modal [name=paymentMethod]').selectOption({ label: method });
         await page.locator('.modal button[type=submit]:has-text("Record payment")').click();
-        await page.waitForTimeout(1800);
+        // The modal closes once the Worker has recorded the payment; CI runners can take several seconds.
+        await page.waitForSelector('#payment-form', { state: 'detached', timeout: 15_000 }).catch(() => {});
         if (toasts.some(text => /Unsupported payment method/.test(text))) throw new Error('payment rejected');
       }
+      await page.waitForFunction(() => /(?<!PARTIALLY )PAID/.test(document.querySelector('main')?.innerText || '') && /2 payments/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
       const after = await row.innerText();
-      if (!/PAID/.test(after) || !/2 payments/.test(after)) throw new Error(after.replace(/\s+/g, ' ').slice(0, 200));
+      if (!/(?<!PARTIALLY )PAID/.test(after) || !/2 payments/.test(after)) throw new Error(after.replace(/\s+/g, ' ').slice(0, 200));
     });
     await check('messaging shows the two-way texting inbox and shop ops shows declined work', async () => {
       pageErrors.length = 0;
