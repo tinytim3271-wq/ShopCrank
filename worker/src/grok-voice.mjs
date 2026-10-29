@@ -14,6 +14,7 @@ import {
 import { searchLicensedLabor } from './integrations/labor.mjs';
 import { bookAppointment, loadBookingContext, nextAvailability, shopClock } from './scheduling.mjs';
 import { buildCallSummary, callActionFromTool, saveCallSummary } from './call-summaries.mjs';
+import { aiPhoneBookingEnabled } from './growth-flags.mjs';
 
 const PHONE_CREDENTIAL_ROLES = Object.freeze(['admin', 'owner', 'office', 'super_admin']);
 
@@ -173,7 +174,8 @@ export async function resolveGrokApiKey(env, shopId, getSecret = null) {
   return { apiKey: '', keySource: null };
 }
 
-const GROK_BOOKING_TOOLS = [
+/** Offered only when AI_PHONE_BOOKING_ENABLED is "1". */
+export const GROK_BOOKING_TOOLS = Object.freeze([
   {
     type: 'function',
     name: 'check_appointment_availability',
@@ -206,7 +208,7 @@ const GROK_BOOKING_TOOLS = [
       additionalProperties: false,
     },
   },
-];
+]);
 
 export const GROK_SHOP_TOOLS = Object.freeze([
   {
@@ -338,7 +340,6 @@ export const GROK_SHOP_TOOLS = Object.freeze([
       additionalProperties: false,
     },
   },
-  ...GROK_BOOKING_TOOLS,
 ]);
 
 export function buildGrokInstructions({
@@ -347,6 +348,7 @@ export function buildGrokInstructions({
   callerPhone = '',
   callerContext = null,
   today = shopClock(new Date(), shopSettings.timeZone || 'America/Chicago').date,
+  bookingEnabled = false,
 } = {}) {
   const shopName = shopSettings.shopName || 'Our Automotive Shop';
   const laborRate = Number(pricing.laborRate || 140).toFixed(2);
@@ -358,6 +360,12 @@ export function buildGrokInstructions({
     : '';
   const existingCustomerLine = callerContext?.customer
     ? `\nReturning customer: ${JSON.stringify(callerContext.customer)}. Vehicles on file: ${JSON.stringify(callerContext.vehicles || [])}. Recent and open orders: ${JSON.stringify(callerContext.openOrders || [])}. Greet them by first name, confirm which vehicle they are calling about, and don't ask again for details already on file.`
+    : '';
+  const bookingInstructions = bookingEnabled
+    ? `
+5. Book Appointments on the Shop Calendar:
+   - Today is ${today} (shop time zone). When the caller wants to come in, call \`check_appointment_availability\`, offer two or three of the returned times, then call \`book_appointment\` with the exact date and time they choose.
+   - Only confirm an appointment after \`book_appointment\` returns booked: true, then read back the day, date, and time. If the slot was just taken, offer the alternatives it returns.`
     : '';
   const extraInstructions = shopSettings.instructions
     ? `\nShop-specific policy & notes: ${shopSettings.instructions}`
@@ -384,10 +392,7 @@ Your Core Responsibilities on Every Call:
    - When the caller asks how much a repair, maintenance service, or diagnostic costs, call \`calculate_service_estimate\` to compute the labor, parts, shop supplies, and tax using the shop's $${laborRate}/hr labor rate.
    - Clearly state the ballpark total and mention that final pricing is confirmed after an in-bay technician inspection.
 4. Fill Shop Forms & Save the Intake + Estimate:
-   - Call \`save_call_intake_and_estimate\` as soon as you have the caller's name/phone, vehicle, and concern so the shop's intake form, customer record, estimate, and work order draft are filled in automatically.
-5. Book Appointments on the Shop Calendar:
-   - Today is ${today} (shop time zone). When the caller wants to come in, call \`check_appointment_availability\`, offer two or three of the returned times, then call \`book_appointment\` with the exact date and time they choose.
-   - Only confirm an appointment after \`book_appointment\` returns booked: true, then read back the day, date, and time. If the slot was just taken, offer the alternatives it returns.`;
+   - Call \`save_call_intake_and_estimate\` as soon as you have the caller's name/phone, vehicle, and concern so the shop's intake form, customer record, estimate, and work order draft are filled in automatically.${bookingInstructions}`;
 }
 
 export function buildGrokSessionUpdate({
@@ -395,12 +400,13 @@ export function buildGrokSessionUpdate({
   pricing = { laborRate: 140, taxRate: 8.25 },
   callerPhone = '',
   callerContext = null,
+  bookingEnabled = false,
 } = {}) {
   return {
     type: 'session.update',
     session: {
       voice: normalizeGrokVoice(shopSettings.voice),
-      instructions: buildGrokInstructions({ shopSettings, pricing, callerPhone, callerContext }),
+      instructions: buildGrokInstructions({ shopSettings, pricing, callerPhone, callerContext, bookingEnabled }),
       turn_detection: { type: 'server_vad' },
       audio: {
         input: {
@@ -411,7 +417,7 @@ export function buildGrokSessionUpdate({
           format: { type: 'audio/pcm', rate: GROK_SAMPLE_RATE },
         },
       },
-      tools: GROK_SHOP_TOOLS,
+      tools: bookingEnabled ? [...GROK_SHOP_TOOLS, ...GROK_BOOKING_TOOLS] : GROK_SHOP_TOOLS,
     },
   };
 }
@@ -1000,6 +1006,10 @@ export async function executeGrokShopTool(env, shopId, name, args = {}, { caller
     };
   }
 
+  if ((name === 'check_appointment_availability' || name === 'book_appointment') && !aiPhoneBookingEnabled(env)) {
+    return { error: 'Phone booking is turned off; take a message so the shop can call back to schedule.' };
+  }
+
   if (name === 'check_appointment_availability') {
     if (!env?.DB || !shopId) return { error: 'The shop calendar is unavailable; take a message for a callback.' };
     const booking = await loadBookingContext(env, shopId);
@@ -1307,6 +1317,7 @@ export async function handleGrokClientSecret(request, env, context, { getSecret 
     pricing,
     callerPhone,
     callerContext,
+    bookingEnabled: aiPhoneBookingEnabled(env),
   });
 
   return json({
@@ -1767,6 +1778,7 @@ export async function handleGrokTwilioBridge({
         pricing,
         callerPhone: currentCaller,
         callerContext,
+        bookingEnabled: aiPhoneBookingEnabled(env),
       })));
       for (const payload of startupAudioBuffer) {
         const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);

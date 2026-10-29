@@ -80,6 +80,15 @@ AI_ENABLED=1
 # MOTOR_PUBLIC_KEY=...
 # MOTOR_PRIVATE_KEY=...
 
+# Customer-facing automation is off unless set to exactly 1 (worker/src/growth-flags.mjs).
+# Production: add to wrangler.jsonc "vars" or `npx wrangler secret put NAME`.
+# Daily service-reminder / Google review texts and booking confirmations; wait for A2P 10DLC approval.
+# AUTOMATED_SMS_ENABLED=1
+# Public booking page at /api/book/:shopId.
+# ONLINE_BOOKING_ENABLED=1
+# Grok AI phone agent can check availability and book appointments.
+# AI_PHONE_BOOKING_ENABLED=1
+
 # Plate-to-VIN (CARFAX for Shops Quick VIN, PlateToVIN, ...). POSTs {plate,state}
 # unless PLATE_TO_VIN_METHOD=GET; {plate}/{state} placeholders work in the path.
 # PLATE_TO_VIN_BASE_URL=https://...

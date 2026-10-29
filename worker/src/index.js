@@ -93,6 +93,7 @@ import { createCustomerDocumentLink, handleCustomerDocument } from './customer-d
 import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
 import { FOLLOWUP_CRON, runScheduledFollowups, runShopFollowups } from './customer-followups.mjs';
 import { handlePublicBooking } from './online-booking.mjs';
+import { automatedSmsEnabled } from './growth-flags.mjs';
 import { handleVehicleData } from './integrations/vehicle-data.mjs';
 import {
   handleIntegrationStatus,
@@ -3782,6 +3783,10 @@ async function proxyPagesRequest(request, env) {
 export default {
   async scheduled(controller, env, executionCtx) {
     if (controller?.cron === FOLLOWUP_CRON) {
+      if (!automatedSmsEnabled(env)) {
+        console.log(JSON.stringify({ message: 'customer follow-up cron skipped', reason: 'AUTOMATED_SMS_ENABLED is not "1"' }));
+        return;
+      }
       const followups = runScheduledFollowups(env, { getSecret: getIntegrationSecret, bookingOrigin: env.GOOGLE_REDIRECT_ORIGIN || 'https://www.shopcrank.com' })
         .then(reports => console.log(JSON.stringify({
           message: 'customer follow-up cron',

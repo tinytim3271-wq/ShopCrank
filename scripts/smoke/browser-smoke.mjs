@@ -114,6 +114,7 @@ async function startStack() {
     INTEGRATION_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
     LICENSE_TOKEN_SECRET: randomBytes(32).toString('hex'),
     DIAGNOSTICS_CAPABILITY_SECRET: randomBytes(32).toString('hex'),
+    ONLINE_BOOKING_ENABLED: '1',
   };
   if (await fetch(`${WORKER}/api/healthz`).then(() => true, () => false)) {
     throw new Error(`Port ${WORKER_PORT} is already serving; stop that process or set SMOKE_WORKER_PORT`);

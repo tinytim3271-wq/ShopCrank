@@ -1,5 +1,6 @@
 import { resolveTwilioShopConfig, sendSms } from './integrations/sms.mjs';
 import { shopEntitled } from './scheduling.mjs';
+import { automatedSmsEnabled, onlineBookingEnabled } from './growth-flags.mjs';
 
 /**
  * Automatic customer follow-ups, included on every plan:
@@ -10,6 +11,7 @@ import { shopEntitled } from './scheduling.mjs';
  *    at most once per customer per `minDaysBetween`.
  * Settings live in shopsettings/followups; sending needs the shop's Twilio
  * number (or ShopCrank's platform number). Opted-out phones are never texted.
+ * Nothing runs unless the Worker var AUTOMATED_SMS_ENABLED is "1".
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -245,6 +247,7 @@ async function claim(env, shopId, type, id, doneField, now) {
 /** Run follow-ups for one shop. `send` is injectable for tests; defaults to Twilio. */
 export async function runShopFollowups(env, shopId, { now = Date.now(), getSecret = null, send = null, bookingOrigin = '' } = {}) {
   const report = { shopId, remindersCreated: 0, remindersSent: 0, reviewRequestsSent: 0, skipped: 0, errors: [] };
+  if (!automatedSmsEnabled(env)) return { ...report, skippedReason: 'disabled' };
   if (!(await shopEntitled(env, shopId, 'sms', now))) return { ...report, skippedReason: 'not_entitled' };
   if (!(await acquireRunLock(env, shopId, now))) return { ...report, skippedReason: 'already_running' };
   const [settingsRows, orders, invoices, reminders, customers, shop] = await Promise.all([
@@ -305,7 +308,7 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
       }
     }
     if (settings.serviceReminders.autoSend) {
-      const bookingUrl = bookingOrigin && byId.booking?.enabled !== false ? `${bookingOrigin}/api/book/${encodeURIComponent(shopId)}` : '';
+      const bookingUrl = bookingOrigin && onlineBookingEnabled(env) && byId.booking?.enabled !== false ? `${bookingOrigin}/api/book/${encodeURIComponent(shopId)}` : '';
       for (const reminder of dueReminders(all, { today, leadDays: settings.serviceReminders.leadDays })) {
         const customer = customers.find(item => item.id === reminder.customerId || item.name === reminder.customer);
         const sent = await textCustomer({
@@ -347,6 +350,7 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
 
 /** Daily cron: every shop with an active or trialing subscription. */
 export async function runScheduledFollowups(env, options = {}) {
+  if (!automatedSmsEnabled(env)) return [];
   const shops = await env.DB.prepare("SELECT shop_id FROM subscriptions WHERE status IN ('active', 'trialing')").all();
   const reports = [];
   for (const row of shops.results || []) {

@@ -2,6 +2,7 @@ import { HttpError, json } from './http.mjs';
 import { BookingError, bookAppointment, loadBookingContext, nextAvailability, shopEntitled, validBookingDate } from './scheduling.mjs';
 import { resolveTwilioShopConfig, sendSms } from './integrations/sms.mjs';
 import { toE164 } from './customer-followups.mjs';
+import { automatedSmsEnabled, onlineBookingEnabled } from './growth-flags.mjs';
 
 /**
  * Public online booking, included on every plan:
@@ -9,6 +10,8 @@ import { toE164 } from './customer-followups.mjs';
  *   GET  /api/book/:shopId/slots    open times
  *   POST /api/book/:shopId          book; rate limited per client IP
  * The shop turns it off in Settings (shopsettings/booking.enabled = false).
+ * Off for every shop unless ONLINE_BOOKING_ENABLED is "1"; the confirmation
+ * text also needs AUTOMATED_SMS_ENABLED.
  */
 
 const RATE_LIMIT = Object.freeze({ windowMs: 15 * 60 * 1000, max: 6 });
@@ -65,6 +68,7 @@ form.addEventListener('submit',async e=>{e.preventDefault();show('');if(!time)re
 export async function handlePublicBooking(request, env, segments, { hashValue, getSecret = null } = {}) {
   const shopId = decodeURIComponent(segments[1] || '');
   const action = segments[2] || '';
+  if (!onlineBookingEnabled(env)) throw new HttpError(404, 'Online booking is not available for this shop');
   const shop = await activeShop(env, shopId);
   if (!shop) throw new HttpError(404, 'Online booking is not available for this shop');
   const context = await loadBookingContext(env, shopId);
@@ -101,7 +105,7 @@ export async function handlePublicBooking(request, env, segments, { hashValue, g
       const { appointment } = await bookAppointment(env, shopId, { ...body, phone }, { source: 'online_booking', createdBy: 'online-booking' });
       try {
         const consent = await env.DB.prepare('SELECT status FROM sms_consent WHERE shop_id = ? AND phone = ?').bind(shopId, phone).first();
-        const twilio = consent?.status === 'opted_out' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
+        const twilio = !automatedSmsEnabled(env) || consent?.status === 'opted_out' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
         if (twilio?.configured) {
           const text = `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.`;
           const result = await sendSms(env, { to: phone, body: text }, { config: twilio });

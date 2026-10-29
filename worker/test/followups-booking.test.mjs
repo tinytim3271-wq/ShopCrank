@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, * as entry from '../src/index.js';
 import {
-  FOLLOWUP_CRON, dueReviewRequests, followupSettings, normalizeGoogleReviewUrl, plannedServiceReminders, runShopFollowups,
+  FOLLOWUP_CRON, dueReviewRequests, followupSettings, normalizeGoogleReviewUrl, plannedServiceReminders, runScheduledFollowups, runShopFollowups,
 } from '../src/customer-followups.mjs';
 import { createD1 } from './helpers/d1-sqlite.mjs';
+import { FLAGS_ON } from './helpers/growth-flags-on.mjs';
 import { readFileSync } from 'node:fs';
 
 const ORIGIN = 'https://www.shopcrank.com';
@@ -72,7 +73,7 @@ test('the follow-up run texts due reminders and review requests and records them
   put('orders', 'RO-1', { customer: 'Alice Brooks', vehicle: '2019 Camry', vin: 'VIN1', status: 'completed', completedAt: new Date(now - 182 * DAY).toISOString(), estimate: { lines: [{ description: 'Oil change' }] } });
   put('invoices', 'INV-1', { number: 'INV-1', customer: 'Alice Brooks', status: 'paid', paidAt: new Date(now - 5 * 3600_000).toISOString() });
   const sent = [];
-  const report = await runShopFollowups({ DB }, 'shop-a1b2c3', { now, send: async message => { sent.push(message); return { provider: 'twilio', messageSid: `SM${sent.length}`, status: 'queued' }; }, bookingOrigin: ORIGIN });
+  const report = await runShopFollowups({ ...FLAGS_ON, DB }, 'shop-a1b2c3', { now, send: async message => { sent.push(message); return { provider: 'twilio', messageSid: `SM${sent.length}`, status: 'queued' }; }, bookingOrigin: ORIGIN });
   assert.equal(report.remindersCreated, 1);
   assert.equal(report.remindersSent, 1);
   assert.equal(report.reviewRequestsSent, 1);
@@ -84,7 +85,7 @@ test('the follow-up run texts due reminders and review requests and records them
   assert.ok(read('invoices')[0].reviewRequestedAt);
   const logged = DB.sqlite.prepare('SELECT message_type FROM customer_messages ORDER BY message_type').all().map(row => row.message_type);
   assert.deepEqual(logged, ['reminder', 'review_request']);
-  const again = await runShopFollowups({ DB }, 'shop-a1b2c3', { now, send: async message => { sent.push(message); return {}; } });
+  const again = await runShopFollowups({ ...FLAGS_ON, DB }, 'shop-a1b2c3', { now, send: async message => { sent.push(message); return {}; } });
   assert.equal(again.remindersSent + again.reviewRequestsSent, 0, 'nothing is sent twice');
 });
 
@@ -103,7 +104,7 @@ test('the daily cron is configured and routed to follow-ups', () => {
 
 test('online booking works on the Solo plan: page, slots, booking, and rate limit', async () => {
   const { DB, read } = seedShop({ plan: 'solo' });
-  const env = { DB };
+  const env = { ...FLAGS_ON, DB };
   const call = (path, init = {}) => worker.fetch(new Request(`${ORIGIN}/api/book/shop-a1b2c3${path}`, { ...init, headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9', ...(init.headers || {}) } }), env, {});
   const page = await call('');
   assert.equal(page.status, 200);
@@ -128,9 +129,36 @@ test('online booking works on the Solo plan: page, slots, booking, and rate limi
 
 test('online booking is hidden when the shop turns it off or the subscription lapsed', async () => {
   const off = seedShop({ booking: { enabled: false } });
-  const response = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-a1b2c3`), { DB: off.DB }, {});
+  const response = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-a1b2c3`), { ...FLAGS_ON, DB: off.DB }, {});
   assert.equal(response.status, 404);
   const lapsed = seedShop();
   lapsed.DB.sqlite.exec("UPDATE subscriptions SET status = 'canceled'");
-  assert.equal((await worker.fetch(new Request(`${ORIGIN}/api/book/shop-a1b2c3`), { DB: lapsed.DB }, {})).status, 404);
+  assert.equal((await worker.fetch(new Request(`${ORIGIN}/api/book/shop-a1b2c3`), { ...FLAGS_ON, DB: lapsed.DB }, {})).status, 404);
+});
+
+test('automated texts and online booking are off unless their Worker vars are "1"', async () => {
+  const { DB, put, read } = seedShop({ followups: { reviewRequests: { googleReviewUrl: 'https://g.page/r/abc/review' } } });
+  const now = Date.now();
+  put('customers', 'Alice Brooks', { name: 'Alice Brooks', phone: '806-555-0101' });
+  put('orders', 'RO-1', { customer: 'Alice Brooks', vehicle: '2019 Camry', vin: 'VIN1', status: 'completed', completedAt: new Date(now - 182 * DAY).toISOString(), estimate: { lines: [{ description: 'Oil change' }] } });
+  put('invoices', 'INV-1', { number: 'INV-1', customer: 'Alice Brooks', status: 'paid', paidAt: new Date(now - 5 * 3600_000).toISOString() });
+  const sent = [];
+  const send = async message => { sent.push(message); return {}; };
+  for (const value of [undefined, '', '0', 'true']) {
+    const env = { DB, AUTOMATED_SMS_ENABLED: value, ONLINE_BOOKING_ENABLED: value };
+    const report = await runShopFollowups(env, 'shop-a1b2c3', { now, send, bookingOrigin: ORIGIN });
+    assert.equal(report.skippedReason, 'disabled');
+    assert.deepEqual(await runScheduledFollowups(env, { now, send }), []);
+    assert.equal((await worker.fetch(new Request(`${ORIGIN}/api/book/shop-a1b2c3`), env, {})).status, 404);
+  }
+  const waits = [];
+  await worker.scheduled({ cron: FOLLOWUP_CRON }, { DB }, { waitUntil: promise => waits.push(promise) });
+  await Promise.all(waits);
+  assert.equal(sent.length, 0);
+  assert.deepEqual(read('reminders'), [], 'no reminders are even created');
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM customer_messages').get().n, 0);
+
+  const report = await runShopFollowups({ DB, AUTOMATED_SMS_ENABLED: '1' }, 'shop-a1b2c3', { now, send, bookingOrigin: ORIGIN });
+  assert.equal(report.remindersSent, 1);
+  assert.doesNotMatch(sent[0].body, /\/api\/book\//, 'no booking link while online booking is off');
 });

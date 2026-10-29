@@ -6057,7 +6057,8 @@ function bindGrowthSettings() {
     event.currentTarget.disabled = true;
     try {
       const report = await apiFetch("/followups/run", { method: "POST", body: "{}" });
-      toast(`Sent ${report.remindersSent} reminder(s) and ${report.reviewRequestsSent} review request(s)${report.skipped ? ` · ${report.skipped} skipped (no texting number, opted out, or missing phone)` : ""}`);
+      if (report.skippedReason === "disabled") toast("Automatic follow-up texts are turned off until ShopCrank's texting registration is approved");
+      else toast(`Sent ${report.remindersSent} reminder(s) and ${report.reviewRequestsSent} review request(s)${report.skipped ? ` · ${report.skipped} skipped (no texting number, opted out, or missing phone)` : ""}`);
     } catch (error) { toast(error.message || "Follow-ups could not run") }
     event.currentTarget.disabled = false;
   });

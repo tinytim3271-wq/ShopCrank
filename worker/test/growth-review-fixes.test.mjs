@@ -6,6 +6,7 @@ import { availableSlots, bookAppointment, parseShopHours } from '../src/scheduli
 import { createCustomerDocumentLink, handleCustomerDocument } from '../src/customer-documents.mjs';
 import { isVideoMedia } from '../../src/modules/inspection-ratings.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
+import { FLAGS_ON } from './helpers/growth-flags-on.mjs';
 
 const ORIGIN = 'https://www.shopcrank.com';
 const DAY = 86400000;
@@ -40,10 +41,10 @@ test('follow-ups and booking stop for expired trials and suspended shops', async
     const fixture = shop(options);
     seedDue(fixture);
     const sent = [];
-    const report = await runShopFollowups({ DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent) });
+    const report = await runShopFollowups({ ...FLAGS_ON, DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent) });
     assert.equal(report.skippedReason, 'not_entitled');
     assert.equal(sent.length, 0);
-    assert.equal((await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`), { DB: fixture.DB }, {})).status, 404);
+    assert.equal((await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`), { ...FLAGS_ON, DB: fixture.DB }, {})).status, 404);
   }
 });
 
@@ -52,8 +53,8 @@ test('one run per shop at a time; records are claimed before texting', async () 
   seedDue(fixture);
   const sent = [];
   const [first, second] = await Promise.all([
-    runShopFollowups({ DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent) }),
-    runShopFollowups({ DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent) }),
+    runShopFollowups({ ...FLAGS_ON, DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent) }),
+    runShopFollowups({ ...FLAGS_ON, DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent) }),
   ]);
   assert.equal([first, second].filter(report => report.skippedReason === 'already_running').length, 1);
   assert.equal(sent.length, 2, 'one reminder and one review request, once');
@@ -68,7 +69,7 @@ test('nothing is texted when opt-outs cannot be read; reviews pause when history
     batch: fixture.DB.batch,
   };
   const sent = [];
-  const report = await runShopFollowups({ DB }, 'shop-r3v13w', { send: sender(sent) });
+  const report = await runShopFollowups({ ...FLAGS_ON, DB }, 'shop-r3v13w', { send: sender(sent) });
   assert.equal(sent.length, 0);
   assert.match(report.errors.join(' '), /opt-out list unavailable/);
 
@@ -76,7 +77,7 @@ test('nothing is texted when opt-outs cannot be read; reviews pause when history
   seedDue(second);
   const DB2 = { ...second.DB, prepare: sql => (/message_type = 'review_request' GROUP BY/.test(sql) ? { bind: () => ({ all: async () => { throw new Error('D1 down'); } }) } : second.DB.prepare(sql)), batch: second.DB.batch };
   const sent2 = [];
-  const report2 = await runShopFollowups({ DB: DB2 }, 'shop-r3v13w', { send: sender(sent2) });
+  const report2 = await runShopFollowups({ ...FLAGS_ON, DB: DB2 }, 'shop-r3v13w', { send: sender(sent2) });
   assert.equal(report2.reviewRequestsSent, 0);
   assert.equal(report2.remindersSent, 1, 'reminders still go out');
 });
@@ -116,8 +117,8 @@ test('booking: the last slot cannot be double-booked, and minimum notice spans d
 test('booking confirmation respects STOP and is logged when sent', async () => {
   const { DB } = shop();
   DB.sqlite.exec("INSERT INTO sms_consent (shop_id, phone, status, source, updated_at) VALUES ('shop-r3v13w', '+18065550150', 'opted_out', 'test', 'now')");
-  const slots = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w/slots`), { DB }, {})).json();
-  const env = { DB, TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 't', TWILIO_FROM_NUMBER: '+18065550000' };
+  const slots = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w/slots`), { ...FLAGS_ON, DB }, {})).json();
+  const env = { ...FLAGS_ON, DB, TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 't', TWILIO_FROM_NUMBER: '+18065550000' };
   const realFetch = globalThis.fetch;
   let twilioCalls = 0;
   globalThis.fetch = async (url, init) => (String(url).includes('api.twilio.com') ? (twilioCalls += 1, Response.json({ sid: 'SM1', status: 'queued' })) : realFetch(url, init));
@@ -128,6 +129,10 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
     assert.equal((await book('806-555-0151', slots.days[0].slots[1])).status, 201);
     assert.equal(twilioCalls, 1);
     assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM customer_messages WHERE message_type = 'booking_confirmation'").get().n, 1);
+    const smsOff = { ...env, AUTOMATED_SMS_ENABLED: '0' };
+    const quiet = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Y', phone: '806-555-0152', vehicle: 'Civic', service: 'Oil', date: slots.days.at(-1).date, time: slots.days.at(-1).slots.at(-1) }) }), smsOff, {});
+    assert.equal(quiet.status, 201, 'booking still works with automated texts off');
+    assert.equal(twilioCalls, 1, 'but no confirmation text goes out');
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -162,7 +167,7 @@ test('review fixes: same-name callers never overwrite each other; sends only tou
 
   const second = shop();
   seedDue(second);
-  const report = await runShopFollowups({ DB: second.DB }, 'shop-r3v13w', {
+  const report = await runShopFollowups({ ...FLAGS_ON, DB: second.DB }, 'shop-r3v13w', {
     send: async message => {
       // Staff collect a signature on the invoice while the text is in flight.
       second.DB.sqlite.prepare("UPDATE entities SET data_json = json_set(data_json, '$.signature', 'signed') WHERE entity_id = 'INV-1'").run();
@@ -188,7 +193,7 @@ test('review fixes: attention is yellow, shop-scoped photo keys print, new calle
   const fixture = shop({ booking: { enabled: false } });
   seedDue(fixture);
   const sent = [];
-  await runShopFollowups({ DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent), bookingOrigin: ORIGIN });
+  await runShopFollowups({ ...FLAGS_ON, DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent), bookingOrigin: ORIGIN });
   const reminder = sent.find(message => /is due/.test(message.body));
   assert.ok(reminder);
   assert.doesNotMatch(reminder.body, /\/api\/book\//);

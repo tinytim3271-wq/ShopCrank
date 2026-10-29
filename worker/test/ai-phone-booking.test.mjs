@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { availableSlots, bookAppointment, nextAvailability, parseShopHours, shopClock } from '../src/scheduling.mjs';
-import { GROK_SHOP_TOOLS, buildGrokInstructions, executeGrokShopTool } from '../src/grok-voice.mjs';
+import { GROK_BOOKING_TOOLS, GROK_SHOP_TOOLS, buildGrokInstructions, buildGrokSessionUpdate, executeGrokShopTool } from '../src/grok-voice.mjs';
 import { agentPhoneCallSummary, buildCallSummary, callActionFromTool, extractiveCallSummary } from '../src/call-summaries.mjs';
 import { callLogHtml } from '../../src/modules/call-log.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
+import { FLAGS_ON } from './helpers/growth-flags-on.mjs';
 
 const hours = parseShopHours('Monday–Friday 8:00 AM – 5:30 PM; Saturday 9 AM - 1 PM');
 
@@ -45,7 +46,7 @@ async function shop() {
   put('shopsettings', 'booking', { hours: 'Monday-Sunday 7:00 AM - 7:00 PM', capacity: 1, leadMinutes: 0 });
   put('customers', 'Alice Brooks', { name: 'Alice Brooks', phone: '(806) 555-0101' });
   const read = type => DB.sqlite.prepare('SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = ?').all('shop-a', type).map(row => JSON.parse(row.data_json));
-  return { env: { DB }, read };
+  return { env: { ...FLAGS_ON, DB }, read };
 }
 
 function tomorrow() {
@@ -55,8 +56,8 @@ function tomorrow() {
 
 test('the AI phone books a real appointment, links the returning caller, and refuses a taken slot', async () => {
   const { env, read } = await shop();
-  assert.ok(GROK_SHOP_TOOLS.some(tool => tool.name === 'book_appointment'));
-  assert.ok(GROK_SHOP_TOOLS.some(tool => tool.name === 'check_appointment_availability'));
+  assert.ok(GROK_BOOKING_TOOLS.some(tool => tool.name === 'book_appointment'));
+  assert.ok(GROK_BOOKING_TOOLS.some(tool => tool.name === 'check_appointment_availability'));
   const date = tomorrow();
   const availability = await executeGrokShopTool(env, 'shop-a', 'check_appointment_availability', { date });
   assert.equal(availability.days[0].date, date);
@@ -75,6 +76,22 @@ test('the AI phone books a real appointment, links the returning caller, and ref
   assert.ok(again.alternatives.length > 0);
 });
 
+test('without AI_PHONE_BOOKING_ENABLED the phone agent gets no booking tools and books nothing', async () => {
+  const { env, read } = await shop();
+  const off = { DB: env.DB };
+  const update = buildGrokSessionUpdate({ shopSettings: { shopName: 'Lubbock Brake & Tire' } });
+  assert.deepEqual(update.session.tools.map(tool => tool.name), GROK_SHOP_TOOLS.map(tool => tool.name));
+  assert.ok(!update.session.tools.some(tool => tool.name === 'book_appointment'));
+  assert.doesNotMatch(update.session.instructions, /book_appointment|check_appointment_availability/);
+  const enabled = buildGrokSessionUpdate({ shopSettings: { shopName: 'Lubbock Brake & Tire' }, bookingEnabled: true });
+  assert.ok(enabled.session.tools.some(tool => tool.name === 'book_appointment'));
+  const date = tomorrow();
+  const booked = await executeGrokShopTool(off, 'shop-a', 'book_appointment', { customerName: 'Alice', vehicle: 'Camry', service: 'Oil', date, time: '09:00' }, { callerPhone: '+18065550101' });
+  assert.match(booked.error, /turned off/);
+  assert.match((await executeGrokShopTool(off, 'shop-a', 'check_appointment_availability', { date })).error, /turned off/);
+  assert.deepEqual(read('appointments'), []);
+});
+
 test('a new caller gets a customer record; a same-name customer is never overwritten', async () => {
   const { env, read } = await shop();
   const date = tomorrow();
@@ -87,7 +104,7 @@ test('a new caller gets a customer record; a same-name customer is never overwri
 });
 
 test('instructions greet returning callers by name and tell the agent today\'s date', () => {
-  const text = buildGrokInstructions({ shopSettings: { shopName: 'Lubbock Brake & Tire' }, callerContext: { customer: { name: 'Alice Brooks' } }, today: '2026-11-02' });
+  const text = buildGrokInstructions({ shopSettings: { shopName: 'Lubbock Brake & Tire' }, callerContext: { customer: { name: 'Alice Brooks' } }, today: '2026-11-02', bookingEnabled: true });
   assert.match(text, /Returning customer/);
   assert.match(text, /Greet them by first name/);
   assert.match(text, /Today is 2026-11-02/);
