@@ -7,6 +7,7 @@ export const ESTIMATE_APPROVAL_TYPES = Object.freeze([
   { value: 'in_person', label: 'In-person approval' },
   { value: 'email', label: 'Email approval' },
   { value: 'text', label: 'Text approval' },
+  { value: 'online', label: 'Online one-tap approval' },
   { value: 'other', label: 'Other' },
 ]);
 

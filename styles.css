@@ -284,3 +284,12 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .sms-composer { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
 .sms-composer textarea { flex: 1; min-width: 0; }
 @media (max-width: 720px) { .sms-inbox-grid { grid-template-columns: 1fr; } .sms-composer { flex-wrap: wrap; } }
+
+/* Inspection red / yellow / green ratings and declined-work follow-up */
+.rating-chip { display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #fff; vertical-align: 1px; }
+.rating-red { background: #b3261e; }
+.rating-yellow { background: #c78a00; }
+.rating-green { background: #1f654b; }
+.declined-work tr.due td { background: color-mix(in srgb, #c78a00 10%, transparent); }
+.declined-work td small { display: block; color: var(--muted, #64748b); }
+.customer-inspection video { width: 220px; max-width: 100%; border-radius: 6px; }

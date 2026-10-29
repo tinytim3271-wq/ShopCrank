@@ -1,15 +1,17 @@
 /**
- * Reliable Automotive inspection menu. Each inspection is its own record.
+ * Shop inspection menu. Each inspection is its own record.
  * Repairs, parts, and disassembly are quoted separately from the flat fee.
  */
+
+import { isVideoMedia, ratingChipHtml } from './inspection-ratings.js';
 
 const check = (id, label, measure = '') => ({ id, label, measure });
 
 export const INSPECTION_STATUSES = [
-  { id: 'ok', label: 'OK' },
-  { id: 'monitor', label: 'Monitor' },
-  { id: 'soon', label: 'Soon' },
-  { id: 'critical', label: 'Safety-critical' },
+  { id: 'ok', label: 'Green · OK' },
+  { id: 'monitor', label: 'Yellow · Monitor' },
+  { id: 'soon', label: 'Yellow · Soon' },
+  { id: 'critical', label: 'Red · Safety-critical' },
   { id: 'skipped', label: 'Not performed' },
 ];
 
@@ -388,17 +390,19 @@ export function customerInspectionDocument(inspection, profile = {}, escapeHtml 
     groups.get(title).push(item);
   }
   const sections = [...groups.entries()].map(([title, items]) => {
-    const rows = items.map(item => `<tr><td>${escapeHtml(item.label || item.name || '')}</td><td class="result ${escapeHtml(item.status || 'skipped')}">${escapeHtml(statusLabel(item.status))}</td><td>${escapeHtml(item.measurement || '')}</td><td>${escapeHtml(item.note || '')}</td></tr>`).join('');
+    const rows = items.map(item => `<tr><td>${escapeHtml(item.label || item.name || '')}</td><td class="result ${escapeHtml(item.status || 'skipped')}">${ratingChipHtml(item.status, escapeHtml)}${escapeHtml(statusLabel(item.status))}</td><td>${escapeHtml(item.measurement || '')}</td><td>${escapeHtml(item.note || '')}</td></tr>`).join('');
     return `<h2>${escapeHtml(title)}</h2><table><thead><tr><th>Item</th><th>Result</th><th>Measurement</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
   }).join('');
   const verdict = (catalog?.verdicts || []).find(item => item.id === inspection.verdict);
-  const photos = (inspection.photoKeys || []).map(key => inspectionPhotoSrc(key, apiUrl)).filter(Boolean).map(src => `<img src="${escapeHtml(src)}" alt="Inspection photo"/>`).join('');
+  const photos = (inspection.photoKeys || []).map(key => [key, inspectionPhotoSrc(key, apiUrl)]).filter(([, src]) => src).map(([key, src]) => (isVideoMedia(key)
+    ? `<video controls preload="metadata" src="${escapeHtml(src)}"></video>`
+    : `<img src="${escapeHtml(src)}" alt="Inspection photo"/>`)).join('');
   const signature = inspectionPhotoSrc(inspection.customerSignature, apiUrl);
   const scanKept = (inspection.items || []).some(item => /not cleared/i.test(item.label || item.name || '') && item.status && item.status !== 'skipped');
   return `<article class="customer-inspection">
     <p class="fee">Inspection fee ${price.toFixed(2)} USD. Repairs, parts, and disassembly are quoted separately.</p>
     <h1>${escapeHtml(name)}</h1>
-    <p>${escapeHtml(profile.shopName || 'Reliable Automotive Services')}</p>
+    <p>${escapeHtml(profile.shopName || '')}</p>
     <p>${escapeHtml(inspection.number || '')} · ${escapeHtml(inspection.createdAt || '')}</p>
     <p><b>Customer</b> ${escapeHtml(inspection.customer || '')} · <b>Vehicle</b> ${escapeHtml(inspection.vehicle || '')}</p>
     <p><b>VIN</b> ${escapeHtml(inspection.vin || '')} · <b>Mileage</b> ${escapeHtml(inspection.mileage || '')} · <b>Technician</b> ${escapeHtml(inspection.techName || '')}</p>
@@ -472,7 +476,7 @@ export function catalogInspectionFormHtml(catalog, record = null, context = {}, 
       <label class="full">Recommendations<textarea name="recommendations" rows="3">${escapeHtml(record?.recommendations || '')}</textarea></label>
       <button type="button" class="secondary dictate" data-dictate="recommendations">Dictate recommendations</button>
       ${verdicts ? `<label>Verdict<select name="verdict"><option value="">Choose</option>${verdicts}</select></label><label class="full">One-page seller summary<textarea name="sellerSummary" rows="4">${escapeHtml(record?.sellerSummary || '')}</textarea></label><button type="button" class="secondary dictate" data-dictate="sellerSummary">Dictate seller summary</button>` : ''}
-      <label class="full">Photos of key findings<input name="photos" type="file" accept="image/*" capture="environment" multiple/></label>
+      <label class="full">Photos or video of key findings<input name="photos" type="file" accept="image/*,video/mp4,video/webm,video/quicktime" capture="environment" multiple/></label>
       ${photos.length ? `<div class="inspect-photos">${photos.map(src => `<img src="${escapeHtml(src)}" alt="Attached inspection photo"/>`).join('')}</div>` : ''}
       <input type="hidden" name="existingPhotos" value="${escapeHtml(JSON.stringify(record?.photoKeys || []))}"/>
       <label>Customer acknowledgment name<input name="customerName" value="${escapeHtml(record?.customerName || record?.customer || '')}" placeholder="Name on the customer copy"/></label>

@@ -283,6 +283,16 @@ async function main() {
       const after = await row.innerText();
       if (!/PAID/.test(after) || !/2 payments/.test(after)) throw new Error(after.replace(/\s+/g, ' ').slice(0, 200));
     });
+    await check('messaging shows the two-way texting inbox and shop ops shows declined work', async () => {
+      pageErrors.length = 0;
+      await route('messaging');
+      if (!/Two-way texting|Customer texts/.test(await main())) throw new Error('texting inbox missing');
+      await route('shopops');
+      await page.click('[data-ops-tab=declined]');
+      await page.waitForTimeout(700);
+      if (!/Declined work/.test(await main())) throw new Error('declined work tab missing');
+      if (pageErrors.length) throw new Error(pageErrors.join(' | '));
+    });
     for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
       await check(`every module renders on ${label} with no errors or sideways scroll`, async () => {
         await page.setViewportSize(viewport);

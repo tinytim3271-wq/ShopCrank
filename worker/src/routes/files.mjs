@@ -1,16 +1,24 @@
 import { HttpError, json, requestJson } from '../http.mjs';
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+// Uploads are buffered before the R2 put, so video stays well under the Worker's 128 MB memory.
+const MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024;
+const VIDEO_CONTENT_TYPES = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
 const ALLOWED_CONTENT_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/webp',
   'application/pdf',
+  ...VIDEO_CONTENT_TYPES,
 ]);
+
+export function maxUploadBytes(contentType) {
+  return VIDEO_CONTENT_TYPES.has(String(contentType || '').toLowerCase().split(';')[0].trim()) ? MAX_VIDEO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
+}
 
 class UploadTooLargeError extends Error {
   constructor() {
-    super('File exceeds 15 MB');
+    super('File is too large');
     this.name = 'UploadTooLargeError';
   }
 }
@@ -67,7 +75,7 @@ export async function storeUploadedFile(files, key, body, metadata, maxBytes = M
     const upload = await new Response(limitedBody).arrayBuffer();
     await files.put(key, upload, metadata);
   } catch (error) {
-    if (error instanceof UploadTooLargeError) throw new HttpError(413, 'File exceeds 15 MB');
+    if (error instanceof UploadTooLargeError) throw new HttpError(413, `File exceeds ${Math.floor(maxBytes / (1024 * 1024))} MB`);
     if (error instanceof HttpError) throw error;
     const upstreamStatus = Number(error?.status);
     const status = Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599
@@ -85,7 +93,7 @@ export async function handleFiles(request, env, context, segments, { onUploaded 
     const body = await requestJson(request);
     const kind = String(body.kind || 'file').replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'file';
     const contentType = assertUploadContentType(body.contentType);
-    assertUploadSize(body.contentLength);
+    assertUploadSize(body.contentLength, maxUploadBytes(contentType));
     const key = `shops/${context.shopId}/${kind}/${crypto.randomUUID()}`;
     // Same-origin relative URL keeps Access/session cookies on the upload PUT.
     const uploadUrl = `/api/files/upload?key=${encodeURIComponent(key)}`;
@@ -102,11 +110,12 @@ export async function handleFiles(request, env, context, segments, { onUploaded 
     const contentType = String(request.headers.get('Content-Type') || '').toLowerCase().split(';')[0].trim();
     if (!ALLOWED_CONTENT_TYPES.has(contentType)) throw new HttpError(415, 'Unsupported file type');
     const contentLength = Number(request.headers.get('Content-Length') || 0);
-    if (contentLength > MAX_UPLOAD_BYTES) throw new HttpError(413, 'File exceeds 15 MB');
+    const limit = maxUploadBytes(contentType);
+    if (contentLength > limit) throw new HttpError(413, `File exceeds ${Math.floor(limit / (1024 * 1024))} MB`);
     const received = await storeUploadedFile(env.FILES, key, request.body, {
       httpMetadata: { contentType },
       customMetadata: { shopId: context.shopId, uploadedBy: context.userId },
-    });
+    }, limit);
     onUploaded({ file_kind: key.split('/')[2], content_type: contentType, size_bytes: received });
     return new Response(null, { status: 204 });
   }
@@ -128,7 +137,7 @@ export async function handleFiles(request, env, context, segments, { onUploaded 
       headers.set('Content-Disposition', 'attachment');
     }
     headers.set('X-Content-Type-Options', 'nosniff');
-    headers.set('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+    headers.set('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox");
     headers.set('ETag', object.httpEtag);
     headers.set('Cache-Control', 'private, max-age=300');
     return new Response(object.body, { headers });

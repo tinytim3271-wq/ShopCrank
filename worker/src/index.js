@@ -3539,7 +3539,7 @@ async function route(request, env, analytics) {
   if (path === '/licenses/unlock' && request.method === 'GET') return unlockLandingPage();
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
   if (segments[0] === 'customer-documents') {
-    return handleCustomerDocument(request, env, decodeURIComponent(segments[1] || ''));
+    return handleCustomerDocument(request, env, decodeURIComponent(segments[1] || ''), segments[2] || '');
   }
   if (segments[0] === 'payments' && segments[1] === 'webhook') {
     return handleStripeWebhook(request, env, decodeURIComponent(segments[2] || ''), analytics);

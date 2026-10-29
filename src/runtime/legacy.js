@@ -38,6 +38,7 @@ import {
 } from '../modules/customer-intake.js';
 import * as KeyLicense from '../modules/vehicle-key-license.js';
 import * as SmsInbox from '../modules/sms-inbox.js';
+import * as InspectionRatings from '../modules/inspection-ratings.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -5961,6 +5962,58 @@ const bindSmsInboxCore = bind;
 bind = function () {
   bindSmsInboxCore();
   if (state.route === "messaging") bindSmsInbox();
+};
+
+// --- Declined work follow-up (Shop operations → Declined work) ---
+function declinedWork() { return InspectionRatings.declinedWorkItems(state.orders) }
+const shopOperationsDeclinedCore = shopOperations;
+shopOperations = function () {
+  const declinedTab = active => `<button class="tab ${active ? "active" : ""}" data-ops-tab="declined">Declined work${InspectionRatings.declinedWorkSummary(declinedWork()).dueCount ? ` <span class="badge">${InspectionRatings.declinedWorkSummary(declinedWork()).dueCount}</span>` : ""}</button>`;
+  const addTab = (markup, active) => markup.replace(/(<div class="accounting-tabs ops-tabs">[\s\S]*?)(<\/div>)/, (_, tabs, end) => `${active ? tabs.replace(/class="tab active"/g, 'class="tab "') : tabs}${declinedTab(active)}${end}`);
+  if (shopOpsTab !== "declined") return addTab(shopOperationsDeclinedCore(), false);
+  shopOpsTab = "vehicles";
+  const base = shopOperationsDeclinedCore();
+  shopOpsTab = "declined";
+  const tabs = (addTab(base, true).match(/<div class="accounting-tabs ops-tabs">[\s\S]*?<\/div>/) || [""])[0];
+  return shell(`${heading("Connected workflow", "Shop operations", "Recommendations customers declined, with follow-up dates. Red findings come due in 3 days, everything else in 30.", false)}${tabs}${InspectionRatings.declinedWorkHtml(declinedWork(), { escapeHtml, escapeAttr, money, icon, date: value => value ? new Date(value).toLocaleDateString() : "" })}`);
+};
+async function updateDeclinedFollowUp(key, change) {
+  const item = declinedWork().find(entry => entry.key === key);
+  const index = state.orders.findIndex(order => order.id === item?.orderId);
+  if (!item || index < 0) return null;
+  state.orders[index] = InspectionRatings.recordDeclinedFollowUp(state.orders[index], item.lineId, { ...change, by: currentUser()?.id || "" });
+  save();
+  await updateOrderInApi(state.orders[index], { throwOnError: false });
+  return item;
+}
+function bindDeclinedWork() {
+  document.querySelectorAll("[data-declined-text]").forEach(button => {
+    button.onclick = async () => {
+      const item = declinedWork().find(entry => entry.key === button.dataset.declinedText);
+      if (!item) return;
+      const customer = state.customers.find(entry => entry.id === item.customerId || entry.name === item.customer);
+      const phone = item.phone || customer?.phone;
+      if (!phone) return toast("Add a phone number for this customer first");
+      button.disabled = true;
+      try {
+        await deliverShopMessage({ channel: "sms", to: SmsInbox.toE164(phone), subject: "", body: InspectionRatings.declinedFollowUpMessage(item, shopDisplayName()), metadata: { type: "reminder", customerId: customer?.id, workOrderId: item.orderId } });
+        await updateDeclinedFollowUp(item.key, { contacted: true, note: "Text follow-up" });
+        toast(`Follow-up sent to ${item.customer}`);
+        render();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Follow-up could not be sent");
+      }
+    };
+  });
+  document.querySelectorAll("[data-declined-sold]").forEach(button => {
+    button.onclick = async () => { if (await updateDeclinedFollowUp(button.dataset.declinedSold, { sold: true })) { toast("Marked as sold"); render() } };
+  });
+}
+const bindDeclinedWorkCore = bind;
+bind = function () {
+  bindDeclinedWorkCore();
+  if (state.route === "shopops" && shopOpsTab === "declined") bindDeclinedWork();
 };
 
 // --- Grok Realtime Voice & Phone Call Forwarding ---

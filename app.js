@@ -1659,6 +1659,117 @@
     }
   });
 
+  // src/modules/inspection-ratings.js
+  function ratingForStatus(status) {
+    return STATUS_RATING[String(status || "").trim().toLowerCase()] || null;
+  }
+  function ratingChipHtml(status, escapeHtml4 = (value2) => String(value2 ?? "")) {
+    const rating = ratingForStatus(status);
+    if (!rating) return "";
+    return `<span class="rating-chip rating-${rating}" title="${escapeHtml4(RATINGS[rating].label)}">${escapeHtml4(RATINGS[rating].short)}</span>`;
+  }
+  function isVideoMedia(key, contentType = "") {
+    return /^video\//i.test(contentType) || VIDEO_KEY.test(String(key || ""));
+  }
+  function inspectionUploadKind(file) {
+    return /^video\//i.test(String(file?.type || "")) ? "inspection-video" : "inspection";
+  }
+  function declinedWorkItems(orders2 = [], { now: now2 = Date.now() } = {}) {
+    const items = [];
+    for (const order of orders2) {
+      const approval = order?.estimateApproval;
+      if (!approval || !["approved", "declined"].includes(approval.status)) continue;
+      const decisions = approval.decisions || {};
+      const declinedAt = approval.respondedAt || approval.approvedAt || approval.signedAt || order.linesLockedAt || "";
+      const lines = order.estimate?.lines || [];
+      lines.forEach((line, index) => {
+        const id = String(line.id || `line-${index + 1}`);
+        const declined = decisions[id] === "declined" || line.approvalStatus === "declined";
+        if (!declined) return;
+        const rating = ratingForStatus(line.inspectionStatus) || null;
+        const followUp = order.declinedFollowUps?.[id] || null;
+        const days = FOLLOW_UP_DAYS[rating] || FOLLOW_UP_DAYS.default;
+        const base = Date.parse(declinedAt);
+        const dueAt = Number.isFinite(base) ? new Date(base + days * DAY_MS).toISOString() : "";
+        const amount = Number(line.originalTotal ?? line.declinedTotal ?? line.total ?? 0) || Number(line.hours || 0) * Number(line.laborRate || 0) || Number(line.quantity || 0) * Number(line.unitPrice || 0);
+        items.push({
+          key: `${order.id}:${id}`,
+          orderId: order.id,
+          lineId: id,
+          customer: order.customer || "",
+          customerId: order.customerId || "",
+          phone: order.phone || "",
+          vehicle: order.vehicle || "",
+          vin: order.vin || "",
+          description: String(line.description || line.service || "Declined work"),
+          amount: Math.round(amount * 100) / 100,
+          rating,
+          declinedAt,
+          dueAt,
+          due: Boolean(dueAt) && Date.parse(dueAt) <= now2 && !followUp?.completedAt,
+          followUp,
+          status: followUp?.completedAt ? "sold" : followUp?.lastContactAt ? "contacted" : "open"
+        });
+      });
+    }
+    return items.sort((a, b) => String(b.declinedAt).localeCompare(String(a.declinedAt)));
+  }
+  function declinedWorkSummary(items = []) {
+    const open = items.filter((item) => item.status !== "sold");
+    return {
+      openCount: open.length,
+      openValue: Math.round(open.reduce((total, item) => total + item.amount, 0) * 100) / 100,
+      dueCount: open.filter((item) => item.due).length,
+      redCount: open.filter((item) => item.rating === "red").length
+    };
+  }
+  function declinedFollowUpMessage(item, shopName) {
+    const vehicle = item.vehicle ? ` on your ${item.vehicle}` : "";
+    const urgency = item.rating === "red" ? " Our technician flagged it as needing attention now." : "";
+    return `Hi ${String(item.customer || "").split(" ")[0] || "there"}, this is ${shopName}. During your last visit we recommended ${item.description}${vehicle}.${urgency} Reply to this text to schedule it, or call us with any questions.`;
+  }
+  function recordDeclinedFollowUp(order, lineId, { contacted = false, sold = false, by = "", at = (/* @__PURE__ */ new Date()).toISOString(), note = "" } = {}) {
+    const current = order.declinedFollowUps?.[lineId] || { contacts: [] };
+    const next = { ...current, contacts: [...current.contacts || []] };
+    if (contacted) {
+      next.lastContactAt = at;
+      next.contacts.push({ at, by, note: String(note || "").slice(0, 300) });
+    }
+    if (sold) next.completedAt = at;
+    return { ...order, declinedFollowUps: { ...order.declinedFollowUps || {}, [lineId]: next } };
+  }
+  function declinedWorkHtml(items = [], { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, money: money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`, icon: icon2 = () => "", date = (value2) => String(value2 || "").slice(0, 10) } = {}) {
+    const summary = declinedWorkSummary(items);
+    const rows = items.map((item) => `<tr class="${item.due ? "due" : ""}"><td>${ratingChipHtml(item.rating, escapeHtml4) || "\u2014"}</td><td><b>${escapeHtml4(item.description)}</b><small>${escapeHtml4(item.orderId)}</small></td><td>${escapeHtml4(item.customer)}<small>${escapeHtml4(item.vehicle)}</small></td><td>${money5(item.amount)}</td><td>${escapeHtml4(date(item.declinedAt))}</td><td>${item.status === "sold" ? "Sold" : item.due ? `<b>Due ${escapeHtml4(date(item.dueAt))}</b>` : escapeHtml4(date(item.dueAt))}${item.followUp?.lastContactAt ? `<small>Contacted ${escapeHtml4(date(item.followUp.lastContactAt))}</small>` : ""}</td><td>${item.status === "sold" ? "" : `<button type="button" class="mini-action" data-declined-text="${escapeAttr4(item.key)}">${icon2("message-square", 13)} Text</button><button type="button" class="mini-action" data-declined-sold="${escapeAttr4(item.key)}">${icon2("check", 13)} Sold</button>`}</td></tr>`).join("");
+    return `<section class="data-panel declined-work"><div class="statement-head"><div><div class="eyebrow">Follow-up</div><h2>Declined work</h2><p>${summary.openCount} open recommendation${summary.openCount === 1 ? "" : "s"} worth ${money5(summary.openValue)} \xB7 ${summary.dueCount} due for follow-up${summary.redCount ? ` \xB7 ${summary.redCount} red` : ""}.</p></div>${icon2("list-todo", 20)}</div><table><thead><tr><th>Rating</th><th>Recommendation</th><th>Customer</th><th>Value</th><th>Declined</th><th>Follow up</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="7">No declined work yet. Lines customers decline on an estimate show up here.</td></tr>'}</tbody></table></section>`;
+  }
+  var RATINGS, STATUS_RATING, VIDEO_KEY, DAY_MS, FOLLOW_UP_DAYS;
+  var init_inspection_ratings = __esm({
+    "src/modules/inspection-ratings.js"() {
+      RATINGS = Object.freeze({
+        red: { id: "red", label: "Needs attention now", short: "Red" },
+        yellow: { id: "yellow", label: "Needs attention soon", short: "Yellow" },
+        green: { id: "green", label: "Good", short: "Green" }
+      });
+      STATUS_RATING = Object.freeze({
+        critical: "red",
+        fail: "red",
+        failed: "red",
+        red: "red",
+        soon: "yellow",
+        monitor: "yellow",
+        yellow: "yellow",
+        ok: "green",
+        pass: "green",
+        good: "green",
+        green: "green"
+      });
+      VIDEO_KEY = /\.(mp4|webm|mov)$|\/video\//i;
+      DAY_MS = 24 * 60 * 60 * 1e3;
+      FOLLOW_UP_DAYS = Object.freeze({ red: 3, yellow: 30, default: 30 });
+    }
+  });
+
   // src/modules/shop-inspections.js
   function shopInspection(id) {
     return SHOP_INSPECTIONS.find((item) => item.id === id) || null;
@@ -1705,17 +1816,17 @@
       groups.get(title).push(item);
     }
     const sections = [...groups.entries()].map(([title, items]) => {
-      const rows = items.map((item) => `<tr><td>${escapeHtml4(item.label || item.name || "")}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`).join("");
+      const rows = items.map((item) => `<tr><td>${escapeHtml4(item.label || item.name || "")}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${ratingChipHtml(item.status, escapeHtml4)}${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`).join("");
       return `<h2>${escapeHtml4(title)}</h2><table><thead><tr><th>Item</th><th>Result</th><th>Measurement</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
     }).join("");
     const verdict = (catalog?.verdicts || []).find((item) => item.id === inspection.verdict);
-    const photos = (inspection.photoKeys || []).map((key) => inspectionPhotoSrc(key, apiUrl)).filter(Boolean).map((src) => `<img src="${escapeHtml4(src)}" alt="Inspection photo"/>`).join("");
+    const photos = (inspection.photoKeys || []).map((key) => [key, inspectionPhotoSrc(key, apiUrl)]).filter(([, src]) => src).map(([key, src]) => isVideoMedia(key) ? `<video controls preload="metadata" src="${escapeHtml4(src)}"></video>` : `<img src="${escapeHtml4(src)}" alt="Inspection photo"/>`).join("");
     const signature = inspectionPhotoSrc(inspection.customerSignature, apiUrl);
     const scanKept = (inspection.items || []).some((item) => /not cleared/i.test(item.label || item.name || "") && item.status && item.status !== "skipped");
     return `<article class="customer-inspection">
     <p class="fee">Inspection fee ${price.toFixed(2)} USD. Repairs, parts, and disassembly are quoted separately.</p>
     <h1>${escapeHtml4(name)}</h1>
-    <p>${escapeHtml4(profile.shopName || "Reliable Automotive Services")}</p>
+    <p>${escapeHtml4(profile.shopName || "")}</p>
     <p>${escapeHtml4(inspection.number || "")} \xB7 ${escapeHtml4(inspection.createdAt || "")}</p>
     <p><b>Customer</b> ${escapeHtml4(inspection.customer || "")} \xB7 <b>Vehicle</b> ${escapeHtml4(inspection.vehicle || "")}</p>
     <p><b>VIN</b> ${escapeHtml4(inspection.vin || "")} \xB7 <b>Mileage</b> ${escapeHtml4(inspection.mileage || "")} \xB7 <b>Technician</b> ${escapeHtml4(inspection.techName || "")}</p>
@@ -1786,7 +1897,7 @@
       <label class="full">Recommendations<textarea name="recommendations" rows="3">${escapeHtml4(record?.recommendations || "")}</textarea></label>
       <button type="button" class="secondary dictate" data-dictate="recommendations">Dictate recommendations</button>
       ${verdicts ? `<label>Verdict<select name="verdict"><option value="">Choose</option>${verdicts}</select></label><label class="full">One-page seller summary<textarea name="sellerSummary" rows="4">${escapeHtml4(record?.sellerSummary || "")}</textarea></label><button type="button" class="secondary dictate" data-dictate="sellerSummary">Dictate seller summary</button>` : ""}
-      <label class="full">Photos of key findings<input name="photos" type="file" accept="image/*" capture="environment" multiple/></label>
+      <label class="full">Photos or video of key findings<input name="photos" type="file" accept="image/*,video/mp4,video/webm,video/quicktime" capture="environment" multiple/></label>
       ${photos.length ? `<div class="inspect-photos">${photos.map((src) => `<img src="${escapeHtml4(src)}" alt="Attached inspection photo"/>`).join("")}</div>` : ""}
       <input type="hidden" name="existingPhotos" value="${escapeHtml4(JSON.stringify(record?.photoKeys || []))}"/>
       <label>Customer acknowledgment name<input name="customerName" value="${escapeHtml4(record?.customerName || record?.customer || "")}" placeholder="Name on the customer copy"/></label>
@@ -1803,12 +1914,13 @@
   var check, INSPECTION_STATUSES, SHOP_INSPECTIONS;
   var init_shop_inspections = __esm({
     "src/modules/shop-inspections.js"() {
+      init_inspection_ratings();
       check = (id, label2, measure = "") => ({ id, label: label2, measure });
       INSPECTION_STATUSES = [
-        { id: "ok", label: "OK" },
-        { id: "monitor", label: "Monitor" },
-        { id: "soon", label: "Soon" },
-        { id: "critical", label: "Safety-critical" },
+        { id: "ok", label: "Green \xB7 OK" },
+        { id: "monitor", label: "Yellow \xB7 Monitor" },
+        { id: "soon", label: "Yellow \xB7 Soon" },
+        { id: "critical", label: "Red \xB7 Safety-critical" },
         { id: "skipped", label: "Not performed" }
       ];
       SHOP_INSPECTIONS = [
@@ -6050,8 +6162,12 @@ button{margin-top:12px;padding:8px 14px}
     const keys = [...record.photoKeys];
     for (const file of files) {
       try {
-        keys.push(await app.uploadFileToR2(file, "inspection", file.type || "image/jpeg"));
-      } catch {
+        keys.push(await app.uploadFileToR2(file, inspectionUploadKind(file), file.type || "image/jpeg"));
+      } catch (error) {
+        if (/^video\//.test(file.type)) {
+          app.toast?.(error.message || "Video upload failed; reconnect and attach it again");
+          continue;
+        }
         const dataUrl = await fileToDataUrl(file);
         if (dataUrl) keys.push(dataUrl);
       }
@@ -6231,6 +6347,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   var init_catalog_inspection_ui = __esm({
     "src/runtime/catalog-inspection-ui.js"() {
+      init_inspection_ratings();
       init_shop_inspections();
       init_print_document();
     }
@@ -7634,6 +7751,7 @@ button{margin-top:12px;padding:8px 14px}
         { value: "in_person", label: "In-person approval" },
         { value: "email", label: "Email approval" },
         { value: "text", label: "Text approval" },
+        { value: "online", label: "Online one-tap approval" },
         { value: "other", label: "Other" }
       ]);
       APPROVAL_TYPE_VALUES = new Set(ESTIMATE_APPROVAL_TYPES.map((option) => option.value));
@@ -14908,6 +15026,47 @@ ${line}`.trim();
       void loadSmsInbox({ quiet: true });
     }, 2e4);
   }
+  function declinedWork() {
+    return declinedWorkItems(state.orders);
+  }
+  async function updateDeclinedFollowUp(key, change) {
+    const item = declinedWork().find((entry) => entry.key === key);
+    const index = state.orders.findIndex((order) => order.id === item?.orderId);
+    if (!item || index < 0) return null;
+    state.orders[index] = recordDeclinedFollowUp(state.orders[index], item.lineId, { ...change, by: currentUser()?.id || "" });
+    save();
+    await updateOrderInApi(state.orders[index], { throwOnError: false });
+    return item;
+  }
+  function bindDeclinedWork() {
+    document.querySelectorAll("[data-declined-text]").forEach((button) => {
+      button.onclick = async () => {
+        const item = declinedWork().find((entry) => entry.key === button.dataset.declinedText);
+        if (!item) return;
+        const customer = state.customers.find((entry) => entry.id === item.customerId || entry.name === item.customer);
+        const phone = item.phone || customer?.phone;
+        if (!phone) return toast("Add a phone number for this customer first");
+        button.disabled = true;
+        try {
+          await deliverShopMessage({ channel: "sms", to: toE164(phone), subject: "", body: declinedFollowUpMessage(item, shopDisplayName()), metadata: { type: "reminder", customerId: customer?.id, workOrderId: item.orderId } });
+          await updateDeclinedFollowUp(item.key, { contacted: true, note: "Text follow-up" });
+          toast(`Follow-up sent to ${item.customer}`);
+          render();
+        } catch (error) {
+          button.disabled = false;
+          toast(error.message || "Follow-up could not be sent");
+        }
+      };
+    });
+    document.querySelectorAll("[data-declined-sold]").forEach((button) => {
+      button.onclick = async () => {
+        if (await updateDeclinedFollowUp(button.dataset.declinedSold, { sold: true })) {
+          toast("Marked as sold");
+          render();
+        }
+      };
+    });
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -15089,7 +15248,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15116,6 +15275,7 @@ ${line}`.trim();
       init_customer_intake();
       init_vehicle_key_license();
       init_sms_inbox();
+      init_inspection_ratings();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -17322,6 +17482,22 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
       bind = function() {
         bindSmsInboxCore();
         if (state.route === "messaging") bindSmsInbox();
+      };
+      shopOperationsDeclinedCore = shopOperations;
+      shopOperations = function() {
+        const declinedTab = (active) => `<button class="tab ${active ? "active" : ""}" data-ops-tab="declined">Declined work${declinedWorkSummary(declinedWork()).dueCount ? ` <span class="badge">${declinedWorkSummary(declinedWork()).dueCount}</span>` : ""}</button>`;
+        const addTab = (markup, active) => markup.replace(/(<div class="accounting-tabs ops-tabs">[\s\S]*?)(<\/div>)/, (_, tabs2, end) => `${active ? tabs2.replace(/class="tab active"/g, 'class="tab "') : tabs2}${declinedTab(active)}${end}`);
+        if (shopOpsTab !== "declined") return addTab(shopOperationsDeclinedCore(), false);
+        shopOpsTab = "vehicles";
+        const base = shopOperationsDeclinedCore();
+        shopOpsTab = "declined";
+        const tabs = (addTab(base, true).match(/<div class="accounting-tabs ops-tabs">[\s\S]*?<\/div>/) || [""])[0];
+        return shell(`${heading("Connected workflow", "Shop operations", "Recommendations customers declined, with follow-up dates. Red findings come due in 3 days, everything else in 30.", false)}${tabs}${declinedWorkHtml(declinedWork(), { escapeHtml, escapeAttr, money: money4, icon, date: (value2) => value2 ? new Date(value2).toLocaleDateString() : "" })}`);
+      };
+      bindDeclinedWorkCore = bind;
+      bind = function() {
+        bindDeclinedWorkCore();
+        if (state.route === "shopops" && shopOpsTab === "declined") bindDeclinedWork();
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
       activeGrokSession = null;
