@@ -42,6 +42,7 @@ import * as InspectionRatings from '../modules/inspection-ratings.js';
 import * as CallLog from '../modules/call-log.js';
 import * as GrowthSettings from '../modules/growth-settings.js';
 import * as ShopKpis from '../modules/shop-kpis.js';
+import * as VehicleLookups from '../modules/vehicle-lookups.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -6079,6 +6080,41 @@ const bindKpiCore = bind;
 bind = function () {
   bindKpiCore();
   if (state.route === "reports") document.querySelectorAll("[data-kpi-period]").forEach(button => { button.onclick = () => { kpiPeriod = button.dataset.kpiPeriod; render() } });
+};
+
+// --- Plate-to-VIN and CARFAX service history on the vehicle form ---
+const openVehicleFormLookupsCore = openVehicleForm;
+openVehicleForm = function (existing = null) {
+  openVehicleFormLookupsCore(existing);
+  const form = document.querySelector("#vehicle-form");
+  const plate = form?.elements.plate?.closest("label");
+  if (!form || !plate || isOfflineDesktop()) return;
+  plate.insertAdjacentHTML("afterend", VehicleLookups.plateLookupHtml({ state: existing?.plateState || state.taxSettings?.state || "TX", icon }));
+  lucide.createIcons();
+  const status = document.querySelector("#plate-status");
+  document.querySelector("#plate-lookup")?.addEventListener("click", async event => {
+    event.currentTarget.disabled = true;
+    status.textContent = "Looking up plate…";
+    try {
+      const result = await apiFetch("/vehicle-data/plate-lookup", { method: "POST", body: JSON.stringify({ plate: form.elements.plate.value, state: form.elements.plateState.value }) });
+      if (!result.found) { status.textContent = "No VIN found for that plate."; return }
+      const current = Object.fromEntries(["vin", "year", "make", "model", "trim"].map(key => [key, form.elements[key]?.value]));
+      for (const [key, value] of Object.entries(VehicleLookups.plateLookupFill(result, current))) if (form.elements[key]) form.elements[key].value = value;
+      status.textContent = `VIN ${result.vin}${result.year ? ` · ${result.year} ${result.make} ${result.model}` : ""}`;
+    } catch (error) { status.textContent = error.message || "Plate lookup failed" } finally { event.currentTarget.disabled = false }
+  });
+  document.querySelector("#carfax-history")?.addEventListener("click", async event => {
+    const vin = form.elements.vin.value.trim().toUpperCase();
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) { status.textContent = "Enter or look up the 17-character VIN first."; return }
+    event.currentTarget.disabled = true;
+    status.textContent = "Checking CARFAX…";
+    try {
+      const result = await apiFetch("/vehicle-data/service-history", { method: "POST", body: JSON.stringify({ vin }) });
+      document.querySelector("#carfax-results").innerHTML = safeHtml(VehicleLookups.serviceHistoryHtml(result, { escapeHtml }));
+      status.textContent = "";
+      if (existing) { existing.carfaxHistory = { retrievedAt: result.retrievedAt, records: result.records }; void saveShopEntity("vehicles", existing).catch(() => {}) }
+    } catch (error) { status.textContent = error.message || "CARFAX lookup failed" } finally { event.currentTarget.disabled = false }
+  });
 };
 
 // --- Grok Realtime Voice & Phone Call Forwarding ---

@@ -5627,6 +5627,29 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/vehicle-lookups.js
+  function plateLookupHtml({ state: state2 = "TX", icon: icon2 = () => "" } = {}) {
+    return `<label>Plate state<select name="plateState">${PLATE_STATES.map((code) => `<option ${code === state2 ? "selected" : ""}>${code}</option>`).join("")}</select></label><div class="full vin-actions"><button class="secondary" type="button" id="plate-lookup">${icon2("search", 14)} Find VIN from plate</button><button class="secondary" type="button" id="carfax-history">${icon2("history", 14)} CARFAX service history</button><span id="plate-status"></span></div><div class="full" id="carfax-results"></div>`;
+  }
+  function plateLookupFill(result = {}, current = {}) {
+    const fill = {};
+    for (const key of ["vin", "year", "make", "model", "trim"]) {
+      if (result[key] && !String(current[key] || "").trim()) fill[key] = String(result[key]);
+    }
+    return fill;
+  }
+  function serviceHistoryHtml(result = {}, { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? "") } = {}) {
+    if (!result.found) return '<p class="ops-note">CARFAX has no service records for this VIN.</p>';
+    const rows = result.records.map((record) => `<tr><td>${escapeHtml4(record.date)}</td><td>${record.odometer ? Number(record.odometer).toLocaleString("en-US") : ""}</td><td>${escapeHtml4(record.description)}</td><td>${escapeHtml4(record.source)}</td></tr>`).join("");
+    return `<div class="data-panel carfax-history"><strong>CARFAX service history \xB7 ${result.records.length} record${result.records.length === 1 ? "" : "s"}</strong><table><thead><tr><th>Date</th><th>Odometer</th><th>Service</th><th>Where</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+  var PLATE_STATES;
+  var init_vehicle_lookups = __esm({
+    "src/modules/vehicle-lookups.js"() {
+      PLATE_STATES = Object.freeze("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA PR RI SC SD TN TX UT VT VA WA WV WI WY".split(" "));
+    }
+  });
+
   // src/modules/filing/withholding.js
   function roundCents(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
@@ -15550,7 +15573,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15581,6 +15604,7 @@ ${line}`.trim();
       init_call_log();
       init_growth_settings();
       init_shop_kpis();
+      init_vehicle_lookups();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -17835,6 +17859,57 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
             kpiPeriod = button.dataset.kpiPeriod;
             render();
           };
+        });
+      };
+      openVehicleFormLookupsCore = openVehicleForm;
+      openVehicleForm = function(existing = null) {
+        openVehicleFormLookupsCore(existing);
+        const form = document.querySelector("#vehicle-form");
+        const plate = form?.elements.plate?.closest("label");
+        if (!form || !plate || isOfflineDesktop()) return;
+        plate.insertAdjacentHTML("afterend", plateLookupHtml({ state: existing?.plateState || state.taxSettings?.state || "TX", icon }));
+        lucide.createIcons();
+        const status = document.querySelector("#plate-status");
+        document.querySelector("#plate-lookup")?.addEventListener("click", async (event) => {
+          event.currentTarget.disabled = true;
+          status.textContent = "Looking up plate\u2026";
+          try {
+            const result = await apiFetch("/vehicle-data/plate-lookup", { method: "POST", body: JSON.stringify({ plate: form.elements.plate.value, state: form.elements.plateState.value }) });
+            if (!result.found) {
+              status.textContent = "No VIN found for that plate.";
+              return;
+            }
+            const current = Object.fromEntries(["vin", "year", "make", "model", "trim"].map((key) => [key, form.elements[key]?.value]));
+            for (const [key, value2] of Object.entries(plateLookupFill(result, current))) if (form.elements[key]) form.elements[key].value = value2;
+            status.textContent = `VIN ${result.vin}${result.year ? ` \xB7 ${result.year} ${result.make} ${result.model}` : ""}`;
+          } catch (error) {
+            status.textContent = error.message || "Plate lookup failed";
+          } finally {
+            event.currentTarget.disabled = false;
+          }
+        });
+        document.querySelector("#carfax-history")?.addEventListener("click", async (event) => {
+          const vin = form.elements.vin.value.trim().toUpperCase();
+          if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
+            status.textContent = "Enter or look up the 17-character VIN first.";
+            return;
+          }
+          event.currentTarget.disabled = true;
+          status.textContent = "Checking CARFAX\u2026";
+          try {
+            const result = await apiFetch("/vehicle-data/service-history", { method: "POST", body: JSON.stringify({ vin }) });
+            document.querySelector("#carfax-results").innerHTML = safeHtml(serviceHistoryHtml(result, { escapeHtml }));
+            status.textContent = "";
+            if (existing) {
+              existing.carfaxHistory = { retrievedAt: result.retrievedAt, records: result.records };
+              void saveShopEntity("vehicles", existing).catch(() => {
+              });
+            }
+          } catch (error) {
+            status.textContent = error.message || "CARFAX lookup failed";
+          } finally {
+            event.currentTarget.disabled = false;
+          }
         });
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };

@@ -93,6 +93,7 @@ import { createCustomerDocumentLink, handleCustomerDocument } from './customer-d
 import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
 import { FOLLOWUP_CRON, runScheduledFollowups, runShopFollowups } from './customer-followups.mjs';
 import { handlePublicBooking } from './online-booking.mjs';
+import { handleVehicleData } from './integrations/vehicle-data.mjs';
 import {
   handleIntegrationStatus,
   handleLaborIntegration,
@@ -3634,6 +3635,7 @@ async function route(request, env, analytics) {
       listEntities,
     });
   }
+  if (segments[0] === 'vehicle-data') return handleVehicleData(request, env, context, segments, { requireRole, recordAudit: recordDiagnosticAudit });
   if (path === '/followups/run' && request.method === 'POST') {
     requireRole(context, ['admin']);
     return json(await runShopFollowups(env, context.shopId, { getSecret: getIntegrationSecret, bookingOrigin: new URL(request.url).origin }));
