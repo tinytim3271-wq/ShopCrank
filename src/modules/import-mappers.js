@@ -37,7 +37,12 @@ const COMMON = Object.freeze({
   tax: ['tax', 'sales_tax', 'tax_total', 'total_tax'],
   date: ['invoice_date', 'posted_date', 'date_posted', 'completed_date', 'closed_date', 'date', 'created_date', 'created_at', 'date_created'],
   mileage: ['mileage', 'odometer', 'miles_in', 'mileage_in'],
+  balance: ['balance', 'balance_due', 'amount_due', 'outstanding', 'open_balance', 'remaining_balance'],
+  payment_status: ['payment_status', 'paid_status', 'paid'],
 });
+
+const PAID_WORDS = new Set(['paid', 'paid_in_full', 'closed_paid', 'yes', 'true']);
+const ESTIMATE_DECISIONS = Object.freeze({ approved: 'approved', accepted: 'approved', authorized: 'approved', declined: 'declined', rejected: 'declined' });
 
 export const SOURCE_SYSTEMS = Object.freeze({
   tekmetric: {
@@ -152,10 +157,15 @@ export function mapExportToCanonicalCsv(sourceId, type, text) {
       return { ro_number: get(row, 'ro_number'), customer, vehicle: vehicleText(row), vin: get(row, 'vin'), complaint: get(row, 'complaint') || `Imported from ${system.name}`, status: status === 'invoiced' ? 'invoiced' : status, total: get(row, 'total'), phone: get(row, 'phone') };
     }
     if (type === 'invoices') {
-      const status = statusFor(row);
-      return { number: get(row, 'invoice_number') || get(row, 'ro_number'), customer, ro: get(row, 'ro_number'), date: get(row, 'date'), status: ['invoiced', 'completed', 'paid'].includes(status) ? 'paid' : status, subtotal: get(row, 'subtotal'), tax: get(row, 'tax'), amount: get(row, 'total') };
+      // Completed or posted work isn't proof of payment (Tekmetric 'Accounts Receivable'
+      // is posted and unpaid); only a paid status or a zero balance marks an invoice paid.
+      const raw = normalizeHeader(get(row, 'status'));
+      const balance = Number(String(get(row, 'balance')).replace(/[$,\s]/g, ''));
+      const paid = PAID_WORDS.has(raw) || PAID_WORDS.has(normalizeHeader(get(row, 'payment_status'))) || (get(row, 'balance') !== '' && balance === 0);
+      return { number: get(row, 'invoice_number') || get(row, 'ro_number'), customer, ro: get(row, 'ro_number'), date: get(row, 'date'), status: paid ? 'paid' : 'sent', subtotal: get(row, 'subtotal'), tax: get(row, 'tax'), amount: get(row, 'total') };
     }
-    return { number: get(row, 'ro_number'), customer, vehicle: vehicleText(row), summary: get(row, 'complaint'), status: 'pending', subtotal: get(row, 'subtotal'), tax: get(row, 'tax'), total: get(row, 'total'), email: get(row, 'email'), phone: get(row, 'phone') };
+    const decision = ESTIMATE_DECISIONS[normalizeHeader(get(row, 'status'))] || 'pending';
+    return { number: get(row, 'ro_number'), customer, vehicle: vehicleText(row), summary: get(row, 'complaint'), status: decision, subtotal: get(row, 'subtotal'), tax: get(row, 'tax'), total: get(row, 'total'), email: get(row, 'email'), phone: get(row, 'phone') };
   });
   return { csv: toCsv(CANONICAL[type], mapped), rows: mapped.length, system: system.name };
 }

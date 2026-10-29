@@ -28,11 +28,24 @@ function wordPattern(keyword) {
   return new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
 }
 
-function bestService(services, keywords, used) {
+/** Cylinder count named in text: V6, V-8, I4, inline-4, "4-cyl", "6 cylinder", ... */
+export function cylinderCount(text) {
+  const match = /\b(?:v-?(\d{1,2})|i-?(\d)|inline[- ]?(\d)|(\d{1,2})[- ]?cyl(?:inder)?s?)\b/i.exec(String(text || ''));
+  return match ? Number(match[1] || match[2] || match[3] || match[4]) : null;
+}
+
+/** A cylinder-specific service only fits a vehicle known to have that many cylinders. */
+export function serviceFitsVehicle(service, vehicleText = '') {
+  const required = cylinderCount(`${service.name || ''} ${service.description || ''}`);
+  if (required === null) return true;
+  return cylinderCount(vehicleText) === required;
+}
+
+function bestService(services, keywords, used, vehicleText = '') {
   let best = null;
   let bestScore = 0;
   for (const service of services) {
-    if (used.has(service.id) || service.active === false) continue;
+    if (used.has(service.id) || service.active === false || !serviceFitsVehicle(service, vehicleText)) continue;
     const text = textOf(service);
     const score = keywords.reduce((total, keyword, index) => total + (wordPattern(keyword).test(text) ? keywords.length - index : 0), 0);
     if (score > bestScore) { best = service; bestScore = score; }
@@ -41,16 +54,16 @@ function bestService(services, keywords, used) {
 }
 
 /** Canned services that match the scanned codes, plus the shop's diagnostic service first. */
-export function cannedServicesForCodes(codes = [], services = []) {
+export function cannedServicesForCodes(codes = [], services = [], { vehicle = '' } = {}) {
   const normalized = [...new Set(codes.map(code => String(code || '').trim().toUpperCase()).filter(Boolean))];
   const used = new Set();
   const matches = [];
-  const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used);
+  const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used, vehicle);
   if (diagnostic && normalized.length) { used.add(diagnostic.id); matches.push({ service: diagnostic, reason: 'Diagnosis', codes: normalized }); }
   for (const rule of DTC_SERVICE_RULES) {
     const hit = normalized.filter(code => rule.test(code));
     if (!hit.length) continue;
-    const service = bestService(services, rule.keywords, used);
+    const service = bestService(services, rule.keywords, used, vehicle);
     if (!service) continue;
     used.add(service.id);
     matches.push({ service, reason: rule.label, codes: hit });
@@ -76,8 +89,8 @@ export function cannedServiceLines(match, { laborRate = 0, scanId = '' } = {}) {
 }
 
 /** Canned lines first, then AI-draft lines whose description isn't already covered. */
-export function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = '' } = {}) {
-  const matches = cannedServicesForCodes(codes, services);
+export function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = '', vehicle = '' } = {}) {
+  const matches = cannedServicesForCodes(codes, services, { vehicle });
   const canned = matches.flatMap(match => cannedServiceLines(match, { laborRate, scanId }));
   const seen = new Set(canned.map(line => String(line.description).toLowerCase()));
   const extra = aiLines.filter(line => !seen.has(String(line.description || '').toLowerCase()));

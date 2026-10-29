@@ -35,7 +35,7 @@ test('margin protection flags parts sold below the minimum margin', () => {
     { id: 'c', type: 'part', description: 'Declined', unitPrice: 41, cost: 40, approvalStatus: 'declined' },
   ], pricingSettings({ minPartsMarginPercent: 35 }));
   assert.deepEqual(warnings.map(item => [item.lineId, item.margin, item.suggestedPrice]), [['a', 20, 80]]);
-  assert.match(marginWarningsHtml(warnings), /20% margin at \$50\.00 \(cost \$40\.00\)\. Matrix price \$80\.00/);
+  assert.match(marginWarningsHtml(warnings), /20% margin at \$50\.00 \(cost \$40\.00\)\. Suggested \$80\.00/);
   assert.equal(marginWarningsHtml([]), '');
 });
 
@@ -69,4 +69,20 @@ test('labor category rates apply to lines at the shop default rate only', async 
   assert.deepEqual(lines.map(line => line.laborRate), [175, 160, 120, 140]);
   assert.equal(lines[1].total, 960);
   assert.equal(laborCategoryFor({ description: 'Replace alternator' }), 'electrical');
+});
+
+test('review fixes: core charges are never repriced, and suggestions always meet the minimum margin', async () => {
+  const { protectedPartPrice } = await import('./pricing-matrix.js');
+  const settings = pricingSettings({ minPartsMarginPercent: 35 });
+  const [part, core] = applyPartsMatrix([
+    { id: 'p', type: 'part', quantity: 1, unitPrice: 0, partstech: { cost: 40, priceBasis: 'cost' } },
+    { id: 'c', type: 'part', quantity: 1, unitPrice: 10, partstech: { cost: 40, priceBasis: 'cost', isCore: true } },
+  ], settings);
+  assert.equal(part.unitPrice, 80);
+  assert.equal(core.unitPrice, 10, 'refundable core keeps its charge');
+  assert.deepEqual(marginWarnings([{ id: 'c', type: 'part', unitPrice: 10, partstech: { cost: 40, isCore: true } }], settings), []);
+  const [warning] = marginWarnings([{ id: 'x', type: 'part', description: 'Module', unitPrice: 850, cost: 600 }], settings);
+  assert.equal(protectedPartPrice(600, settings), 923.08);
+  assert.equal(warning.suggestedPrice, 923.08, 'never suggests a price that lowers margin');
+  assert.ok((warning.suggestedPrice - 600) / warning.suggestedPrice >= 0.35);
 });

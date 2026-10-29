@@ -1,5 +1,5 @@
 import { HttpError, json } from './http.mjs';
-import { BookingError, bookAppointment, loadBookingContext, nextAvailability, validBookingDate } from './scheduling.mjs';
+import { BookingError, bookAppointment, loadBookingContext, nextAvailability, shopEntitled, validBookingDate } from './scheduling.mjs';
 import { resolveTwilioShopConfig, sendSms } from './integrations/sms.mjs';
 import { toE164 } from './customer-followups.mjs';
 
@@ -22,7 +22,8 @@ function nonce() {
 
 async function activeShop(env, shopId) {
   if (!SHOP_ID.test(shopId)) return null;
-  return env.DB.prepare("SELECT s.id, s.name FROM shops s JOIN subscriptions sub ON sub.shop_id = s.id WHERE s.id = ? AND sub.status IN ('active', 'trialing')").bind(shopId).first();
+  if (!(await shopEntitled(env, shopId, 'sms'))) return null;
+  return env.DB.prepare('SELECT id, name FROM shops WHERE id = ?').bind(shopId).first();
 }
 
 async function enforceRateLimit(request, env, shopId, hash) {
@@ -99,9 +100,15 @@ export async function handlePublicBooking(request, env, segments, { hashValue, g
     try {
       const { appointment } = await bookAppointment(env, shopId, { ...body, phone }, { source: 'online_booking', createdBy: 'online-booking' });
       try {
-        const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
-        if (twilio.configured) {
-          await sendSms(env, { to: phone, body: `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.` }, { config: twilio });
+        const consent = await env.DB.prepare('SELECT status FROM sms_consent WHERE shop_id = ? AND phone = ?').bind(shopId, phone).first();
+        const twilio = consent?.status === 'opted_out' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
+        if (twilio?.configured) {
+          const text = `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.`;
+          const result = await sendSms(env, { to: phone, body: text }, { config: twilio });
+          await env.DB.prepare(`
+            INSERT OR IGNORE INTO customer_messages (id, shop_id, customer_id, work_order_id, phone, direction, body, provider, provider_message_id, message_type, status, created_at)
+            VALUES (?, ?, ?, NULL, ?, 'outbound', ?, ?, ?, 'booking_confirmation', ?, ?)
+          `).bind(`sms-${crypto.randomUUID()}`, shopId, appointment.customerId || null, phone, text, result.provider || 'twilio', result.messageSid || null, result.status || 'sent', new Date().toISOString()).run();
         }
       } catch {
         // Confirmation text is best-effort; the appointment is already on the calendar.

@@ -6134,9 +6134,8 @@ function showMarginWarnings(root, lines) {
   panel.querySelectorAll("[data-apply-matrix]").forEach(button => {
     button.onclick = () => {
       const row = [...root.querySelectorAll(".job-estimate-line")].find(item => item.dataset.lineId === button.dataset.applyMatrix);
-      const line = lines.find(item => item.id === button.dataset.applyMatrix);
-      const price = line ? Pricing.matrixPartPrice(Pricing.lineCost(line, state.inventory), shopPricing()) : null;
-      if (!row || price === null) return;
+      const price = Number(button.dataset.price);
+      if (!row || !(price > 0)) return;
       row.querySelector(".job-line-rate").value = price.toFixed(2);
       refreshEstimateEditor(root);
     };
@@ -6172,13 +6171,18 @@ scanAiPanel = function (scan) {
   const button = `<button class="primary" type="button" data-scan-estimate-send="${escapeAttr(scan.id)}" ${sent ? "disabled" : ""}>${icon("send", 14)} ${sent ? "Estimate sent for approval" : "Build canned estimate & text approval link"}</button>`;
   return panel.replace(/<\/div>$/, `<div class="messaging-actions">${button}</div></div>`);
 };
+/** Vehicle and engine text for fitment: the scan, the RO, and the linked vehicle record. */
+function scanVehicleText(scan, order) {
+  const vehicle = state.vehicles.find(item => (order.vin && item.vin === order.vin) || (order.vehicleId && item.id === order.vehicleId));
+  return [scan.vehicle, scan.engine, order.vehicle, order.engine, vehicle?.engine, vehicle?.trim].filter(Boolean).join(" ");
+}
 async function sendScanEstimateForApproval(scanId) {
   const scan = state.diagnosticSessions.find(item => item.id === scanId);
   const order = state.orders.find(item => item.id === scan?.orderId);
   if (!scan || !order) return toast("Link this scan to a repair order first");
   const codes = scan.aiAnalysis?.codes?.length ? scan.aiAnalysis.codes : (scan.dtcs || []).map(item => item.code || item);
   const aiLines = scan.aiAnalysis?.draft && !scan.aiAnalysis.appliedAt ? diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes }) : [];
-  const { lines, matches } = ScanToEstimate.buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id });
+  const { lines, matches } = ScanToEstimate.buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
   const existing = new Set((order.estimate?.lines || []).map(line => line.id));
   const fresh = lines.filter(line => !existing.has(line.id));
   if (!fresh.length && !(order.estimate?.lines || []).length) return toast("No canned services or AI lines matched these codes");

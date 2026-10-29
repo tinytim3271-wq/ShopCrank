@@ -150,16 +150,24 @@ function documentLines(document, type) {
 }
 
 /** Finding photos/videos the customer may view through this link: only keys on the document, in its shop. */
+/** Inspection-wide media is copied to estimate.photoKeys; line media sits on each line. */
+function documentLevelMedia(document, type) {
+  return type === 'estimate' ? mediaKeys(document.estimate || {}) : [];
+}
+
 function documentMediaKeys(link, document) {
   const keys = new Set();
-  for (const line of documentLines(document, link.document_type)) {
-    for (const key of mediaKeys(line)) if (key.startsWith(`shops/${link.shop_id}/`)) keys.add(key);
-  }
+  const all = [...documentLines(document, link.document_type).flatMap(line => mediaKeys(line)), ...documentLevelMedia(document, link.document_type)];
+  for (const key of all) if (key.startsWith(`shops/${link.shop_id}/`)) keys.add(key);
   return keys;
 }
 
 function mediaHtml(line, link, token) {
-  const items = mediaKeys(line).filter(key => key.startsWith(`shops/${link.shop_id}/`)).slice(0, 6).map(key => {
+  return mediaListHtml(mediaKeys(line), link, token);
+}
+
+function mediaListHtml(keys, link, token, limit = 6) {
+  const items = keys.filter(key => key.startsWith(`shops/${link.shop_id}/`)).slice(0, limit).map(key => {
     const src = `/api/customer-documents/${token}/media?key=${encodeURIComponent(key)}`;
     return isVideoMedia(key)
       ? `<video controls preload="metadata" playsinline src="${escapeHtml(src)}"></video>`
@@ -242,6 +250,7 @@ function customerDocumentPage(link, document, nonce, token = '') {
     ${status}
     <section class="meta"><div><small>Customer</small><strong>${escapeHtml(document.customer || '')}</strong></div><div><small>Work order</small><strong>${escapeHtml(document.id || document.ro || '')}</strong></div></section>
     ${isEstimate ? ratingBanner(document) : ''}
+    ${isEstimate && documentLevelMedia(document, type).length ? `<section class="meta"><div><small>Inspection photos and video</small>${mediaListHtml(documentLevelMedia(document, type), link, token, 12)}</div></section>` : ''}
     <section class="lines">${lineRows(document, type, link, token)}</section>
     <section class="totals"><span>Subtotal<br><b>${escapeHtml(money(estimate.subtotal))}</b></span><span>Tax<br><b>${escapeHtml(money(estimate.tax))}</b></span><strong>Total<br>${escapeHtml(money(estimate.total ?? estimate.amount))}</strong></section>
     ${controls}

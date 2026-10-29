@@ -1,4 +1,5 @@
 import { resolveTwilioShopConfig, sendSms } from './integrations/sms.mjs';
+import { shopEntitled } from './scheduling.mjs';
 
 /**
  * Automatic customer follow-ups, included on every plan:
@@ -62,9 +63,21 @@ function addMonths(isoDate, months) {
   return date.toISOString().slice(0, 10);
 }
 
+/** Work actually performed: approved/undeclined lines; the complaint only for legacy orders with no lines. */
 function orderServiceText(order) {
-  const lines = (order.estimate?.lines || []).filter(line => line.approvalStatus !== 'declined').map(line => `${line.description || ''} ${line.service || ''}`);
-  return [order.complaint, order.service, ...lines].join(' \n ').toLowerCase();
+  const allLines = order.estimate?.lines || order.lines || [];
+  const lines = allLines.filter(line => line.approvalStatus !== 'declined').map(line => `${line.description || ''} ${line.service || ''}`);
+  return (allLines.length ? lines : [order.complaint, order.service]).join(' \n ').toLowerCase();
+}
+
+const VIN = /^[A-HJ-NPR-Z0-9]{17}$/;
+
+/** A real VIN, else the vehicle record id, else this customer's vehicle description. */
+export function vehicleIdentity(order = {}) {
+  const vin = String(order.vin || '').trim().toUpperCase();
+  if (VIN.test(vin)) return `vin:${vin}`;
+  if (order.vehicleId) return `vehicle:${order.vehicleId}`;
+  return `customer:${String(order.customerId || order.customer || '').toLowerCase()}|${String(order.vehicle || '').toLowerCase()}`;
 }
 
 function completedAt(order) {
@@ -83,7 +96,7 @@ export function plannedServiceReminders(orders = [], existingReminders = [], set
     const text = orderServiceText(order);
     for (const interval of settings.serviceReminders.intervals) {
       if (!new RegExp(interval.match, 'i').test(text)) continue;
-      const key = `${String(order.vin || order.vehicle).toUpperCase()}|${interval.id}`;
+      const key = `${vehicleIdentity(order)}|${interval.id}`;
       if (!latest.has(key) || latest.get(key).done < done) latest.set(key, { order, interval, done });
     }
   }
@@ -93,7 +106,8 @@ export function plannedServiceReminders(orders = [], existingReminders = [], set
     const sourceKey = `${key}|${done}`;
     if (tracked.has(sourceKey)) continue;
     planned.push({
-      id: `reminder-auto-${sourceKey.replace(/[^A-Za-z0-9|-]/g, '').replace(/\|/g, '-')}`.slice(0, 120),
+      seriesKey: key,
+      id: `reminder-auto-${sourceKey.replace(/[^A-Za-z0-9|-]/g, '').replace(/\|/g, '-')}`.slice(0, 160),
       customer: order.customer || '',
       customerId: order.customerId || '',
       phone: order.phone || '',
@@ -111,9 +125,22 @@ export function plannedServiceReminders(orders = [], existingReminders = [], set
   return planned;
 }
 
+/** Older unsent automatic reminders for a vehicle/service that a newer visit replaced. */
+export function supersededReminders(reminders = []) {
+  const newest = new Map();
+  for (const item of reminders) {
+    if (item.source !== 'auto' || !item.seriesKey) continue;
+    if (!newest.has(item.seriesKey) || String(item.lastServiceDate) > String(newest.get(item.seriesKey).lastServiceDate)) newest.set(item.seriesKey, item);
+  }
+  return reminders.filter(item => item.source === 'auto' && item.seriesKey && !item.sentAt && item.status !== 'superseded' && newest.get(item.seriesKey) !== item);
+}
+
+/** Reminders to text now: SMS channel (the default), unsent, not cancelled or superseded, due within leadDays. */
 export function dueReminders(reminders = [], { today, leadDays = 7 } = {}) {
   const horizon = new Date(Date.parse(`${today}T12:00:00Z`) + leadDays * DAY_MS).toISOString().slice(0, 10);
-  return reminders.filter(item => !item.sentAt && item.status !== 'cancelled' && item.dueDate && item.dueDate <= horizon);
+  const superseded = new Set(supersededReminders(reminders).map(item => item.id));
+  return reminders.filter(item => !item.sentAt && !['cancelled', 'superseded'].includes(item.status) && !superseded.has(item.id)
+    && (item.channel || 'sms') === 'sms' && item.dueDate && item.dueDate <= horizon);
 }
 
 export function reminderMessage(reminder, shopName, bookingUrl = '') {
@@ -182,8 +209,34 @@ async function recordMessage(env, shopId, { phone, body, messageType, customerId
   `).bind(`sms-${crypto.randomUUID()}`, shopId, customerId || null, phone, body, result.provider || 'twilio', result.messageSid || null, messageType, result.status || 'sent', new Date().toISOString()).run();
 }
 
+const RUN_LOCK_MS = 10 * 60 * 1000;
+const CLAIM_STALE_MS = 30 * 60 * 1000;
+
+/** One follow-up run per shop per 10 minutes, so the cron and a manual run never overlap. */
+async function acquireRunLock(env, shopId, now) {
+  const windowStart = Math.floor(now / RUN_LOCK_MS) * RUN_LOCK_MS;
+  const result = await env.DB.prepare(
+    'INSERT INTO auth_rate_limits (bucket, window_start, request_count) VALUES (?, ?, 1) ON CONFLICT(bucket, window_start) DO NOTHING',
+  ).bind(`followups:${shopId}`, windowStart).run();
+  return Number(result?.meta?.changes || 0) === 1;
+}
+
+/** Claim one record before texting about it; a concurrent or retried run skips claimed records. */
+async function claim(env, shopId, type, id, doneField, now) {
+  const result = await env.DB.prepare(`
+    UPDATE entities SET data_json = json_set(data_json, '$.followupClaimAt', ?), updated_at = ?
+    WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
+      AND json_extract(data_json, ?) IS NULL
+      AND COALESCE(json_extract(data_json, '$.followupClaimAt'), '') < ?
+  `).bind(new Date(now).toISOString(), new Date(now).toISOString(), shopId, type, id, `$.${doneField}`, new Date(now - CLAIM_STALE_MS).toISOString()).run();
+  return Number(result?.meta?.changes || 0) === 1;
+}
+
 /** Run follow-ups for one shop. `send` is injectable for tests; defaults to Twilio. */
 export async function runShopFollowups(env, shopId, { now = Date.now(), getSecret = null, send = null, bookingOrigin = '' } = {}) {
+  const report = { shopId, remindersCreated: 0, remindersSent: 0, reviewRequestsSent: 0, skipped: 0, errors: [] };
+  if (!(await shopEntitled(env, shopId, 'sms', now))) return { ...report, skippedReason: 'not_entitled' };
+  if (!(await acquireRunLock(env, shopId, now))) return { ...report, skippedReason: 'already_running' };
   const [settingsRows, orders, invoices, reminders, customers, shop] = await Promise.all([
     env.DB.prepare("SELECT entity_id, data_json FROM entities WHERE shop_id = ? AND entity_type = 'shopsettings' AND entity_id IN ('followups', 'profile')").bind(shopId).all(),
     list(env, shopId, 'orders'),
@@ -195,18 +248,26 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
   const byId = Object.fromEntries((settingsRows.results || []).map(row => [row.entity_id, parse(row) || {}]));
   const settings = followupSettings(byId.followups);
   const shopName = clean(byId.profile?.shopName || shop?.name || 'Your shop', 120);
-  const report = { shopId, remindersCreated: 0, remindersSent: 0, reviewRequestsSent: 0, skipped: 0, errors: [] };
 
   let deliver = send;
   if (!deliver) {
     const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
     if (twilio.configured) deliver = message => sendSms(env, message, { config: twilio });
   }
-  const consent = await env.DB.prepare("SELECT phone FROM sms_consent WHERE shop_id = ? AND status = 'opted_out'").bind(shopId).all().catch(() => ({ results: [] }));
-  const optedOut = new Set((consent.results || []).map(row => String(row.phone || '').replace(/\D/g, '').slice(-10)));
-  const textCustomer = async ({ phone, body, messageType, customerId }) => {
+  // If opt-outs can't be read, nothing is texted: sending to someone who replied STOP is worse than a late reminder.
+  let optedOut;
+  try {
+    const consent = await env.DB.prepare("SELECT phone FROM sms_consent WHERE shop_id = ? AND status = 'opted_out'").bind(shopId).all();
+    optedOut = new Set((consent.results || []).map(row => String(row.phone || '').replace(/\D/g, '').slice(-10)));
+  } catch (error) {
+    report.errors.push(`opt-out list unavailable: ${error.message || error}`);
+    deliver = null;
+    optedOut = new Set();
+  }
+  const textCustomer = async ({ phone, body, messageType, customerId, claimRecord }) => {
     const to = toE164(phone);
     if (!deliver || !to || optedOut.has(to.replace(/\D/g, '').slice(-10))) { report.skipped += 1; return false; }
+    if (claimRecord && !(await claimRecord())) { report.skipped += 1; return false; }
     try {
       const result = await deliver({ to, body });
       await recordMessage(env, shopId, { phone: to, body, messageType, customerId, result: result || {} });
@@ -228,12 +289,19 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
         all.push(record);
         report.remindersCreated += 1;
       }
+      for (const old of supersededReminders(all)) {
+        await put(env, shopId, 'reminders', { ...old, status: 'superseded' });
+        old.status = 'superseded';
+      }
     }
     if (settings.serviceReminders.autoSend) {
       const bookingUrl = bookingOrigin ? `${bookingOrigin}/api/book/${encodeURIComponent(shopId)}` : '';
       for (const reminder of dueReminders(all, { today, leadDays: settings.serviceReminders.leadDays })) {
         const customer = customers.find(item => item.id === reminder.customerId || item.name === reminder.customer);
-        const sent = await textCustomer({ phone: reminder.phone || customer?.phone, body: reminderMessage(reminder, shopName, bookingUrl), messageType: 'reminder', customerId: customer?.id });
+        const sent = await textCustomer({
+          phone: reminder.phone || customer?.phone, body: reminderMessage(reminder, shopName, bookingUrl), messageType: 'reminder', customerId: customer?.id,
+          claimRecord: () => claim(env, shopId, 'reminders', reminder.id, 'sentAt', now),
+        });
         if (sent) {
           await put(env, shopId, 'reminders', { ...reminder, sentAt: new Date(now).toISOString(), sentBy: 'auto' });
           report.remindersSent += 1;
@@ -244,10 +312,20 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
 
   if (settings.reviewRequests.enabled) {
     const url = normalizeGoogleReviewUrl(settings.reviewRequests.googleReviewUrl);
-    const history = await env.DB.prepare("SELECT phone, MAX(created_at) AS last FROM customer_messages WHERE shop_id = ? AND message_type = 'review_request' GROUP BY phone").bind(shopId).all().catch(() => ({ results: [] }));
-    const lastRequestByPhone = new Map((history.results || []).map(row => [String(row.phone || '').replace(/\D/g, '').slice(-10), row.last]));
-    for (const due of dueReviewRequests(invoices, { now, settings, lastRequestByPhone, optedOut, customers })) {
-      const sent = await textCustomer({ phone: due.phone, body: reviewRequestMessage(due.customer, shopName, url), messageType: 'review_request', customerId: due.customerId });
+    let history = null;
+    try {
+      history = await env.DB.prepare("SELECT phone, MAX(created_at) AS last FROM customer_messages WHERE shop_id = ? AND message_type = 'review_request' GROUP BY phone").bind(shopId).all();
+    } catch (error) {
+      // Without history the 180-day cooldown can't be honoured, so no review requests this run.
+      report.errors.push(`review history unavailable: ${error.message || error}`);
+    }
+    const lastRequestByPhone = new Map((history?.results || []).map(row => [String(row.phone || '').replace(/\D/g, '').slice(-10), row.last]));
+    for (const due of history ? dueReviewRequests(invoices, { now, settings, lastRequestByPhone, optedOut, customers }) : []) {
+      const invoiceId = due.invoice.id || due.invoice.number;
+      const sent = await textCustomer({
+        phone: due.phone, body: reviewRequestMessage(due.customer, shopName, url), messageType: 'review_request', customerId: due.customerId,
+        claimRecord: () => claim(env, shopId, 'invoices', invoiceId, 'reviewRequestedAt', now),
+      });
       if (sent) {
         await put(env, shopId, 'invoices', { ...due.invoice, reviewRequestedAt: new Date(now).toISOString() });
         report.reviewRequestsSent += 1;

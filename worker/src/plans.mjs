@@ -153,13 +153,17 @@ export function planCapabilities(planId) {
   return [...(PLAN_CAPABILITIES[planId] || [])];
 }
 
-export function hasPlanCapability(subscription, capability, now = Date.now()) {
+/** Active or trialing, and the paid period / trial has not ended. */
+export function subscriptionActive(subscription, now = Date.now()) {
   const periodEnd = subscription?.current_period_end
     ? Date.parse(subscription.current_period_end)
     : null;
   return ['active', 'trialing'].includes(String(subscription?.status || ''))
-    && (periodEnd === null || (Number.isFinite(periodEnd) && periodEnd > now))
-    && planCapabilities(subscription?.plan_id).includes(capability);
+    && (periodEnd === null || (Number.isFinite(periodEnd) && periodEnd > now));
+}
+
+export function hasPlanCapability(subscription, capability, now = Date.now()) {
+  return subscriptionActive(subscription, now) && planCapabilities(subscription?.plan_id).includes(capability);
 }
 
 export function claimDecision({ invite, counter, planId }) {

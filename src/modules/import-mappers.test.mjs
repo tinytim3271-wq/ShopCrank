@@ -60,3 +60,10 @@ test('the ShopCrank template passes through untouched; formula-looking cells sta
   const result = run('tekmetric', 'customers', 'First Name,Last Name\n=HYPERLINK("x"),Brooks');
   assert.doesNotMatch(result.records[0].name, /^=/);
 });
+
+test('review fixes: posted or AR invoices stay open unless paid; estimate decisions survive', () => {
+  const tek = run('tekmetric', 'invoices', 'Repair Order #,Customer First Name,Customer Last Name,Posted Date,Status,Total,Balance Due\n1,A,B,2026-09-01,Accounts Receivable,100,100\n2,C,D,2026-09-01,Posted,50,0');
+  assert.deepEqual(tek.records.map(record => record.status), ['sent', 'paid']);
+  const estimates = run('shopmonkey', 'estimates', 'Order #,Customer,Vehicle,Status,Total\nE1,A B,2020 Civic,Approved,100\nE2,C D,2020 Civic,Declined,80\nE3,E F,2020 Civic,Open,60');
+  assert.deepEqual(estimates.records.map(record => record.status), ['approved', 'declined', 'pending']);
+});

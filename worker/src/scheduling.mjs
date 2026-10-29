@@ -1,3 +1,5 @@
+import { hasPlanCapability } from './plans.mjs';
+
 /**
  * Shop calendar availability and booking, shared by the AI phone receptionist
  * and the public online-booking page. Appointments use the same record shape as
@@ -87,9 +89,12 @@ export function availableSlots({ date, hours, appointments = [], config = {}, no
     if (appointment?.date !== date || !OPEN_STATUSES.has(String(appointment.status || '').toLowerCase())) continue;
     taken.set(appointment.time, (taken.get(appointment.time) || 0) + 1);
   }
+  // Minimum notice spans calendar days: 24 h notice at 5 PM hides tomorrow before 5 PM.
+  const dayOffset = Math.round((Date.parse(`${date}T12:00:00Z`) - Date.parse(`${now.date}T12:00:00Z`)) / 86_400_000);
+  const earliest = now.minutes + leadMinutes - dayOffset * 24 * 60;
   const slots = [];
   for (let start = day.open; start + slotMinutes <= day.close; start += slotMinutes) {
-    if (date === now.date && start < now.minutes + leadMinutes) continue;
+    if (start < earliest) continue;
     if ((taken.get(timeLabel(start)) || 0) < capacity) slots.push(timeLabel(start));
   }
   return slots;
@@ -154,6 +159,26 @@ async function upsertEntity(env, shopId, type, id, record, createdBy) {
   return value;
 }
 
+/**
+ * Insert the appointment only if its slot still has room, in one statement, so
+ * two requests racing for the last opening cannot both succeed. Null if full.
+ */
+async function reserveAppointment(env, shopId, id, capacity, record, createdBy) {
+  const now = new Date().toISOString();
+  const value = { ...record, id, shopId, createdBy, createdAt: now, updatedAt: now };
+  const result = await env.DB.prepare(`
+    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+    SELECT ?, 'appointments', ?, ?, ?, ?, ?
+    WHERE (
+      SELECT COUNT(*) FROM entities
+      WHERE shop_id = ? AND entity_type = 'appointments'
+        AND json_extract(data_json, '$.date') = ? AND json_extract(data_json, '$.time') = ?
+        AND COALESCE(json_extract(data_json, '$.status'), '') IN ('scheduled', 'confirmed', 'checked_in', 'in_progress', '')
+    ) < ?
+  `).bind(shopId, id, JSON.stringify(value), createdBy, now, now, shopId, record.date, record.time, capacity).run();
+  return Number(result?.meta?.changes || 0) === 1 ? value : null;
+}
+
 export async function findCustomerByPhone(env, shopId, phone) {
   const digits = String(phone || '').replace(/\D/g, '').slice(-10);
   if (digits.length < 7) return null;
@@ -165,6 +190,18 @@ export async function findCustomerByPhone(env, shopId, phone) {
   `).bind(shopId, `%${digits}`).first();
   const customer = parseRow(row);
   return customer ? { ...customer, id: customer.id || row.entity_id } : null;
+}
+
+/**
+ * Whether a shop may serve customers through automated channels: subscription
+ * active (trial not expired), plan includes `capability`, account not suspended.
+ */
+export async function shopEntitled(env, shopId, capability = 'sms', now = Date.now()) {
+  const [subscription, account] = await Promise.all([
+    env.DB.prepare('SELECT plan_id, status, current_period_end FROM subscriptions WHERE shop_id = ?').bind(shopId).first(),
+    env.DB.prepare('SELECT suspended FROM accounts WHERE shop_id = ?').bind(shopId).first().catch(() => null),
+  ]);
+  return hasPlanCapability(subscription, capability, now) && Number(account?.suspended || 0) !== 1;
 }
 
 export class BookingError extends Error {
@@ -207,7 +244,7 @@ export async function bookAppointment(env, shopId, input = {}, { source = 'ai_ph
     }, createdBy);
   }
   const id = `appointment-${crypto.randomUUID()}`;
-  const appointment = await upsertEntity(env, shopId, 'appointments', id, {
+  const appointment = await reserveAppointment(env, shopId, id, context.config.capacity, {
     customer: customer.name || name,
     customerId: customer.id || name,
     phone,
@@ -222,5 +259,11 @@ export async function bookAppointment(env, shopId, input = {}, { source = 'ai_ph
     tech: '',
     bay: '',
   }, createdBy);
+  if (!appointment) {
+    const fresh = await loadBookingContext(env, shopId);
+    throw new BookingError('That time was just taken', 409, {
+      alternatives: nextAvailability({ from: date, hours: fresh.hours, appointments: fresh.appointments, config: fresh.config, now: fresh.now }),
+    });
+  }
   return { appointment, customer, returningCustomer: Boolean(existing) };
 }

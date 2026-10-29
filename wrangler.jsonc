@@ -81,9 +81,10 @@
       "new_sqlite_classes": ["AiChatSession"]
     }
   ],
-  // Daily customer follow-ups (service reminders, Google review requests); see FOLLOWUP_CRON.
+  // 15:00 UTC: customer follow-ups (FOLLOWUP_CRON). 08:00 UTC: scheduled Revenue
+  // Recognition exports for shops that turned them on.
   "triggers": {
-    "crons": ["0 15 * * *"]
+    "crons": ["0 15 * * *", "0 8 * * *"]
   },
   "observability": {
     "enabled": true,

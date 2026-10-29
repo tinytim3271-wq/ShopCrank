@@ -96,7 +96,9 @@ test('the Worker entry exports only handlers and classes (workerd refuses to sta
 
 test('the daily cron is configured and routed to follow-ups', () => {
   const config = readFileSync(new URL('../../wrangler.jsonc', import.meta.url), 'utf8');
-  assert.match(config, new RegExp(`"crons": \\["${FOLLOWUP_CRON.replace(/\*/g, '\\*')}"\\]`));
+  const crons = JSON.parse(config.match(/"crons":\s*(\[[^\]]*\])/)[1]);
+  assert.ok(crons.includes(FOLLOWUP_CRON), 'follow-up cron configured');
+  assert.ok(crons.some(cron => cron !== FOLLOWUP_CRON), 'revenue recognition keeps its own cron');
 });
 
 test('online booking works on the Solo plan: page, slots, booking, and rate limit', async () => {

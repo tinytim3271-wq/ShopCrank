@@ -47,6 +47,18 @@ function lineTotal(line) {
   return Number(line.quantity || 1) * Number(line.unitPrice || line.price || 0);
 }
 
+const VIN = /^[A-HJ-NPR-Z0-9]{17}$/;
+
+function vehicleKey(order, invoice) {
+  const vin = String(order.vin || invoice.vin || '').trim().toUpperCase();
+  if (VIN.test(vin)) return vin;
+  return `${invoice.customer || order.customer}|${invoice.vehicle || order.vehicle}`.toUpperCase();
+}
+
+function isCoreCharge(line) {
+  return Boolean(line.partstech?.isCore || line.isCore);
+}
+
 function partUnitCost(line, inventoryBySku) {
   const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find(value => Number.isFinite(value) && value > 0);
   if (direct) return direct;
@@ -78,13 +90,15 @@ export function computeShopKpis({ invoices = [], orders = [], jobClockEntries = 
   for (const invoice of invoiced) {
     const order = ordersById.get(invoice.ro) || {};
     invoicedOrderIds.add(invoice.ro);
-    vehicles.add(String(order.vin || invoice.vin || `${invoice.customer}|${invoice.vehicle || order.vehicle}`).toUpperCase());
+    vehicles.add(vehicleKey(order, invoice));
     const lines = (invoice.lines?.length ? invoice.lines : order.estimate?.lines || []).filter(line => line.approvalStatus !== 'declined');
     const subtotal = Number(invoice.subtotal);
     sales += Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
     for (const line of lines) {
       const total = lineTotal(line);
       const type = lineType(line);
+      // Refundable core deposits are neither parts sales nor parts cost.
+      if (type === 'part' && isCoreCharge(line)) continue;
       if (type === 'part') {
         partsSales += total;
         const unit = partUnitCost(line, inventoryBySku);
@@ -106,11 +120,12 @@ export function computeShopKpis({ invoices = [], orders = [], jobClockEntries = 
   const usersById = new Map(users.map(user => [user.id, user]));
   const clockedByTech = new Map();
   let laborCost = 0; let laborHoursCosted = 0; let laborHoursClocked = 0;
+  // Technician activity is measured in the period; labor cost follows the invoiced
+  // job, so time clocked before the period on an RO invoiced in it still counts.
   for (const entry of jobClockEntries) {
-    if (!inRange(isoDay(entry.clockIn), from, to)) continue;
     const hours = Number(entry.hours) || (entry.clockOut ? (Date.parse(entry.clockOut) - Date.parse(entry.clockIn)) / 3_600_000 : 0);
     if (!(hours > 0)) continue;
-    clockedByTech.set(entry.userId, (clockedByTech.get(entry.userId) || 0) + hours);
+    if (inRange(isoDay(entry.clockIn), from, to)) clockedByTech.set(entry.userId, (clockedByTech.get(entry.userId) || 0) + hours);
     if (!invoicedOrderIds.has(entry.workOrderId)) continue;
     laborHoursClocked += hours;
     const rate = hourlyRate(usersById.get(entry.userId));

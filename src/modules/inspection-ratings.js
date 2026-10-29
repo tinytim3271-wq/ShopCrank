@@ -37,7 +37,8 @@ export function ratingChipHtml(status, escapeHtml = value => String(value ?? '')
   return `<span class="rating-chip rating-${rating}" title="${escapeHtml(RATINGS[rating].label)}">${escapeHtml(RATINGS[rating].short)}</span>`;
 }
 
-const VIDEO_KEY = /\.(mp4|webm|mov)$|\/video\//i;
+// Uploaded videos are keyed shops/<shop>/inspection-video/<uuid> with no extension.
+const VIDEO_KEY = /\.(mp4|webm|mov)$|(^|\/)[a-z-]*video\//i;
 
 /** Photo and video keys attached to an estimate line or inspection item. */
 export function mediaKeys(record = {}) {

@@ -83,3 +83,24 @@ test('period ranges', () => {
   assert.equal(periodRange('week', today).from, '2026-10-26');
   assert.equal(periodRange('ytd', today).from, '2026-01-01');
 });
+
+test('review fixes: core deposits excluded, placeholder VINs do not merge cars, earlier clock time still costs the job', () => {
+  const kpis = computeShopKpis({
+    users: [{ id: 't', payRate: 20, role: 'technician' }],
+    orders: [{ id: 'RO-A', vin: 'VIN pending', vehicle: 'Civic', customer: 'A' }, { id: 'RO-B', vin: 'VIN pending', vehicle: 'F-150', customer: 'B' }],
+    invoices: [
+      { number: 'I1', ro: 'RO-A', customer: 'A', vehicle: 'Civic', date: '2026-10-01', subtotal: 150, lines: [
+        { type: 'part', quantity: 1, unitPrice: 100, total: 100, partstech: { cost: 40 } },
+        { type: 'part', quantity: 1, unitPrice: 50, total: 50, partstech: { cost: 40, isCore: true } },
+      ] },
+      { number: 'I2', ro: 'RO-B', customer: 'B', vehicle: 'F-150', date: '2026-10-02', subtotal: 100, lines: [{ type: 'labor', hours: 1, laborRate: 100, total: 100, technicianIds: ['t'] }] },
+    ],
+    jobClockEntries: [{ userId: 't', workOrderId: 'RO-B', clockIn: '2026-09-30T20:00:00Z', hours: 2 }],
+    from: '2026-10-01', to: '2026-10-31',
+  });
+  assert.equal(kpis.carCount, 2);
+  assert.equal(kpis.partsSales, 100);
+  assert.equal(kpis.partsCost, 40);
+  assert.equal(kpis.laborCost, 40, 'September clock time on an October invoice');
+  assert.equal(kpis.techs[0].clockedHours, 0, 'but it is not October activity');
+});

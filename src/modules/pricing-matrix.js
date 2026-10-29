@@ -65,7 +65,22 @@ export function marginPercent(price, cost) {
   return p > 0 && c >= 0 ? Math.round(((p - c) / p) * 1000) / 10 : null;
 }
 
+/** PartsTech core charges are refundable deposits that inherit the main part's cost fields. */
+export function isCoreCharge(line = {}) {
+  return Boolean(line.partstech?.isCore || line.isCore);
+}
+
+/** Lowest price that meets both the matrix and the minimum margin. */
+export function protectedPartPrice(cost, settings = pricingSettings()) {
+  const matrix = matrixPartPrice(cost, settings);
+  if (matrix === null) return null;
+  const min = Number(settings.minPartsMarginPercent) || 0;
+  const floor = min >= 100 ? matrix : Math.ceil((Number(cost) / (1 - min / 100)) * 100) / 100;
+  return Math.max(matrix, floor);
+}
+
 export function lineCost(line = {}, inventory = []) {
+  if (isCoreCharge(line)) return null;
   const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find(value => Number.isFinite(value) && value > 0);
   if (direct) return direct;
   const stocked = inventory.find(item => (line.inventoryId && item.id === line.inventoryId) || (line.inventorySku && String(item.sku || '').toLowerCase() === String(line.inventorySku).toLowerCase()));
@@ -78,7 +93,7 @@ export function applyPartsMatrix(lines = [], settings = pricingSettings(), inven
   if (!settings.enabled) return lines;
   return lines.map(line => {
     const costPriced = ['cost', 'cost_markup'].includes(line.partstech?.priceBasis);
-    if (line.type !== 'part' || (Number(line.unitPrice) > 0 && !costPriced)) return line;
+    if (line.type !== 'part' || isCoreCharge(line) || (Number(line.unitPrice) > 0 && !costPriced)) return line;
     const cost = lineCost(line, inventory);
     const price = matrixPartPrice(cost, settings);
     if (price === null) return line;
@@ -91,13 +106,13 @@ export function applyPartsMatrix(lines = [], settings = pricingSettings(), inven
 export function marginWarnings(lines = [], settings = pricingSettings(), inventory = []) {
   const warnings = [];
   for (const line of lines) {
-    if (line.type !== 'part' || line.approvalStatus === 'declined') continue;
+    if (line.type !== 'part' || line.approvalStatus === 'declined' || isCoreCharge(line)) continue;
     const cost = lineCost(line, inventory);
     const price = Number(line.unitPrice);
     if (cost === null || !(price > 0)) continue;
     const margin = marginPercent(price, cost);
     if (margin !== null && margin < settings.minPartsMarginPercent) {
-      warnings.push({ lineId: line.id, description: line.description, cost, price, margin, suggestedPrice: matrixPartPrice(cost, settings) });
+      warnings.push({ lineId: line.id, description: line.description, cost, price, margin, suggestedPrice: protectedPartPrice(cost, settings) });
     }
   }
   return warnings;
@@ -152,7 +167,7 @@ export function parseMatrixText(text) {
 
 export function marginWarningsHtml(warnings = [], { money = value => `$${Number(value).toFixed(2)}`, escapeHtml = value => String(value ?? '') } = {}) {
   if (!warnings.length) return '';
-  return `<div class="margin-warning" role="alert"><strong>Margin check</strong>${warnings.map(item => `<p>${escapeHtml(item.description)}: ${item.margin}% margin at ${money(item.price)} (cost ${money(item.cost)}). Matrix price ${money(item.suggestedPrice)}. <button type="button" class="mini-action" data-apply-matrix="${escapeHtml(item.lineId)}">Use matrix price</button></p>`).join('')}</div>`;
+  return `<div class="margin-warning" role="alert"><strong>Margin check</strong>${warnings.map(item => `<p>${escapeHtml(item.description)}: ${item.margin}% margin at ${money(item.price)} (cost ${money(item.cost)}). Suggested ${money(item.suggestedPrice)}. <button type="button" class="mini-action" data-apply-matrix="${escapeHtml(item.lineId)}" data-price="${escapeHtml(item.suggestedPrice)}">Use suggested price</button></p>`).join('')}</div>`;
 }
 
 export function pricingSettingsHtml(record = {}, { canSave = false, escapeHtml = value => String(value ?? ''), icon = () => '' } = {}) {

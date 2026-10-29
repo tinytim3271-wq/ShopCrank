@@ -1764,7 +1764,7 @@
         good: "green",
         green: "green"
       });
-      VIDEO_KEY = /\.(mp4|webm|mov)$|\/video\//i;
+      VIDEO_KEY = /\.(mp4|webm|mov)$|(^|\/)[a-z-]*video\//i;
       DAY_MS = 24 * 60 * 60 * 1e3;
       FOLLOW_UP_DAYS = Object.freeze({ red: 3, yellow: 30, default: 30 });
     }
@@ -5477,6 +5477,14 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     if (lineType(line) === "labor") return Number(line.hours || 0) * Number(line.laborRate || 0);
     return Number(line.quantity || 1) * Number(line.unitPrice || line.price || 0);
   }
+  function vehicleKey(order, invoice) {
+    const vin = String(order.vin || invoice.vin || "").trim().toUpperCase();
+    if (VIN.test(vin)) return vin;
+    return `${invoice.customer || order.customer}|${invoice.vehicle || order.vehicle}`.toUpperCase();
+  }
+  function isCoreCharge(line) {
+    return Boolean(line.partstech?.isCore || line.isCore);
+  }
   function partUnitCost(line, inventoryBySku) {
     const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find((value2) => Number.isFinite(value2) && value2 > 0);
     if (direct) return direct;
@@ -5509,13 +5517,14 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     for (const invoice of invoiced) {
       const order = ordersById.get(invoice.ro) || {};
       invoicedOrderIds.add(invoice.ro);
-      vehicles.add(String(order.vin || invoice.vin || `${invoice.customer}|${invoice.vehicle || order.vehicle}`).toUpperCase());
+      vehicles.add(vehicleKey(order, invoice));
       const lines = (invoice.lines?.length ? invoice.lines : order.estimate?.lines || []).filter((line) => line.approvalStatus !== "declined");
       const subtotal = Number(invoice.subtotal);
       sales += Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
       for (const line of lines) {
         const total = lineTotal(line);
         const type = lineType(line);
+        if (type === "part" && isCoreCharge(line)) continue;
         if (type === "part") {
           partsSales += total;
           const unit = partUnitCost(line, inventoryBySku);
@@ -5539,10 +5548,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     let laborHoursCosted = 0;
     let laborHoursClocked = 0;
     for (const entry of jobClockEntries) {
-      if (!inRange(isoDay(entry.clockIn), from, to)) continue;
       const hours = Number(entry.hours) || (entry.clockOut ? (Date.parse(entry.clockOut) - Date.parse(entry.clockIn)) / 36e5 : 0);
       if (!(hours > 0)) continue;
-      clockedByTech.set(entry.userId, (clockedByTech.get(entry.userId) || 0) + hours);
+      if (inRange(isoDay(entry.clockIn), from, to)) clockedByTech.set(entry.userId, (clockedByTech.get(entry.userId) || 0) + hours);
       if (!invoicedOrderIds.has(entry.workOrderId)) continue;
       laborHoursClocked += hours;
       const rate = hourlyRate(usersById.get(entry.userId));
@@ -5617,12 +5625,13 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   <div class="data-panel"><table><thead><tr><th>Technician</th><th>Billed hrs</th><th>Clocked on jobs</th><th>On shift</th><th>Efficiency</th><th>Productivity</th></tr></thead><tbody>${techRows || '<tr><td colspan="6">No technician time in this period.</td></tr>'}</tbody></table><p class="ops-note">Efficiency = billed hours \xF7 hours clocked on jobs. Productivity = hours clocked on jobs \xF7 hours on shift.</p></div>
   </section>`;
   }
-  var round, ratio, VOID, pct;
+  var round, ratio, VOID, VIN, pct;
   var init_shop_kpis = __esm({
     "src/modules/shop-kpis.js"() {
       round = (value2, places = 2) => Math.round((Number(value2) || 0) * 10 ** places) / 10 ** places;
       ratio = (numerator, denominator) => denominator > 0 ? numerator / denominator : null;
       VOID = /* @__PURE__ */ new Set(["void", "voided", "cancelled", "canceled", "draft"]);
+      VIN = /^[A-HJ-NPR-Z0-9]{17}$/;
       pct = (value2) => value2 === null || value2 === void 0 ? "\u2014" : `${value2}%`;
     }
   });
@@ -5682,7 +5691,18 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const c = Number(cost);
     return p > 0 && c >= 0 ? Math.round((p - c) / p * 1e3) / 10 : null;
   }
+  function isCoreCharge2(line = {}) {
+    return Boolean(line.partstech?.isCore || line.isCore);
+  }
+  function protectedPartPrice(cost, settings2 = pricingSettings()) {
+    const matrix = matrixPartPrice(cost, settings2);
+    if (matrix === null) return null;
+    const min = Number(settings2.minPartsMarginPercent) || 0;
+    const floor = min >= 100 ? matrix : Math.ceil(Number(cost) / (1 - min / 100) * 100) / 100;
+    return Math.max(matrix, floor);
+  }
   function lineCost(line = {}, inventory = []) {
+    if (isCoreCharge2(line)) return null;
     const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find((value2) => Number.isFinite(value2) && value2 > 0);
     if (direct) return direct;
     const stocked = inventory.find((item) => line.inventoryId && item.id === line.inventoryId || line.inventorySku && String(item.sku || "").toLowerCase() === String(line.inventorySku).toLowerCase());
@@ -5693,7 +5713,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     if (!settings2.enabled) return lines;
     return lines.map((line) => {
       const costPriced = ["cost", "cost_markup"].includes(line.partstech?.priceBasis);
-      if (line.type !== "part" || Number(line.unitPrice) > 0 && !costPriced) return line;
+      if (line.type !== "part" || isCoreCharge2(line) || Number(line.unitPrice) > 0 && !costPriced) return line;
       const cost = lineCost(line, inventory);
       const price = matrixPartPrice(cost, settings2);
       if (price === null) return line;
@@ -5704,13 +5724,13 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function marginWarnings(lines = [], settings2 = pricingSettings(), inventory = []) {
     const warnings = [];
     for (const line of lines) {
-      if (line.type !== "part" || line.approvalStatus === "declined") continue;
+      if (line.type !== "part" || line.approvalStatus === "declined" || isCoreCharge2(line)) continue;
       const cost = lineCost(line, inventory);
       const price = Number(line.unitPrice);
       if (cost === null || !(price > 0)) continue;
       const margin = marginPercent(price, cost);
       if (margin !== null && margin < settings2.minPartsMarginPercent) {
-        warnings.push({ lineId: line.id, description: line.description, cost, price, margin, suggestedPrice: matrixPartPrice(cost, settings2) });
+        warnings.push({ lineId: line.id, description: line.description, cost, price, margin, suggestedPrice: protectedPartPrice(cost, settings2) });
       }
     }
     return warnings;
@@ -5751,7 +5771,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   }
   function marginWarningsHtml(warnings = [], { money: money5 = (value2) => `$${Number(value2).toFixed(2)}`, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? "") } = {}) {
     if (!warnings.length) return "";
-    return `<div class="margin-warning" role="alert"><strong>Margin check</strong>${warnings.map((item) => `<p>${escapeHtml4(item.description)}: ${item.margin}% margin at ${money5(item.price)} (cost ${money5(item.cost)}). Matrix price ${money5(item.suggestedPrice)}. <button type="button" class="mini-action" data-apply-matrix="${escapeHtml4(item.lineId)}">Use matrix price</button></p>`).join("")}</div>`;
+    return `<div class="margin-warning" role="alert"><strong>Margin check</strong>${warnings.map((item) => `<p>${escapeHtml4(item.description)}: ${item.margin}% margin at ${money5(item.price)} (cost ${money5(item.cost)}). Suggested ${money5(item.suggestedPrice)}. <button type="button" class="mini-action" data-apply-matrix="${escapeHtml4(item.lineId)}" data-price="${escapeHtml4(item.suggestedPrice)}">Use suggested price</button></p>`).join("")}</div>`;
   }
   function pricingSettingsHtml(record = {}, { canSave = false, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), icon: icon2 = () => "" } = {}) {
     const settings2 = pricingSettings(record);
@@ -5820,11 +5840,20 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function wordPattern(keyword) {
     return new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
   }
-  function bestService(services, keywords, used) {
+  function cylinderCount(text2) {
+    const match = /\b(?:v-?(\d{1,2})|i-?(\d)|inline[- ]?(\d)|(\d{1,2})[- ]?cyl(?:inder)?s?)\b/i.exec(String(text2 || ""));
+    return match ? Number(match[1] || match[2] || match[3] || match[4]) : null;
+  }
+  function serviceFitsVehicle(service, vehicleText = "") {
+    const required = cylinderCount(`${service.name || ""} ${service.description || ""}`);
+    if (required === null) return true;
+    return cylinderCount(vehicleText) === required;
+  }
+  function bestService(services, keywords, used, vehicleText = "") {
     let best = null;
     let bestScore = 0;
     for (const service of services) {
-      if (used.has(service.id) || service.active === false) continue;
+      if (used.has(service.id) || service.active === false || !serviceFitsVehicle(service, vehicleText)) continue;
       const text2 = textOf(service);
       const score = keywords.reduce((total, keyword, index) => total + (wordPattern(keyword).test(text2) ? keywords.length - index : 0), 0);
       if (score > bestScore) {
@@ -5834,11 +5863,11 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
     return best;
   }
-  function cannedServicesForCodes(codes = [], services = []) {
+  function cannedServicesForCodes(codes = [], services = [], { vehicle = "" } = {}) {
     const normalized = [...new Set(codes.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean))];
     const used = /* @__PURE__ */ new Set();
     const matches = [];
-    const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used);
+    const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used, vehicle);
     if (diagnostic && normalized.length) {
       used.add(diagnostic.id);
       matches.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
@@ -5846,7 +5875,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     for (const rule of DTC_SERVICE_RULES) {
       const hit = normalized.filter((code) => rule.test(code));
       if (!hit.length) continue;
-      const service = bestService(services, rule.keywords, used);
+      const service = bestService(services, rule.keywords, used, vehicle);
       if (!service) continue;
       used.add(service.id);
       matches.push({ service, reason: rule.label, codes: hit });
@@ -5866,8 +5895,8 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     if (parts) lines.push({ ...base, id: `scan-${scanId || "x"}-${service.id}-parts`, type: "part", description: `${service.name} parts`, quantity: 1, unitPrice: parts, total: parts, priceStatus: "priced" });
     return lines;
   }
-  function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = "" } = {}) {
-    const matches = cannedServicesForCodes(codes, services);
+  function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = "", vehicle = "" } = {}) {
+    const matches = cannedServicesForCodes(codes, services, { vehicle });
     const canned = matches.flatMap((match) => cannedServiceLines(match, { laborRate, scanId }));
     const seen = new Set(canned.map((line) => String(line.description).toLowerCase()));
     const extra = aiLines.filter((line) => !seen.has(String(line.description || "").toLowerCase()));
@@ -5959,14 +5988,17 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         return { ro_number: get(row, "ro_number"), customer, vehicle: vehicleText(row), vin: get(row, "vin"), complaint: get(row, "complaint") || `Imported from ${system.name}`, status: status === "invoiced" ? "invoiced" : status, total: get(row, "total"), phone: get(row, "phone") };
       }
       if (type === "invoices") {
-        const status = statusFor(row);
-        return { number: get(row, "invoice_number") || get(row, "ro_number"), customer, ro: get(row, "ro_number"), date: get(row, "date"), status: ["invoiced", "completed", "paid"].includes(status) ? "paid" : status, subtotal: get(row, "subtotal"), tax: get(row, "tax"), amount: get(row, "total") };
+        const raw = normalizeHeader(get(row, "status"));
+        const balance = Number(String(get(row, "balance")).replace(/[$,\s]/g, ""));
+        const paid = PAID_WORDS.has(raw) || PAID_WORDS.has(normalizeHeader(get(row, "payment_status"))) || get(row, "balance") !== "" && balance === 0;
+        return { number: get(row, "invoice_number") || get(row, "ro_number"), customer, ro: get(row, "ro_number"), date: get(row, "date"), status: paid ? "paid" : "sent", subtotal: get(row, "subtotal"), tax: get(row, "tax"), amount: get(row, "total") };
       }
-      return { number: get(row, "ro_number"), customer, vehicle: vehicleText(row), summary: get(row, "complaint"), status: "pending", subtotal: get(row, "subtotal"), tax: get(row, "tax"), total: get(row, "total"), email: get(row, "email"), phone: get(row, "phone") };
+      const decision = ESTIMATE_DECISIONS[normalizeHeader(get(row, "status"))] || "pending";
+      return { number: get(row, "ro_number"), customer, vehicle: vehicleText(row), summary: get(row, "complaint"), status: decision, subtotal: get(row, "subtotal"), tax: get(row, "tax"), total: get(row, "total"), email: get(row, "email"), phone: get(row, "phone") };
     });
     return { csv: toCsv(CANONICAL[type], mapped), rows: mapped.length, system: system.name };
   }
-  var COMMON, SOURCE_SYSTEMS, SOURCE_OPTIONS, CANONICAL;
+  var COMMON, PAID_WORDS, ESTIMATE_DECISIONS, SOURCE_SYSTEMS, SOURCE_OPTIONS, CANONICAL;
   var init_import_mappers = __esm({
     "src/modules/import-mappers.js"() {
       init_imports();
@@ -5990,8 +6022,12 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         subtotal: ["subtotal", "sub_total", "total_before_tax", "pre_tax_total"],
         tax: ["tax", "sales_tax", "tax_total", "total_tax"],
         date: ["invoice_date", "posted_date", "date_posted", "completed_date", "closed_date", "date", "created_date", "created_at", "date_created"],
-        mileage: ["mileage", "odometer", "miles_in", "mileage_in"]
+        mileage: ["mileage", "odometer", "miles_in", "mileage_in"],
+        balance: ["balance", "balance_due", "amount_due", "outstanding", "open_balance", "remaining_balance"],
+        payment_status: ["payment_status", "paid_status", "paid"]
       });
+      PAID_WORDS = /* @__PURE__ */ new Set(["paid", "paid_in_full", "closed_paid", "yes", "true"]);
+      ESTIMATE_DECISIONS = Object.freeze({ approved: "approved", accepted: "approved", authorized: "approved", declined: "declined", rejected: "declined" });
       SOURCE_SYSTEMS = Object.freeze({
         tekmetric: {
           name: "Tekmetric",
@@ -15799,13 +15835,16 @@ ${line}`.trim();
     panel.querySelectorAll("[data-apply-matrix]").forEach((button) => {
       button.onclick = () => {
         const row = [...root.querySelectorAll(".job-estimate-line")].find((item) => item.dataset.lineId === button.dataset.applyMatrix);
-        const line = lines.find((item) => item.id === button.dataset.applyMatrix);
-        const price = line ? matrixPartPrice(lineCost(line, state.inventory), shopPricing()) : null;
-        if (!row || price === null) return;
+        const price = Number(button.dataset.price);
+        if (!row || !(price > 0)) return;
         row.querySelector(".job-line-rate").value = price.toFixed(2);
         refreshEstimateEditor(root);
       };
     });
+  }
+  function scanVehicleText(scan, order) {
+    const vehicle = state.vehicles.find((item) => order.vin && item.vin === order.vin || order.vehicleId && item.id === order.vehicleId);
+    return [scan.vehicle, scan.engine, order.vehicle, order.engine, vehicle?.engine, vehicle?.trim].filter(Boolean).join(" ");
   }
   async function sendScanEstimateForApproval(scanId) {
     const scan = state.diagnosticSessions.find((item) => item.id === scanId);
@@ -15813,7 +15852,7 @@ ${line}`.trim();
     if (!scan || !order) return toast("Link this scan to a repair order first");
     const codes = scan.aiAnalysis?.codes?.length ? scan.aiAnalysis.codes : (scan.dtcs || []).map((item) => item.code || item);
     const aiLines = scan.aiAnalysis?.draft && !scan.aiAnalysis.appliedAt ? diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes }) : [];
-    const { lines, matches } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id });
+    const { lines, matches } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
     const existing = new Set((order.estimate?.lines || []).map((line) => line.id));
     const fresh = lines.filter((line) => !existing.has(line.id));
     if (!fresh.length && !(order.estimate?.lines || []).length) return toast("No canned services or AI lines matched these codes");
