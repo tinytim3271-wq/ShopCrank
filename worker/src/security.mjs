@@ -113,6 +113,19 @@ export async function importEcdsaPrivateKey(pkcs8Base64) {
   );
 }
 
+/** The verify-only half of the Worker's PKCS#8 signing key. */
+export async function importEcdsaPublicKeyFromPrivate(pkcs8Base64) {
+  const extractable = await crypto.subtle.importKey(
+    'pkcs8',
+    base64ToBytes(pkcs8Base64),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign'],
+  );
+  const { kty, crv, x, y } = await crypto.subtle.exportKey('jwk', extractable);
+  return crypto.subtle.importKey('jwk', { kty, crv, x, y }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+}
+
 /** Sign `data` with an ECDSA P-256 key, returning a base64url IEEE-P1363 (r||s) signature. */
 export async function ecdsaP256SignBase64Url(privateKey, data) {
   const signature = await crypto.subtle.sign(

@@ -1,4 +1,4 @@
-import { base64UrlEncode, ecdsaP256SignBase64Url, importEcdsaPrivateKey } from './security.mjs';
+import { base64UrlDecode, base64UrlEncode, ecdsaP256SignBase64Url, importEcdsaPrivateKey, importEcdsaPublicKeyFromPrivate } from './security.mjs';
 
 const encoder = new TextEncoder();
 
@@ -75,6 +75,45 @@ export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, a
 }
 
 /**
+ * Verify a capability token this Worker minted. Returns the payload only when the
+ * signature, shop, VIN, mode, and scope all match and it has not expired; null
+ * otherwise. Not single-use here: one job can request SecurityAccess repeatedly.
+ */
+/**
+ * UDS SecurityAccess level for each unlock scope, as J2534.Host sends them
+ * (requestSeed 0x03 immobilizer, 0x05 programming). The Worker derives the scope
+ * from the level so a caller cannot ask for an immobilizer key under a flash job.
+ */
+export const SECURITY_ACCESS_LEVELS = Object.freeze({ immobilizer: 0x03, flash: 0x05 });
+
+/** Job scopes whose capability token may request each SecurityAccess unlock. Module coding writes need the programming unlock. */
+export const SECURITY_ACCESS_TOKEN_SCOPES = Object.freeze({ immobilizer: ['immobilizer'], flash: ['flash', 'coding'] });
+
+export function securityAccessScopeForLevel(level) {
+  return Object.entries(SECURITY_ACCESS_LEVELS).find(([, value]) => value === Number(level))?.[0] || null;
+}
+
+export async function verifyCapabilityToken(env, token, { shopId, vin, mode, scope, scopes = [scope], nowMs = Date.now() }) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'v2' || !env.DIAGNOSTICS_SIGNING_PRIVATE_KEY) return null;
+  let payload;
+  try {
+    const publicKey = await importEcdsaPublicKeyFromPrivate(env.DIAGNOSTICS_SIGNING_PRIVATE_KEY);
+    const valid = await crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' }, publicKey, base64UrlDecode(parts[2]), encoder.encode(`v2.${parts[1]}`),
+    );
+    if (!valid) return null;
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
+  } catch {
+    return null;
+  }
+  if (payload?.v !== 2 || payload.shopId !== shopId || payload.vin !== vin) return null;
+  if (payload.mode !== mode || !scopes.includes(payload.scope) || procedureSpec(payload.procedure)?.klass !== payload.scope) return null;
+  if (!(Number(payload.exp) > nowMs)) return null;
+  return payload;
+}
+
+/**
  * Live key programming is authorized by a signed repair order in the shop's own
  * records rather than an AutoAuth login: the order must carry this VIN and have
  * an approved, signed estimateApproval recorded through the Worker approval path.
@@ -97,7 +136,9 @@ export async function signedRepairOrderForKeys(db, shopId, orderId, vin) {
   if (
     approval
     && approval.status === 'approved'
-    && approval.signedAt
+    && String(approval.type || 'signature').trim().toLowerCase() === 'signature'
+    && orderData.linesLockedAt
+    && Number.isFinite(Date.parse(approval.signedAt))
     && String(approval.authorizationName || '').trim()
   ) {
     return {

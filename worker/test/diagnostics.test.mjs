@@ -129,7 +129,7 @@ test('live key authorization needs the order estimateApproval signature for the 
     authorizationName: 'Pat Customer',
     signatureKey: 'shops/shop-1/signature/pat.png',
   };
-  const order = { id: 'RO-1', vin, estimateApproval: approval };
+  const order = { id: 'RO-1', vin, linesLockedAt: '2026-10-01T00:00:00Z', estimateApproval: approval };
   const ok = await signedRepairOrderForKeys(entitiesDb({ order }), 'shop-1', 'RO-1', vin);
   assert.equal(ok.authorizationName, 'Pat Customer');
   assert.equal(ok.signatureKey, approval.signatureKey);
@@ -149,5 +149,8 @@ test('live key authorization needs the order estimateApproval signature for the 
     order: { ...order, vin: '1C6SRFHT0LN999999' },
   }), 'shop-1', 'RO-1', vin), null);
   assert.equal(await signedRepairOrderForKeys(entitiesDb({ order: null }), 'shop-1', 'RO-1', vin), null);
+  assert.equal(await signedRepairOrderForKeys(entitiesDb({
+    order: { ...order, linesLockedAt: undefined },
+  }), 'shop-1', 'RO-1', vin), null, 'estimate lines must be locked by the approval');
   assert.equal(await signedRepairOrderForKeys(entitiesDb({ order }), 'shop-1', '', vin), null);
 });

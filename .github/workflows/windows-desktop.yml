@@ -73,15 +73,6 @@ jobs:
       - run: npm rebuild esbuild electron
       - name: Build web bundle
         run: npm run build:web
-      - name: Bake diagnostics capability secret for packaged desktop
-        shell: bash
-        env:
-          DIAGNOSTICS_CAPABILITY_SECRET: ${{ secrets.DIAGNOSTICS_CAPABILITY_SECRET }}
-        run: |
-          if [ -z "${DIAGNOSTICS_CAPABILITY_SECRET:-}" ]; then
-            echo "::warning title=Diagnostics capability secret missing::Add repository secret DIAGNOSTICS_CAPABILITY_SECRET (must match Worker) so Clear DTC works in packaged builds. Read-only J2534 ops still work."
-          fi
-          node scripts/bake-diagnostics-secret.mjs
       - name: Build NSIS installer and portable zip
         run: npx electron-builder --win nsis zip --publish never
       - name: Smoke test Windows artifacts
@@ -93,8 +84,6 @@ jobs:
           test -s "$EXE"
           test -s "$ZIP"
       - name: Build offline PC installer
-        env:
-          DIAGNOSTICS_CAPABILITY_SECRET: ${{ secrets.DIAGNOSTICS_CAPABILITY_SECRET }}
         run: npm run build:windows:offline
       - name: Smoke test offline installer
         shell: bash

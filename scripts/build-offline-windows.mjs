@@ -18,7 +18,6 @@ try {
   run('npm', ['run', 'build:web']);
   if (!demo) {
     run('npm', ['run', 'build:j2534']);
-    run('node', ['scripts/bake-diagnostics-secret.mjs']);
   }
   run('npx', ['--no-install', 'electron-builder', '--win', demo ? 'zip' : 'nsis', '--x64', '--publish', 'never', '--config', demo ? 'desktop/builder-demo.json' : 'desktop/builder-offline.json']);
 } finally {

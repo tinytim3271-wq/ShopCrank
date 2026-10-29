@@ -217,12 +217,12 @@ public sealed class DiagnosticSession : IDisposable
     /// <summary>Test seam: override the live/simulator SecurityAccess provider.</summary>
     public ISecurityAccessProvider? SecurityAccessProviderOverride { get; set; }
 
-    ISecurityAccessProvider SecurityProvider()
+    ISecurityAccessProvider SecurityProvider(string? authorizationToken)
     {
         if (SecurityAccessProviderOverride is not null) return SecurityAccessProviderOverride;
         if (_simulator) return new SimulatorSecurityAccessProvider();
         var apiBase = Environment.GetEnvironmentVariable("SHOP_CRANK_API_BASE");
-        if (!string.IsNullOrWhiteSpace(apiBase)) return new CloudSecurityAccessProvider();
+        if (!string.IsNullOrWhiteSpace(apiBase)) return new CloudSecurityAccessProvider(authorizationToken);
         return new FailClosedSecurityAccessProvider();
     }
 
@@ -230,12 +230,12 @@ public sealed class DiagnosticSession : IDisposable
 
     static int SecurityLevel(string scope) => scope == "flash" ? 0x05 : 0x03;
 
-    public async Task<object> SecurityAccessAsync(string scope)
+    public async Task<object> SecurityAccessAsync(string scope, string? authorizationToken = null)
     {
         RequireConnected();
         var normalized = scope == "flash" ? "flash" : ImmobilizerScope;
         var level = SecurityLevel(normalized);
-        var provider = SecurityProvider();
+        var provider = SecurityProvider(authorizationToken);
         if (_simulator)
         {
             Log("tx", "0x7E0", $"27{level:X2}", $"SecurityAccess requestSeed ({normalized})");
