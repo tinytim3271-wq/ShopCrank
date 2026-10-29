@@ -158,7 +158,7 @@ export function createLaborGuideHandlers({
       }
 
       // Book provider path: MOTOR via the shop's PartsTech account.
-      if (status.connected && status.provider === 'motor') {
+      if (status.connected && status.provider === 'motor' && record.viaPartstech) {
         const credentials = await readJsonSecret(getSecret, context.shopId, PARTSTECH_SECRET_NAME);
         if (!credentials) throw new HttpError(409, 'PartsTech is not connected');
         if (!vin && !body.vehicleParams) throw new HttpError(400, 'vin or vehicleParams is required');

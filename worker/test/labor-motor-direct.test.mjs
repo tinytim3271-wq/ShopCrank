@@ -141,3 +141,14 @@ test('review fixes: camelCase MOTOR hours parse, and a connected direct-MOTOR st
   assert.match(html, /id="labor-guide-disconnect"/);
   assert.doesNotMatch(html, /included with ShopCrank/);
 });
+
+test('review fix: an empty direct-MOTOR result reaches the web fallback, never the PartsTech branch', async () => {
+  const calls = [];
+  const { search } = harness({
+    [LABOR_GUIDE_SECRET_NAME]: JSON.stringify({ provider: 'motor', viaPartstech: false, publicKey: 'shop-pub', privateKey: 'shop-priv' }),
+  });
+  const env = { MOTOR_API_BASE_URL: platformEnv.MOTOR_API_BASE_URL, MOTOR_LABOR_PATH: platformEnv.MOTOR_LABOR_PATH, fetch: motorFetch(calls, []) };
+  const result = await search(env, { vin: VIN, keyword: 'nothing', year: 2022, make: 'Ford', model: 'F-150' });
+  assert.equal(result.provider, 'web_estimate');
+  assert.ok(calls.every(call => !call.url.includes('partstech')));
+});
