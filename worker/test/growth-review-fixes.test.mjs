@@ -149,3 +149,28 @@ test('uploaded inspection videos are recognized, and inspection-wide media reach
   const media = await handleCustomerDocument(new Request(`${ORIGIN}/api/customer-documents/${token}/media?key=${encodeURIComponent('shops/shop-r3v13w/inspection-video/abc')}`), env, token, 'media');
   assert.equal(media.status, 200);
 });
+
+test('review fixes: same-name callers never overwrite each other; sends only touch the follow-up fields', async () => {
+  const fixture = shop({ booking: { capacity: 5 } });
+  fixture.put('customers', 'Alice Brooks', { name: 'Alice Brooks', phone: '806-555-0101' });
+  const date = new Date(Date.now() + 2 * DAY).toISOString().slice(0, 10);
+  const a = await bookAppointment({ DB: fixture.DB }, 'shop-r3v13w', { customerName: 'Alice Brooks', phone: '806-555-0177', vehicle: 'Civic', service: 'Oil', date, time: '09:00' });
+  const b = await bookAppointment({ DB: fixture.DB }, 'shop-r3v13w', { customerName: 'Alice Brooks', phone: '912-555-0177', vehicle: 'F-150', service: 'Oil', date, time: '10:00' });
+  assert.deepEqual([a.customer.name, b.customer.name], ['Alice Brooks (0177)', 'Alice Brooks (0177-2)']);
+  const phones = fixture.read('customers').map(customer => customer.phone).sort();
+  assert.deepEqual(phones, ['806-555-0101', '806-555-0177', '912-555-0177']);
+
+  const second = shop();
+  seedDue(second);
+  const report = await runShopFollowups({ DB: second.DB }, 'shop-r3v13w', {
+    send: async message => {
+      // Staff collect a signature on the invoice while the text is in flight.
+      second.DB.sqlite.prepare("UPDATE entities SET data_json = json_set(data_json, '$.signature', 'signed') WHERE entity_id = 'INV-1'").run();
+      return { provider: 'twilio', messageSid: message.to, status: 'queued' };
+    },
+  });
+  assert.equal(report.reviewRequestsSent, 1);
+  const invoice = second.read('invoices')[0];
+  assert.equal(invoice.signature, 'signed');
+  assert.ok(invoice.reviewRequestedAt);
+});

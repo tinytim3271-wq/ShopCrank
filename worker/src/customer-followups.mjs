@@ -221,6 +221,16 @@ async function acquireRunLock(env, shopId, now) {
   return Number(result?.meta?.changes || 0) === 1;
 }
 
+/** Set fields on the stored record in place, so edits made while a text was sending are kept. */
+async function markFields(env, shopId, type, id, fields) {
+  const now = new Date().toISOString();
+  const pairs = Object.entries({ ...fields, updatedAt: now });
+  await env.DB.prepare(`
+    UPDATE entities SET data_json = json_set(data_json, ${pairs.map(() => '?, ?').join(', ')}), updated_at = ?
+    WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
+  `).bind(...pairs.flatMap(([key, value]) => [`$.${key}`, value]), now, shopId, type, id).run();
+}
+
 /** Claim one record before texting about it; a concurrent or retried run skips claimed records. */
 async function claim(env, shopId, type, id, doneField, now) {
   const result = await env.DB.prepare(`
@@ -290,7 +300,7 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
         report.remindersCreated += 1;
       }
       for (const old of supersededReminders(all)) {
-        await put(env, shopId, 'reminders', { ...old, status: 'superseded' });
+        await markFields(env, shopId, 'reminders', old.id, { status: 'superseded' });
         old.status = 'superseded';
       }
     }
@@ -303,7 +313,7 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
           claimRecord: () => claim(env, shopId, 'reminders', reminder.id, 'sentAt', now),
         });
         if (sent) {
-          await put(env, shopId, 'reminders', { ...reminder, sentAt: new Date(now).toISOString(), sentBy: 'auto' });
+          await markFields(env, shopId, 'reminders', reminder.id, { sentAt: new Date(now).toISOString(), sentBy: 'auto' });
           report.remindersSent += 1;
         }
       }
@@ -327,7 +337,7 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
         claimRecord: () => claim(env, shopId, 'invoices', invoiceId, 'reviewRequestedAt', now),
       });
       if (sent) {
-        await put(env, shopId, 'invoices', { ...due.invoice, reviewRequestedAt: new Date(now).toISOString() });
+        await markFields(env, shopId, 'invoices', invoiceId, { reviewRequestedAt: new Date(now).toISOString() });
         report.reviewRequestsSent += 1;
       }
     }

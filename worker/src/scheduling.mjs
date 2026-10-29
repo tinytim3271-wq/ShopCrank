@@ -148,17 +148,6 @@ export async function loadBookingContext(env, shopId) {
   };
 }
 
-async function upsertEntity(env, shopId, type, id, record, createdBy) {
-  const now = new Date().toISOString();
-  const value = { ...record, id, shopId, createdBy, createdAt: record.createdAt || now, updatedAt: now };
-  await env.DB.prepare(`
-    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, entity_type, entity_id) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at
-  `).bind(shopId, type, id, JSON.stringify(value), createdBy, value.createdAt, now).run();
-  return value;
-}
-
 /**
  * Insert the appointment only if its slot still has room, in one statement, so
  * two requests racing for the last opening cannot both succeed. Null if full.
@@ -177,6 +166,26 @@ async function reserveAppointment(env, shopId, id, capacity, record, createdBy) 
     ) < ?
   `).bind(shopId, id, JSON.stringify(value), createdBy, now, now, shopId, record.date, record.time, capacity).run();
   return Number(result?.meta?.changes || 0) === 1 ? value : null;
+}
+
+/**
+ * Customers are keyed by name, so a new caller who shares a name gets
+ * "Name (0177)", then "Name (0177-2)", ... Insert-if-absent never overwrites anyone.
+ */
+async function insertNewCustomer(env, shopId, name, phone, record, createdBy) {
+  const last4 = phone.replace(/\D/g, '').slice(-4);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const id = attempt === 0 ? name : `${name} (${last4}${attempt > 1 ? `-${attempt}` : ''})`;
+    const now = new Date().toISOString();
+    const value = { ...record, name: id, id, shopId, createdBy, createdAt: now, updatedAt: now };
+    const result = await env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, 'customers', ?, ?, ?, ?, ?)
+      ON CONFLICT(shop_id, entity_type, entity_id) DO NOTHING
+    `).bind(shopId, id, JSON.stringify(value), createdBy, now, now).run();
+    if (Number(result?.meta?.changes || 0) === 1) return value;
+  }
+  throw new BookingError('Could not create the customer record; please call the shop', 503);
 }
 
 export async function findCustomerByPhone(env, shopId, phone) {
@@ -236,11 +245,8 @@ export async function bookAppointment(env, shopId, input = {}, { source = 'ai_ph
   const existing = await findCustomerByPhone(env, shopId, phone);
   let customer = existing;
   if (!customer) {
-    // Customers are keyed by name; never overwrite a different customer who shares it.
-    const taken = await env.DB.prepare("SELECT 1 FROM entities WHERE shop_id = ? AND entity_type = 'customers' AND entity_id = ?").bind(shopId, name).first();
-    const customerId = taken ? `${name} (${phone.replace(/\D/g, '').slice(-4)})` : name;
-    customer = await upsertEntity(env, shopId, 'customers', customerId, {
-      name: customerId, phone, email: cleanText(input.email, 254), source, notes: `Created from ${source === 'online_booking' ? 'online booking' : 'AI phone call'}`,
+    customer = await insertNewCustomer(env, shopId, name, phone, {
+      phone, email: cleanText(input.email, 254), source, notes: `Created from ${source === 'online_booking' ? 'online booking' : 'AI phone call'}`,
     }, createdBy);
   }
   const id = `appointment-${crypto.randomUUID()}`;
