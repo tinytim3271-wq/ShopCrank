@@ -3,7 +3,7 @@ export const ENTITY_TYPES = new Set([
   'employees', 'shiftentries', 'jobclockentries', 'payrollentries', 'conversations',
   'chatmessages', 'inventory', 'vendors', 'services', 'inspectiontemplates',
   'inspections', 'reminders', 'shopsettings', 'appointments', 'purchases',
-  'diagnosticsessions', 'keyprogrammingjobs',
+  'diagnosticsessions', 'keyprogrammingjobs', 'calls',
 ]);
 
 export const WRITE_ROLES = {
@@ -20,6 +20,7 @@ export const WRITE_ROLES = {
   inspectiontemplates: ['admin', 'office', 'service_writer'],
   diagnosticsessions: ['admin', 'technician', 'service_writer'],
   keyprogrammingjobs: ['admin', 'technician', 'service_writer'],
+  calls: ['admin', 'office', 'service_writer'],
 };
 
 export const READ_ROLES = {

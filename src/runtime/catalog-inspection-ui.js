@@ -1,3 +1,4 @@
+import { inspectionUploadKind } from '../modules/inspection-ratings.js';
 import {
   catalogInspectionFormHtml,
   closeInspectionIssues,
@@ -80,8 +81,10 @@ async function attachPhotos(form, record, app) {
   const keys = [...record.photoKeys];
   for (const file of files) {
     try {
-      keys.push(await app.uploadFileToR2(file, 'inspection', file.type || 'image/jpeg'));
-    } catch {
+      keys.push(await app.uploadFileToR2(file, inspectionUploadKind(file), file.type || 'image/jpeg'));
+    } catch (error) {
+      // Offline photos fall back to an inline image; video is too large to inline.
+      if (/^video\//.test(file.type)) { app.toast?.(error.message || 'Video upload failed; reconnect and attach it again'); continue; }
       const dataUrl = await fileToDataUrl(file);
       if (dataUrl) keys.push(dataUrl);
     }

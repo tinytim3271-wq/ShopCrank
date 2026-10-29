@@ -90,6 +90,11 @@ import {
 import { AiChatSession } from './chat-session.mjs';
 import { AiVoiceSession } from './voice-session.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
+import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
+import { FOLLOWUP_CRON, runScheduledFollowups, runShopFollowups } from './customer-followups.mjs';
+import { handlePublicBooking } from './online-booking.mjs';
+import { automatedSmsEnabled } from './growth-flags.mjs';
+import { handleVehicleData } from './integrations/vehicle-data.mjs';
 import {
   handleIntegrationStatus,
   handleLaborIntegration,
@@ -1810,7 +1815,10 @@ async function handleAgentPhoneWebhook(request, env, shopId) {
   const account = await env.DB.prepare('SELECT suspended FROM accounts WHERE shop_id = ?').bind(shopId).first();
   if (account && Number(account.suspended) === 1) throw new HttpError(403, 'Shop account is suspended');
   const body = parseJson(payload);
-  if (body.event === 'agent.call_ended') return json({ received: true });
+  if (body.event === 'agent.call_ended') {
+    await saveCallSummary(env, await agentPhoneCallSummary(env, shopId, body));
+    return json({ received: true });
+  }
   if (body.event !== 'agent.message' || !['voice', 'sms', 'mms', 'imessage'].includes(String(body.channel))) return json({ received: true });
   const transcript = String(body.data?.transcript || body.data?.message || '').trim().slice(0, 4000);
   if (!transcript) return json({ text: 'How can I help you today?' });
@@ -3538,8 +3546,11 @@ async function route(request, env, analytics) {
   if (segments[0] === 'founding') return handleFounding(request, env);
   if (path === '/licenses/unlock' && request.method === 'GET') return unlockLandingPage();
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
+  if (segments[0] === 'book') {
+    return handlePublicBooking(request, env, segments, { hashValue, getSecret: getIntegrationSecret });
+  }
   if (segments[0] === 'customer-documents') {
-    return handleCustomerDocument(request, env, decodeURIComponent(segments[1] || ''));
+    return handleCustomerDocument(request, env, decodeURIComponent(segments[1] || ''), segments[2] || '');
   }
   if (segments[0] === 'payments' && segments[1] === 'webhook') {
     return handleStripeWebhook(request, env, decodeURIComponent(segments[2] || ''), analytics);
@@ -3624,6 +3635,11 @@ async function route(request, env, analytics) {
       getEntity,
       listEntities,
     });
+  }
+  if (segments[0] === 'vehicle-data') return handleVehicleData(request, env, context, segments, { requireRole, recordAudit: recordDiagnosticAudit });
+  if (path === '/followups/run' && request.method === 'POST') {
+    requireRole(context, ['admin']);
+    return json(await runShopFollowups(env, context.shopId, { getSecret: getIntegrationSecret, bookingOrigin: new URL(request.url).origin }));
   }
   if (segments[0] === 'support') return handleSupport(request, env, context);
   if (segments[0] === 'integrations' && segments[1] === 'partstech') {
@@ -3766,6 +3782,23 @@ async function proxyPagesRequest(request, env) {
 
 export default {
   async scheduled(controller, env, executionCtx) {
+    if (controller?.cron === FOLLOWUP_CRON) {
+      if (!automatedSmsEnabled(env)) {
+        console.log(JSON.stringify({ message: 'customer follow-up cron skipped', reason: 'AUTOMATED_SMS_ENABLED is not "1"' }));
+        return;
+      }
+      const followups = runScheduledFollowups(env, { getSecret: getIntegrationSecret, bookingOrigin: env.GOOGLE_REDIRECT_ORIGIN || 'https://www.shopcrank.com' })
+        .then(reports => console.log(JSON.stringify({
+          message: 'customer follow-up cron',
+          shops: reports.length,
+          remindersSent: reports.reduce((total, item) => total + (item.remindersSent || 0), 0),
+          reviewRequestsSent: reports.reduce((total, item) => total + (item.reviewRequestsSent || 0), 0),
+        })))
+        .catch(error => console.error('customer follow-up cron failed', error));
+      if (executionCtx?.waitUntil) executionCtx.waitUntil(followups);
+      else await followups;
+      return;
+    }
     const run = runScheduledRevenueRecognitionExports(env)
       .then((results) => {
         console.log(JSON.stringify({

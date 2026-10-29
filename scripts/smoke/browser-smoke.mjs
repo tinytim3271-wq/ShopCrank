@@ -114,6 +114,7 @@ async function startStack() {
     INTEGRATION_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
     LICENSE_TOKEN_SECRET: randomBytes(32).toString('hex'),
     DIAGNOSTICS_CAPABILITY_SECRET: randomBytes(32).toString('hex'),
+    ONLINE_BOOKING_ENABLED: '1',
   };
   if (await fetch(`${WORKER}/api/healthz`).then(() => true, () => false)) {
     throw new Error(`Port ${WORKER_PORT} is already serving; stop that process or set SMOKE_WORKER_PORT`);
@@ -277,11 +278,33 @@ async function main() {
         await page.fill('.modal [name=amount]', amount || String(await remaining()));
         await page.locator('.modal [name=paymentMethod]').selectOption({ label: method });
         await page.locator('.modal button[type=submit]:has-text("Record payment")').click();
-        await page.waitForTimeout(1800);
+        // The modal closes once the Worker has recorded the payment; CI runners can take several seconds.
+        await page.waitForSelector('#payment-form', { state: 'detached', timeout: 15_000 }).catch(() => {});
         if (toasts.some(text => /Unsupported payment method/.test(text))) throw new Error('payment rejected');
       }
+      await page.waitForFunction(() => /(?<!PARTIALLY )PAID/.test(document.querySelector('main')?.innerText || '') && /2 payments/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
       const after = await row.innerText();
-      if (!/PAID/.test(after) || !/2 payments/.test(after)) throw new Error(after.replace(/\s+/g, ' ').slice(0, 200));
+      if (!/(?<!PARTIALLY )PAID/.test(after) || !/2 payments/.test(after)) throw new Error(after.replace(/\s+/g, ' ').slice(0, 200));
+    });
+    await check('messaging shows the two-way texting inbox and shop ops shows declined work', async () => {
+      pageErrors.length = 0;
+      await route('messaging');
+      if (!/Two-way texting|Customer texts/.test(await main())) throw new Error('texting inbox missing');
+      await route('shopops');
+      await page.click('[data-ops-tab=declined]');
+      await page.waitForTimeout(700);
+      if (!/Declined work/.test(await main())) throw new Error('declined work tab missing');
+      if (pageErrors.length) throw new Error(pageErrors.join(' | '));
+    });
+    await check('settings links a public booking page that a new trial shop can use', async () => {
+      await route('settings');
+      const link = await page.inputValue('#booking-link');
+      if (!/\/api\/book\/shop-/.test(link)) throw new Error(`booking link missing: ${link}`);
+      const booking = await context.newPage();
+      await booking.goto(link, { waitUntil: 'networkidle' });
+      const text = await booking.evaluate(() => document.body.innerText);
+      await booking.close();
+      if (!text.includes(SHOP) || !/Book appointment/.test(text)) throw new Error(`booking page: ${text.slice(0, 160)}`);
     });
     for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
       await check(`every module renders on ${label} with no errors or sideways scroll`, async () => {

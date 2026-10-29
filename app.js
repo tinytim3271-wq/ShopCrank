@@ -649,8 +649,8 @@
   });
 
   // src/modules/imports.js
-  function parseCsv(text) {
-    const source = String(text || "").replace(/^\uFEFF/, "");
+  function parseCsv(text2) {
+    const source = String(text2 || "").replace(/^\uFEFF/, "");
     const rows = [];
     const current = [];
     let cell = "";
@@ -680,8 +680,8 @@
     if (current.some(Boolean)) rows.push(current.slice());
     return rows;
   }
-  function rowData(text) {
-    const rows = parseCsv(text);
+  function rowData(text2) {
+    const rows = parseCsv(text2);
     if (rows.length < 2) return [];
     const headers = rows.shift().map((header) => header.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
     return rows.map((row) => Object.fromEntries(headers.map((key, index) => [key, row[index] || ""])));
@@ -690,9 +690,9 @@
     return keys.map((key) => row[key]).find((item) => item !== void 0 && item !== "") || "";
   }
   function cleanText(raw, max = 240) {
-    let text = String(raw || "").replace(/\s+/g, " ").trim();
-    if (/^[=@]/.test(text) || /^[+-](?!\d)/.test(text)) text = text.replace(/^[=+@-]+/, "");
-    return text.slice(0, max);
+    let text2 = String(raw || "").replace(/\s+/g, " ").trim();
+    if (/^[=@]/.test(text2) || /^[+-](?!\d)/.test(text2)) text2 = text2.replace(/^[=+@-]+/, "");
+    return text2.slice(0, max);
   }
   function moneyAmount(raw) {
     if (raw === void 0 || raw === null || String(raw).trim() === "") return null;
@@ -701,13 +701,13 @@
     return Math.round(amount * 100) / 100;
   }
   function isoDate(raw) {
-    const text = String(raw || "").trim();
-    if (!text) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-      const parsed2 = /* @__PURE__ */ new Date(`${text}T00:00:00Z`);
-      return Number.isNaN(parsed2.valueOf()) || parsed2.toISOString().slice(0, 10) !== text ? "" : text;
+    const text2 = String(raw || "").trim();
+    if (!text2) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) {
+      const parsed2 = /* @__PURE__ */ new Date(`${text2}T00:00:00Z`);
+      return Number.isNaN(parsed2.valueOf()) || parsed2.toISOString().slice(0, 10) !== text2 ? "" : text2;
     }
-    const parsed = new Date(text);
+    const parsed = new Date(text2);
     if (Number.isNaN(parsed.valueOf())) return "";
     return localIsoDate(parsed);
   }
@@ -751,9 +751,9 @@
   function emptyResult(type, errors = [], skipped = 0) {
     return { type, records: [], errors, skipped };
   }
-  function prepareImportRecords(type, text, existing = {}) {
+  function prepareImportRecords(type, text2, existing = {}) {
     if (!IMPORT_TYPES[type]) return emptyResult(type, ["Choose a supported import type."]);
-    const rows = rowData(text);
+    const rows = rowData(text2);
     if (!rows.length) return emptyResult(type, ["The file needs a header row and at least one data row."]);
     const customers2 = existing.customers || [];
     const vehicles = existing.vehicles || [];
@@ -1225,23 +1225,23 @@
     return `<svg class="repair-diagram" viewBox="0 0 360 210" role="img" aria-label="${label2}" xmlns="http://www.w3.org/2000/svg"><rect width="360" height="210" rx="8" fill="#e7efe9"/><text x="16" y="24" fill="#1c3a32" font-family="sans-serif" font-size="13" font-weight="700">${label2}</text>${body}</svg>`;
   }
   function repairFamily(repair) {
-    const text = String(repair || "").toLowerCase();
-    if (/brake fluid|fluid flush/.test(text) && /brake|fluid/.test(text)) return "brake-flush";
-    if (/no-start|no start|won't start|wont start|crank/.test(text)) return "nostart";
-    if (/brake|rotor|pad|caliper/.test(text)) return "brakes";
-    if (/water pump|thermostat|coolant|radiator/.test(text)) return "cooling";
-    if (/transmission|atf/.test(text)) return "transmission";
-    if (/differential|gear oil/.test(text)) return "differential";
-    if (/spark plug|ignition coil|tune-up|tune up/.test(text)) return "ignition";
-    if (/serpentine|drive belt/.test(text) || /\bbelt\b/.test(text) && !/seat/.test(text)) return "belt";
-    if (/cabin|pollen/.test(text)) return "cabin-filter";
-    if (/air filter/.test(text)) return "air-filter";
-    if (/wiper/.test(text)) return "wipers";
-    if (/rotat/.test(text) && /tire|wheel/.test(text)) return "rotation";
-    if (/battery/.test(text)) return "battery";
-    if (/injector|fuel system|induction/.test(text)) return "fuel";
-    if (/oil/.test(text)) return "oil";
-    if (/call-out|call out|no-access|no access/.test(text)) return "callout";
+    const text2 = String(repair || "").toLowerCase();
+    if (/brake fluid|fluid flush/.test(text2) && /brake|fluid/.test(text2)) return "brake-flush";
+    if (/no-start|no start|won't start|wont start|crank/.test(text2)) return "nostart";
+    if (/brake|rotor|pad|caliper/.test(text2)) return "brakes";
+    if (/water pump|thermostat|coolant|radiator/.test(text2)) return "cooling";
+    if (/transmission|atf/.test(text2)) return "transmission";
+    if (/differential|gear oil/.test(text2)) return "differential";
+    if (/spark plug|ignition coil|tune-up|tune up/.test(text2)) return "ignition";
+    if (/serpentine|drive belt/.test(text2) || /\bbelt\b/.test(text2) && !/seat/.test(text2)) return "belt";
+    if (/cabin|pollen/.test(text2)) return "cabin-filter";
+    if (/air filter/.test(text2)) return "air-filter";
+    if (/wiper/.test(text2)) return "wipers";
+    if (/rotat/.test(text2) && /tire|wheel/.test(text2)) return "rotation";
+    if (/battery/.test(text2)) return "battery";
+    if (/injector|fuel system|induction/.test(text2)) return "fuel";
+    if (/oil/.test(text2)) return "oil";
+    if (/call-out|call out|no-access|no access/.test(text2)) return "callout";
     return "general";
   }
   function youtubeSearchUrl(query2) {
@@ -1659,6 +1659,118 @@
     }
   });
 
+  // src/modules/inspection-ratings.js
+  function ratingForStatus(status) {
+    return STATUS_RATING[String(status || "").trim().toLowerCase()] || null;
+  }
+  function ratingChipHtml(status, escapeHtml4 = (value2) => String(value2 ?? "")) {
+    const rating = ratingForStatus(status);
+    if (!rating) return "";
+    return `<span class="rating-chip rating-${rating}" title="${escapeHtml4(RATINGS[rating].label)}">${escapeHtml4(RATINGS[rating].short)}</span>`;
+  }
+  function isVideoMedia(key, contentType = "") {
+    return /^video\//i.test(contentType) || VIDEO_KEY.test(String(key || ""));
+  }
+  function inspectionUploadKind(file) {
+    return /^video\//i.test(String(file?.type || "")) ? "inspection-video" : "inspection";
+  }
+  function declinedWorkItems(orders2 = [], { now: now2 = Date.now() } = {}) {
+    const items = [];
+    for (const order of orders2) {
+      const approval = order?.estimateApproval;
+      if (!approval || !["approved", "declined"].includes(approval.status)) continue;
+      const decisions = approval.decisions || {};
+      const declinedAt = approval.respondedAt || approval.approvedAt || approval.signedAt || order.linesLockedAt || "";
+      const lines = order.estimate?.lines || [];
+      lines.forEach((line, index) => {
+        const id = String(line.id || `line-${index + 1}`);
+        const declined = decisions[id] === "declined" || line.approvalStatus === "declined";
+        if (!declined) return;
+        const rating = ratingForStatus(line.inspectionStatus) || null;
+        const followUp = order.declinedFollowUps?.[id] || null;
+        const days = FOLLOW_UP_DAYS[rating] || FOLLOW_UP_DAYS.default;
+        const base = Date.parse(declinedAt);
+        const dueAt = Number.isFinite(base) ? new Date(base + days * DAY_MS).toISOString() : "";
+        const amount = Number(line.originalTotal ?? line.declinedTotal ?? line.total ?? 0) || Number(line.hours || 0) * Number(line.laborRate || 0) || Number(line.quantity || 0) * Number(line.unitPrice || 0);
+        items.push({
+          key: `${order.id}:${id}`,
+          orderId: order.id,
+          lineId: id,
+          customer: order.customer || "",
+          customerId: order.customerId || "",
+          phone: order.phone || "",
+          vehicle: order.vehicle || "",
+          vin: order.vin || "",
+          description: String(line.description || line.service || "Declined work"),
+          amount: Math.round(amount * 100) / 100,
+          rating,
+          declinedAt,
+          dueAt,
+          due: Boolean(dueAt) && Date.parse(dueAt) <= now2 && !followUp?.completedAt,
+          followUp,
+          status: followUp?.completedAt ? "sold" : followUp?.lastContactAt ? "contacted" : "open"
+        });
+      });
+    }
+    return items.sort((a, b) => String(b.declinedAt).localeCompare(String(a.declinedAt)));
+  }
+  function declinedWorkSummary(items = []) {
+    const open = items.filter((item) => item.status !== "sold");
+    return {
+      openCount: open.length,
+      openValue: Math.round(open.reduce((total, item) => total + item.amount, 0) * 100) / 100,
+      dueCount: open.filter((item) => item.due).length,
+      redCount: open.filter((item) => item.rating === "red").length
+    };
+  }
+  function declinedFollowUpMessage(item, shopName) {
+    const vehicle = item.vehicle ? ` on your ${item.vehicle}` : "";
+    const urgency = item.rating === "red" ? " Our technician flagged it as needing attention now." : "";
+    return `Hi ${String(item.customer || "").split(" ")[0] || "there"}, this is ${shopName}. During your last visit we recommended ${item.description}${vehicle}.${urgency} Reply to this text to schedule it, or call us with any questions.`;
+  }
+  function recordDeclinedFollowUp(order, lineId, { contacted = false, sold = false, by = "", at = (/* @__PURE__ */ new Date()).toISOString(), note = "" } = {}) {
+    const current = order.declinedFollowUps?.[lineId] || { contacts: [] };
+    const next = { ...current, contacts: [...current.contacts || []] };
+    if (contacted) {
+      next.lastContactAt = at;
+      next.contacts.push({ at, by, note: String(note || "").slice(0, 300) });
+    }
+    if (sold) next.completedAt = at;
+    return { ...order, declinedFollowUps: { ...order.declinedFollowUps || {}, [lineId]: next } };
+  }
+  function declinedWorkHtml(items = [], { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, money: money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`, icon: icon2 = () => "", date = (value2) => String(value2 || "").slice(0, 10) } = {}) {
+    const summary = declinedWorkSummary(items);
+    const rows = items.map((item) => `<tr class="${item.due ? "due" : ""}"><td>${ratingChipHtml(item.rating, escapeHtml4) || "\u2014"}</td><td><b>${escapeHtml4(item.description)}</b><small>${escapeHtml4(item.orderId)}</small></td><td>${escapeHtml4(item.customer)}<small>${escapeHtml4(item.vehicle)}</small></td><td>${money5(item.amount)}</td><td>${escapeHtml4(date(item.declinedAt))}</td><td>${item.status === "sold" ? "Sold" : item.due ? `<b>Due ${escapeHtml4(date(item.dueAt))}</b>` : escapeHtml4(date(item.dueAt))}${item.followUp?.lastContactAt ? `<small>Contacted ${escapeHtml4(date(item.followUp.lastContactAt))}</small>` : ""}</td><td>${item.status === "sold" ? "" : `<button type="button" class="mini-action" data-declined-text="${escapeAttr4(item.key)}">${icon2("message-square", 13)} Text</button><button type="button" class="mini-action" data-declined-sold="${escapeAttr4(item.key)}">${icon2("check", 13)} Sold</button>`}</td></tr>`).join("");
+    return `<section class="data-panel declined-work"><div class="statement-head"><div><div class="eyebrow">Follow-up</div><h2>Declined work</h2><p>${summary.openCount} open recommendation${summary.openCount === 1 ? "" : "s"} worth ${money5(summary.openValue)} \xB7 ${summary.dueCount} due for follow-up${summary.redCount ? ` \xB7 ${summary.redCount} red` : ""}.</p></div>${icon2("list-todo", 20)}</div><table><thead><tr><th>Rating</th><th>Recommendation</th><th>Customer</th><th>Value</th><th>Declined</th><th>Follow up</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="7">No declined work yet. Lines customers decline on an estimate show up here.</td></tr>'}</tbody></table></section>`;
+  }
+  var RATINGS, STATUS_RATING, VIDEO_KEY, DAY_MS, FOLLOW_UP_DAYS;
+  var init_inspection_ratings = __esm({
+    "src/modules/inspection-ratings.js"() {
+      RATINGS = Object.freeze({
+        red: { id: "red", label: "Needs attention now", short: "Red" },
+        yellow: { id: "yellow", label: "Needs attention soon", short: "Yellow" },
+        green: { id: "green", label: "Good", short: "Green" }
+      });
+      STATUS_RATING = Object.freeze({
+        critical: "red",
+        fail: "red",
+        failed: "red",
+        red: "red",
+        soon: "yellow",
+        monitor: "yellow",
+        attention: "yellow",
+        yellow: "yellow",
+        ok: "green",
+        pass: "green",
+        good: "green",
+        green: "green"
+      });
+      VIDEO_KEY = /\.(mp4|webm|mov)$|(^|\/)[a-z-]*video\//i;
+      DAY_MS = 24 * 60 * 60 * 1e3;
+      FOLLOW_UP_DAYS = Object.freeze({ red: 3, yellow: 30, default: 30 });
+    }
+  });
+
   // src/modules/shop-inspections.js
   function shopInspection(id) {
     return SHOP_INSPECTIONS.find((item) => item.id === id) || null;
@@ -1691,6 +1803,7 @@
     const value2 = String(key || "");
     if (value2.startsWith("data:image/")) return value2;
     if (value2.startsWith("http://") || value2.startsWith("https://") || value2.startsWith("/")) return value2;
+    if (apiUrl && /^shops\/[a-z0-9-]+\/[\w-]+\/[\w.-]+$/i.test(value2) && !value2.includes("..")) return `${apiUrl}/files/object?key=${encodeURIComponent(value2)}`;
     if (apiUrl && value2 && !value2.includes("..") && !value2.includes("/")) return `${apiUrl}/files/${encodeURIComponent(value2)}`;
     return "";
   }
@@ -1705,17 +1818,17 @@
       groups.get(title).push(item);
     }
     const sections = [...groups.entries()].map(([title, items]) => {
-      const rows = items.map((item) => `<tr><td>${escapeHtml4(item.label || item.name || "")}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`).join("");
+      const rows = items.map((item) => `<tr><td>${escapeHtml4(item.label || item.name || "")}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${ratingChipHtml(item.status, escapeHtml4)}${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`).join("");
       return `<h2>${escapeHtml4(title)}</h2><table><thead><tr><th>Item</th><th>Result</th><th>Measurement</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
     }).join("");
     const verdict = (catalog?.verdicts || []).find((item) => item.id === inspection.verdict);
-    const photos = (inspection.photoKeys || []).map((key) => inspectionPhotoSrc(key, apiUrl)).filter(Boolean).map((src) => `<img src="${escapeHtml4(src)}" alt="Inspection photo"/>`).join("");
+    const photos = (inspection.photoKeys || []).map((key) => [key, inspectionPhotoSrc(key, apiUrl)]).filter(([, src]) => src).map(([key, src]) => isVideoMedia(key) ? `<video controls preload="metadata" src="${escapeHtml4(src)}"></video>` : `<img src="${escapeHtml4(src)}" alt="Inspection photo"/>`).join("");
     const signature = inspectionPhotoSrc(inspection.customerSignature, apiUrl);
     const scanKept = (inspection.items || []).some((item) => /not cleared/i.test(item.label || item.name || "") && item.status && item.status !== "skipped");
     return `<article class="customer-inspection">
     <p class="fee">Inspection fee ${price.toFixed(2)} USD. Repairs, parts, and disassembly are quoted separately.</p>
     <h1>${escapeHtml4(name)}</h1>
-    <p>${escapeHtml4(profile.shopName || "Reliable Automotive Services")}</p>
+    <p>${escapeHtml4(profile.shopName || "")}</p>
     <p>${escapeHtml4(inspection.number || "")} \xB7 ${escapeHtml4(inspection.createdAt || "")}</p>
     <p><b>Customer</b> ${escapeHtml4(inspection.customer || "")} \xB7 <b>Vehicle</b> ${escapeHtml4(inspection.vehicle || "")}</p>
     <p><b>VIN</b> ${escapeHtml4(inspection.vin || "")} \xB7 <b>Mileage</b> ${escapeHtml4(inspection.mileage || "")} \xB7 <b>Technician</b> ${escapeHtml4(inspection.techName || "")}</p>
@@ -1786,7 +1899,7 @@
       <label class="full">Recommendations<textarea name="recommendations" rows="3">${escapeHtml4(record?.recommendations || "")}</textarea></label>
       <button type="button" class="secondary dictate" data-dictate="recommendations">Dictate recommendations</button>
       ${verdicts ? `<label>Verdict<select name="verdict"><option value="">Choose</option>${verdicts}</select></label><label class="full">One-page seller summary<textarea name="sellerSummary" rows="4">${escapeHtml4(record?.sellerSummary || "")}</textarea></label><button type="button" class="secondary dictate" data-dictate="sellerSummary">Dictate seller summary</button>` : ""}
-      <label class="full">Photos of key findings<input name="photos" type="file" accept="image/*" capture="environment" multiple/></label>
+      <label class="full">Photos or video of key findings<input name="photos" type="file" accept="image/*,video/mp4,video/webm,video/quicktime" capture="environment" multiple/></label>
       ${photos.length ? `<div class="inspect-photos">${photos.map((src) => `<img src="${escapeHtml4(src)}" alt="Attached inspection photo"/>`).join("")}</div>` : ""}
       <input type="hidden" name="existingPhotos" value="${escapeHtml4(JSON.stringify(record?.photoKeys || []))}"/>
       <label>Customer acknowledgment name<input name="customerName" value="${escapeHtml4(record?.customerName || record?.customer || "")}" placeholder="Name on the customer copy"/></label>
@@ -1803,12 +1916,13 @@
   var check, INSPECTION_STATUSES, SHOP_INSPECTIONS;
   var init_shop_inspections = __esm({
     "src/modules/shop-inspections.js"() {
+      init_inspection_ratings();
       check = (id, label2, measure = "") => ({ id, label: label2, measure });
       INSPECTION_STATUSES = [
-        { id: "ok", label: "OK" },
-        { id: "monitor", label: "Monitor" },
-        { id: "soon", label: "Soon" },
-        { id: "critical", label: "Safety-critical" },
+        { id: "ok", label: "Green \xB7 OK" },
+        { id: "monitor", label: "Yellow \xB7 Monitor" },
+        { id: "soon", label: "Yellow \xB7 Soon" },
+        { id: "critical", label: "Red \xB7 Safety-critical" },
         { id: "skipped", label: "Not performed" }
       ];
       SHOP_INSPECTIONS = [
@@ -3541,11 +3655,11 @@
     return { ...priced, disclaimer: INTAKE_DISCLAIMER, lines };
   }
   function localDiagnosticChecklist(draft = {}) {
-    const text = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
+    const text2 = `${draft.concern?.description || ""} ${draft.diagnosis?.codes || ""}`.toLowerCase();
     const causes = [];
-    if (/misfire|stall|p030/.test(text)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
-    if (/p0171|lean|vacuum/.test(text)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
-    if (/p0420|catalyst/.test(text)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
+    if (/misfire|stall|p030/.test(text2)) causes.push({ name: "Ignition and fuel", detail: "Compare coil, plug, and injector contribution on the dead cylinder before parts are sold." });
+    if (/p0171|lean|vacuum/.test(text2)) causes.push({ name: "Unmetered air", detail: "Smoke-test the intake and review fuel trims before replacing a sensor." });
+    if (/p0420|catalyst/.test(text2)) causes.push({ name: "Catalyst efficiency", detail: "Confirm the upstream mixture and exhaust leaks before condemning the converter." });
     if (!causes.length) causes.push({ name: "Verify the complaint", detail: "Road-test or reproduce the symptom, then record what the scan tool and the inspection actually show." });
     return {
       source: "shop-checklist",
@@ -4080,11 +4194,11 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     if (!float32Samples?.length) return "";
     let samples = float32Samples;
     if (inputSampleRate !== targetRate && inputSampleRate > 0) {
-      const ratio = inputSampleRate / targetRate;
-      const outLength = Math.max(1, Math.round(float32Samples.length / ratio));
+      const ratio2 = inputSampleRate / targetRate;
+      const outLength = Math.max(1, Math.round(float32Samples.length / ratio2));
       const resampled = new Float32Array(outLength);
       for (let i = 0; i < outLength; i += 1) {
-        const srcIdx = i * ratio;
+        const srcIdx = i * ratio2;
         const i0 = Math.floor(srcIdx);
         const i1 = Math.min(float32Samples.length - 1, i0 + 1);
         const frac = srcIdx - i0;
@@ -4275,8 +4389,8 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       }
       setPhase("idle");
     };
-    const sendTextTurn = (text) => {
-      const clean2 = String(text || "").trim();
+    const sendTextTurn = (text2) => {
+      const clean2 = String(text2 || "").trim();
       if (!clean2 || !ws || ws.readyState !== globalThis.WebSocket.OPEN) return false;
       stopPlayback();
       ws.send(JSON.stringify({
@@ -4836,12 +4950,12 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   // src/modules/file-upload.js
   async function uploadErrorMessage(response) {
     const fallback = `Upload to storage failed (${response.status})`;
-    const text = await response.text().catch(() => "");
-    if (!text) return fallback;
+    const text2 = await response.text().catch(() => "");
+    if (!text2) return fallback;
     try {
-      return JSON.parse(text).message || fallback;
+      return JSON.parse(text2).message || fallback;
     } catch {
-      return text.trim() || fallback;
+      return text2.trim() || fallback;
     }
   }
   function uploadFailureMessage(error, fallback) {
@@ -5073,10 +5187,10 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     return uploadFileToStorage(file, "license-proof", file.type, { apiFetch: apiFetch2, fetchImpl });
   }
   function parseUnlockInput(value2) {
-    const text = String(value2 || "").trim();
-    let candidate = text;
-    const hashIndex = text.indexOf("#");
-    if (hashIndex >= 0) candidate = new URLSearchParams(text.slice(hashIndex + 1)).get("token") || "";
+    const text2 = String(value2 || "").trim();
+    let candidate = text2;
+    const hashIndex = text2.indexOf("#");
+    if (hashIndex >= 0) candidate = new URLSearchParams(text2.slice(hashIndex + 1)).get("token") || "";
     candidate = decodeURIComponent(candidate);
     return TOKEN_PATTERN.test(candidate) ? candidate : null;
   }
@@ -5190,6 +5304,793 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       saveStoredUnlock = (value2) => writeRecord("unlock", value2);
       PROOF_TYPES = /* @__PURE__ */ new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
       STATUS_BADGE = { active: "paid", suspended: "estimate", revoked: "overdue", pending: "estimate", approved: "paid", denied: "overdue" };
+    }
+  });
+
+  // src/modules/sms-inbox.js
+  function phoneKey(value2) {
+    const digits = String(value2 || "").replace(/\D/g, "");
+    return digits.length >= 10 ? digits.slice(-10) : digits;
+  }
+  function toE164(value2) {
+    const raw = String(value2 || "").trim();
+    if (/^\+[1-9]\d{6,14}$/.test(raw)) return raw;
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length === 10) return `+1${digits}`;
+    if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+    return raw;
+  }
+  function customerForPhone(customers2, key) {
+    return (customers2 || []).find((customer) => phoneKey(customer.phone) === key) || null;
+  }
+  function groupThreads(messages = [], customers2 = [], readAt = {}) {
+    const threads = /* @__PURE__ */ new Map();
+    for (const message of messages) {
+      const key = phoneKey(message.phone);
+      if (!key) continue;
+      if (!threads.has(key)) {
+        const customer = customerForPhone(customers2, key);
+        threads.set(key, { key, phone: message.phone, customer: customer?.name || "", customerId: message.customerId || customer?.id || "", messages: [], unread: 0, lastAt: "" });
+      }
+      const thread = threads.get(key);
+      thread.messages.push(message);
+      if (!thread.customerId && message.customerId) thread.customerId = message.customerId;
+      if (String(message.createdAt) > thread.lastAt) thread.lastAt = String(message.createdAt);
+      if (message.direction === "inbound" && String(message.createdAt) > String(readAt[key] || "")) thread.unread += 1;
+    }
+    for (const thread of threads.values()) {
+      thread.messages.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      const last = thread.messages[thread.messages.length - 1];
+      thread.preview = String(last?.body || "").slice(0, 90);
+      const consent = thread.messages.filter((message) => ["opt_out", "opt_in"].includes(message.messageType));
+      thread.optedOut = consent.length > 0 && consent[consent.length - 1].messageType === "opt_out";
+    }
+    return [...threads.values()].sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  }
+  function smsInboxHtml({ threads = [], selectedKey = "", enabled = false, loading = false, error = "" }, { escapeHtml: escapeHtml4, escapeAttr: escapeAttr4 = escapeHtml4, icon: icon2 = () => "", time = (value2) => value2 } = {}) {
+    if (!enabled) {
+      return `<section class="messaging-panel sms-inbox"><div class="messaging-status idle">${icon2("message-square", 17)}<div><strong>Two-way texting is not connected</strong><span>Texting and text-to-pay are included on every plan. Connect the shop's Twilio number below (or ask ShopCrank to provision one) and customer replies will appear here.</span></div></div></section>`;
+    }
+    const selected = threads.find((thread) => thread.key === selectedKey) || threads[0] || null;
+    const list = threads.map((thread) => `<button type="button" class="sms-thread${thread === selected ? " active" : ""}" data-sms-thread="${escapeAttr4(thread.key)}"><strong>${escapeHtml4(thread.customer || thread.phone)}</strong>${thread.unread ? `<span class="badge">${thread.unread}</span>` : ""}<small>${escapeHtml4(thread.preview)}</small></button>`).join("");
+    const bubbles = selected ? selected.messages.map((message) => `<div class="sms-bubble ${message.direction === "inbound" ? "in" : "out"}"><p>${escapeHtml4(message.body)}</p><small>${escapeHtml4(time(message.createdAt))}${TYPE_LABELS[message.messageType] ? ` \xB7 ${escapeHtml4(TYPE_LABELS[message.messageType])}` : ""}${message.direction === "outbound" && message.status ? ` \xB7 ${escapeHtml4(message.status)}` : ""}</small></div>`).join("") : "";
+    const composer = selected ? selected.optedOut ? `<p class="ops-note">${icon2("ban", 14)} This customer replied STOP. ShopCrank won't text them until they reply START.</p>` : `<form id="sms-reply-form" class="sms-composer"><input type="hidden" name="to" value="${escapeAttr4(selected.phone)}"/><input type="hidden" name="customerId" value="${escapeAttr4(selected.customerId)}"/><textarea name="messageBody" maxlength="1600" rows="2" required placeholder="Reply to ${escapeAttr4(selected.customer || selected.phone)}"></textarea><button class="primary" type="submit">${icon2("send", 14)} Send</button></form>` : "";
+    const start = `<form id="sms-new-form" class="sms-composer"><input name="to" required placeholder="Customer mobile number" autocomplete="off"/><textarea name="messageBody" maxlength="1600" rows="2" required placeholder="New text message"></textarea><button class="secondary" type="submit">${icon2("message-square-plus", 14)} Start text</button></form>`;
+    return `<section class="messaging-panel sms-inbox"><div class="statement-head"><div><div class="eyebrow">Two-way texting</div><h2>Customer texts</h2><p>Replies from customers land here. Texting and text-to-pay are included on every plan.</p></div>${icon2("messages-square", 20)}</div>${error ? `<p class="login-error">${escapeHtml4(error)}</p>` : ""}${loading && !threads.length ? "<p>Loading conversations\u2026</p>" : ""}<div class="sms-inbox-grid"><div class="sms-thread-list">${list || '<p class="ops-note">No conversations yet.</p>'}</div><div class="sms-conversation">${bubbles || '<p class="ops-note">Pick a conversation or start a new text.</p>'}${composer}</div></div>${start}</section>`;
+  }
+  var TYPE_LABELS;
+  var init_sms_inbox = __esm({
+    "src/modules/sms-inbox.js"() {
+      TYPE_LABELS = Object.freeze({
+        text_to_pay: "Text-to-pay link",
+        estimate: "Estimate",
+        reminder: "Reminder",
+        review_request: "Review request",
+        opt_out: "Opted out (STOP)",
+        opt_in: "Opted back in"
+      });
+    }
+  });
+
+  // src/modules/call-log.js
+  function recentCalls(calls = [], limit = 10) {
+    return [...calls].sort((a, b) => String(b.endedAt || b.createdAt || "").localeCompare(String(a.endedAt || a.createdAt || ""))).slice(0, limit);
+  }
+  function callLogHtml(calls = [], { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, icon: icon2 = () => "", time = (value2) => String(value2 || "") } = {}) {
+    const rows = recentCalls(calls).map((call) => {
+      const outcome = OUTCOMES[call.outcome] || OUTCOMES.info;
+      const who = call.customer || call.caller || "Unknown caller";
+      const minutes = call.durationSeconds ? ` \xB7 ${Math.max(1, Math.round(call.durationSeconds / 60))} min` : "";
+      return `<article class="call-log-row"><div><strong>${escapeHtml4(who)}</strong>${call.returningCaller ? ' <span class="badge approved">Returning</span>' : ""}<small>${escapeHtml4(call.caller || "")} \xB7 ${escapeHtml4(time(call.endedAt || call.createdAt))}${minutes}</small></div><span class="badge ${outcome.badge}">${escapeHtml4(outcome.label)}</span><p>${escapeHtml4(call.summary || "")}</p>${call.appointmentId ? `<button type="button" class="mini-action" data-edit-appointment="${escapeAttr4(call.appointmentId)}">${icon2("calendar", 13)} Open appointment</button>` : ""}</article>`;
+    }).join("");
+    return `<section class="data-panel call-log"><div class="statement-head"><div><div class="eyebrow">AI phone line</div><h2>Recent calls</h2><p>Every call the AI receptionist answers is summarized here. Appointments it books land on this calendar.</p></div>${icon2("phone-call", 20)}</div>${rows || '<p class="ops-note">No AI phone calls yet.</p>'}</section>`;
+  }
+  var OUTCOMES;
+  var init_call_log = __esm({
+    "src/modules/call-log.js"() {
+      OUTCOMES = Object.freeze({
+        booked: { label: "Booked", badge: "paid" },
+        estimate: { label: "Estimate saved", badge: "approved" },
+        quoted: { label: "Quoted", badge: "approved" },
+        status_check: { label: "Status check", badge: "sent" },
+        info: { label: "Question", badge: "sent" }
+      });
+    }
+  });
+
+  // src/modules/growth-settings.js
+  function text(value2, max = 300) {
+    return String(value2 ?? "").trim().slice(0, max);
+  }
+  function bookingUrl(origin, shopId) {
+    return shopId ? `${String(origin || "").replace(/\/$/, "")}/api/book/${encodeURIComponent(shopId)}` : "";
+  }
+  function growthSettingsHtml({ booking = {}, followups = {}, shopId = "", origin = "", canSave = false }, { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, icon: icon2 = () => "" } = {}) {
+    const review = followups.reviewRequests || {};
+    const reminders = followups.serviceReminders || {};
+    const link = bookingUrl(origin, shopId);
+    const disabled = canSave ? "" : "disabled";
+    const checked = (value2) => value2 !== false ? "checked" : "";
+    return `<section class="settings-panel growth-settings"><div class="statement-head"><div><div class="eyebrow">Included on every plan</div><h2>Online booking, reminders &amp; reviews</h2><p>Customers book on your calendar, get service reminders by text, and are asked for a Google review after they pay.</p></div>${icon2("calendar-check", 20)}</div>
+  <form id="growth-settings-form" class="form-grid">
+    <label class="toggle-field full"><input type="checkbox" name="bookingEnabled" ${checked(booking.enabled)} ${disabled}/><span>Online booking page is on</span></label>
+    ${link ? `<label class="full">Booking link (put it on your website and Google profile)<input id="booking-link" readonly value="${escapeAttr4(link)}"/></label>` : ""}
+    <label class="full">Booking hours<input name="bookingHours" maxlength="300" placeholder="Monday\u2013Friday 8:00 AM \u2013 5:30 PM; Saturday 9 AM \u2013 1 PM" value="${escapeAttr4(booking.hours || "")}" ${disabled}/></label>
+    <label>Appointments per time slot<input name="bookingCapacity" type="number" min="1" max="20" value="${escapeAttr4(booking.capacity || 2)}" ${disabled}/></label>
+    <label>Minimum notice (minutes)<input name="bookingLeadMinutes" type="number" min="0" max="10080" value="${escapeAttr4(booking.leadMinutes ?? 60)}" ${disabled}/></label>
+    <label class="full">Services customers can pick (comma separated)<input name="bookingServices" maxlength="1000" value="${escapeAttr4((booking.services || []).join(", "))}" placeholder="Oil change, Brakes, Check engine light, Tires" ${disabled}/></label>
+    <label class="toggle-field full"><input type="checkbox" name="reviewEnabled" ${checked(review.enabled)} ${disabled}/><span>Text a Google review request after an invoice is paid</span></label>
+    <label class="full">Google review link or Place ID<input name="googleReviewUrl" maxlength="500" placeholder="https://g.page/r/\u2026/review or ChIJ\u2026" value="${escapeAttr4(review.googleReviewUrl || "")}" ${disabled}/></label>
+    <label class="toggle-field full"><input type="checkbox" name="remindersAutoSend" ${checked(reminders.autoSend)} ${disabled}/><span>Create service reminders from completed work and text them when due</span></label>
+    ${canSave ? `<div class="full"><button class="primary" type="submit">${icon2("save", 14)} Save</button> <button class="secondary" type="button" id="growth-run-now">${icon2("send", 14)} Send due follow-ups now</button>${link ? ` <button class="secondary" type="button" id="booking-link-copy">${icon2("copy", 14)} Copy booking link</button>` : ""}</div>` : '<p class="ops-note full">Ask an owner or admin to change these settings.</p>'}
+  </form></section>`;
+  }
+  function growthSettingsRecords(values = {}, current = {}) {
+    const services = text(values.bookingServices, 1e3).split(",").map((item) => text(item, 80)).filter(Boolean).slice(0, 30);
+    const capacity = Math.min(20, Math.max(1, Math.round(Number(values.bookingCapacity) || 2)));
+    const leadMinutes = Math.min(10080, Math.max(0, Math.round(Number(values.bookingLeadMinutes) || 0)));
+    const booking = {
+      ...current.booking || {},
+      id: "booking",
+      enabled: values.bookingEnabled === "on",
+      hours: text(values.bookingHours, 300),
+      capacity,
+      leadMinutes,
+      services
+    };
+    const followups = {
+      ...current.followups || {},
+      id: "followups",
+      reviewRequests: { ...current.followups?.reviewRequests || {}, enabled: values.reviewEnabled === "on", googleReviewUrl: text(values.googleReviewUrl, 500) },
+      serviceReminders: { ...current.followups?.serviceReminders || {}, enabled: true, autoCreate: values.remindersAutoSend === "on", autoSend: values.remindersAutoSend === "on" }
+    };
+    return { booking, followups };
+  }
+  var init_growth_settings = __esm({
+    "src/modules/growth-settings.js"() {
+    }
+  });
+
+  // src/modules/shop-kpis.js
+  function isoDay(value2) {
+    const text2 = String(value2 || "");
+    if (/^\d{4}-\d{2}-\d{2}/.test(text2)) return text2.slice(0, 10);
+    const date = new Date(text2);
+    return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+  }
+  function periodRange(period, today = /* @__PURE__ */ new Date()) {
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const day = (date) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
+    if (period === "week") {
+      const start = new Date(today);
+      start.setDate(today.getDate() - (today.getDay() + 6) % 7);
+      return { from: day(start), to: day(today), label: "This week" };
+    }
+    if (period === "last_month") return { from: day(new Date(y, m - 1, 1)), to: day(new Date(y, m, 0)), label: "Last month" };
+    if (period === "ytd") return { from: day(new Date(y, 0, 1)), to: day(today), label: "Year to date" };
+    return { from: day(new Date(y, m, 1)), to: day(today), label: "This month" };
+  }
+  function lineType(line) {
+    return ["part", "fee"].includes(line.type) ? line.type : "labor";
+  }
+  function lineTotal(line) {
+    if (Number.isFinite(Number(line.total))) return Number(line.total);
+    if (lineType(line) === "labor") return Number(line.hours || 0) * Number(line.laborRate || 0);
+    return Number(line.quantity || 1) * Number(line.unitPrice || line.price || 0);
+  }
+  function vehicleKey(order, invoice) {
+    const vin = String(order.vin || invoice.vin || "").trim().toUpperCase();
+    if (VIN.test(vin)) return vin;
+    return `${invoice.customer || order.customer}|${invoice.vehicle || order.vehicle}`.toUpperCase();
+  }
+  function isCoreCharge(line) {
+    return Boolean(line.partstech?.isCore || line.isCore);
+  }
+  function partUnitCost(line, inventoryBySku) {
+    const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find((value2) => Number.isFinite(value2) && value2 > 0);
+    if (direct) return direct;
+    const sku = String(line.inventorySku || line.partNumber || "").trim().toLowerCase();
+    const stocked = sku ? inventoryBySku.get(sku) : null;
+    const cost = Number(stocked?.cost);
+    return Number.isFinite(cost) && cost > 0 ? cost : null;
+  }
+  function hourlyRate(user) {
+    const rate = Number(user?.payRate);
+    if (!Number.isFinite(rate) || rate <= 0) return null;
+    return String(user.employmentType || "").toLowerCase() === "salary" ? rate / 2080 : rate;
+  }
+  function inRange(day, from, to) {
+    return Boolean(day) && day >= from && day <= to;
+  }
+  function computeShopKpis({ invoices: invoices2 = [], orders: orders2 = [], jobClockEntries = [], shiftEntries = [], users = [], inventory = [], from, to }) {
+    const inventoryBySku = new Map(inventory.map((item) => [String(item.sku || item.partNumber || "").trim().toLowerCase(), item]).filter(([key]) => key));
+    const ordersById = new Map(orders2.map((order) => [order.id, order]));
+    const invoiced = invoices2.filter((invoice) => !VOID.has(String(invoice.status || "").toLowerCase()) && inRange(isoDay(invoice.date || invoice.createdAt), from, to));
+    const vehicles = /* @__PURE__ */ new Set();
+    let sales = 0;
+    let partsSales = 0;
+    let partsCost = 0;
+    let partsSalesCosted = 0;
+    let laborSales = 0;
+    let feeSales = 0;
+    const billedByTech = /* @__PURE__ */ new Map();
+    const invoicedOrderIds = /* @__PURE__ */ new Set();
+    for (const invoice of invoiced) {
+      const order = ordersById.get(invoice.ro) || {};
+      invoicedOrderIds.add(invoice.ro);
+      vehicles.add(vehicleKey(order, invoice));
+      const lines = (invoice.lines?.length ? invoice.lines : order.estimate?.lines || []).filter((line) => line.approvalStatus !== "declined");
+      const subtotal = Number(invoice.subtotal);
+      const coreDeposits = lines.filter((line) => lineType(line) === "part" && isCoreCharge(line)).reduce((total, line) => total + lineTotal(line), 0);
+      const invoiceSales = Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
+      sales += Math.max(0, invoiceSales - coreDeposits);
+      const discountPercent = Math.min(100, Math.max(0, Number(invoice.discountPercent ?? order.estimate?.discountPercent) || 0));
+      const factor = 1 - discountPercent / 100;
+      for (const line of lines) {
+        const total = lineTotal(line) * factor;
+        const type = lineType(line);
+        if (type === "part" && isCoreCharge(line)) continue;
+        if (type === "part") {
+          partsSales += total;
+          const unit = partUnitCost(line, inventoryBySku);
+          if (unit !== null) {
+            partsCost += unit * Number(line.quantity || 1);
+            partsSalesCosted += total;
+          }
+        } else if (type === "fee") {
+          feeSales += total;
+        } else {
+          laborSales += total;
+          const techs2 = Array.isArray(line.technicianIds) && line.technicianIds.length ? line.technicianIds : (order.assignments || []).map((item) => item.employeeId).filter(Boolean);
+          const hours = Number(line.hours || 0);
+          for (const tech of techs2) billedByTech.set(tech, (billedByTech.get(tech) || 0) + hours / techs2.length);
+        }
+      }
+    }
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const clockedByTech = /* @__PURE__ */ new Map();
+    let laborCost = 0;
+    let laborHoursCosted = 0;
+    let laborHoursClocked = 0;
+    for (const entry of jobClockEntries) {
+      const hours = Number(entry.hours) || (entry.clockOut ? (Date.parse(entry.clockOut) - Date.parse(entry.clockIn)) / 36e5 : 0);
+      if (!(hours > 0)) continue;
+      if (inRange(isoDay(entry.clockIn), from, to)) clockedByTech.set(entry.userId, (clockedByTech.get(entry.userId) || 0) + hours);
+      if (!invoicedOrderIds.has(entry.workOrderId)) continue;
+      laborHoursClocked += hours;
+      const rate = hourlyRate(usersById.get(entry.userId));
+      if (rate !== null) {
+        laborCost += hours * rate;
+        laborHoursCosted += hours;
+      }
+    }
+    const shiftByTech = /* @__PURE__ */ new Map();
+    for (const shift of shiftEntries) {
+      if (!inRange(isoDay(shift.clockIn), from, to)) continue;
+      const hours = Number(shift.hours) || (shift.clockOut ? (Date.parse(shift.clockOut) - Date.parse(shift.clockIn)) / 36e5 : 0);
+      if (hours > 0) shiftByTech.set(shift.userId, (shiftByTech.get(shift.userId) || 0) + hours);
+    }
+    const techIds = /* @__PURE__ */ new Set([...billedByTech.keys(), ...clockedByTech.keys(), ...users.filter((user) => user.role === "technician" && user.active !== false).map((user) => user.id)]);
+    const techs = [...techIds].map((id) => {
+      const user = usersById.get(id) || {};
+      const billed = billedByTech.get(id) || 0;
+      const clocked = clockedByTech.get(id) || 0;
+      const shift = shiftByTech.get(id) || 0;
+      return {
+        id,
+        name: user.name || user.techName || id,
+        billedHours: round(billed, 1),
+        clockedHours: round(clocked, 1),
+        shiftHours: round(shift, 1),
+        efficiency: ratio(billed, clocked) === null ? null : round(ratio(billed, clocked) * 100, 0),
+        productivity: ratio(clocked, shift) === null ? null : round(ratio(clocked, shift) * 100, 0)
+      };
+    }).filter((tech) => tech.billedHours || tech.clockedHours || tech.shiftHours).sort((a, b) => b.billedHours - a.billedHours);
+    const roCount = invoiced.length;
+    const grossProfit = sales - partsCost - laborCost;
+    return {
+      from,
+      to,
+      carCount: vehicles.size,
+      roCount,
+      sales: round(sales),
+      aro: roCount ? round(sales / roCount) : 0,
+      partsSales: round(partsSales),
+      partsCost: round(partsCost),
+      laborSales: round(laborSales),
+      laborCost: round(laborCost),
+      feeSales: round(feeSales),
+      grossProfit: round(grossProfit),
+      grossMargin: sales > 0 ? round(grossProfit / sales * 100, 1) : null,
+      partsMargin: partsSalesCosted > 0 ? round((partsSalesCosted - partsCost) / partsSalesCosted * 100, 1) : null,
+      laborMargin: laborSales > 0 && laborHoursCosted > 0 ? round((laborSales - laborCost) / laborSales * 100, 1) : null,
+      partsCostCoverage: partsSales > 0 ? round(partsSalesCosted / partsSales * 100, 0) : null,
+      laborCostCoverage: laborHoursClocked > 0 ? round(laborHoursCosted / laborHoursClocked * 100, 0) : null,
+      techs
+    };
+  }
+  function kpiDashboardHtml(kpis, { period = "month", label: label2 = "", money: money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), icon: icon2 = () => "" } = {}) {
+    const periods = [["week", "This week"], ["month", "This month"], ["last_month", "Last month"], ["ytd", "Year to date"]];
+    const caveats = [
+      kpis.partsCostCoverage !== null && kpis.partsCostCoverage < 100 ? `Parts cost is known for ${kpis.partsCostCoverage}% of parts sales; add costs in Inventory or order through PartsTech for exact margin.` : "",
+      kpis.laborCostCoverage !== null && kpis.laborCostCoverage < 100 ? `Labor cost uses pay rates for ${kpis.laborCostCoverage}% of clocked hours; add hourly pay rates on Employees.` : "",
+      kpis.roCount && kpis.laborCostCoverage === null ? "No job-clock time on these orders, so labor cost is not included in gross profit." : ""
+    ].filter(Boolean);
+    const card2 = (title, value2, detail = "") => `<article class="kpi-card"><span>${escapeHtml4(title)}</span><strong>${value2}</strong>${detail ? `<small>${detail}</small>` : ""}</article>`;
+    const techRows = kpis.techs.map((tech) => `<tr><td><b>${escapeHtml4(tech.name)}</b></td><td>${tech.billedHours}</td><td>${tech.clockedHours}</td><td>${tech.shiftHours}</td><td><b>${pct(tech.efficiency)}</b></td><td>${pct(tech.productivity)}</td></tr>`).join("");
+    return `<section class="kpi-dashboard"><div class="statement-head"><div><div class="eyebrow">Shop performance</div><h2>${escapeHtml4(label2 || "This month")}</h2><p>${escapeHtml4(kpis.from)} to ${escapeHtml4(kpis.to)} \xB7 based on invoices issued in the period.</p></div><div class="accounting-tabs">${periods.map(([id, name]) => `<button type="button" class="tab ${period === id ? "active" : ""}" data-kpi-period="${id}">${name}</button>`).join("")}</div></div>
+  <div class="kpi-grid">
+    ${card2("Car count", String(kpis.carCount), `${kpis.roCount} repair order${kpis.roCount === 1 ? "" : "s"}`)}
+    ${card2("Average repair order", money5(kpis.aro), `${money5(kpis.sales)} sales before tax`)}
+    ${card2("Gross profit", money5(kpis.grossProfit), `${pct(kpis.grossMargin)} of sales`)}
+    ${card2("Parts gross margin", pct(kpis.partsMargin), `${money5(kpis.partsSales)} parts sales \xB7 ${money5(kpis.partsCost)} cost`)}
+    ${card2("Labor gross margin", pct(kpis.laborMargin), `${money5(kpis.laborSales)} labor sales \xB7 ${money5(kpis.laborCost)} tech pay`)}
+  </div>
+  ${caveats.length ? `<p class="ops-note">${icon2("info", 14)} ${caveats.map(escapeHtml4).join(" ")}</p>` : ""}
+  <div class="data-panel"><table><thead><tr><th>Technician</th><th>Billed hrs</th><th>Clocked on jobs</th><th>On shift</th><th>Efficiency</th><th>Productivity</th></tr></thead><tbody>${techRows || '<tr><td colspan="6">No technician time in this period.</td></tr>'}</tbody></table><p class="ops-note">Efficiency = billed hours \xF7 hours clocked on jobs. Productivity = hours clocked on jobs \xF7 hours on shift.</p></div>
+  </section>`;
+  }
+  var round, ratio, VOID, VIN, pct;
+  var init_shop_kpis = __esm({
+    "src/modules/shop-kpis.js"() {
+      round = (value2, places = 2) => Math.round((Number(value2) || 0) * 10 ** places) / 10 ** places;
+      ratio = (numerator, denominator) => denominator > 0 ? numerator / denominator : null;
+      VOID = /* @__PURE__ */ new Set(["void", "voided", "cancelled", "canceled", "draft"]);
+      VIN = /^[A-HJ-NPR-Z0-9]{17}$/;
+      pct = (value2) => value2 === null || value2 === void 0 ? "\u2014" : `${value2}%`;
+    }
+  });
+
+  // src/modules/vehicle-lookups.js
+  function plateLookupHtml({ state: state2 = "TX", icon: icon2 = () => "" } = {}) {
+    return `<label>Plate state<select name="plateState">${PLATE_STATES.map((code) => `<option ${code === state2 ? "selected" : ""}>${code}</option>`).join("")}</select></label><div class="full vin-actions"><button class="secondary" type="button" id="plate-lookup">${icon2("search", 14)} Find VIN from plate</button><button class="secondary" type="button" id="carfax-history">${icon2("history", 14)} CARFAX service history</button><span id="plate-status"></span></div><div class="full" id="carfax-results"></div>`;
+  }
+  function plateLookupFill(result = {}, current = {}) {
+    const fill = {};
+    for (const key of ["vin", "year", "make", "model", "trim"]) {
+      if (result[key] && !String(current[key] || "").trim()) fill[key] = String(result[key]);
+    }
+    return fill;
+  }
+  function serviceHistoryHtml(result = {}, { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? "") } = {}) {
+    if (!result.found) return '<p class="ops-note">CARFAX has no service records for this VIN.</p>';
+    const rows = result.records.map((record) => `<tr><td>${escapeHtml4(record.date)}</td><td>${record.odometer ? Number(record.odometer).toLocaleString("en-US") : ""}</td><td>${escapeHtml4(record.description)}</td><td>${escapeHtml4(record.source)}</td></tr>`).join("");
+    return `<div class="data-panel carfax-history"><strong>CARFAX service history \xB7 ${result.records.length} record${result.records.length === 1 ? "" : "s"}</strong><table><thead><tr><th>Date</th><th>Odometer</th><th>Service</th><th>Where</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+  var PLATE_STATES;
+  var init_vehicle_lookups = __esm({
+    "src/modules/vehicle-lookups.js"() {
+      PLATE_STATES = Object.freeze("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA PR RI SC SD TN TX UT VT VA WA WV WI WY".split(" "));
+    }
+  });
+
+  // src/modules/pricing-matrix.js
+  function sortedTiers(tiers) {
+    const valid = (Array.isArray(tiers) ? tiers : []).map((tier) => ({
+      upTo: tier.upTo === null || tier.upTo === "" || tier.upTo === void 0 || !Number.isFinite(Number(tier.upTo)) ? null : Number(tier.upTo),
+      multiplier: Number(tier.multiplier)
+    })).filter((tier) => Number.isFinite(tier.multiplier) && tier.multiplier >= 1 && tier.multiplier <= 10);
+    valid.sort((a, b) => (a.upTo ?? Infinity) - (b.upTo ?? Infinity));
+    return valid.length ? valid : [...DEFAULT_PARTS_MATRIX];
+  }
+  function pricingSettings(record = {}) {
+    return {
+      enabled: record.enabled !== false,
+      partsMatrix: sortedTiers(record.partsMatrix),
+      minPartsMarginPercent: Number.isFinite(Number(record.minPartsMarginPercent)) ? Math.min(90, Math.max(0, Number(record.minPartsMarginPercent))) : DEFAULT_PRICING.minPartsMarginPercent,
+      laborRates: { ...DEFAULT_PRICING.laborRates, ...record.laborRates || {} }
+    };
+  }
+  function partsMultiplier(cost, settings2 = pricingSettings()) {
+    const value2 = Number(cost);
+    const tier = settings2.partsMatrix.find((item) => item.upTo === null || value2 <= item.upTo) || settings2.partsMatrix[settings2.partsMatrix.length - 1];
+    return tier.multiplier;
+  }
+  function matrixPartPrice(cost, settings2 = pricingSettings()) {
+    const value2 = Number(cost);
+    if (!Number.isFinite(value2) || value2 <= 0) return null;
+    return round2(value2 * partsMultiplier(value2, settings2));
+  }
+  function marginPercent(price, cost) {
+    const p = Number(price);
+    const c = Number(cost);
+    return p > 0 && c >= 0 ? Math.round((p - c) / p * 1e3) / 10 : null;
+  }
+  function isCoreCharge2(line = {}) {
+    return Boolean(line.partstech?.isCore || line.isCore);
+  }
+  function protectedPartPrice(cost, settings2 = pricingSettings()) {
+    const matrix = matrixPartPrice(cost, settings2);
+    if (matrix === null) return null;
+    const min = Number(settings2.minPartsMarginPercent) || 0;
+    const floor = min >= 100 ? matrix : Math.ceil(Number(cost) / (1 - min / 100) * 100) / 100;
+    return Math.max(matrix, floor);
+  }
+  function lineCost(line = {}, inventory = []) {
+    if (isCoreCharge2(line)) return null;
+    const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find((value2) => Number.isFinite(value2) && value2 > 0);
+    if (direct) return direct;
+    const stocked = inventory.find((item) => line.inventoryId && item.id === line.inventoryId || line.inventorySku && String(item.sku || "").toLowerCase() === String(line.inventorySku).toLowerCase());
+    const cost = Number(stocked?.cost);
+    return Number.isFinite(cost) && cost > 0 ? cost : null;
+  }
+  function applyPartsMatrix(lines = [], settings2 = pricingSettings(), inventory = []) {
+    if (!settings2.enabled) return lines;
+    return lines.map((line) => {
+      const costPriced = ["cost", "cost_markup"].includes(line.partstech?.priceBasis);
+      if (line.type !== "part" || isCoreCharge2(line) || Number(line.unitPrice) > 0 && !costPriced) return line;
+      const cost = lineCost(line, inventory);
+      const price = matrixPartPrice(cost, settings2);
+      if (price === null) return line;
+      const quantity = Math.max(1, Number(line.quantity) || 1);
+      return { ...line, cost, unitPrice: price, total: round2(price * quantity), priceStatus: "priced", priceSource: "matrix" };
+    });
+  }
+  function marginWarnings(lines = [], settings2 = pricingSettings(), inventory = []) {
+    const warnings = [];
+    for (const line of lines) {
+      if (line.type !== "part" || line.approvalStatus === "declined" || isCoreCharge2(line)) continue;
+      const cost = lineCost(line, inventory);
+      const price = Number(line.unitPrice);
+      if (cost === null || !(price > 0)) continue;
+      const margin = marginPercent(price, cost);
+      if (margin !== null && margin < settings2.minPartsMarginPercent) {
+        warnings.push({ lineId: line.id, description: line.description, cost, price, margin, suggestedPrice: protectedPartPrice(cost, settings2) });
+      }
+    }
+    return warnings;
+  }
+  function laborRateFor(category, settings2 = pricingSettings(), fallback = 0) {
+    const rate = Number(settings2.laborRates?.[category]);
+    return rate > 0 ? rate : Number(fallback) || 0;
+  }
+  function laborCategoryFor(line = {}) {
+    if (line.laborCategory) return String(line.laborCategory);
+    const text2 = `${line.description || ""} ${line.notes || ""}`;
+    return Object.entries(LABOR_CATEGORY_PATTERNS).find(([, pattern]) => pattern.test(text2))?.[0] || "standard";
+  }
+  function applyLaborMatrix(lines = [], settings2 = pricingSettings(), shopRate = 0) {
+    if (!settings2.enabled) return lines;
+    return lines.map((line) => {
+      if (line.type === "part" || line.type === "fee") return line;
+      const current = Number(line.laborRate ?? line.unitPrice);
+      if (current > 0 && current !== Number(shopRate)) return line;
+      const category = laborCategoryFor(line);
+      const rate = laborRateFor(category, settings2, 0);
+      if (!(rate > 0)) return line;
+      const hours = Number(line.hours ?? line.quantity) || 0;
+      return { ...line, laborCategory: category, laborRate: rate, unitPrice: rate, total: round2(hours * rate) };
+    });
+  }
+  function matrixText(tiers = DEFAULT_PARTS_MATRIX) {
+    return sortedTiers(tiers).map((tier) => `${tier.upTo === null ? "over" : `up to ${tier.upTo}`}: ${tier.multiplier}`).join("\n");
+  }
+  function parseMatrixText(text2) {
+    const tiers = String(text2 || "").split("\n").map((line) => {
+      const match = /^\s*(?:up\s*to\s*\$?([\d.]+)|over|above|\*)\s*[:=]\s*([\d.]+)\s*x?\s*$/i.exec(line);
+      if (!match) return null;
+      return { upTo: match[1] === void 0 ? null : Number(match[1]), multiplier: Number(match[2]) };
+    }).filter(Boolean);
+    if (!tiers.some((tier) => tier.upTo === null) && tiers.length) tiers.push({ upTo: null, multiplier: tiers[tiers.length - 1].multiplier });
+    return sortedTiers(tiers);
+  }
+  function marginWarningsHtml(warnings = [], { money: money5 = (value2) => `$${Number(value2).toFixed(2)}`, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? "") } = {}) {
+    if (!warnings.length) return "";
+    return `<div class="margin-warning" role="alert"><strong>Margin check</strong>${warnings.map((item) => `<p>${escapeHtml4(item.description)}: ${item.margin}% margin at ${money5(item.price)} (cost ${money5(item.cost)}). Suggested ${money5(item.suggestedPrice)}. <button type="button" class="mini-action" data-apply-matrix="${escapeHtml4(item.lineId)}" data-price="${escapeHtml4(item.suggestedPrice)}">Use suggested price</button></p>`).join("")}</div>`;
+  }
+  function pricingSettingsHtml(record = {}, { canSave = false, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), icon: icon2 = () => "" } = {}) {
+    const settings2 = pricingSettings(record);
+    const disabled = canSave ? "" : "disabled";
+    return `<section class="settings-panel pricing-matrix"><div class="statement-head"><div><div class="eyebrow">Margin protection</div><h2>Parts &amp; labor pricing matrix</h2><p>Parts with a known cost (PartsTech, inventory) are priced from the matrix, and estimates warn when a part sells below your minimum margin.</p></div>${icon2("percent", 20)}</div>
+  <form id="pricing-matrix-form" class="form-grid">
+    <label class="toggle-field full"><input type="checkbox" name="matrixEnabled" ${settings2.enabled ? "checked" : ""} ${disabled}/><span>Price parts from the matrix</span></label>
+    <label class="full">Parts markup by cost (one tier per line, cost \xD7 multiplier)<textarea name="partsMatrix" rows="8" ${disabled}>${escapeHtml4(matrixText(settings2.partsMatrix))}</textarea></label>
+    <label>Minimum parts margin %<input name="minPartsMarginPercent" type="number" min="0" max="90" step="1" value="${escapeHtml4(settings2.minPartsMarginPercent)}" ${disabled}/></label>
+    ${Object.entries(settings2.laborRates).map(([key, value2]) => `<label>${escapeHtml4(key[0].toUpperCase() + key.slice(1))} labor rate<input name="laborRate_${escapeHtml4(key)}" type="number" min="0" step="0.01" value="${escapeHtml4(value2 || "")}" placeholder="Shop default" ${disabled}/></label>`).join("")}
+    ${canSave ? `<div class="full"><button class="primary" type="submit">${icon2("save", 14)} Save pricing</button></div>` : ""}
+  </form></section>`;
+  }
+  function pricingRecordFromForm(values = {}, current = {}) {
+    const laborRates = {};
+    for (const [key, value2] of Object.entries(values)) {
+      if (!key.startsWith("laborRate_")) continue;
+      const rate = Number(value2);
+      laborRates[key.slice("laborRate_".length)] = rate > 0 ? Math.round(rate * 100) / 100 : 0;
+    }
+    return {
+      ...current,
+      id: "pricing",
+      enabled: values.matrixEnabled === "on",
+      partsMatrix: parseMatrixText(values.partsMatrix),
+      minPartsMarginPercent: Math.min(90, Math.max(0, Number(values.minPartsMarginPercent) || 0)),
+      laborRates: { ...current.laborRates || {}, ...laborRates }
+    };
+  }
+  function editorCarryFields(line = {}) {
+    return Object.fromEntries(EDITOR_CARRY_FIELDS.filter((key) => line[key] !== void 0 && line[key] !== null && line[key] !== "").map((key) => [key, line[key]]));
+  }
+  var DEFAULT_PARTS_MATRIX, DEFAULT_PRICING, round2, LABOR_CATEGORY_PATTERNS, EDITOR_CARRY_FIELDS;
+  var init_pricing_matrix = __esm({
+    "src/modules/pricing-matrix.js"() {
+      DEFAULT_PARTS_MATRIX = Object.freeze([
+        { upTo: 10, multiplier: 2.5 },
+        { upTo: 25, multiplier: 2.25 },
+        { upTo: 50, multiplier: 2 },
+        { upTo: 100, multiplier: 1.8 },
+        { upTo: 250, multiplier: 1.6 },
+        { upTo: 500, multiplier: 1.45 },
+        { upTo: 1e3, multiplier: 1.35 },
+        { upTo: null, multiplier: 1.25 }
+      ]);
+      DEFAULT_PRICING = Object.freeze({
+        enabled: true,
+        partsMatrix: DEFAULT_PARTS_MATRIX,
+        minPartsMarginPercent: 35,
+        laborRates: { standard: 0, diagnostic: 0, heavy: 0, electrical: 0 }
+      });
+      round2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      LABOR_CATEGORY_PATTERNS = Object.freeze({
+        diagnostic: /diagnos|troubleshoot|check engine|no[- ]start|inspection/i,
+        electrical: /electric|wiring|battery|alternator|starter|module|sensor/i,
+        heavy: /engine (replace|rebuild|overhaul)|transmission (replace|rebuild|overhaul)|head gasket|timing (chain|belt)|differential|clutch/i
+      });
+      EDITOR_CARRY_FIELDS = Object.freeze(["cost", "unitCost", "partstech", "partstechOrder", "priceSource", "source", "laborGuide", "inspectionStatus", "inspectionItemId", "photoKeys", "videoKeys", "mediaKeys", "laborCategory"]);
+    }
+  });
+
+  // src/modules/scan-to-estimate.js
+  function generalDiagnosticService(services, used, vehicleText) {
+    return services.find((service) => !used.has(service.id) && service.active !== false && serviceFitsVehicle(service, vehicleText) && GENERAL_DIAGNOSTIC.test(service.name || "") && !NARROW_DIAGNOSTIC.test(service.name || "")) || null;
+  }
+  function textOf(service) {
+    return `${service.name || ""} ${service.description || ""}`.toLowerCase();
+  }
+  function wordPattern(keyword) {
+    return new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  }
+  function cylinderCount(text2) {
+    const match = /\b(?:v-?(\d{1,2})|i-?(\d)|inline[- ]?(\d)|(\d{1,2})[- ]?cyl(?:inder)?s?)\b/i.exec(String(text2 || ""));
+    return match ? Number(match[1] || match[2] || match[3] || match[4]) : null;
+  }
+  function serviceFitsVehicle(service, vehicleText = "") {
+    const required = cylinderCount(`${service.name || ""} ${service.description || ""}`);
+    if (required === null) return true;
+    return cylinderCount(vehicleText) === required;
+  }
+  function bestService(services, keywords, used, vehicleText = "") {
+    let best = null;
+    let bestScore = 0;
+    for (const service of services) {
+      if (used.has(service.id) || service.active === false || !serviceFitsVehicle(service, vehicleText)) continue;
+      const text2 = textOf(service);
+      const score = keywords.reduce((total, keyword, index) => total + (wordPattern(keyword).test(text2) ? keywords.length - index : 0), 0);
+      if (score > bestScore) {
+        best = service;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+  function cannedServicesForCodes(codes = [], services = [], { vehicle = "" } = {}) {
+    const normalized = [...new Set(codes.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean))];
+    const used = /* @__PURE__ */ new Set();
+    const matches = [];
+    const diagnostic = generalDiagnosticService(services, used, vehicle);
+    if (diagnostic && normalized.length) {
+      used.add(diagnostic.id);
+      matches.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
+    }
+    for (const rule of DTC_SERVICE_RULES) {
+      const hit = normalized.filter((code) => rule.test(code));
+      if (!hit.length) continue;
+      const service = bestService(services, rule.keywords, used, vehicle);
+      if (!service) continue;
+      used.add(service.id);
+      matches.push({ service, reason: rule.label, codes: hit });
+    }
+    return matches;
+  }
+  function cannedServiceLines(match, { laborRate = 0, scanId = "" } = {}) {
+    const { service, codes, reason } = match;
+    const discount = Math.min(100, Math.max(0, Number(service.discount) || 0));
+    const factor = 1 - discount / 100;
+    const discountNote = discount ? ` Includes ${discount}% menu discount.` : "";
+    const base = { source: "scan", cannedServiceId: service.id, scanId, dtcCodes: codes, notes: `${service.description || ""}${service.description ? " " : ""}(${reason}: ${codes.join(", ")})${discountNote}`.trim() };
+    const menuPrice = Number(service.menuPrice);
+    if (service.menuPrice != null && Number.isFinite(menuPrice)) {
+      const price = round3(menuPrice * factor);
+      return [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "fee", description: service.name, quantity: 1, unitPrice: price, amount: price, total: price }];
+    }
+    const hours = Math.max(0, Number(service.laborHours) || 0);
+    const rate = round3(laborRate * factor);
+    const lines = [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "labor", description: service.name, hours, quantity: hours, laborRate: rate, unitPrice: rate, total: round3(hours * rate) }];
+    const parts = round3(Math.max(0, Number(service.partsPrice) || 0) * factor);
+    if (parts) lines.push({ ...base, id: `scan-${scanId || "x"}-${service.id}-parts`, type: "part", description: `${service.name} parts`, quantity: 1, unitPrice: parts, total: parts, priceStatus: "priced" });
+    return lines;
+  }
+  function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = "", vehicle = "" } = {}) {
+    const matches = cannedServicesForCodes(codes, services, { vehicle });
+    const canned = matches.flatMap((match) => cannedServiceLines(match, { laborRate, scanId }));
+    const seen = new Set(canned.map((line) => String(line.description).toLowerCase()));
+    const extra = aiLines.filter((line) => !seen.has(String(line.description || "").toLowerCase()));
+    return { lines: [...canned, ...extra], matches };
+  }
+  function scanEstimateSummary({ matches = [], lines = [] }) {
+    if (!lines.length) return "No canned services or AI lines matched these codes.";
+    const canned = matches.map((match) => `${match.service.name} (${match.codes.join(", ")})`).join("; ");
+    return `${lines.length} line${lines.length === 1 ? "" : "s"}${canned ? ` \xB7 canned: ${canned}` : ""}`;
+  }
+  var range, DTC_SERVICE_RULES, GENERAL_DIAGNOSTIC, NARROW_DIAGNOSTIC, round3;
+  var init_scan_to_estimate = __esm({
+    "src/modules/scan-to-estimate.js"() {
+      range = (prefix, from, to) => (code) => code[0] === prefix && Number.parseInt(code.slice(1), 16) >= Number.parseInt(from, 16) && Number.parseInt(code.slice(1), 16) <= Number.parseInt(to, 16);
+      DTC_SERVICE_RULES = Object.freeze([
+        { id: "misfire", label: "Misfire / ignition", test: (code) => range("P", "0300", "0312")(code) || range("P", "0350", "0362")(code), keywords: ["tune-up", "tune up", "spark plug", "ignition coil", "coil"] },
+        { id: "fuel-trim", label: "Lean / rich fuel trim", test: (code) => ["P0171", "P0172", "P0174", "P0175", "P0101", "P0102", "P0103"].includes(code), keywords: ["fuel system", "injector", "mass air", "maf", "vacuum leak", "smoke test"] },
+        { id: "catalyst", label: "Catalyst efficiency", test: (code) => ["P0420", "P0430"].includes(code) || range("P", "0130", "0167")(code), keywords: ["catalytic", "oxygen sensor", "o2 sensor", "exhaust"] },
+        { id: "cooling", label: "Cooling system", test: (code) => ["P0115", "P0116", "P0117", "P0118", "P0125", "P0128", "P0217"].includes(code), keywords: ["coolant", "thermostat", "cooling"] },
+        { id: "evap", label: "EVAP leak", test: range("P", "0440", "0457"), keywords: ["evap", "smoke test", "gas cap", "purge"] },
+        { id: "transmission", label: "Transmission", test: range("P", "0700", "0799"), keywords: ["transmission"] },
+        { id: "charging", label: "Charging / battery", test: (code) => ["P0560", "P0562", "P0563", "P0620", "P0621", "P0622", "P0A80"].includes(code), keywords: ["battery", "alternator", "charging"] },
+        { id: "abs", label: "ABS / wheel speed", test: (code) => code[0] === "C", keywords: ["wheel speed", "abs"] },
+        { id: "network", label: "Network communication", test: (code) => code[0] === "U", keywords: ["network", "module", "electrical diagnostic", "diagnostic"] }
+      ]);
+      GENERAL_DIAGNOSTIC = /check engine|engine light|general diagnos|diagnostic fee|diagnosis/i;
+      NARROW_DIAGNOSTIC = /no[- ]start|battery|starter|charging|electrical/i;
+      round3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+    }
+  });
+
+  // src/modules/import-mappers.js
+  function normalizeHeader(header) {
+    return String(header || "").toLowerCase().replace(/#/g, " number ").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  }
+  function pick(row, keys) {
+    for (const key of keys) {
+      const value2 = row[key];
+      if (value2 !== void 0 && String(value2).trim() !== "") return String(value2).trim();
+    }
+    return "";
+  }
+  function aliasesFor(system, field2) {
+    return [.../* @__PURE__ */ new Set([...system?.aliases?.[field2] || [], ...COMMON[field2] || []])];
+  }
+  function displayName(row, system) {
+    const first = pick(row, aliasesFor(system, "first_name"));
+    const last = pick(row, aliasesFor(system, "last_name"));
+    if (first || last) return [first, last].filter(Boolean).join(" ");
+    const name = pick(row, aliasesFor(system, "name"));
+    const reversed = /^([^,]+),\s*(.+)$/.exec(name);
+    return reversed ? `${reversed[2]} ${reversed[1]}` : name;
+  }
+  function mapStatus(system, raw) {
+    const key = normalizeHeader(raw);
+    return system?.statuses?.[key] || key;
+  }
+  function csvCell(value2) {
+    const text2 = String(value2 ?? "");
+    return /[",\n\r]/.test(text2) ? `"${text2.replace(/"/g, '""')}"` : text2;
+  }
+  function toCsv(headers, rows) {
+    return [headers.join(","), ...rows.map((row) => headers.map((header) => csvCell(row[header])).join(","))].join("\n");
+  }
+  function detectSourceSystem(text2) {
+    const [headerRow = []] = parseCsv(text2);
+    const headers = new Set(headerRow.map(normalizeHeader));
+    let best = null;
+    for (const [id, system] of Object.entries(SOURCE_SYSTEMS)) {
+      const hits = system.signature.filter((header) => headers.has(header)).length;
+      if (hits === system.signature.length && (!best || hits > best.hits)) best = { id, hits };
+    }
+    return best?.id || null;
+  }
+  function mapExportToCanonicalCsv(sourceId, type, text2) {
+    const system = SOURCE_SYSTEMS[sourceId];
+    const parsed = parseCsv(text2);
+    if (!system || !CANONICAL[type] || parsed.length < 2) return { csv: String(text2 || ""), rows: Math.max(0, parsed.length - 1), system: null, rejected: [] };
+    const headers = parsed.shift().map(normalizeHeader);
+    const rows = parsed.map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""])));
+    const get = (row, field2) => pick(row, aliasesFor(system, field2));
+    const vehicleText = (row) => get(row, "vehicle") || [get(row, "year"), get(row, "make"), get(row, "model")].filter(Boolean).join(" ");
+    const statusFor = (row) => mapStatus(system, get(row, "status"));
+    const rejected = [];
+    const mapped = rows.map((row) => {
+      const customer = displayName(row, system);
+      if (type === "customers") return { name: customer, phone: get(row, "phone"), email: get(row, "email") };
+      if (type === "vehicles") return { customer, year: get(row, "year"), make: get(row, "make"), model: get(row, "model"), vin: get(row, "vin"), plate: get(row, "plate") };
+      if (type === "orders") {
+        const status = statusFor(row);
+        return { ro_number: get(row, "ro_number"), customer, vehicle: vehicleText(row), vin: get(row, "vin"), complaint: get(row, "complaint") || `Imported from ${system.name}`, status: status === "invoiced" ? "invoiced" : status, total: get(row, "total"), phone: get(row, "phone") };
+      }
+      if (type === "invoices") {
+        const raw = normalizeHeader(get(row, "status"));
+        const balance = Number(String(get(row, "balance")).replace(/[$,\s]/g, ""));
+        const paid = PAID_WORDS.has(raw) || PAID_WORDS.has(normalizeHeader(get(row, "payment_status"))) || get(row, "balance") !== "" && balance === 0;
+        const total = Number(String(get(row, "total")).replace(/[$,\s]/g, ""));
+        if (get(row, "balance") !== "" && balance > 0 && Number.isFinite(total) && balance < total) {
+          rejected.push(`${get(row, "invoice_number") || get(row, "ro_number") || "Invoice"} is partly paid (${get(row, "balance")} of ${get(row, "total")} open); import it after recording its payment, or enter it by hand.`);
+          return null;
+        }
+        return { number: get(row, "invoice_number") || get(row, "ro_number"), customer, ro: get(row, "ro_number"), date: get(row, "date"), closeout_date: paid ? get(row, "closeout_date") : "", status: paid ? "paid" : "sent", subtotal: get(row, "subtotal"), tax: get(row, "tax"), amount: get(row, "total") };
+      }
+      const decision = ESTIMATE_DECISIONS[normalizeHeader(get(row, "status"))] || "pending";
+      return { number: get(row, "ro_number"), customer, vehicle: vehicleText(row), summary: get(row, "complaint"), status: decision, subtotal: get(row, "subtotal"), tax: get(row, "tax"), total: get(row, "total"), email: get(row, "email"), phone: get(row, "phone") };
+    });
+    const kept = mapped.filter(Boolean);
+    return { csv: toCsv(CANONICAL[type], kept), rows: kept.length, system: system.name, rejected };
+  }
+  var COMMON, PAID_WORDS, ESTIMATE_DECISIONS, SOURCE_SYSTEMS, SOURCE_OPTIONS, CANONICAL;
+  var init_import_mappers = __esm({
+    "src/modules/import-mappers.js"() {
+      init_imports();
+      COMMON = Object.freeze({
+        first_name: ["first_name", "firstname", "customer_first_name", "customer_first", "first"],
+        last_name: ["last_name", "lastname", "customer_last_name", "customer_last", "last"],
+        name: ["customer_name", "name", "customer", "full_name", "company_name", "owner", "owner_name", "customer_full_name"],
+        phone: ["phone", "phone_number", "primary_phone", "mobile", "mobile_phone", "cell_phone", "cell", "phone_1", "home_phone", "work_phone"],
+        email: ["email", "email_address", "e_mail", "primary_email"],
+        year: ["year", "vehicle_year", "model_year"],
+        make: ["make", "vehicle_make"],
+        model: ["model", "vehicle_model"],
+        vin: ["vin", "vehicle_vin", "vin_number"],
+        plate: ["plate", "license_plate", "license", "lic_plate", "license_plate_number", "tag"],
+        vehicle: ["vehicle", "vehicle_description", "vehicle_name", "year_make_model"],
+        ro_number: ["ro_number", "repair_order_number", "repair_order", "ro", "order_number", "work_order_number", "work_order"],
+        invoice_number: ["invoice_number", "invoice", "invoice_id"],
+        complaint: ["complaint", "concern", "concerns", "customer_concern", "description", "work_requested", "reason_for_visit", "notes"],
+        status: ["status", "ro_status", "order_status", "workflow_status", "stage"],
+        total: ["total", "grand_total", "total_sale", "invoice_total", "ro_total", "amount", "total_amount"],
+        subtotal: ["subtotal", "sub_total", "total_before_tax", "pre_tax_total"],
+        tax: ["tax", "sales_tax", "tax_total", "total_tax"],
+        date: ["invoice_date", "posted_date", "date_posted", "date", "created_date", "created_at", "date_created", "completed_date"],
+        closeout_date: ["paid_date", "payment_date", "date_paid", "closed_date", "closeout_date", "date_closed"],
+        mileage: ["mileage", "odometer", "miles_in", "mileage_in"],
+        balance: ["balance", "balance_due", "amount_due", "outstanding", "open_balance", "remaining_balance"],
+        payment_status: ["payment_status", "paid_status", "paid"]
+      });
+      PAID_WORDS = /* @__PURE__ */ new Set(["paid", "paid_in_full", "closed_paid", "yes", "true"]);
+      ESTIMATE_DECISIONS = Object.freeze({ approved: "approved", accepted: "approved", authorized: "approved", declined: "declined", rejected: "declined" });
+      SOURCE_SYSTEMS = Object.freeze({
+        tekmetric: {
+          name: "Tekmetric",
+          aliases: { ro_number: ["ro_number", "repair_order_number"], date: ["posted_date", "completed_date"], complaint: ["concerns"] },
+          statuses: { estimate: "estimate", work_in_progress: "in_progress", complete: "completed", posted: "invoiced", accounts_receivable: "invoiced", saved_for_later: "estimate" },
+          signature: ["repair_order_number", "posted_date"]
+        },
+        shopmonkey: {
+          name: "Shopmonkey",
+          aliases: { ro_number: ["order_number", "order"], complaint: ["complaint", "order_name"] },
+          statuses: { estimate: "estimate", work_in_progress: "in_progress", in_progress: "in_progress", invoice: "completed", paid: "invoiced", completed: "completed" },
+          signature: ["order_number", "order_name"]
+        },
+        autoleap: {
+          name: "AutoLeap",
+          aliases: { name: ["customer_name"], ro_number: ["ro_number", "ro"], total: ["invoice_total", "total"] },
+          statuses: { estimate: "estimate", in_progress: "in_progress", work_in_progress: "in_progress", completed: "completed", invoiced: "invoiced", paid: "invoiced" },
+          signature: ["ro_number", "invoice_total"]
+        },
+        shopware: {
+          name: "Shop-Ware",
+          aliases: { first_name: ["customer_first"], last_name: ["customer_last"], ro_number: ["ro_number", "repair_order"] },
+          statuses: { estimate: "estimate", wip: "in_progress", work_in_progress: "in_progress", complete: "completed", invoiced: "invoiced", closed: "invoiced" },
+          signature: ["customer_first", "customer_last"]
+        },
+        mitchell1: {
+          name: "Mitchell 1 Manager SE",
+          aliases: { ro_number: ["ro_number", "repair_order_number"], invoice_number: ["invoice_number"], total: ["total_sale", "invoice_total", "total"], phone: ["cell_phone", "home_phone", "work_phone", "phone"], email: ["e_mail", "email"], plate: ["lic_plate", "license"] },
+          statuses: { estimate: "estimate", open: "in_progress", work_order: "in_progress", finalized: "invoiced", invoice: "invoiced", closed: "invoiced" },
+          signature: ["total_sale", "lic_plate"]
+        }
+      });
+      SOURCE_OPTIONS = Object.freeze([["shopcrank", "ShopCrank template"], ...Object.entries(SOURCE_SYSTEMS).map(([id, system]) => [id, system.name])]);
+      CANONICAL = Object.freeze({
+        customers: ["name", "phone", "email"],
+        vehicles: ["customer", "year", "make", "model", "vin", "plate"],
+        orders: ["ro_number", "customer", "vehicle", "vin", "complaint", "status", "total", "phone"],
+        invoices: ["number", "customer", "ro", "date", "closeout_date", "status", "subtotal", "tax", "amount"],
+        estimates: ["number", "customer", "vehicle", "summary", "status", "subtotal", "tax", "total", "email", "phone"]
+      });
     }
   });
 
@@ -5985,8 +6886,12 @@ button{margin-top:12px;padding:8px 14px}
     const keys = [...record.photoKeys];
     for (const file of files) {
       try {
-        keys.push(await app.uploadFileToR2(file, "inspection", file.type || "image/jpeg"));
-      } catch {
+        keys.push(await app.uploadFileToR2(file, inspectionUploadKind(file), file.type || "image/jpeg"));
+      } catch (error) {
+        if (/^video\//.test(file.type)) {
+          app.toast?.(error.message || "Video upload failed; reconnect and attach it again");
+          continue;
+        }
         const dataUrl = await fileToDataUrl(file);
         if (dataUrl) keys.push(dataUrl);
       }
@@ -6012,8 +6917,8 @@ button{margin-top:12px;padding:8px 14px}
         recognition.lang = "en-US";
         recognition.interimResults = false;
         recognition.onresult = (event) => {
-          const text = [...event.results].map((result) => result[0]?.transcript || "").join(" ").trim();
-          if (text) field2.value = `${field2.value} ${text}`.trim();
+          const text2 = [...event.results].map((result) => result[0]?.transcript || "").join(" ").trim();
+          if (text2) field2.value = `${field2.value} ${text2}`.trim();
         };
         recognition.onerror = () => toast2("Dictation stopped. Type the note.");
         recognition.onend = () => {
@@ -6166,6 +7071,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   var init_catalog_inspection_ui = __esm({
     "src/runtime/catalog-inspection-ui.js"() {
+      init_inspection_ratings();
       init_shop_inspections();
       init_print_document();
     }
@@ -6317,7 +7223,7 @@ button{margin-top:12px;padding:8px 14px}
         text: ""
       };
     }
-    const text = [
+    const text2 = [
       `Customer: ${name}`,
       `Vehicle: ${unit}`,
       `Date: ${when}`,
@@ -6328,7 +7234,7 @@ button{margin-top:12px;padding:8px 14px}
       "",
       `Result: Released the ${unit}. ${name} drove away.`
     ].join("\n");
-    return { ready: true, missing: [], text };
+    return { ready: true, missing: [], text: text2 };
   }
   function recoveryOrder(orders2) {
     return (orders2 || []).find((order) => /mud|winch|bogged|stuck/i.test(`${order.complaint || ""} ${order.notes || ""}`)) || null;
@@ -7024,9 +7930,9 @@ button{margin-top:12px;padding:8px 14px}
   }
   function isAfterMidnightFeeLine(line = {}) {
     if (line.code === "after-midnight") return true;
-    const text = normalizedFeeText(`${line.description || line.service || ""} ${line.notes || line.explanation || ""}`);
-    const hasTime = /\bmidnight\b|\bovernight\b|\blate night\b|\bafter 12(?: 00)? a?m\b/.test(text);
-    const hasCharge = /\bfee\b|\bsurcharge\b|\bdifferen(?:tial|tail)\b|\bdifferentail\b/.test(text);
+    const text2 = normalizedFeeText(`${line.description || line.service || ""} ${line.notes || line.explanation || ""}`);
+    const hasTime = /\bmidnight\b|\bovernight\b|\blate night\b|\bafter 12(?: 00)? a?m\b/.test(text2);
+    const hasCharge = /\bfee\b|\bsurcharge\b|\bdifferen(?:tial|tail)\b|\bdifferentail\b/.test(text2);
     return line.type !== "part" && hasTime && hasCharge;
   }
   function isLegacyAfterMidnightLine(line = {}) {
@@ -7202,14 +8108,14 @@ button{margin-top:12px;padding:8px 14px}
     return bytes;
   }
   function parseElmPayload(raw, command = "") {
-    const text = String(raw ?? "").trim();
-    const upper = text.toUpperCase();
+    const text2 = String(raw ?? "").trim();
+    const upper = text2.toUpperCase();
     const noData = /\bNO\s*DATA\b/.test(upper);
     const adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || "";
-    const lines = text.replace(/>/g, "\n").split(/[\r\n]+/);
+    const lines = text2.replace(/>/g, "\n").split(/[\r\n]+/);
     const frames = lines.map((line) => elmFrameBytes(line, command)).filter((frame) => frame.length);
     const bytes = frames.flat();
-    return { raw: text, noData, adapterError, frames, bytes };
+    return { raw: text2, noData, adapterError, frames, bytes };
   }
   function findServiceReply(bytes, responseService, pid) {
     for (let index = 0; index < bytes.length; index++) {
@@ -7569,6 +8475,7 @@ button{margin-top:12px;padding:8px 14px}
         { value: "in_person", label: "In-person approval" },
         { value: "email", label: "Email approval" },
         { value: "text", label: "Text approval" },
+        { value: "online", label: "Online one-tap approval" },
         { value: "other", label: "Other" }
       ]);
       APPROVAL_TYPE_VALUES = new Set(ESTIMATE_APPROVAL_TYPES.map((option) => option.value));
@@ -8064,8 +8971,8 @@ button{margin-top:12px;padding:8px 14px}
   function aiPhoneForm() {
     return `${aiFormShell("AI phone intake", "Turn a customer call transcript into service recommendations, questions, and booking guidance.", `<label class="full">Call transcript<textarea name="transcript" required placeholder="Customer: My 2016 Camry has a check engine light and shakes at stop lights..."></textarea></label>`, "Analyze call")}${aiResult?.kind === "phone" ? phoneResult(aiResult) : ""}`;
   }
-  function aiKeywords(text) {
-    return String(text || "").toLowerCase();
+  function aiKeywords(text2) {
+    return String(text2 || "").toLowerCase();
   }
   function estimateLocal(vehicle, service, notes = "") {
     const source = aiKeywords(`${service} ${notes}`), laborRate = Number(shopProfile().laborRate ?? 140), brake = /brake|rotor|pad/.test(source), oil = /oil|lube/.test(source), ac = /a\/c|air.?condition/.test(source), lines = brake ? [{ service: "Front brake pads and rotor service", hours: 2, parts: 285, notes: "Includes hardware inspection and brake bedding road test." }] : oil ? [{ service: "Synthetic oil and filter service", hours: 0.5, parts: 68, notes: "Includes multipoint inspection and fluid top-off." }] : ac ? [{ service: "A/C performance diagnosis", hours: 1.5, parts: 35, notes: "Pressure test and airflow inspection; repair parts quoted after diagnosis." }] : [{ service, hours: 1.5, parts: 110, notes: "Preliminary estimate; verify condition and part fitment before approval." }];
@@ -8076,7 +8983,7 @@ button{margin-top:12px;padding:8px 14px}
     return buildRepairGuide(vehicle, repair);
   }
   function phoneLocal(transcript) {
-    const text = aiKeywords(transcript), vehicle = (transcript.match(/(?:19|20)\d{2}\s+[A-Za-z]+(?:\s+[A-Za-z0-9-]+){0,2}/) || ["Vehicle not confirmed"])[0], urgent = /brake|smoke|overheat|stall|no.?start/.test(text), service = /brake/.test(text) ? "Brake system inspection" : /a\/c|warm/.test(text) ? "A/C performance inspection" : /check engine|rough|shake/.test(text) ? "Check-engine diagnostic" : /oil/.test(text) ? "Oil service and inspection" : "Diagnostic inspection";
+    const text2 = aiKeywords(transcript), vehicle = (transcript.match(/(?:19|20)\d{2}\s+[A-Za-z]+(?:\s+[A-Za-z0-9-]+){0,2}/) || ["Vehicle not confirmed"])[0], urgent = /brake|smoke|overheat|stall|no.?start/.test(text2), service = /brake/.test(text2) ? "Brake system inspection" : /a\/c|warm/.test(text2) ? "A/C performance inspection" : /check engine|rough|shake/.test(text2) ? "Check-engine diagnostic" : /oil/.test(text2) ? "Oil service and inspection" : "Diagnostic inspection";
     return { kind: "phone", vehicle, symptoms: transcript.slice(0, 260), service, urgency: urgent ? "Immediate" : "Soon", response: urgent ? "For safety, please avoid driving the vehicle until we can inspect it. We can prioritize an appointment today." : "We can schedule a diagnostic appointment so a technician can verify the concern and provide an accurate estimate.", questions: ["What warning lights are currently on?", "When did the concern begin and does it happen consistently?", "What is the current mileage and have there been recent repairs?"], booking: true };
   }
   function detailedDiagnosticPlan(vehicle, symptoms, dtc) {
@@ -8095,8 +9002,8 @@ button{margin-top:12px;padding:8px 14px}
     const diagnostics = detailedDiagnosticPlan(order.vehicle, order.complaint, ""), estimate = estimateLocal(order.vehicle, order.complaint, order.notes), guide = detailedGuide(order.vehicle, estimate.lines[0].service);
     return { kind: "workflow", orderId: order.id, order: { customer: order.customer, vehicle: order.vehicle, vin: order.vin || "VIN pending", complaint: order.complaint, technician: order.tech || "Unassigned", bay: order.bay || "Unassigned", promise: order.promise || "Not scheduled", notes: order.notes || "" }, diagnostics, estimate, guide, recommended: [{ service: "Multipoint inspection", reason: "Confirm related wear items while the vehicle is in service.", cost: 0 }, { service: "Fluid and maintenance review", reason: "Check manufacturer interval items during the repair visit.", cost: 45 }] };
   }
-  function worksheetCheck(label2, text) {
-    return `<li><span class="print-check">&#9633;</span><div><b>${escapeHtml(label2)}</b><p>${escapeHtml(text)}</p></div></li>`;
+  function worksheetCheck(label2, text2) {
+    return `<li><span class="print-check">&#9633;</span><div><b>${escapeHtml(label2)}</b><p>${escapeHtml(text2)}</p></div></li>`;
   }
   function workflowResult(result) {
     const order = result.order || {}, causes = result.diagnostics.causes.map((cause) => `<article class="cause-card"><div class="cause-title"><h3>${escapeHtml(cause.cause)}</h3><span class="ai-tag ${cause.likelihood.toLowerCase()}">${cause.likelihood}</span></div><p>${escapeHtml(cause.explanation)}</p><small><b>Evidence that raises likelihood:</b> ${escapeHtml(cause.evidence)}</small><div class="cause-tools"><b>Tools:</b> ${cause.tools.map(escapeHtml).join(" \xB7 ")}</div>${cause.tests.map((test, index) => `<section class="test-procedure"><h4>Test ${index + 1}: ${escapeHtml(test.name)}</h4><ol>${test.procedure.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol><div class="expected-readings"><p><b>Pass / normal:</b> ${escapeHtml(test.good)}</p><p><b>Fail / supports cause:</b> ${escapeHtml(test.bad)}</p></div><div class="worksheet-reading">Actual reading / observation: ______________________________________________</div></section>`).join("")}<h4>Repair options after confirmation</h4><ul class="repair-options">${cause.repairs.map((option) => worksheetCheck("Option", option)).join("")}</ul></article>`).join(""), parts = result.estimate.lines.map((line) => `<tr><td>${escapeHtml(line.service)}</td><td>${line.hours.toFixed(2)}</td><td>${money4(line.parts)}</td><td><b>${money4(line.total)}</b></td></tr>`).join(""), steps = result.guide.steps.map((step, index) => worksheetCheck(`Step ${index + 1}`, stepText(step))).join(""), safety = result.guide.safety.map((item) => `<li>${escapeHtml(item)}</li>`).join(""), qc = result.guide.postRepair.map((item, index) => worksheetCheck(`QC ${index + 1}`, item)).join("");
@@ -8846,10 +9753,10 @@ button{margin-top:12px;padding:8px 14px}
     document.querySelector("#toast-region").append(node);
     setTimeout(() => node.remove(), 2600);
   }
-  function nav(route, iconName, text, count = "") {
+  function nav(route, iconName, text2, count = "") {
     if (!canAccess(route)) return "";
     const current = state.route === route;
-    return `<button class="nav-button ${current ? "active" : ""}" data-route="${route}"${current ? ' aria-current="page"' : ""}>${icon(iconName)}<span>${text}</span>${count !== "" && count !== "0" ? `<span class="count">${count}</span>` : ""}</button>`;
+    return `<button class="nav-button ${current ? "active" : ""}" data-route="${route}"${current ? ' aria-current="page"' : ""}>${icon(iconName)}<span>${text2}</span>${count !== "" && count !== "0" ? `<span class="count">${count}</span>` : ""}</button>`;
   }
   function sidebarNavigation() {
     const counts = { active: visibleOrders().filter((x) => !["completed", "invoiced"].includes(x.status)).length, orders: visibleOrders().length, overdue: state.invoices.filter((x) => x.status === "overdue").length, unread: state.conversations.reduce((sum, item) => sum + chatUnread(item), 0) };
@@ -9028,7 +9935,7 @@ button{margin-top:12px;padding:8px 14px}
       const status = reminderStatus(item), vehicle = reminderVehicle(item), statusLabel3 = status === "upcoming" ? "Upcoming" : status[0].toUpperCase() + status.slice(1), statusClass = status === "sent" ? "paid" : status === "overdue" ? "overdue" : status === "due" ? "approved" : "estimate";
       return `<tr class="clickable-row" data-edit-reminder="${item.id}"><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.service)}${item.parentReminderId ? `<small>Follow-up reminder</small>` : ""}</td><td>${item.dueDate || "Date pending"}<small>${item.dueMileage ? `${item.dueMileage} miles${vehicle?.mileage ? ` \xB7 current ${vehicle.mileage}` : ""}` : "No mileage trigger"}</small></td><td><span class="badge ${statusClass}">${statusLabel3}</span>${item.sentAt ? `<small>${new Date(item.sentAt).toLocaleString()}</small>` : ""}</td><td><div class="reminder-actions"><button class="mini-action" data-edit-reminder-button="${item.id}">${icon("pencil", 13)} Edit</button>${item.sentAt ? `<button class="mini-action" data-follow-up-reminder="${item.id}">${icon("calendar-plus", 13)} Follow up</button>` : `<button class="mini-action" data-send-reminder="${item.id}">${icon("send", 13)} Send</button>`}</div></td></tr>`;
     }).join("");
-    return `<div class="ops-actions reminder-toolbar"><div class="tabs reminder-filters">${filters.map(([value2, text]) => `<button class="tab ${reminderFilter === value2 ? "active" : ""}" data-reminder-filter="${value2}">${text}</button>`).join("")}</div><button class="primary" id="add-reminder">${icon("bell-plus", 14)} Add reminder</button></div><div class="data-panel reminder-table"><table><thead><tr><th>Customer & vehicle</th><th>Service</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No ${reminderFilter === "all" ? "maintenance" : reminderFilter} reminders.</td></tr>`}</tbody></table></div>`;
+    return `<div class="ops-actions reminder-toolbar"><div class="tabs reminder-filters">${filters.map(([value2, text2]) => `<button class="tab ${reminderFilter === value2 ? "active" : ""}" data-reminder-filter="${value2}">${text2}</button>`).join("")}</div><button class="primary" id="add-reminder">${icon("bell-plus", 14)} Add reminder</button></div><div class="data-panel reminder-table"><table><thead><tr><th>Customer & vehicle</th><th>Service</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No ${reminderFilter === "all" ? "maintenance" : reminderFilter} reminders.</td></tr>`}</tbody></table></div>`;
   }
   function operationsDiagnostics() {
     const output = state.elmOutput || "Connect an ELM327 for generic OBD-II data. OEM programming, module coding, and bidirectional controls are in OEM diagnostics.", friendly = typeof output === "string" ? output : output.friendly, raw = typeof output === "object" ? output.raw : "";
@@ -9047,7 +9954,7 @@ button{margin-top:12px;padding:8px 14px}
       return false;
     }
     try {
-      const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+      const revised = appendEstimateLinesToOrder(order, applyLaborMatrix(applyPartsMatrix(lines, shopPricing(), state.inventory), shopPricing(), Number(shopProfile().laborRate) || 0), { editedAt: now(), taxRate: state.taxSettings.rate });
       const saved = await updateOrderInApi(revised, { throwOnError: true });
       Object.assign(order, saved?.queued ? revised : saved);
       save();
@@ -9275,15 +10182,15 @@ button{margin-top:12px;padding:8px 14px}
     win.document.close();
   }
   function shareInspectionReport(inspection) {
-    const counts = (inspection.items || []).reduce((t, r) => (t[r.status] = (t[r.status] || 0) + 1, t), {}), text = `Inspection ${inspection.number} \xB7 ${inspection.vehicle} \xB7 ${inspection.customer}
+    const counts = (inspection.items || []).reduce((t, r) => (t[r.status] = (t[r.status] || 0) + 1, t), {}), text2 = `Inspection ${inspection.number} \xB7 ${inspection.vehicle} \xB7 ${inspection.customer}
 Results: ${counts.pass || 0} pass, ${counts.attention || 0} attention, ${counts.fail || 0} fail
 ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
 ` : ""}Date: ${new Date(inspection.createdAt).toLocaleDateString()}`;
     if (navigator.share) {
-      navigator.share({ title: `Inspection ${inspection.number}`, text }).catch(() => {
+      navigator.share({ title: `Inspection ${inspection.number}`, text: text2 }).catch(() => {
       });
     } else {
-      navigator.clipboard.writeText(text).then(() => toast("Report copied to clipboard")).catch(() => toast("Could not copy report"));
+      navigator.clipboard.writeText(text2).then(() => toast("Report copied to clipboard")).catch(() => toast("Could not copy report"));
     }
   }
   function openInspectionApproval(inspection) {
@@ -9486,8 +10393,8 @@ ${inspection.recommendations ? `Recommendations: ${inspection.recommendations}
     return bytes;
   }
   function normalizeElmResponse(raw, command = "") {
-    const text = String(raw ?? "").trim(), upper = text.toUpperCase(), noData = /\bNO\s*DATA\b/.test(upper), adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || "", lines = text.replace(/>/g, "\n").split(/[\r\n]+/), frames = lines.map((line) => elmLineBytes(line, command)).filter((frame) => frame.length), bytes = frames.flat();
-    return { raw: text, noData, adapterError, frames, bytes };
+    const text2 = String(raw ?? "").trim(), upper = text2.toUpperCase(), noData = /\bNO\s*DATA\b/.test(upper), adapterError = (upper.match(/\b(?:UNABLE TO CONNECT|BUS ERROR|CAN ERROR|BUFFER FULL|ERROR)\b/) || [])[0] || "", lines = text2.replace(/>/g, "\n").split(/[\r\n]+/), frames = lines.map((line) => elmLineBytes(line, command)).filter((frame) => frame.length), bytes = frames.flat();
+    return { raw: text2, noData, adapterError, frames, bytes };
   }
   function findElmReply(bytes, mode, pid) {
     for (let index = 0; index < bytes.length; index++) {
@@ -10029,8 +10936,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       const d = new Date(payment.receivedAt);
       return d >= from && d <= to;
     }).map((payment) => {
-      const invoice = invoices2.get(payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100, tax: Math.round(bd.tax * ratio * 100) / 100 };
+      const invoice = invoices2.get(payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio2 * 100) / 100, tax: Math.round(bd.tax * ratio2 * 100) / 100 };
     }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const totals = rows.reduce((acc, row) => ({ gross: acc.gross + row.gross, taxable: acc.taxable + row.taxable, tax: acc.tax + row.tax }), { gross: 0, taxable: 0, tax: 0 });
     return { from: fromDate, to: toDate, rows, totals };
@@ -10113,7 +11020,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       if (textToPay) {
         const customer = state.customers.find((item) => item.id === invoice.customerId || item.name === invoice.customer), phone = invoice.phone || customer?.phone;
         if (!phone) throw new Error("Add a customer phone number before sending text-to-pay");
-        const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${state.messagingSettings.shopName || "Your shop"} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
+        const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${shopDisplayName()} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
         toast(result.mode === "shopcrank_sms" ? `Text-to-pay sent for ${invoice.number}` : `Text-to-pay opened in the device messaging app`);
       } else if (checkoutWindow) checkoutWindow.location = data.url;
       else window.location.assign(data.url);
@@ -11479,8 +12386,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function finance() {
     const paid = paymentRecords(), open = state.invoices.filter((invoice) => invoiceBalance(invoice) > 0), income = paid.reduce((s, payment) => s + payment.amount, 0), expenses = state.expenses.reduce((s, x) => s + Number(x.amount || 0), 0), tax = paid.reduce((s, payment) => {
-      const invoice = state.invoices.find((item) => item.number === payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      return s + bd.tax * ratio;
+      const invoice = state.invoices.find((item) => item.number === payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+      return s + bd.tax * ratio2;
     }, 0), manualIncome = state.journalEntries.filter((x) => x.creditAccount === "4000").reduce((s, x) => s + x.amount, 0), manualExpense = state.journalEntries.filter((x) => /^5|^6/.test(x.debitAccount)).reduce((s, x) => s + x.amount, 0);
     return { income: income + manualIncome, expenses: expenses + manualExpense, net: income + manualIncome - expenses - manualExpense, receivable: open.reduce((s, invoice) => s + invoiceBalance(invoice), 0), overdue: open.filter((invoice) => invoice.status === "overdue").reduce((s, invoice) => s + invoiceBalance(invoice), 0), tax, open };
   }
@@ -11556,8 +12463,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const p = importPreview, rows = p.records.slice(0, 5).map((record, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(Object.values(record).slice(0, 4).join(" \xB7 "))}</td></tr>`).join("");
     return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} records</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>`;
   }
-  function prepareImport(type, text) {
-    return prepareImportRecords(type, text, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
+  function prepareImport(type, text2) {
+    return prepareImportRecords(type, text2, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
   }
   function downloadTemplate(type) {
     const link = document.createElement("a"), file = importTypes[type];
@@ -13484,9 +14391,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     for (const payment of payments2) {
       const invoice = state.invoices.find((item) => item.number === payment.invoiceNumber);
       const bd = invoiceTaxBreakdown(invoice);
-      const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      salesTax += bd.tax * ratio;
-      revenue += payment.amount - bd.tax * ratio;
+      const ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+      salesTax += bd.tax * ratio2;
+      revenue += payment.amount - bd.tax * ratio2;
     }
     const manualIncome = journals.filter((x) => x.creditAccount === "4000").reduce((s, x) => s + Number(x.amount || 0), 0);
     const manualExpense = journals.filter((x) => /^5|^6/.test(x.debitAccount)).reduce((s, x) => s + Number(x.amount || 0), 0);
@@ -13502,8 +14409,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function taxPackageView() {
     const presets = filingPeriodPresets();
-    const range = taxPackageRange || presets.ytd;
-    const pack = buildTaxPackage(range.from, range.to);
+    const range2 = taxPackageRange || presets.ytd;
+    const pack = buildTaxPackage(range2.from, range2.to);
     const catRows = Object.entries(pack.byCategory).map(([cat, amt]) => `<div class="statement-line"><span>${escapeHtml(cat)}</span><b>${money4(amt)}</b></div>`).join("") || '<div class="statement-line"><span>No expenses in range</span><b>$0.00</b></div>';
     return `<div class="tax-package-print" id="tax-package-printable">
 <div class="payroll-period-controls no-print" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
@@ -13530,8 +14437,8 @@ ${catRows}
   }
   function exportTaxPackagePl() {
     const presets = filingPeriodPresets();
-    const range = taxPackageRange || presets.ytd;
-    const pack = buildTaxPackage(range.from, range.to);
+    const range2 = taxPackageRange || presets.ytd;
+    const pack = buildTaxPackage(range2.from, range2.to);
     const rows = [
       ["Cash-basis profit and loss"],
       ["From", pack.from],
@@ -13550,8 +14457,8 @@ ${catRows}
   }
   function exportTaxPackageExpenses() {
     const presets = filingPeriodPresets();
-    const range = taxPackageRange || presets.ytd;
-    const pack = buildTaxPackage(range.from, range.to);
+    const range2 = taxPackageRange || presets.ytd;
+    const pack = buildTaxPackage(range2.from, range2.to);
     const rows = [
       ["Date", "Vendor", "Category", "Account", "Amount", "Memo"],
       ...pack.expenses.map((x) => [x.date, x.vendor, x.category, x.account || expenseAccount(x.category), x.amount, x.memo || ""])
@@ -13689,8 +14596,8 @@ ${catRows}
       };
     });
     const w2Employees = employees2.filter((e) => !String(e.taxStatus || "").includes("1099"));
-    const text = buildEfw2Text({ ein: shop.ein, name: shop.shopName, address: shop.address }, w2Employees, year);
-    downloadTextFile(`shopcrank-efw2-${year}.txt`, text, "text/plain;charset=utf-8");
+    const text2 = buildEfw2Text({ ein: shop.ein, name: shop.shopName, address: shop.address }, w2Employees, year);
+    downloadTextFile(`shopcrank-efw2-${year}.txt`, text2, "text/plain;charset=utf-8");
     toast("SSA EFW2 package downloaded");
   }
   function printEmployeeAnnualForm(userId) {
@@ -14769,6 +15676,216 @@ ${line}`.trim();
       };
     });
   }
+  function smsReadMarks() {
+    try {
+      return JSON.parse(localStorage.getItem(SMS_READ_MARKS) || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+  function markSmsThreadRead(key) {
+    if (!key) return;
+    const marks = smsReadMarks();
+    marks[key] = (/* @__PURE__ */ new Date()).toISOString();
+    localStorage.setItem(SMS_READ_MARKS, JSON.stringify(marks));
+  }
+  function smsThreads() {
+    return groupThreads(smsInbox.messages, state.customers, smsReadMarks());
+  }
+  function smsComposerBusy() {
+    return Boolean(document.querySelector("#sms-reply-form textarea, #sms-new-form textarea")?.value || document.activeElement?.closest?.(".sms-composer"));
+  }
+  async function loadSmsInbox({ quiet = false } = {}) {
+    if (smsInbox.loading) return;
+    smsInbox.loading = true;
+    const before = smsInbox.messages[0]?.id;
+    try {
+      const result = await apiFetch("/messaging/threads");
+      smsInbox = { ...smsInbox, loaded: true, enabled: Boolean(result.enabled), messages: result.messages || [], error: "" };
+    } catch (error) {
+      smsInbox = { ...smsInbox, loaded: true, error: error.message || "Could not load customer texts" };
+    } finally {
+      smsInbox.loading = false;
+    }
+    if (state.route !== "messaging") return;
+    if (!quiet || smsInbox.messages[0]?.id !== before && !smsComposerBusy()) render();
+  }
+  async function sendSmsFromInbox(form, data) {
+    const button = form.querySelector("button[type=submit]");
+    const to = toE164(data.to);
+    const body = String(data.body || "").trim();
+    if (!body) return;
+    button.disabled = true;
+    try {
+      const customer = state.customers.find((item) => phoneKey(item.phone) === phoneKey(to));
+      await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+      smsInbox.selectedKey = phoneKey(to);
+      toast("Text sent");
+      await loadSmsInbox();
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "Text could not be sent");
+    }
+  }
+  function bindSmsInbox() {
+    document.querySelectorAll("[data-sms-thread]").forEach((button) => {
+      button.onclick = () => {
+        smsInbox.selectedKey = button.dataset.smsThread;
+        render();
+      };
+    });
+    for (const id of ["#sms-reply-form", "#sms-new-form"]) {
+      document.querySelector(id)?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void sendSmsFromInbox(event.target, readFormValues(event.target));
+      });
+    }
+    document.querySelector(".sms-conversation")?.scrollTo?.({ top: 1e6 });
+    clearInterval(smsInboxTimer);
+    if (state.route === "messaging" && smsInbox.enabled) smsInboxTimer = setInterval(() => {
+      if (state.route !== "messaging") {
+        clearInterval(smsInboxTimer);
+        return;
+      }
+      void loadSmsInbox({ quiet: true });
+    }, 2e4);
+  }
+  function declinedWork() {
+    return declinedWorkItems(state.orders);
+  }
+  async function updateDeclinedFollowUp(key, change) {
+    const item = declinedWork().find((entry) => entry.key === key);
+    const index = state.orders.findIndex((order) => order.id === item?.orderId);
+    if (!item || index < 0) return null;
+    state.orders[index] = recordDeclinedFollowUp(state.orders[index], item.lineId, { ...change, by: currentUser()?.id || "" });
+    save();
+    await updateOrderInApi(state.orders[index], { throwOnError: false });
+    return item;
+  }
+  function bindDeclinedWork() {
+    document.querySelectorAll("[data-declined-text]").forEach((button) => {
+      button.onclick = async () => {
+        const item = declinedWork().find((entry) => entry.key === button.dataset.declinedText);
+        if (!item) return;
+        const customer = state.customers.find((entry) => entry.id === item.customerId || entry.name === item.customer);
+        const phone = item.phone || customer?.phone;
+        if (!phone) return toast("Add a phone number for this customer first");
+        button.disabled = true;
+        try {
+          await deliverShopMessage({ channel: "sms", to: toE164(phone), subject: "", body: declinedFollowUpMessage(item, shopDisplayName()), metadata: { type: "reminder", customerId: customer?.id, workOrderId: item.orderId } });
+          await updateDeclinedFollowUp(item.key, { contacted: true, note: "Text follow-up" });
+          toast(`Follow-up sent to ${item.customer}`);
+          render();
+        } catch (error) {
+          button.disabled = false;
+          toast(error.message || "Follow-up could not be sent");
+        }
+      };
+    });
+    document.querySelectorAll("[data-declined-sold]").forEach((button) => {
+      button.onclick = async () => {
+        if (await updateDeclinedFollowUp(button.dataset.declinedSold, { sold: true })) {
+          toast("Marked as sold");
+          render();
+        }
+      };
+    });
+  }
+  function sessionShopId() {
+    try {
+      return JSON.parse(sessionStorage.getItem(storageKeys.session) || "null")?.claims?.["custom:shopId"] || "";
+    } catch {
+      return "";
+    }
+  }
+  function growthSettingsRecord(id) {
+    return state.shopSettingsRecords.find((item) => item.id === id) || {};
+  }
+  function bindGrowthSettings() {
+    document.querySelector("#growth-settings-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.target.querySelector("button[type=submit]");
+      button.disabled = true;
+      try {
+        const { booking, followups } = growthSettingsRecords(readFormValues(event.target), { booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups") });
+        await saveShopEntity("shopsettings", { ...growthSettingsRecord("booking"), ...booking });
+        await saveShopEntity("shopsettings", { ...growthSettingsRecord("followups"), ...followups });
+        toast("Booking and follow-up settings saved");
+        render();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Settings could not be saved");
+      }
+    });
+    document.querySelector("#growth-run-now")?.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        const report = await apiFetch("/followups/run", { method: "POST", body: "{}" });
+        if (report.skippedReason === "disabled") toast("Automatic follow-up texts are turned off until ShopCrank's texting registration is approved");
+        else toast(`Sent ${report.remindersSent} reminder(s) and ${report.reviewRequestsSent} review request(s)${report.skipped ? ` \xB7 ${report.skipped} skipped (no texting number, opted out, or missing phone)` : ""}`);
+      } catch (error) {
+        toast(error.message || "Follow-ups could not run");
+      }
+      event.currentTarget.disabled = false;
+    });
+    document.querySelector("#booking-link-copy")?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(document.querySelector("#booking-link")?.value || "");
+        toast("Booking link copied");
+      } catch {
+        toast("Select the link and copy it");
+      }
+    });
+  }
+  function shopPricing() {
+    return pricingSettings(state.shopSettingsRecords.find((item) => item.id === "pricing") || {});
+  }
+  function editorCarry(row) {
+    try {
+      return JSON.parse(row.dataset.carry || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+  function showMarginWarnings(root, lines) {
+    const host = root.parentElement || root;
+    let panel = host.querySelector(".margin-warnings");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.className = "margin-warnings";
+      root.insertAdjacentElement("afterend", panel);
+    }
+    panel.innerHTML = safeHtml(marginWarningsHtml(marginWarnings(lines, shopPricing(), state.inventory), { money: money4, escapeHtml }));
+    panel.querySelectorAll("[data-apply-matrix]").forEach((button) => {
+      button.onclick = () => {
+        const row = [...root.querySelectorAll(".job-estimate-line")].find((item) => item.dataset.lineId === button.dataset.applyMatrix);
+        const price = Number(button.dataset.price);
+        if (!row || !(price > 0)) return;
+        row.querySelector(".job-line-rate").value = price.toFixed(2);
+        refreshEstimateEditor(root);
+      };
+    });
+  }
+  function scanVehicleText(scan, order) {
+    const vehicle = state.vehicles.find((item) => order.vin && item.vin === order.vin || order.vehicleId && item.id === order.vehicleId);
+    return [scan.vehicle, scan.engine, order.vehicle, order.engine, vehicle?.engine, vehicle?.trim].filter(Boolean).join(" ");
+  }
+  async function sendScanEstimateForApproval(scanId) {
+    const scan = state.diagnosticSessions.find((item) => item.id === scanId);
+    const order = state.orders.find((item) => item.id === scan?.orderId);
+    if (!scan || !order) return toast("Link this scan to a repair order first");
+    const codes = scan.aiAnalysis?.codes?.length ? scan.aiAnalysis.codes : (scan.dtcs || []).map((item) => item.code || item);
+    const aiLines = scan.aiAnalysis?.draft && !scan.aiAnalysis.appliedAt ? diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes }) : [];
+    const { lines, matches } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
+    const existing = new Set((order.estimate?.lines || []).map((line) => line.id));
+    const fresh = lines.filter((line) => !existing.has(line.id));
+    if (!fresh.length && !(order.estimate?.lines || []).length) return toast("No canned services or AI lines matched these codes");
+    if (fresh.length && !await addLinesToTargetOrder(fresh, "the scan estimate", order.id)) return;
+    await sendJobEstimate(state.orders.find((item) => item.id === order.id), "sms");
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: scan.aiAnalysis.appliedAt || now(), approvalSentAt: now(), cannedServices: matches.map((match) => match.service.id) } });
+    toast(scanEstimateSummary({ matches, lines: fresh }));
+    render();
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -14867,22 +15984,22 @@ ${line}`.trim();
         activeGrokPhase = nextPhase;
         updateGrokVoiceUiControls();
       },
-      onUserTranscript: (text, { final }) => {
+      onUserTranscript: (text2, { final }) => {
         if (liveUserMsgIndex < 0 || assistantConversation[liveUserMsgIndex]?.role !== "user") {
           liveUserMsgIndex = assistantConversation.length;
-          assistantConversation.push({ role: "user", content: text });
+          assistantConversation.push({ role: "user", content: text2 });
         } else {
-          assistantConversation[liveUserMsgIndex].content = text;
+          assistantConversation[liveUserMsgIndex].content = text2;
         }
         if (final) liveUserMsgIndex = -1;
         refreshAssistantList();
       },
-      onAssistantTranscript: (text, { final }) => {
+      onAssistantTranscript: (text2, { final }) => {
         if (liveAssistantMsgIndex < 0 || assistantConversation[liveAssistantMsgIndex]?.role !== "assistant") {
           liveAssistantMsgIndex = assistantConversation.length;
-          assistantConversation.push({ role: "assistant", content: text, actions: [] });
+          assistantConversation.push({ role: "assistant", content: text2, actions: [] });
         } else {
-          assistantConversation[liveAssistantMsgIndex].content = text;
+          assistantConversation[liveAssistantMsgIndex].content = text2;
         }
         if (final) liveAssistantMsgIndex = -1;
         refreshAssistantList();
@@ -14950,7 +16067,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -14976,6 +16093,15 @@ ${line}`.trim();
       init_ai_workflow();
       init_customer_intake();
       init_vehicle_key_license();
+      init_sms_inbox();
+      init_inspection_ratings();
+      init_call_log();
+      init_growth_settings();
+      init_shop_kpis();
+      init_vehicle_lookups();
+      init_pricing_matrix();
+      init_scan_to_estimate();
+      init_import_mappers();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -15030,6 +16156,7 @@ ${line}`.trim();
         services: [],
         inspectionTemplates: [],
         inspections: [],
+        calls: [],
         reminders: [],
         appointments: [
           { id: "apt-1048", sampleData: true, customer: "Demo Customer A", vehicle: "2018 Ford F-150 XLT", date: "2026-09-09", time: "09:00", service: "Brake inspection follow-up", tech: "Tech A", bay: "Bay 2", status: "confirmed" },
@@ -15140,7 +16267,7 @@ ${line}`.trim();
         pill.outerHTML = safeHtml(syncStatusBadge());
         lucide.createIcons();
       }));
-      shopEntityCollections = { vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
+      shopEntityCollections = { calls: "calls", vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
       shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
       roleLabel = { super_admin: "Super Admin", admin: "Admin", technician: "Technician", office: "Office", service_writer: "Service Writer" };
       roleRoutes = { super_admin: ["superadmin"], admin: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "accounting", "payroll", "messaging", "payments", "integrations", "support", "imports", "reports", "settings", "employees"], technician: ["dispatch", "orders", "schedule", "shopops", "oem-diagnostics", "obd", "keys", "chat", "ai", "payroll", "integrations", "support"], office: ["customers", "shopops", "chat", "invoices", "pos", "accounting", "messaging", "integrations", "support"], service_writer: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "messaging", "integrations", "support"] };
@@ -15177,7 +16304,7 @@ ${line}`.trim();
         return shell(`${heading("Administration", "Shop settings", "Branding, invoice defaults, tax, and optional provider readiness.", false)}<form class="settings-panel form-grid" id="shop-profile-form"><label>Shop name<input name="shopName" value="${escapeHtml(profile.shopName)}" required/></label><label>Phone<input name="phone" value="${escapeHtml(profile.phone)}"/></label><label class="full">Address<input name="address" value="${escapeHtml(profile.address)}"/></label><label>Logo URL<input name="logoUrl" type="url" value="${escapeHtml(profile.logoUrl)}"/></label><label>Default labor rate<input name="laborRate" type="number" step=".01" value="${Number(profile.laborRate)}"/></label><label>Mileage rate ($/mi)<input name="mileageRate" type="number" min="0" step=".01" value="${Number(profile.mileageRate ?? 0.68)}"/></label><label class="full">Invoice footer<input name="invoiceFooter" value="${escapeHtml(profile.invoiceFooter)}"/></label><div class="full service-contract"><h2>Commercial integrations</h2><p>CarFax service history and license-plate recognition require provider contracts and server-side credentials. They remain unavailable until configured by the platform operator.</p></div><label class="toggle-field"><input type="checkbox" disabled ${profile.carfaxEnabled ? "checked" : ""}/><span>CarFax provider configured</span></label><label class="toggle-field"><input type="checkbox" disabled ${profile.plateProviderEnabled ? "checked" : ""}/><span>Plate recognition configured</span></label><div class="full"><button class="primary">${icon("save", 14)} Save business profile</button></div></form><div class="settings-panel"><form class="form-grid" id="tax-settings-form"><label>Filing state<select name="state">${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${escapeHtml(t.taxId)}"/></label><label>Sales tax rate %<input name="rate" type="number" step=".01" min="0" value="${t.rate}"/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary">Save tax settings</button></div></form></div>`);
       };
       schedule = function() {
-        return scheduleWorkspace();
+        return scheduleWorkspace().replace(/<\/main>(?![\s\S]*<\/main>)/, `${callLogHtml(state.calls || [], { escapeHtml, escapeAttr, icon, time: (value2) => value2 ? new Date(value2).toLocaleString() : "" })}</main>`);
       };
       newOrderEstimateRow = function(line = { service: "Custom service", notes: "Describe the inspection, labor, parts, and verification included with this service.", hours: 1, parts: 0, discount: 0 }) {
         const inventoryOptions = state.inventory.map((item) => `<option value="${escapeHtml(item.id)}" ${line.inventoryId === item.id ? "selected" : ""}>${escapeHtml(item.sku || "No SKU")} \xB7 ${escapeHtml(item.name)} (${Number(item.quantity || 0)} on hand)</option>`).join("");
@@ -16304,7 +17431,7 @@ ${line}`.trim();
       };
       estimateEditorLine = function(line = {}, index = 0, removable = true) {
         const item = normalizeEstimateLine(line, index), description = estimateEditorDescription(line, item.description), part = item.type === "part", fee = item.type === "fee", laborSource = item.laborSource || "Unverified shop estimate";
-        return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}">
+        return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}" data-carry="${escapeAttr(JSON.stringify(editorCarryFields(line)))}">
     <div class="estimate-line-head"><strong>${part ? "Part" : fee ? "Fee" : "Labor"} line</strong><div>${!part && !fee ? `<button class="mini-action lookup-labor-time" type="button">${icon("badge-check", 13)} Labor guide</button>` : ""}${removable ? `<button class="icon-button remove-job-line" type="button" title="Remove line">${icon("trash-2", 14)}</button>` : ""}</div></div>
     <div class="form-grid">
       <label>Type<select class="job-line-type" ${item.code ? "disabled" : ""}><option value="labor" ${!part && !fee ? "selected" : ""}>Labor</option><option value="part" ${part ? "selected" : ""}>Part</option><option value="fee" ${fee ? "selected" : ""}>Fee</option></select></label>
@@ -16327,6 +17454,8 @@ ${line}`.trim();
           const inventory = type === "part" ? state.inventory.find((item) => item.id === row.querySelector(".job-line-inventory").value) : null;
           const partNumber = type === "part" ? (row.querySelector(".job-line-part-number")?.value || "").trim() : "";
           return normalizeEstimateLine({
+            ...editorCarry(row),
+            ...inventory && Number(inventory.cost) > 0 ? { cost: Number(inventory.cost) } : {},
             id: row.dataset.lineId || `line-${Date.now()}-${index}`,
             type,
             description: row.querySelector(".job-line-description").value.trim(),
@@ -16383,6 +17512,7 @@ ${line}`.trim();
         if (summary) summary.innerHTML = `<span>Parts <b>${money4(estimate.parts)}</b></span><span>Labor <b>${money4(estimate.labor)}</b></span><span>Fees <b>${money4(estimate.lineFees)}</b></span><span>Supplies <b>${money4(supplies)}</b></span><span>Discount <b>-${money4(estimate.discountAmount)}</b></span><span>Tax <b>${money4(estimate.tax)}</b></span><strong>Total ${money4(estimate.total)}</strong>`;
         const total = document.querySelector("#new-estimate-total");
         if (total && root.id === "new-estimate-lines") total.value = estimate.total.toFixed(2);
+        showMarginWarnings(root, estimate.lines);
       };
       coherentOrderEstimate = function(order) {
         const source = order.estimate || {};
@@ -16616,10 +17746,10 @@ ${line}`.trim();
         }).map((payment) => {
           const invoice = invoices2.get(payment.invoiceNumber);
           const bd = invoiceTaxBreakdown(invoice);
-          const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+          const ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
           const gross = Number(payment.amount);
-          const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100;
-          const tax = Math.round(bd.tax * ratio * 100) / 100;
+          const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio2 * 100) / 100;
+          const tax = Math.round(bd.tax * ratio2 * 100) / 100;
           const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
           return {
             date: payment.receivedAt,
@@ -17167,6 +18297,184 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         }
         renderKeyLicenseCore();
       };
+      SMS_READ_MARKS = "shopcrank-sms-read-v1";
+      smsInbox = { loaded: false, loading: false, enabled: false, messages: [], selectedKey: "", error: "" };
+      smsInboxTimer = 0;
+      messagingTwilioPanelSmsCore = messagingTwilioPanelHtml;
+      messagingTwilioPanelHtml = function() {
+        if (!smsInbox.loaded) void loadSmsInbox();
+        const threads = smsThreads();
+        const selectedKey = smsInbox.selectedKey || threads[0]?.key || "";
+        if (selectedKey && state.route === "messaging") markSmsThreadRead(selectedKey);
+        return `${smsInboxHtml({ ...smsInbox, threads, selectedKey }, { escapeHtml, escapeAttr, icon, time: (value2) => new Date(value2).toLocaleString() })}${messagingTwilioPanelSmsCore()}`;
+      };
+      bindSmsInboxCore = bind;
+      bind = function() {
+        bindSmsInboxCore();
+        if (state.route === "messaging") bindSmsInbox();
+      };
+      shopOperationsDeclinedCore = shopOperations;
+      shopOperations = function() {
+        const declinedTab = (active) => `<button class="tab ${active ? "active" : ""}" data-ops-tab="declined">Declined work${declinedWorkSummary(declinedWork()).dueCount ? ` <span class="badge">${declinedWorkSummary(declinedWork()).dueCount}</span>` : ""}</button>`;
+        const addTab = (markup, active) => markup.replace(/(<div class="accounting-tabs ops-tabs">[\s\S]*?)(<\/div>)/, (_, tabs2, end) => `${active ? tabs2.replace(/class="tab active"/g, 'class="tab "') : tabs2}${declinedTab(active)}${end}`);
+        if (shopOpsTab !== "declined") return addTab(shopOperationsDeclinedCore(), false);
+        shopOpsTab = "vehicles";
+        const base = shopOperationsDeclinedCore();
+        shopOpsTab = "declined";
+        const tabs = (addTab(base, true).match(/<div class="accounting-tabs ops-tabs">[\s\S]*?<\/div>/) || [""])[0];
+        return shell(`${heading("Connected workflow", "Shop operations", "Recommendations customers declined, with follow-up dates. Red findings come due in 3 days, everything else in 30.", false)}${tabs}${declinedWorkHtml(declinedWork(), { escapeHtml, escapeAttr, money: money4, icon, date: (value2) => value2 ? new Date(value2).toLocaleDateString() : "" })}`);
+      };
+      bindDeclinedWorkCore = bind;
+      bind = function() {
+        bindDeclinedWorkCore();
+        if (state.route === "shopops" && shopOpsTab === "declined") bindDeclinedWork();
+      };
+      settingsGrowthCore = settings;
+      settings = function() {
+        const page = settingsGrowthCore();
+        if (isOfflineDesktop()) return page;
+        const panel = growthSettingsHtml({ booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups"), shopId: sessionShopId(), origin: location.origin, canSave: currentUser()?.role === "admin" }, { escapeHtml, escapeAttr, icon });
+        return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+      };
+      bindGrowthSettingsCore = bind;
+      bind = function() {
+        bindGrowthSettingsCore();
+        if (state.route === "settings") bindGrowthSettings();
+      };
+      kpiPeriod = "month";
+      reportsKpiCore = reports;
+      reports = function() {
+        const page = reportsKpiCore();
+        const range2 = periodRange(kpiPeriod);
+        const kpis = computeShopKpis({ invoices: state.invoices, orders: state.orders, jobClockEntries: state.jobClockEntries || [], shiftEntries: state.shiftEntries || [], users: state.users, inventory: state.inventory || [], from: range2.from, to: range2.to });
+        const dashboard = kpiDashboardHtml(kpis, { period: kpiPeriod, label: range2.label, money: money4, escapeHtml, icon });
+        const marker = '<section class="messaging-panel">';
+        return page.includes(marker) ? page.replace(marker, `${dashboard}${marker}`) : page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${dashboard}</main>`);
+      };
+      bindKpiCore = bind;
+      bind = function() {
+        bindKpiCore();
+        if (state.route === "reports") document.querySelectorAll("[data-kpi-period]").forEach((button) => {
+          button.onclick = () => {
+            kpiPeriod = button.dataset.kpiPeriod;
+            render();
+          };
+        });
+      };
+      openVehicleFormLookupsCore = openVehicleForm;
+      openVehicleForm = function(existing = null) {
+        openVehicleFormLookupsCore(existing);
+        const form = document.querySelector("#vehicle-form");
+        const plate = form?.elements.plate?.closest("label");
+        if (!form || !plate || isOfflineDesktop()) return;
+        plate.insertAdjacentHTML("afterend", plateLookupHtml({ state: existing?.plateState || state.taxSettings?.state || "TX", icon }));
+        lucide.createIcons();
+        const status = document.querySelector("#plate-status");
+        document.querySelector("#plate-lookup")?.addEventListener("click", async (event) => {
+          event.currentTarget.disabled = true;
+          status.textContent = "Looking up plate\u2026";
+          try {
+            const result = await apiFetch("/vehicle-data/plate-lookup", { method: "POST", body: JSON.stringify({ plate: form.elements.plate.value, state: form.elements.plateState.value }) });
+            if (!result.found) {
+              status.textContent = "No VIN found for that plate.";
+              return;
+            }
+            const current = Object.fromEntries(["vin", "year", "make", "model", "trim"].map((key) => [key, form.elements[key]?.value]));
+            for (const [key, value2] of Object.entries(plateLookupFill(result, current))) if (form.elements[key]) form.elements[key].value = value2;
+            status.textContent = `VIN ${result.vin}${result.year ? ` \xB7 ${result.year} ${result.make} ${result.model}` : ""}`;
+          } catch (error) {
+            status.textContent = error.message || "Plate lookup failed";
+          } finally {
+            event.currentTarget.disabled = false;
+          }
+        });
+        document.querySelector("#carfax-history")?.addEventListener("click", async (event) => {
+          const vin = form.elements.vin.value.trim().toUpperCase();
+          if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
+            status.textContent = "Enter or look up the 17-character VIN first.";
+            return;
+          }
+          event.currentTarget.disabled = true;
+          status.textContent = "Checking CARFAX\u2026";
+          try {
+            const result = await apiFetch("/vehicle-data/service-history", { method: "POST", body: JSON.stringify({ vin }) });
+            document.querySelector("#carfax-results").innerHTML = safeHtml(serviceHistoryHtml(result, { escapeHtml }));
+            status.textContent = "";
+            if (existing) {
+              existing.carfaxHistory = { retrievedAt: result.retrievedAt, records: result.records };
+              void saveShopEntity("vehicles", existing).catch(() => {
+              });
+            }
+          } catch (error) {
+            status.textContent = error.message || "CARFAX lookup failed";
+          } finally {
+            event.currentTarget.disabled = false;
+          }
+        });
+      };
+      settingsPricingCore = settings;
+      settings = function() {
+        const page = settingsPricingCore();
+        const panel = pricingSettingsHtml(state.shopSettingsRecords.find((item) => item.id === "pricing") || {}, { canSave: currentUser()?.role === "admin", escapeHtml, icon });
+        return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+      };
+      bindPricingCore = bind;
+      bind = function() {
+        bindPricingCore();
+        if (state.route !== "settings") return;
+        document.querySelector("#pricing-matrix-form")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          try {
+            const current = state.shopSettingsRecords.find((item) => item.id === "pricing") || {};
+            await saveShopEntity("shopsettings", pricingRecordFromForm(readFormValues(event.target), current));
+            toast("Pricing matrix saved");
+            render();
+          } catch (error) {
+            toast(error.message || "Pricing could not be saved");
+          }
+        });
+      };
+      scanAiPanelEstimateCore = scanAiPanel;
+      scanAiPanel = function(scan) {
+        const panel = scanAiPanelEstimateCore(scan);
+        if (!scan?.aiAnalysis || !scan.orderId || isOfflineDesktop()) return panel;
+        const sent = scan.aiAnalysis.approvalSentAt;
+        const button = `<button class="primary" type="button" data-scan-estimate-send="${escapeAttr(scan.id)}" ${sent ? "disabled" : ""}>${icon("send", 14)} ${sent ? "Estimate sent for approval" : "Build canned estimate & text approval link"}</button>`;
+        return panel.replace(/<\/div>$/, `<div class="messaging-actions">${button}</div></div>`);
+      };
+      bindScanEstimateCore = bind;
+      bind = function() {
+        bindScanEstimateCore();
+        document.querySelectorAll("[data-scan-estimate-send]").forEach((button) => {
+          button.onclick = () => {
+            button.disabled = true;
+            void sendScanEstimateForApproval(button.dataset.scanEstimateSend);
+          };
+        });
+      };
+      importSource = "auto";
+      prepareImportMapperCore = prepareImport;
+      prepareImport = function(type, text2) {
+        const source = importSource === "auto" ? detectSourceSystem(text2) || "shopcrank" : importSource;
+        if (source === "shopcrank") return prepareImportMapperCore(type, text2);
+        const mapped = mapExportToCanonicalCsv(source, type, text2);
+        const result = prepareImportMapperCore(type, mapped.csv);
+        return { ...result, errors: [...mapped.rejected, ...result.errors || []], skipped: (result.skipped || 0) + mapped.rejected.length, sourceSystem: mapped.system };
+      };
+      importsMapperCore = imports;
+      imports = function() {
+        const page = importsMapperCore();
+        const options = [["auto", "Detect automatically"], ...SOURCE_OPTIONS].map(([id, name]) => `<option value="${id}" ${importSource === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+        const picker = `<section class="settings-panel import-source"><div class="statement-head"><div><div class="eyebrow">Free data migration</div><h2>Coming from another shop system?</h2><p>Export customers, vehicles, repair orders, and invoices as CSV from Tekmetric, Shopmonkey, AutoLeap, Shop-Ware, or Mitchell 1 and choose the matching card below. ShopCrank maps their columns and status names, then shows a preview before anything is saved.</p></div>${icon("arrow-right-left", 20)}</div><label>Exported from<select id="import-source">${options}</select></label>${importPreview?.sourceSystem ? `<p class="ops-note">Mapped from ${escapeHtml(importPreview.sourceSystem)} columns.</p>` : ""}</section>`;
+        return page.replace(/(<div class="import-grid">|<section class="import-preview">)/, `${picker}$1`);
+      };
+      bindImportMapperCore = bind;
+      bind = function() {
+        bindImportMapperCore();
+        document.querySelector("#import-source")?.addEventListener("change", (event) => {
+          importSource = event.target.value;
+        });
+      };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
       activeGrokSession = null;
       activeGrokPhase = "idle";
@@ -17197,16 +18505,16 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
             if (activeGrokSession?.isActive()) {
               event.preventDefault();
               const input = form.elements.message;
-              const text = String(input?.value || "").trim();
-              if (!text) return;
+              const text2 = String(input?.value || "").trim();
+              if (!text2) return;
               input.value = "";
-              assistantConversation.push({ role: "user", content: text });
+              assistantConversation.push({ role: "user", content: text2 });
               const list = document.querySelector("#assistant-messages");
               if (list) {
                 list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
                 list.scrollTop = list.scrollHeight;
               }
-              activeGrokSession.sendTextTurn(text);
+              activeGrokSession.sendTextTurn(text2);
               return;
             }
             if (typeof origSubmit === "function") return origSubmit.call(form, event);

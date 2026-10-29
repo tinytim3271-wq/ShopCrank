@@ -37,6 +37,15 @@ import {
   shouldSearchCustomers,
 } from '../modules/customer-intake.js';
 import * as KeyLicense from '../modules/vehicle-key-license.js';
+import * as SmsInbox from '../modules/sms-inbox.js';
+import * as InspectionRatings from '../modules/inspection-ratings.js';
+import * as CallLog from '../modules/call-log.js';
+import * as GrowthSettings from '../modules/growth-settings.js';
+import * as ShopKpis from '../modules/shop-kpis.js';
+import * as VehicleLookups from '../modules/vehicle-lookups.js';
+import * as Pricing from '../modules/pricing-matrix.js';
+import * as ScanToEstimate from '../modules/scan-to-estimate.js';
+import * as ImportMappers from '../modules/import-mappers.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -430,6 +439,7 @@ const seed = {
   services: [],
   inspectionTemplates: [],
   inspections: [],
+  calls: [],
   reminders: [],
   appointments: [
     { id: "apt-1048", sampleData: true, customer: "Demo Customer A", vehicle: "2018 Ford F-150 XLT", date: "2026-09-09", time: "09:00", service: "Brake inspection follow-up", tech: "Tech A", bay: "Bay 2", status: "confirmed" },
@@ -567,7 +577,7 @@ async function loadJobClockEntriesFromApi() { try { state.jobClockEntries = awai
 async function pushPayrollEntryToApi(record) { try { await apiFetch("/entities/payrollentries", { method: "POST", body: JSON.stringify(record) }) } catch (error) { console.error("Failed to sync payroll entry to API", error) } }
 async function updatePayrollEntryInApi(record) { try { await apiFetch(`/entities/payrollentries/${encodeURIComponent(record.id)}`, { method: "PUT", body: JSON.stringify(record) }) } catch (error) { console.error("Failed to sync payroll entry update to API", error) } }
 async function loadPayrollEntriesFromApi() { try { state.payrollEntries = await apiFetch("/entities/payrollentries"); save() } catch (error) { console.error("Failed to load payroll entries from API; using local data", error) } }
-const shopEntityCollections = { vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
+const shopEntityCollections = { calls: "calls", vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
 async function saveShopEntity(type, record) { const saved = await apiFetch(`/entities/${type}${record.updatedAt ? `/${encodeURIComponent(record.id)}` : ""}`, { method: record.updatedAt ? "PUT" : "POST", body: JSON.stringify(record) }), value = saved?.queued ? record : saved, collection = shopEntityCollections[type], index = state[collection].findIndex(item => item.id === value.id); if (index >= 0) state[collection][index] = value; else state[collection].push(value); save(); return value }
 const shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
 async function loadShopEntities() {
@@ -666,7 +676,7 @@ async function addLinesToTargetOrder(lines, label, orderId = orderingTargetOrder
   const order = state.orders.find(item => item.id === orderId);
   if (!order) { toast("Choose an open repair order first"); return false }
   try {
-    const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+    const revised = appendEstimateLinesToOrder(order, Pricing.applyLaborMatrix(Pricing.applyPartsMatrix(lines, shopPricing(), state.inventory), shopPricing(), Number(shopProfile().laborRate) || 0), { editedAt: now(), taxRate: state.taxSettings.rate });
     const saved = await updateOrderInApi(revised, { throwOnError: true });
     Object.assign(order, saved?.queued ? revised : saved);
     save();
@@ -1096,7 +1106,7 @@ async function startInvoiceCheckout(number, textToPay = false) {
     if (textToPay) {
       const customer = state.customers.find(item => item.id === invoice.customerId || item.name === invoice.customer), phone = invoice.phone || customer?.phone;
       if (!phone) throw new Error("Add a customer phone number before sending text-to-pay");
-      const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${state.messagingSettings.shopName || "Your shop"} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
+      const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${shopDisplayName()} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
       toast(result.mode === "shopcrank_sms" ? `Text-to-pay sent for ${invoice.number}` : `Text-to-pay opened in the device messaging app`);
     } else if (checkoutWindow) checkoutWindow.location = data.url;
     else window.location.assign(data.url);
@@ -1366,7 +1376,7 @@ bindEstimateActions = function () { bindEstimateActionsCore(); document.querySel
 settings = function () { const profile = shopProfile(), t = state.taxSettings, stateOptions = usStates.map(s => `<option value="${s.code}" ${t.state === s.code ? "selected" : ""}>${s.name}</option>`).join(""); return shell(`${heading("Administration", "Shop settings", "Branding, invoice defaults, tax, and optional provider readiness.", false)}<form class="settings-panel form-grid" id="shop-profile-form"><label>Shop name<input name="shopName" value="${escapeHtml(profile.shopName)}" required/></label><label>Phone<input name="phone" value="${escapeHtml(profile.phone)}"/></label><label class="full">Address<input name="address" value="${escapeHtml(profile.address)}"/></label><label>Logo URL<input name="logoUrl" type="url" value="${escapeHtml(profile.logoUrl)}"/></label><label>Default labor rate<input name="laborRate" type="number" step=".01" value="${Number(profile.laborRate)}"/></label><label>Mileage rate ($/mi)<input name="mileageRate" type="number" min="0" step=".01" value="${Number(profile.mileageRate ?? 0.68)}"/></label><label class="full">Invoice footer<input name="invoiceFooter" value="${escapeHtml(profile.invoiceFooter)}"/></label><div class="full service-contract"><h2>Commercial integrations</h2><p>CarFax service history and license-plate recognition require provider contracts and server-side credentials. They remain unavailable until configured by the platform operator.</p></div><label class="toggle-field"><input type="checkbox" disabled ${profile.carfaxEnabled ? "checked" : ""}/><span>CarFax provider configured</span></label><label class="toggle-field"><input type="checkbox" disabled ${profile.plateProviderEnabled ? "checked" : ""}/><span>Plate recognition configured</span></label><div class="full"><button class="primary">${icon("save", 14)} Save business profile</button></div></form><div class="settings-panel"><form class="form-grid" id="tax-settings-form"><label>Filing state<select name="state">${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${escapeHtml(t.taxId)}"/></label><label>Sales tax rate %<input name="rate" type="number" step=".01" min="0" value="${t.rate}"/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary">Save tax settings</button></div></form></div>`) };
 function bindExpandedFeatures() { document.querySelector("#add-appointment")?.addEventListener("click", addAppointment); document.querySelectorAll("[data-edit-appointment]").forEach(row => row.onclick = () => openAppointmentForm(state.appointments.find(item => item.id === row.dataset.editAppointment))); document.querySelectorAll("[data-edit-appointment-button]").forEach(button => button.onclick = event => { event.stopPropagation(); openAppointmentForm(state.appointments.find(item => item.id === button.dataset.editAppointmentButton)) }); document.querySelector("#shop-profile-form")?.addEventListener("submit", async event => { event.preventDefault(); const data = readFormValues(event.target), profile = { ...shopProfile(), ...data, laborRate: Number(data.laborRate) }; await saveShopEntity("shopsettings", profile); toast("Business profile saved"); render() }) }
 const scheduleCore = schedule;
-schedule = function () { return scheduleWorkspace() };
+schedule = function () { return scheduleWorkspace().replace(/<\/main>(?![\s\S]*<\/main>)/, `${CallLog.callLogHtml(state.calls || [], { escapeHtml, escapeAttr, icon, time: value => value ? new Date(value).toLocaleString() : "" })}</main>`) };
 newOrderEstimateRow = function (line = { service: "Custom service", notes: "Describe the inspection, labor, parts, and verification included with this service.", hours: 1, parts: 0, discount: 0 }) { const inventoryOptions = state.inventory.map(item => `<option value="${escapeHtml(item.id)}" ${line.inventoryId === item.id ? "selected" : ""}>${escapeHtml(item.sku || "No SKU")} · ${escapeHtml(item.name)} (${Number(item.quantity || 0)} on hand)</option>`).join(""); return `<article class="new-estimate-line"><div class="estimate-line-head"><strong>Service line</strong><button class="icon-button remove-estimate-line" type="button" title="Remove service">${icon("trash-2", 14)}</button></div><label>Service<input class="estimate-service" value="${escapeHtml(line.service)}" required/></label><label>What this service includes<textarea class="estimate-explanation" required>${escapeHtml(line.notes || line.description || "")}</textarea></label><div class="estimate-line-numbers"><label>Labor hours<input class="estimate-hours" type="number" min="0" step=".25" value="${Number(line.hours || line.laborHours || 0)}"/></label><label>Parts & materials<input class="estimate-parts" type="number" min="0" step=".01" value="${Number(line.parts ?? line.partsPrice ?? 0).toFixed(2)}"/></label><label>Discount %<input class="estimate-discount" type="number" min="0" max="100" step=".1" value="${Number(line.discount || 0)}"/></label><label>Inventory SKU<select class="estimate-inventory"><option value="">Not linked</option>${inventoryOptions}</select></label><label>Committed quantity<input class="estimate-committed-quantity" type="number" min=".01" step=".01" value="${Number(line.committedQuantity || 1)}"/></label><div><span>Line total</span><b class="estimate-line-total">${money((Number(line.hours || line.laborHours || 0) * 165 + Number(line.parts ?? line.partsPrice ?? 0)) * (1 - Number(line.discount || 0) / 100))}</b></div></div></article>` };
 readNewOrderEstimate = function () { const lines = [...document.querySelectorAll(".new-estimate-line")].map(row => { const hours = Math.max(0, Number(row.querySelector(".estimate-hours").value) || 0), parts = Math.max(0, Number(row.querySelector(".estimate-parts").value) || 0), discount = Math.min(100, Math.max(0, Number(row.querySelector(".estimate-discount").value) || 0)), inventoryId = row.querySelector(".estimate-inventory").value, inventory = state.inventory.find(item => item.id === inventoryId), committedQuantity = inventory ? Math.max(0, Number(row.querySelector(".estimate-committed-quantity").value) || 0) : 0, labor = Math.round(hours * 165 * 100) / 100, gross = labor + parts, total = Math.round(gross * (1 - discount / 100) * 100) / 100; return { service: row.querySelector(".estimate-service").value.trim(), explanation: row.querySelector(".estimate-explanation").value.trim(), hours, laborRate: 165, labor, parts, discount, discountAmount: Math.round((gross - total) * 100) / 100, total, inventoryId: inventory?.id || null, inventorySku: inventory?.sku || null, committedQuantity } }).filter(line => line.service), labor = lines.reduce((sum, line) => sum + line.labor, 0), laborHours = lines.reduce((sum, line) => sum + line.hours, 0), parts = lines.reduce((sum, line) => sum + line.parts, 0), discountAmount = lines.reduce((sum, line) => sum + line.discountAmount, 0), shopSupplies = lines.length ? 12 : 0, subtotal = Math.round((labor + parts - discountAmount + shopSupplies) * 100) / 100, tax = Math.round(subtotal * state.taxSettings.rate) / 100, total = Math.round((subtotal + tax) * 100) / 100; return { lines, labor, laborHours, parts, discountAmount, fees: shopSupplies ? [{ description: "Shop supplies", amount: shopSupplies }] : [], subtotal, tax, taxRate: state.taxSettings.rate, total } };
 refreshNewOrderEstimate = function () { const form = document.querySelector("#new-form"), trip = Mileage.refreshMileagePreview(form, { rate: shopMileageRate() }), estimate = Mileage.applyMileageToEstimate(readNewOrderEstimate(), trip.roundTrip, shopMileageRate(), state.taxSettings.rate); document.querySelectorAll(".new-estimate-line").forEach(row => { const hours = Math.max(0, Number(row.querySelector(".estimate-hours").value) || 0), parts = Math.max(0, Number(row.querySelector(".estimate-parts").value) || 0), discount = Math.min(100, Math.max(0, Number(row.querySelector(".estimate-discount").value) || 0)); row.querySelector(".estimate-line-total").textContent = money((hours * 165 + parts) * (1 - discount / 100)) }); const summary = document.querySelector("#new-estimate-summary"); if (summary) summary.innerHTML = `<span>Labor <b>${money(estimate.labor)}</b></span><span>Parts <b>${money(estimate.parts)}</b></span><span>Discount <b>-${money(estimate.discountAmount)}</b></span><span>Tax <b>${money(estimate.tax)}</b></span><strong>Total ${money(estimate.total)}</strong>`; const total = document.querySelector("#new-estimate-total"); if (total) total.value = estimate.total.toFixed(2) };
@@ -3405,7 +3415,7 @@ function showEstimatePreview(estimate) {
 
 estimateEditorLine = function (line = {}, index = 0, removable = true) {
   const item = normalizeEstimateLine(line, index), description = estimateEditorDescription(line, item.description), part = item.type === "part", fee = item.type === "fee", laborSource = item.laborSource || "Unverified shop estimate";
-  return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}">
+  return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}" data-carry="${escapeAttr(JSON.stringify(Pricing.editorCarryFields(line)))}">
     <div class="estimate-line-head"><strong>${part ? "Part" : fee ? "Fee" : "Labor"} line</strong><div>${!part && !fee ? `<button class="mini-action lookup-labor-time" type="button">${icon("badge-check", 13)} Labor guide</button>` : ""}${removable ? `<button class="icon-button remove-job-line" type="button" title="Remove line">${icon("trash-2", 14)}</button>` : ""}</div></div>
     <div class="form-grid">
       <label>Type<select class="job-line-type" ${item.code ? "disabled" : ""}><option value="labor" ${!part && !fee ? "selected" : ""}>Labor</option><option value="part" ${part ? "selected" : ""}>Part</option><option value="fee" ${fee ? "selected" : ""}>Fee</option></select></label>
@@ -3429,6 +3439,8 @@ estimateFromEditor = function (root) {
     const inventory = type === "part" ? state.inventory.find(item => item.id === row.querySelector(".job-line-inventory").value) : null;
     const partNumber = type === "part" ? (row.querySelector(".job-line-part-number")?.value || "").trim() : "";
     return normalizeEstimateLine({
+      ...editorCarry(row),
+      ...(inventory && Number(inventory.cost) > 0 ? { cost: Number(inventory.cost) } : {}),
       id: row.dataset.lineId || `line-${Date.now()}-${index}`,
       type,
       description: row.querySelector(".job-line-description").value.trim(),
@@ -3486,6 +3498,7 @@ refreshEstimateEditor = function (root) {
   if (summary) summary.innerHTML = `<span>Parts <b>${money(estimate.parts)}</b></span><span>Labor <b>${money(estimate.labor)}</b></span><span>Fees <b>${money(estimate.lineFees)}</b></span><span>Supplies <b>${money(supplies)}</b></span><span>Discount <b>-${money(estimate.discountAmount)}</b></span><span>Tax <b>${money(estimate.tax)}</b></span><strong>Total ${money(estimate.total)}</strong>`;
   const total = document.querySelector("#new-estimate-total");
   if (total && root.id === "new-estimate-lines") total.value = estimate.total.toFixed(2);
+  showMarginWarnings(root, estimate.lines);
 };
 
 coherentOrderEstimate = function (order) {
@@ -5899,6 +5912,316 @@ render = function () {
   }
   renderKeyLicenseCore();
 };
+// --- Two-way customer texting: inbox on the Messaging page ---
+const SMS_READ_MARKS = "shopcrank-sms-read-v1";
+let smsInbox = { loaded: false, loading: false, enabled: false, messages: [], selectedKey: "", error: "" };
+let smsInboxTimer = 0;
+function smsReadMarks() { try { return JSON.parse(localStorage.getItem(SMS_READ_MARKS) || "{}") || {} } catch { return {} } }
+function markSmsThreadRead(key) { if (!key) return; const marks = smsReadMarks(); marks[key] = new Date().toISOString(); localStorage.setItem(SMS_READ_MARKS, JSON.stringify(marks)) }
+function smsThreads() { return SmsInbox.groupThreads(smsInbox.messages, state.customers, smsReadMarks()) }
+function smsComposerBusy() { return Boolean(document.querySelector("#sms-reply-form textarea, #sms-new-form textarea")?.value || document.activeElement?.closest?.(".sms-composer")) }
+async function loadSmsInbox({ quiet = false } = {}) {
+  if (smsInbox.loading) return;
+  smsInbox.loading = true;
+  const before = smsInbox.messages[0]?.id;
+  try {
+    const result = await apiFetch("/messaging/threads");
+    smsInbox = { ...smsInbox, loaded: true, enabled: Boolean(result.enabled), messages: result.messages || [], error: "" };
+  } catch (error) {
+    smsInbox = { ...smsInbox, loaded: true, error: error.message || "Could not load customer texts" };
+  } finally {
+    smsInbox.loading = false;
+  }
+  if (state.route !== "messaging") return;
+  if (!quiet || (smsInbox.messages[0]?.id !== before && !smsComposerBusy())) render();
+}
+const messagingTwilioPanelSmsCore = messagingTwilioPanelHtml;
+messagingTwilioPanelHtml = function () {
+  if (!smsInbox.loaded) void loadSmsInbox();
+  const threads = smsThreads();
+  const selectedKey = smsInbox.selectedKey || threads[0]?.key || "";
+  if (selectedKey && state.route === "messaging") markSmsThreadRead(selectedKey);
+  return `${SmsInbox.smsInboxHtml({ ...smsInbox, threads, selectedKey }, { escapeHtml, escapeAttr, icon, time: value => new Date(value).toLocaleString() })}${messagingTwilioPanelSmsCore()}`;
+};
+async function sendSmsFromInbox(form, data) {
+  const button = form.querySelector("button[type=submit]");
+  const to = SmsInbox.toE164(data.to);
+  const body = String(data.body || "").trim();
+  if (!body) return;
+  button.disabled = true;
+  try {
+    const customer = state.customers.find(item => SmsInbox.phoneKey(item.phone) === SmsInbox.phoneKey(to));
+    await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+    smsInbox.selectedKey = SmsInbox.phoneKey(to);
+    toast("Text sent");
+    await loadSmsInbox();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message || "Text could not be sent");
+  }
+}
+function bindSmsInbox() {
+  document.querySelectorAll("[data-sms-thread]").forEach(button => { button.onclick = () => { smsInbox.selectedKey = button.dataset.smsThread; render() } });
+  for (const id of ["#sms-reply-form", "#sms-new-form"]) {
+    document.querySelector(id)?.addEventListener("submit", event => { event.preventDefault(); void sendSmsFromInbox(event.target, readFormValues(event.target)) });
+  }
+  document.querySelector(".sms-conversation")?.scrollTo?.({ top: 1e6 });
+  clearInterval(smsInboxTimer);
+  if (state.route === "messaging" && smsInbox.enabled) smsInboxTimer = setInterval(() => { if (state.route !== "messaging") { clearInterval(smsInboxTimer); return } void loadSmsInbox({ quiet: true }) }, 20000);
+}
+const bindSmsInboxCore = bind;
+bind = function () {
+  bindSmsInboxCore();
+  if (state.route === "messaging") bindSmsInbox();
+};
+
+// --- Declined work follow-up (Shop operations → Declined work) ---
+function declinedWork() { return InspectionRatings.declinedWorkItems(state.orders) }
+const shopOperationsDeclinedCore = shopOperations;
+shopOperations = function () {
+  const declinedTab = active => `<button class="tab ${active ? "active" : ""}" data-ops-tab="declined">Declined work${InspectionRatings.declinedWorkSummary(declinedWork()).dueCount ? ` <span class="badge">${InspectionRatings.declinedWorkSummary(declinedWork()).dueCount}</span>` : ""}</button>`;
+  const addTab = (markup, active) => markup.replace(/(<div class="accounting-tabs ops-tabs">[\s\S]*?)(<\/div>)/, (_, tabs, end) => `${active ? tabs.replace(/class="tab active"/g, 'class="tab "') : tabs}${declinedTab(active)}${end}`);
+  if (shopOpsTab !== "declined") return addTab(shopOperationsDeclinedCore(), false);
+  shopOpsTab = "vehicles";
+  const base = shopOperationsDeclinedCore();
+  shopOpsTab = "declined";
+  const tabs = (addTab(base, true).match(/<div class="accounting-tabs ops-tabs">[\s\S]*?<\/div>/) || [""])[0];
+  return shell(`${heading("Connected workflow", "Shop operations", "Recommendations customers declined, with follow-up dates. Red findings come due in 3 days, everything else in 30.", false)}${tabs}${InspectionRatings.declinedWorkHtml(declinedWork(), { escapeHtml, escapeAttr, money, icon, date: value => value ? new Date(value).toLocaleDateString() : "" })}`);
+};
+async function updateDeclinedFollowUp(key, change) {
+  const item = declinedWork().find(entry => entry.key === key);
+  const index = state.orders.findIndex(order => order.id === item?.orderId);
+  if (!item || index < 0) return null;
+  state.orders[index] = InspectionRatings.recordDeclinedFollowUp(state.orders[index], item.lineId, { ...change, by: currentUser()?.id || "" });
+  save();
+  await updateOrderInApi(state.orders[index], { throwOnError: false });
+  return item;
+}
+function bindDeclinedWork() {
+  document.querySelectorAll("[data-declined-text]").forEach(button => {
+    button.onclick = async () => {
+      const item = declinedWork().find(entry => entry.key === button.dataset.declinedText);
+      if (!item) return;
+      const customer = state.customers.find(entry => entry.id === item.customerId || entry.name === item.customer);
+      const phone = item.phone || customer?.phone;
+      if (!phone) return toast("Add a phone number for this customer first");
+      button.disabled = true;
+      try {
+        await deliverShopMessage({ channel: "sms", to: SmsInbox.toE164(phone), subject: "", body: InspectionRatings.declinedFollowUpMessage(item, shopDisplayName()), metadata: { type: "reminder", customerId: customer?.id, workOrderId: item.orderId } });
+        await updateDeclinedFollowUp(item.key, { contacted: true, note: "Text follow-up" });
+        toast(`Follow-up sent to ${item.customer}`);
+        render();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Follow-up could not be sent");
+      }
+    };
+  });
+  document.querySelectorAll("[data-declined-sold]").forEach(button => {
+    button.onclick = async () => { if (await updateDeclinedFollowUp(button.dataset.declinedSold, { sold: true })) { toast("Marked as sold"); render() } };
+  });
+}
+const bindDeclinedWorkCore = bind;
+bind = function () {
+  bindDeclinedWorkCore();
+  if (state.route === "shopops" && shopOpsTab === "declined") bindDeclinedWork();
+};
+
+// --- Online booking, service reminders and review requests (Settings) ---
+function sessionShopId() { try { return JSON.parse(sessionStorage.getItem(storageKeys.session) || "null")?.claims?.["custom:shopId"] || "" } catch { return "" } }
+function growthSettingsRecord(id) { return state.shopSettingsRecords.find(item => item.id === id) || {} }
+const settingsGrowthCore = settings;
+settings = function () {
+  const page = settingsGrowthCore();
+  if (isOfflineDesktop()) return page;
+  const panel = GrowthSettings.growthSettingsHtml({ booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups"), shopId: sessionShopId(), origin: location.origin, canSave: currentUser()?.role === "admin" }, { escapeHtml, escapeAttr, icon });
+  return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+};
+function bindGrowthSettings() {
+  document.querySelector("#growth-settings-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.target.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      const { booking, followups } = GrowthSettings.growthSettingsRecords(readFormValues(event.target), { booking: growthSettingsRecord("booking"), followups: growthSettingsRecord("followups") });
+      await saveShopEntity("shopsettings", { ...growthSettingsRecord("booking"), ...booking });
+      await saveShopEntity("shopsettings", { ...growthSettingsRecord("followups"), ...followups });
+      toast("Booking and follow-up settings saved");
+      render();
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "Settings could not be saved");
+    }
+  });
+  document.querySelector("#growth-run-now")?.addEventListener("click", async event => {
+    event.currentTarget.disabled = true;
+    try {
+      const report = await apiFetch("/followups/run", { method: "POST", body: "{}" });
+      if (report.skippedReason === "disabled") toast("Automatic follow-up texts are turned off until ShopCrank's texting registration is approved");
+      else toast(`Sent ${report.remindersSent} reminder(s) and ${report.reviewRequestsSent} review request(s)${report.skipped ? ` · ${report.skipped} skipped (no texting number, opted out, or missing phone)` : ""}`);
+    } catch (error) { toast(error.message || "Follow-ups could not run") }
+    event.currentTarget.disabled = false;
+  });
+  document.querySelector("#booking-link-copy")?.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(document.querySelector("#booking-link")?.value || ""); toast("Booking link copied") } catch { toast("Select the link and copy it") }
+  });
+}
+const bindGrowthSettingsCore = bind;
+bind = function () {
+  bindGrowthSettingsCore();
+  if (state.route === "settings") bindGrowthSettings();
+};
+
+// --- Shop KPIs on Reports: car count, ARO, gross profit, tech efficiency ---
+let kpiPeriod = "month";
+const reportsKpiCore = reports;
+reports = function () {
+  const page = reportsKpiCore();
+  const range = ShopKpis.periodRange(kpiPeriod);
+  const kpis = ShopKpis.computeShopKpis({ invoices: state.invoices, orders: state.orders, jobClockEntries: state.jobClockEntries || [], shiftEntries: state.shiftEntries || [], users: state.users, inventory: state.inventory || [], from: range.from, to: range.to });
+  const dashboard = ShopKpis.kpiDashboardHtml(kpis, { period: kpiPeriod, label: range.label, money, escapeHtml, icon });
+  const marker = '<section class="messaging-panel">';
+  return page.includes(marker) ? page.replace(marker, `${dashboard}${marker}`) : page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${dashboard}</main>`);
+};
+const bindKpiCore = bind;
+bind = function () {
+  bindKpiCore();
+  if (state.route === "reports") document.querySelectorAll("[data-kpi-period]").forEach(button => { button.onclick = () => { kpiPeriod = button.dataset.kpiPeriod; render() } });
+};
+
+// --- Plate-to-VIN and CARFAX service history on the vehicle form ---
+const openVehicleFormLookupsCore = openVehicleForm;
+openVehicleForm = function (existing = null) {
+  openVehicleFormLookupsCore(existing);
+  const form = document.querySelector("#vehicle-form");
+  const plate = form?.elements.plate?.closest("label");
+  if (!form || !plate || isOfflineDesktop()) return;
+  plate.insertAdjacentHTML("afterend", VehicleLookups.plateLookupHtml({ state: existing?.plateState || state.taxSettings?.state || "TX", icon }));
+  lucide.createIcons();
+  const status = document.querySelector("#plate-status");
+  document.querySelector("#plate-lookup")?.addEventListener("click", async event => {
+    event.currentTarget.disabled = true;
+    status.textContent = "Looking up plate…";
+    try {
+      const result = await apiFetch("/vehicle-data/plate-lookup", { method: "POST", body: JSON.stringify({ plate: form.elements.plate.value, state: form.elements.plateState.value }) });
+      if (!result.found) { status.textContent = "No VIN found for that plate."; return }
+      const current = Object.fromEntries(["vin", "year", "make", "model", "trim"].map(key => [key, form.elements[key]?.value]));
+      for (const [key, value] of Object.entries(VehicleLookups.plateLookupFill(result, current))) if (form.elements[key]) form.elements[key].value = value;
+      status.textContent = `VIN ${result.vin}${result.year ? ` · ${result.year} ${result.make} ${result.model}` : ""}`;
+    } catch (error) { status.textContent = error.message || "Plate lookup failed" } finally { event.currentTarget.disabled = false }
+  });
+  document.querySelector("#carfax-history")?.addEventListener("click", async event => {
+    const vin = form.elements.vin.value.trim().toUpperCase();
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) { status.textContent = "Enter or look up the 17-character VIN first."; return }
+    event.currentTarget.disabled = true;
+    status.textContent = "Checking CARFAX…";
+    try {
+      const result = await apiFetch("/vehicle-data/service-history", { method: "POST", body: JSON.stringify({ vin }) });
+      document.querySelector("#carfax-results").innerHTML = safeHtml(VehicleLookups.serviceHistoryHtml(result, { escapeHtml }));
+      status.textContent = "";
+      if (existing) { existing.carfaxHistory = { retrievedAt: result.retrievedAt, records: result.records }; void saveShopEntity("vehicles", existing).catch(() => {}) }
+    } catch (error) { status.textContent = error.message || "CARFAX lookup failed" } finally { event.currentTarget.disabled = false }
+  });
+};
+
+// --- Parts & labor pricing matrix with margin protection ---
+function shopPricing() { return Pricing.pricingSettings(state.shopSettingsRecords.find(item => item.id === "pricing") || {}) }
+function editorCarry(row) { try { return JSON.parse(row.dataset.carry || "{}") || {} } catch { return {} } }
+function showMarginWarnings(root, lines) {
+  const host = root.parentElement || root;
+  let panel = host.querySelector(".margin-warnings");
+  if (!panel) { panel = document.createElement("div"); panel.className = "margin-warnings"; root.insertAdjacentElement("afterend", panel) }
+  panel.innerHTML = safeHtml(Pricing.marginWarningsHtml(Pricing.marginWarnings(lines, shopPricing(), state.inventory), { money, escapeHtml }));
+  panel.querySelectorAll("[data-apply-matrix]").forEach(button => {
+    button.onclick = () => {
+      const row = [...root.querySelectorAll(".job-estimate-line")].find(item => item.dataset.lineId === button.dataset.applyMatrix);
+      const price = Number(button.dataset.price);
+      if (!row || !(price > 0)) return;
+      row.querySelector(".job-line-rate").value = price.toFixed(2);
+      refreshEstimateEditor(root);
+    };
+  });
+}
+const settingsPricingCore = settings;
+settings = function () {
+  const page = settingsPricingCore();
+  const panel = Pricing.pricingSettingsHtml(state.shopSettingsRecords.find(item => item.id === "pricing") || {}, { canSave: currentUser()?.role === "admin", escapeHtml, icon });
+  return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+};
+const bindPricingCore = bind;
+bind = function () {
+  bindPricingCore();
+  if (state.route !== "settings") return;
+  document.querySelector("#pricing-matrix-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const current = state.shopSettingsRecords.find(item => item.id === "pricing") || {};
+      await saveShopEntity("shopsettings", Pricing.pricingRecordFromForm(readFormValues(event.target), current));
+      toast("Pricing matrix saved");
+      render();
+    } catch (error) { toast(error.message || "Pricing could not be saved") }
+  });
+};
+
+// --- Scan-to-estimate: codes + AI diagnosis → canned estimate → customer approval link ---
+const scanAiPanelEstimateCore = scanAiPanel;
+scanAiPanel = function (scan) {
+  const panel = scanAiPanelEstimateCore(scan);
+  if (!scan?.aiAnalysis || !scan.orderId || isOfflineDesktop()) return panel;
+  const sent = scan.aiAnalysis.approvalSentAt;
+  const button = `<button class="primary" type="button" data-scan-estimate-send="${escapeAttr(scan.id)}" ${sent ? "disabled" : ""}>${icon("send", 14)} ${sent ? "Estimate sent for approval" : "Build canned estimate & text approval link"}</button>`;
+  return panel.replace(/<\/div>$/, `<div class="messaging-actions">${button}</div></div>`);
+};
+/** Vehicle and engine text for fitment: the scan, the RO, and the linked vehicle record. */
+function scanVehicleText(scan, order) {
+  const vehicle = state.vehicles.find(item => (order.vin && item.vin === order.vin) || (order.vehicleId && item.id === order.vehicleId));
+  return [scan.vehicle, scan.engine, order.vehicle, order.engine, vehicle?.engine, vehicle?.trim].filter(Boolean).join(" ");
+}
+async function sendScanEstimateForApproval(scanId) {
+  const scan = state.diagnosticSessions.find(item => item.id === scanId);
+  const order = state.orders.find(item => item.id === scan?.orderId);
+  if (!scan || !order) return toast("Link this scan to a repair order first");
+  const codes = scan.aiAnalysis?.codes?.length ? scan.aiAnalysis.codes : (scan.dtcs || []).map(item => item.code || item);
+  const aiLines = scan.aiAnalysis?.draft && !scan.aiAnalysis.appliedAt ? diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes }) : [];
+  const { lines, matches } = ScanToEstimate.buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
+  const existing = new Set((order.estimate?.lines || []).map(line => line.id));
+  const fresh = lines.filter(line => !existing.has(line.id));
+  if (!fresh.length && !(order.estimate?.lines || []).length) return toast("No canned services or AI lines matched these codes");
+  if (fresh.length && !(await addLinesToTargetOrder(fresh, "the scan estimate", order.id))) return;
+  await sendJobEstimate(state.orders.find(item => item.id === order.id), "sms");
+  await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: scan.aiAnalysis.appliedAt || now(), approvalSentAt: now(), cannedServices: matches.map(match => match.service.id) } });
+  toast(ScanToEstimate.scanEstimateSummary({ matches, lines: fresh }));
+  render();
+}
+const bindScanEstimateCore = bind;
+bind = function () {
+  bindScanEstimateCore();
+  document.querySelectorAll("[data-scan-estimate-send]").forEach(button => { button.onclick = () => { button.disabled = true; void sendScanEstimateForApproval(button.dataset.scanEstimateSend) } });
+};
+
+// --- Free migration from Tekmetric, Shopmonkey, AutoLeap, Shop-Ware, Mitchell 1 ---
+let importSource = "auto";
+const prepareImportMapperCore = prepareImport;
+prepareImport = function (type, text) {
+  const source = importSource === "auto" ? ImportMappers.detectSourceSystem(text) || "shopcrank" : importSource;
+  if (source === "shopcrank") return prepareImportMapperCore(type, text);
+  const mapped = ImportMappers.mapExportToCanonicalCsv(source, type, text);
+  const result = prepareImportMapperCore(type, mapped.csv);
+  return { ...result, errors: [...mapped.rejected, ...(result.errors || [])], skipped: (result.skipped || 0) + mapped.rejected.length, sourceSystem: mapped.system };
+};
+const importsMapperCore = imports;
+imports = function () {
+  const page = importsMapperCore();
+  const options = [["auto", "Detect automatically"], ...ImportMappers.SOURCE_OPTIONS].map(([id, name]) => `<option value="${id}" ${importSource === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+  const picker = `<section class="settings-panel import-source"><div class="statement-head"><div><div class="eyebrow">Free data migration</div><h2>Coming from another shop system?</h2><p>Export customers, vehicles, repair orders, and invoices as CSV from Tekmetric, Shopmonkey, AutoLeap, Shop-Ware, or Mitchell 1 and choose the matching card below. ShopCrank maps their columns and status names, then shows a preview before anything is saved.</p></div>${icon("arrow-right-left", 20)}</div><label>Exported from<select id="import-source">${options}</select></label>${importPreview?.sourceSystem ? `<p class="ops-note">Mapped from ${escapeHtml(importPreview.sourceSystem)} columns.</p>` : ""}</section>`;
+  return page.replace(/(<div class="import-grid">|<section class="import-preview">)/, `${picker}$1`);
+};
+const bindImportMapperCore = bind;
+bind = function () {
+  bindImportMapperCore();
+  document.querySelector("#import-source")?.addEventListener("change", event => { importSource = event.target.value });
+};
+
 // --- Grok Realtime Voice & Phone Call Forwarding ---
 let grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
 let activeGrokSession = null;

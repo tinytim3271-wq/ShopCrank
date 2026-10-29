@@ -12,6 +12,9 @@ import {
   verifyTwilioWebhookSignature,
 } from './integrations/sms.mjs';
 import { searchLicensedLabor } from './integrations/labor.mjs';
+import { bookAppointment, loadBookingContext, nextAvailability, shopClock } from './scheduling.mjs';
+import { buildCallSummary, callActionFromTool, saveCallSummary } from './call-summaries.mjs';
+import { aiPhoneBookingEnabled } from './growth-flags.mjs';
 
 const PHONE_CREDENTIAL_ROLES = Object.freeze(['admin', 'owner', 'office', 'super_admin']);
 
@@ -135,6 +138,7 @@ export async function loadGrokShopSettings(env, shopId) {
       WHERE shop_id = ? AND entity_type = 'shopsettings' AND entity_id IN ('profile', 'grok_phone')
     `).bind(shopId).all();
     const map = new Map((result.results || []).map((row) => [row.entity_id, parseEntityRow(row)]));
+    const shopRow = await env.DB.prepare('SELECT timezone FROM shops WHERE id = ?').bind(shopId).first().catch(() => null);
     const profile = map.get('profile') || {};
     const grokPhone = map.get('grok_phone') || {};
     return {
@@ -147,6 +151,7 @@ export async function loadGrokShopSettings(env, shopId) {
       shopPhone: cleanText(profile.phone || '', 40),
       shopAddress: cleanText(profile.address || '', 240),
       shopHours: cleanText(grokPhone.shopHours || profile.hours || defaults.shopHours, 240),
+      timeZone: cleanText(shopRow?.timezone || 'America/Chicago', 64),
     };
   } catch {
     return defaults;
@@ -168,6 +173,42 @@ export async function resolveGrokApiKey(env, shopId, getSecret = null) {
   if (envKey) return { apiKey: envKey, keySource: 'platform' };
   return { apiKey: '', keySource: null };
 }
+
+/** Offered only when AI_PHONE_BOOKING_ENABLED is "1". */
+export const GROK_BOOKING_TOOLS = Object.freeze([
+  {
+    type: 'function',
+    name: 'check_appointment_availability',
+    description: 'List open appointment times on the shop calendar. Call before offering times; never promise a time this tool did not return.',
+    parameters: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'Preferred date as YYYY-MM-DD in the shop time zone. Omit for the next available days.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'book_appointment',
+    description: 'Book a real appointment on the shop calendar once the caller agrees to a time returned by check_appointment_availability. Read back the date and time after booking.',
+    parameters: {
+      type: 'object',
+      properties: {
+        customerName: { type: 'string' },
+        phone: { type: 'string', description: 'Callback number; defaults to Caller ID.' },
+        email: { type: 'string' },
+        vehicle: { type: 'string', description: 'Year make model.' },
+        service: { type: 'string', description: 'Reason for the visit.' },
+        date: { type: 'string', description: 'YYYY-MM-DD' },
+        time: { type: 'string', description: 'HH:MM, 24-hour, exactly as returned by check_appointment_availability' },
+        notes: { type: 'string' },
+      },
+      required: ['customerName', 'vehicle', 'service', 'date', 'time'],
+      additionalProperties: false,
+    },
+  },
+]);
 
 export const GROK_SHOP_TOOLS = Object.freeze([
   {
@@ -306,6 +347,8 @@ export function buildGrokInstructions({
   pricing = { laborRate: 140, taxRate: 8.25 },
   callerPhone = '',
   callerContext = null,
+  today = shopClock(new Date(), shopSettings.timeZone || 'America/Chicago').date,
+  bookingEnabled = false,
 } = {}) {
   const shopName = shopSettings.shopName || 'Our Automotive Shop';
   const laborRate = Number(pricing.laborRate || 140).toFixed(2);
@@ -316,7 +359,13 @@ export function buildGrokInstructions({
     ? `\nCaller phone number from Caller ID: ${callerPhone}.`
     : '';
   const existingCustomerLine = callerContext?.customer
-    ? `\nMatched existing customer on file: ${JSON.stringify(callerContext.customer)}. Vehicles on file: ${JSON.stringify(callerContext.vehicles || [])}. Open orders: ${JSON.stringify(callerContext.openOrders || [])}.`
+    ? `\nReturning customer: ${JSON.stringify(callerContext.customer)}. Vehicles on file: ${JSON.stringify(callerContext.vehicles || [])}. Recent and open orders: ${JSON.stringify(callerContext.openOrders || [])}. Greet them by first name, confirm which vehicle they are calling about, and don't ask again for details already on file.`
+    : '';
+  const bookingInstructions = bookingEnabled
+    ? `
+5. Book Appointments on the Shop Calendar:
+   - Today is ${today} (shop time zone). When the caller wants to come in, call \`check_appointment_availability\`, offer two or three of the returned times, then call \`book_appointment\` with the exact date and time they choose.
+   - Only confirm an appointment after \`book_appointment\` returns booked: true, then read back the day, date, and time. If the slot was just taken, offer the alternatives it returns.`
     : '';
   const extraInstructions = shopSettings.instructions
     ? `\nShop-specific policy & notes: ${shopSettings.instructions}`
@@ -343,7 +392,7 @@ Your Core Responsibilities on Every Call:
    - When the caller asks how much a repair, maintenance service, or diagnostic costs, call \`calculate_service_estimate\` to compute the labor, parts, shop supplies, and tax using the shop's $${laborRate}/hr labor rate.
    - Clearly state the ballpark total and mention that final pricing is confirmed after an in-bay technician inspection.
 4. Fill Shop Forms & Save the Intake + Estimate:
-   - Call \`save_call_intake_and_estimate\` as soon as you have the caller's name/phone, vehicle, and concern so the shop's intake form, customer record, estimate, and work order draft are filled in automatically.`;
+   - Call \`save_call_intake_and_estimate\` as soon as you have the caller's name/phone, vehicle, and concern so the shop's intake form, customer record, estimate, and work order draft are filled in automatically.${bookingInstructions}`;
 }
 
 export function buildGrokSessionUpdate({
@@ -351,12 +400,13 @@ export function buildGrokSessionUpdate({
   pricing = { laborRate: 140, taxRate: 8.25 },
   callerPhone = '',
   callerContext = null,
+  bookingEnabled = false,
 } = {}) {
   return {
     type: 'session.update',
     session: {
       voice: normalizeGrokVoice(shopSettings.voice),
-      instructions: buildGrokInstructions({ shopSettings, pricing, callerPhone, callerContext }),
+      instructions: buildGrokInstructions({ shopSettings, pricing, callerPhone, callerContext, bookingEnabled }),
       turn_detection: { type: 'server_vad' },
       audio: {
         input: {
@@ -367,7 +417,7 @@ export function buildGrokSessionUpdate({
           format: { type: 'audio/pcm', rate: GROK_SAMPLE_RATE },
         },
       },
-      tools: GROK_SHOP_TOOLS,
+      tools: bookingEnabled ? [...GROK_SHOP_TOOLS, ...GROK_BOOKING_TOOLS] : GROK_SHOP_TOOLS,
     },
   };
 }
@@ -956,6 +1006,27 @@ export async function executeGrokShopTool(env, shopId, name, args = {}, { caller
     };
   }
 
+  if ((name === 'check_appointment_availability' || name === 'book_appointment') && !aiPhoneBookingEnabled(env)) {
+    return { error: 'Phone booking is turned off; take a message so the shop can call back to schedule.' };
+  }
+
+  if (name === 'check_appointment_availability') {
+    if (!env?.DB || !shopId) return { error: 'The shop calendar is unavailable; take a message for a callback.' };
+    const booking = await loadBookingContext(env, shopId);
+    const days = nextAvailability({ from: cleanText(args.date, 10), hours: booking.hours, appointments: booking.appointments, config: booking.config, now: booking.now });
+    return { today: booking.now.date, timeZone: booking.timeZone, hours: booking.hoursText, days: days.map(day => ({ date: day.date, times: day.slots.slice(0, 6) })) };
+  }
+
+  if (name === 'book_appointment') {
+    if (!env?.DB || !shopId) return { error: 'The shop calendar is unavailable; take a message for a callback.' };
+    try {
+      const { appointment, returningCustomer } = await bookAppointment(env, shopId, { ...args, phone: args.phone || callerPhone }, { source: 'ai_phone', createdBy: 'grok-voice' });
+      return { booked: true, appointmentId: appointment.id, date: appointment.date, time: appointment.time, service: appointment.service, customerName: appointment.customer, returningCustomer };
+    } catch (error) {
+      return { booked: false, error: error.message, alternatives: error.alternatives || [] };
+    }
+  }
+
   return { error: `Unknown tool: ${name}` };
 }
 
@@ -1246,6 +1317,7 @@ export async function handleGrokClientSecret(request, env, context, { getSecret 
     pricing,
     callerPhone,
     callerContext,
+    bookingEnabled: aiPhoneBookingEnabled(env),
   });
 
   return json({
@@ -1472,6 +1544,9 @@ export async function handleGrokTwilioBridge({
   let greetingSent = false;
   let finalized = false;
   const transcriptLines = [];
+  const callActions = [];
+  const callStartedAt = new Date().toISOString();
+  let callerContextForSummary = null;
 
   const upstreamOpen = () => Boolean(upstream) && upstream.readyState === WebSocket.OPEN;
 
@@ -1514,6 +1589,15 @@ export async function handleGrokTwilioBridge({
       });
     } catch {
       // Best-effort usage logging
+    }
+    if (!transcriptLines.length && !callActions.length) return;
+    try {
+      await saveCallSummary(env, await buildCallSummary(env, {
+        shopId, callSid: currentCallSid, caller: currentCaller, callerContext: callerContextForSummary,
+        transcript: transcriptLines, actions: callActions, startedAt: callStartedAt, durationSeconds: voiceSeconds, reason,
+      }));
+    } catch (error) {
+      console.error(JSON.stringify({ message: 'could not save AI phone call summary', shopId, callSid: currentCallSid, error: error instanceof Error ? error.message : String(error) }));
     }
   };
 
@@ -1582,6 +1666,7 @@ export async function handleGrokTwilioBridge({
     } catch (err) {
       output = { error: err instanceof Error ? err.message : 'Tool execution failed' };
     }
+    callActions.push(callActionFromTool(String(msg.name || ''), parsedArgs, output));
     if (!upstreamOpen()) return;
     upstream.send(JSON.stringify({
       type: 'conversation.item.create',
@@ -1667,6 +1752,7 @@ export async function handleGrokTwilioBridge({
         clearTimeout(timeoutId);
       }
       const [settings, pricing, callerContext, upstreamResponse] = initialized;
+      callerContextForSummary = callerContext;
       const socket = upstreamResponse?.webSocket;
       if (!socket || upstreamResponse.status !== 101) {
         throw new Error(`xAI realtime upgrade failed with HTTP ${upstreamResponse?.status ?? 'none'}`);
@@ -1692,6 +1778,7 @@ export async function handleGrokTwilioBridge({
         pricing,
         callerPhone: currentCaller,
         callerContext,
+        bookingEnabled: aiPhoneBookingEnabled(env),
       })));
       for (const payload of startupAudioBuffer) {
         const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);

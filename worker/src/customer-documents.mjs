@@ -8,6 +8,7 @@ import {
   approvalSummary,
   normalizeEstimateApproval,
 } from '../../src/modules/estimate-approval.js';
+import { isVideoMedia, mediaKeys, ratingChipHtml, ratingSummary } from '../../src/modules/inspection-ratings.js';
 import { HttpError, json, requestJson } from './http.mjs';
 
 const LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -142,8 +143,41 @@ async function linkRecord(env, token) {
   `).bind(tokenHash).first();
 }
 
-function lineRows(document, type) {
-  const source = type === 'estimate' ? document.estimate?.lines || [] : document.lines || [];
+const MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime']);
+
+function documentLines(document, type) {
+  return type === 'estimate' ? document.estimate?.lines || [] : document.lines || [];
+}
+
+/** Finding photos/videos the customer may view through this link: only keys on the document, in its shop. */
+/** Inspection-wide media is copied to estimate.photoKeys; line media sits on each line. */
+function documentLevelMedia(document, type) {
+  return type === 'estimate' ? mediaKeys(document.estimate || {}) : [];
+}
+
+function documentMediaKeys(link, document) {
+  const keys = new Set();
+  const all = [...documentLines(document, link.document_type).flatMap(line => mediaKeys(line)), ...documentLevelMedia(document, link.document_type)];
+  for (const key of all) if (key.startsWith(`shops/${link.shop_id}/`)) keys.add(key);
+  return keys;
+}
+
+function mediaHtml(line, link, token) {
+  return mediaListHtml(mediaKeys(line), link, token);
+}
+
+function mediaListHtml(keys, link, token, limit = 6) {
+  const items = keys.filter(key => key.startsWith(`shops/${link.shop_id}/`)).slice(0, limit).map(key => {
+    const src = `/api/customer-documents/${token}/media?key=${encodeURIComponent(key)}`;
+    return isVideoMedia(key)
+      ? `<video controls preload="metadata" playsinline src="${escapeHtml(src)}"></video>`
+      : `<img loading="lazy" alt="Inspection photo" src="${escapeHtml(src)}">`;
+  });
+  return items.length ? `<div class="media">${items.join('')}</div>` : '';
+}
+
+function lineRows(document, type, link = null, token = '') {
+  const source = documentLines(document, type);
   return source.map((line, index) => {
     const item = normalizeEstimateLine(line, index);
     const detail = item.type === 'part'
@@ -152,16 +186,24 @@ function lineRows(document, type) {
     const choices = type === 'estimate'
       ? `<fieldset class="decision"><legend>Choose this line</legend><label><input type="radio" name="decision-${escapeHtml(item.id)}" value="approved" checked> Approve</label><label><input type="radio" name="decision-${escapeHtml(item.id)}" value="declined"> Decline</label></fieldset>`
       : '';
+    const rating = ratingChipHtml(item.inspectionStatus, escapeHtml);
     return `<article class="line" data-line-id="${escapeHtml(item.id)}">
       <div class="line-type">${item.type === 'part' ? 'Part' : item.type === 'fee' ? 'Fee' : 'Labor'}</div>
-      <div><strong>${escapeHtml(item.description)}</strong><small>${escapeHtml(detail)}</small>${item.notes ? `<p>${escapeHtml(item.notes)}</p>` : ''}</div>
+      <div>${rating}<strong>${escapeHtml(item.description)}</strong><small>${escapeHtml(detail)}</small>${item.notes ? `<p>${escapeHtml(item.notes)}</p>` : ''}${link ? mediaHtml(item, link, token) : ''}</div>
       <b>${escapeHtml(money(item.total))}</b>
       ${choices}
     </article>`;
   }).join('');
 }
 
-function customerDocumentPage(link, document, nonce) {
+function ratingBanner(document) {
+  const counts = ratingSummary(documentLines(document, 'estimate'));
+  if (!counts.red && !counts.yellow && !counts.green) return '';
+  const chip = (rating, label, count) => (count ? `<span>${ratingChipHtml(rating, escapeHtml)}${count} ${label}</span>` : '');
+  return `<section class="ratings">${chip('red', 'need attention now', counts.red)}${chip('yellow', 'need attention soon', counts.yellow)}${chip('green', 'look good', counts.green)}</section>`;
+}
+
+function customerDocumentPage(link, document, nonce, token = '') {
   const type = link.document_type;
   const isEstimate = type === 'estimate';
   const estimate = isEstimate ? document.estimate || calculateEstimate([], 0) : document;
@@ -188,8 +230,9 @@ function customerDocumentPage(link, document, nonce) {
     <p class="error" id="error" hidden></p>
     <div class="actions">
       ${isEstimate ? '<button type="button" class="decline" id="decline-estimate">Decline all</button>' : ''}
-      <button type="button" class="approve" id="submit-signature">${isEstimate ? 'Sign & approve selected work' : 'Sign invoice'}</button>
-    </div>`;
+      ${isEstimate ? '<button type="button" class="approve tap" id="tap-approve">Approve selected work</button>' : ''}
+      <button type="button" class="${isEstimate ? 'secondary' : 'approve'}" id="submit-signature">${isEstimate ? 'Sign & approve' : 'Sign invoice'}</button>
+    </div>${isEstimate ? '<p class="tap-note">Approve with one tap using your name, or draw a signature. Declined items are saved so the shop can follow up later.</p>' : ''}`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -198,7 +241,7 @@ function customerDocumentPage(link, document, nonce) {
   <meta name="referrer" content="no-referrer">
   <title>${isEstimate ? 'Estimate approval' : 'Invoice signature'} · ShopCrank</title>
   <style>
-    :root{color-scheme:light;--ink:#14201c;--muted:#68766f;--paper:#fffefb;--line:#d9ddd8;--green:#1f654b;--deep:#162c24;--lime:#c8df59;--red:#a63f36}*{box-sizing:border-box}body{margin:0;padding:20px;color:var(--ink);background:#f3f1eb;font:15px/1.5 system-ui,sans-serif}.sheet{width:min(860px,100%);margin:auto;border:1px solid var(--line);border-radius:10px;background:var(--paper);box-shadow:0 18px 55px #182a221c;overflow:hidden}.head{padding:24px;color:#fff;background:var(--deep);border-top:6px solid var(--lime)}.head span{color:var(--lime);font-size:12px;font-weight:800;text-transform:uppercase}.head h1{margin:4px 0}.head p{margin:0;color:#c8d3ce}.meta,.totals,.signature,.notice{margin:18px;padding:18px;border:1px solid var(--line);border-radius:7px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:12px}.meta small,.line small{display:block;color:var(--muted)}.lines{display:grid;gap:10px;margin:18px}.line{display:grid;grid-template-columns:70px 1fr auto;gap:12px;align-items:start;padding:15px;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:6px}.line-type{font-size:11px;font-weight:800;text-transform:uppercase;color:var(--green)}.line p{margin:5px 0 0;color:var(--muted);font-size:13px}.decision{grid-column:2/-1;display:flex;gap:18px;border:0;padding:8px 0 0}.decision legend{position:absolute;width:1px;height:1px;overflow:hidden}.decision label{font-weight:700}.totals{display:flex;justify-content:flex-end;gap:22px;align-items:end}.totals strong{font-size:24px}.signature{display:grid;gap:8px}.signature label{font-weight:800}.signature input[type=text],#customer-name{width:100%;padding:12px;border:1px solid var(--line);border-radius:5px;font:inherit}canvas{width:100%;height:190px;border:2px dashed #91a099;border-radius:6px;background:#fff;touch-action:none}.signature-actions{text-align:right}.consent{display:flex;align-items:flex-start;gap:9px;font-weight:600!important}.actions{display:flex;justify-content:flex-end;gap:10px;padding:0 18px 22px}button{min-height:44px;padding:0 17px;border-radius:5px;font-weight:800;cursor:pointer}.approve{border:1px solid var(--green);color:#fff;background:var(--green)}.decline{border:1px solid #d9aaa5;color:var(--red);background:#fff}.secondary{border:1px solid var(--line);background:#fff}.error{margin:0 18px 14px;padding:10px;color:var(--red);background:#f8e5e2}.complete{color:#24533e;background:#edf5ef}@media(max-width:600px){body{padding:0}.sheet{border:0;border-radius:0;min-height:100vh}.meta{grid-template-columns:1fr}.line{grid-template-columns:1fr auto}.line-type{grid-column:1/-1}.decision{grid-column:1/-1}.actions{flex-direction:column}.actions button{width:100%}}
+    :root{color-scheme:light;--ink:#14201c;--muted:#68766f;--paper:#fffefb;--line:#d9ddd8;--green:#1f654b;--deep:#162c24;--lime:#c8df59;--red:#a63f36}*{box-sizing:border-box}body{margin:0;padding:20px;color:var(--ink);background:#f3f1eb;font:15px/1.5 system-ui,sans-serif}.sheet{width:min(860px,100%);margin:auto;border:1px solid var(--line);border-radius:10px;background:var(--paper);box-shadow:0 18px 55px #182a221c;overflow:hidden}.head{padding:24px;color:#fff;background:var(--deep);border-top:6px solid var(--lime)}.head span{color:var(--lime);font-size:12px;font-weight:800;text-transform:uppercase}.head h1{margin:4px 0}.head p{margin:0;color:#c8d3ce}.meta,.totals,.signature,.notice{margin:18px;padding:18px;border:1px solid var(--line);border-radius:7px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:12px}.meta small,.line small{display:block;color:var(--muted)}.lines{display:grid;gap:10px;margin:18px}.line{display:grid;grid-template-columns:70px 1fr auto;gap:12px;align-items:start;padding:15px;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:6px}.line-type{font-size:11px;font-weight:800;text-transform:uppercase;color:var(--green)}.line p{margin:5px 0 0;color:var(--muted);font-size:13px}.decision{grid-column:2/-1;display:flex;gap:18px;border:0;padding:8px 0 0}.decision legend{position:absolute;width:1px;height:1px;overflow:hidden}.decision label{font-weight:700}.totals{display:flex;justify-content:flex-end;gap:22px;align-items:end}.totals strong{font-size:24px}.signature{display:grid;gap:8px}.signature label{font-weight:800}.signature input[type=text],#customer-name{width:100%;padding:12px;border:1px solid var(--line);border-radius:5px;font:inherit}canvas{width:100%;height:190px;border:2px dashed #91a099;border-radius:6px;background:#fff;touch-action:none}.signature-actions{text-align:right}.consent{display:flex;align-items:flex-start;gap:9px;font-weight:600!important}.actions{display:flex;justify-content:flex-end;gap:10px;padding:0 18px 22px}button{min-height:44px;padding:0 17px;border-radius:5px;font-weight:800;cursor:pointer}.approve{border:1px solid var(--green);color:#fff;background:var(--green)}.decline{border:1px solid #d9aaa5;color:var(--red);background:#fff}.secondary{border:1px solid var(--line);background:#fff}.error{margin:0 18px 14px;padding:10px;color:var(--red);background:#f8e5e2}.complete{color:#24533e;background:#edf5ef}.rating-chip{display:inline-block;margin-right:8px;padding:1px 9px;border-radius:99px;font-size:11px;font-weight:800;text-transform:uppercase;color:#fff;vertical-align:1px}.rating-red{background:#b3261e}.rating-yellow{background:#c78a00}.rating-green{background:#1f654b}.ratings{display:flex;gap:10px;flex-wrap:wrap;margin:18px;font-weight:700}.media{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.media img,.media video{width:150px;height:112px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:#000}.tap-note{margin:-10px 18px 20px;color:var(--muted);font-size:13px;text-align:right}@media(max-width:600px){body{padding:0}.sheet{border:0;border-radius:0;min-height:100vh}.meta{grid-template-columns:1fr}.line{grid-template-columns:1fr auto}.line-type{grid-column:1/-1}.decision{grid-column:1/-1}.actions{flex-direction:column}.actions button{width:100%}}
   </style>
 </head>
 <body>
@@ -206,7 +249,9 @@ function customerDocumentPage(link, document, nonce) {
     <header class="head"><span>ShopCrank customer approval</span><h1>${isEstimate ? 'Estimate' : 'Invoice'} ${escapeHtml(number || '')}</h1><p>${escapeHtml(document.vehicle || '')}</p></header>
     ${status}
     <section class="meta"><div><small>Customer</small><strong>${escapeHtml(document.customer || '')}</strong></div><div><small>Work order</small><strong>${escapeHtml(document.id || document.ro || '')}</strong></div></section>
-    <section class="lines">${lineRows(document, type)}</section>
+    ${isEstimate ? ratingBanner(document) : ''}
+    ${isEstimate && documentLevelMedia(document, type).length ? `<section class="meta"><div><small>Inspection photos and video</small>${mediaListHtml(documentLevelMedia(document, type), link, token, 12)}</div></section>` : ''}
+    <section class="lines">${lineRows(document, type, link, token)}</section>
     <section class="totals"><span>Subtotal<br><b>${escapeHtml(money(estimate.subtotal))}</b></span><span>Tax<br><b>${escapeHtml(money(estimate.tax))}</b></span><strong>Total<br>${escapeHtml(money(estimate.total ?? estimate.amount))}</strong></section>
     ${controls}
   </main>
@@ -221,6 +266,7 @@ function customerDocumentPage(link, document, nonce) {
     const send=async action=>{
       const error=document.querySelector('#error'),name=document.querySelector('#customer-name').value.trim();
       if(action==='sign'&&(!name||!drawn||!document.querySelector('#consent').checked)){error.textContent='Enter your name, draw your signature, and confirm authorization.';error.hidden=false;return}
+      if(action==='tap'&&(!name||!document.querySelector('#consent').checked)){error.textContent='Enter your name and confirm authorization.';error.hidden=false;return}
       const decisions={};document.querySelectorAll('[data-line-id]').forEach(row=>{const choice=row.querySelector('input[type=radio]:checked');if(choice)decisions[row.dataset.lineId]=choice.value});
       const response=await fetch(location.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,authorizationName:name,signatureDataUrl:action==='sign'?pad.toDataURL('image/png'):'',decisions})});
       const body=await response.json().catch(()=>({}));
@@ -229,6 +275,7 @@ function customerDocumentPage(link, document, nonce) {
     };
     document.querySelector('#submit-signature').onclick=()=>send('sign');
     document.querySelector('#decline-estimate')?.addEventListener('click',()=>send('decline'));
+    document.querySelector('#tap-approve')?.addEventListener('click',()=>send('tap'));
   </script>`}
 </body>
 </html>`;
@@ -335,7 +382,8 @@ async function recordResponse(request, env, link, document, expectedUpdatedAt = 
     await invalidateSiblingDocumentLinks(env, link, 'declined', timestamp);
     return json({ ok: true, status: 'declined' });
   }
-  if (action !== 'sign') throw new HttpError(400, 'Choose sign or decline');
+  if (action === 'tap' && link.document_type !== 'estimate') throw new HttpError(400, 'Invoices need a signature');
+  if (!['sign', 'tap'].includes(action)) throw new HttpError(400, 'Choose sign, approve, or decline');
   const authorizationName = String(body.authorizationName || '').trim().slice(0, 100);
   if (!authorizationName) throw new HttpError(400, 'Full name is required');
   const decisions = body.decisions && typeof body.decisions === 'object' ? body.decisions : {};
@@ -351,17 +399,26 @@ async function recordResponse(request, env, link, document, expectedUpdatedAt = 
     nextEstimate = approvedEstimate(document.estimate || {}, decisions);
     if (!nextEstimate.approvedLineCount) throw new HttpError(400, 'Approve at least one line or decline the estimate');
   }
-  const signatureKey = await storeSignature(env, link, body.signatureDataUrl);
   const timestamp = new Date().toISOString();
-  const signature = {
-    type: 'signature',
-    authorizationName,
-    signatureKey,
-    signedAt: timestamp,
-    approvedAt: timestamp,
-    recordedBy: { id: 'customer', name: authorizationName, email: '' },
-    source: 'remote',
-  };
+  // One-tap approval records the customer's typed name and consent but no drawn
+  // signature, so it never satisfies signature-only gates such as live key work.
+  const signature = action === 'tap'
+    ? {
+      type: 'online',
+      authorizationName,
+      approvedAt: timestamp,
+      recordedBy: { id: 'customer', name: authorizationName, email: '' },
+      source: 'remote',
+    }
+    : {
+      type: 'signature',
+      authorizationName,
+      signatureKey: await storeSignature(env, link, body.signatureDataUrl),
+      signedAt: timestamp,
+      approvedAt: timestamp,
+      recordedBy: { id: 'customer', name: authorizationName, email: '' },
+      source: 'remote',
+    };
   const result = link.document_type === 'estimate' ? 'approved' : 'signed';
   // Claim before write: only the winning request may mutate the document.
   await claimDocumentLink(env, link.id, result, timestamp);
@@ -390,7 +447,24 @@ async function recordResponse(request, env, link, document, expectedUpdatedAt = 
   return json({ ok: true, status: result });
 }
 
-export async function handleCustomerDocument(request, env, token) {
+async function documentMedia(request, env, link, document) {
+  if (request.method !== 'GET') throw new HttpError(405, 'Method not allowed');
+  const key = new URL(request.url).searchParams.get('key') || '';
+  if (!documentMediaKeys(link, document).has(key)) throw new HttpError(404, 'Media not found');
+  const object = await env.FILES?.get(key);
+  if (!object) throw new HttpError(404, 'Media not found');
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  const type = String(headers.get('Content-Type') || '').toLowerCase().split(';')[0].trim();
+  if (!MEDIA_TYPES.has(type)) throw new HttpError(404, 'Media not found');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  headers.set('Cache-Control', 'private, max-age=3600');
+  headers.set('Referrer-Policy', 'no-referrer');
+  return new Response(object.body, { headers });
+}
+
+export async function handleCustomerDocument(request, env, token, subresource = '') {
   if (!/^[A-Za-z0-9_-]{40,100}$/.test(token)) throw new HttpError(404, 'Document link not found');
   const link = await linkRecord(env, token);
   if (!link) throw new HttpError(404, 'Document link not found');
@@ -398,16 +472,18 @@ export async function handleCustomerDocument(request, env, token) {
   const row = await entityRow(env, link.shop_id, entityTypeForDocument(link.document_type), link.document_id);
   const document = parseEntity(row);
   if (!document) throw new HttpError(404, 'Document not found');
+  if (subresource === 'media') return documentMedia(request, env, link, document);
+  if (subresource) throw new HttpError(404, 'Not found');
   if (request.method === 'POST') {
     return recordResponse(request, env, link, document, row.updated_at || document.updatedAt || null);
   }
   if (request.method !== 'GET') throw new HttpError(405, 'Method not allowed');
   const nonce = randomToken();
-  return new Response(customerDocumentPage(link, document, nonce), {
+  return new Response(customerDocumentPage(link, document, nonce, token), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
-      'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; script-src 'nonce-${nonce}'`,
+      'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; script-src 'nonce-${nonce}'`,
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',

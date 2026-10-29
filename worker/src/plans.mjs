@@ -138,12 +138,13 @@ export function stripePriceForPlan(env, planId, interval = 'monthly') {
   return /^price_[A-Za-z0-9]+$/.test(priceId) && !isPlaceholderPrice(priceId) ? priceId : '';
 }
 
+// Two-way texting and text-to-pay are on every plan.
 export const PLAN_CAPABILITIES = Object.freeze({
-  solo: ['labor_guides', 'parts_ordering', 'support'],
+  solo: ['labor_guides', 'parts_ordering', 'sms', 'support'],
   shop: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'support'],
   shop_pro: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'live_diagnostics', 'support'],
   enterprise: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'live_diagnostics', 'multi_location', 'support'],
-  founding_solo: ['labor_guides', 'parts_ordering', 'support'],
+  founding_solo: ['labor_guides', 'parts_ordering', 'sms', 'support'],
   founding_shop: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'support'],
   founding_pro: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'live_diagnostics', 'support'],
 });
@@ -152,13 +153,17 @@ export function planCapabilities(planId) {
   return [...(PLAN_CAPABILITIES[planId] || [])];
 }
 
-export function hasPlanCapability(subscription, capability, now = Date.now()) {
+/** Active or trialing, and the paid period / trial has not ended. */
+export function subscriptionActive(subscription, now = Date.now()) {
   const periodEnd = subscription?.current_period_end
     ? Date.parse(subscription.current_period_end)
     : null;
   return ['active', 'trialing'].includes(String(subscription?.status || ''))
-    && (periodEnd === null || (Number.isFinite(periodEnd) && periodEnd > now))
-    && planCapabilities(subscription?.plan_id).includes(capability);
+    && (periodEnd === null || (Number.isFinite(periodEnd) && periodEnd > now));
+}
+
+export function hasPlanCapability(subscription, capability, now = Date.now()) {
+  return subscriptionActive(subscription, now) && planCapabilities(subscription?.plan_id).includes(capability);
 }
 
 export function claimDecision({ invite, counter, planId }) {

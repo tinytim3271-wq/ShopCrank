@@ -176,7 +176,8 @@ test('public estimate link renders itemized parts and labor without authenticati
   assert.equal(response.status, 200);
   assert.match(html, /Diagnosis/);
   assert.match(html, /Recommended sensor/);
-  assert.match(html, /Sign &amp; approve selected work|Sign & approve selected work/);
+  assert.match(html, /id="tap-approve"[^>]*>Approve selected work<\/button>/);
+  assert.match(html, /Sign &amp; approve|Sign & approve/);
   assert.match(response.headers.get('Content-Security-Policy'), /script-src 'nonce-/);
 });
 
