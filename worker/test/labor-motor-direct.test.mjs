@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLaborGuideHandlers, platformLaborStatus } from '../src/integrations/labor-guide.mjs';
 import { motorAuthHeaders, motorLaborUrl, motorPlatformConfig, normalizeMotorOperation } from '../src/integrations/motor-direct.mjs';
-import { LABOR_GUIDE_SECRET_NAME, laborBookTimeBanner } from '../../src/modules/labor-guide.js';
+import { LABOR_GUIDE_SECRET_NAME, laborBookTimeBanner, laborGuidePanelHtml } from '../../src/modules/labor-guide.js';
 import { PARTSTECH_SECRET_NAME } from '../../src/modules/partstech.js';
 
 const VIN = '1FTFW1E50NFA00001';
@@ -117,4 +117,27 @@ test('with no book source at all, the estimate falls back to the labeled web ave
   const result = await search({}, { year: 2022, make: 'Ford', model: 'F-150', keyword: 'front pads' });
   assert.equal(result.provider, 'web_estimate');
   assert.notEqual(result.bookTime, true);
+});
+
+test('review fixes: empty or VIN-less MOTOR falls back to the web average; platform ALLDATA serves unconnected shops', async () => {
+  const calls = [];
+  const { search } = harness();
+  const vinless = await search({ ...platformEnv, fetch: motorFetch(calls) }, { year: 2022, make: 'Ford', model: 'F-150', keyword: 'front pads' });
+  assert.equal(vinless.provider, 'web_estimate');
+  assert.equal(calls.length, 0, 'no MOTOR call with an empty {vin}');
+  const empty = await search({ ...platformEnv, fetch: motorFetch(calls, []) }, { vin: VIN, keyword: 'nothing' });
+  assert.equal(empty.provider, 'web_estimate');
+  assert.equal(calls.length, 1);
+  const alldataEnv = { ALLDATA_LABOR_BASE_URL: 'https://alldata.example.test/', ALLDATA_LABOR_SEARCH_PATH: 'labor', ALLDATA_LABOR_API_KEY: 'ad-key' };
+  const alldata = await harness().search({ ...alldataEnv, fetch: async () => Response.json({ results: [{ laborHours: 2, operation: 'Water pump' }] }) }, { vin: VIN, keyword: 'water pump', laborRate: 100 });
+  assert.equal(alldata.provider, 'alldata');
+  assert.equal(alldata.licensedBy, 'platform');
+});
+
+test('review fixes: camelCase MOTOR hours parse, and a connected direct-MOTOR status renders as connected', () => {
+  assert.equal(normalizeMotorOperation({ description: 'Replace pads', baseLaborTime: 1.4 }).hours, 1.4);
+  assert.equal(normalizeMotorOperation({ description: 'Replace pads', laborTime: '0.8' }).hours, 0.8);
+  const html = laborGuidePanelHtml({ connected: true, status: 'connected', provider: 'motor', label: 'MOTOR labor guide connected', viaPartstech: false, platform: { motor: true } }, { canSave: true });
+  assert.match(html, /id="labor-guide-disconnect"/);
+  assert.doesNotMatch(html, /included with ShopCrank/);
 });

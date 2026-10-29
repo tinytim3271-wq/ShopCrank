@@ -120,33 +120,41 @@ export function createLaborGuideHandlers({
       const vin = String(body.vin || '').trim();
 
       const fetcher = env.fetch || fetch;
+      // Book results win only when they contain operations; an empty match falls
+      // through to the labeled web average instead of an empty book-time table.
       const book = async (provider, licensedBy, run) => {
         const result = await run();
         await recordAudit?.(env, context, { kind: 'integrations.labor_guide.search', provider, licensedBy, count: result.lines.length });
+        if (!result.lines.length) return null;
         return json({
           connected: true, provider, bookTime: true, licensedBy, label: `${PROVIDER_NAMES[provider]} book time`,
           groups: [], operations: result.operations, lines: result.lines,
         });
       };
+      const motorCanSearch = config => config.configured && (vin || (keyword && !config.laborPath.includes('{vin}')));
+      const alldataSearch = () => book('alldata', 'platform', async () => {
+        const results = await searchLicensedLabor(env, { vin, year: body.year, make: body.make, model: body.model, engine: body.engine, query: keyword }, { provider: 'alldata', fetch: fetcher });
+        const operations = results.filter(item => item.verified);
+        const lines = operations.map((operation, index) => {
+          const line = mapMotorLaborOperationToEstimateLine(operation, { laborRate, provider: 'alldata' }, index);
+          return { ...line, laborGuide: { ...line.laborGuide, bookTime: true, licensedBy: 'platform' } };
+        });
+        return { operations, lines };
+      });
 
       // Shop's own MOTOR keys (not via PartsTech).
       if (status.connected && status.provider === 'motor' && !record.viaPartstech) {
         const config = motorShopConfig(env, record);
         if (!config.configured) throw new HttpError(503, 'MOTOR direct lookup needs MOTOR_API_BASE_URL and MOTOR_LABOR_PATH on the Worker');
-        return book('motor', 'shop', () => searchMotorLabor(config, { vin, keyword, laborRate, source: 'shop' }, { fetcher }));
+        if (!motorCanSearch(config)) throw new HttpError(400, 'Enter the VIN to look up MOTOR labor times');
+        const found = await book('motor', 'shop', () => searchMotorLabor(config, { vin, keyword, laborRate, source: 'shop' }, { fetcher }));
+        if (found) return found;
       }
 
       // ALLDATA through the platform adapter when ShopCrank holds the license.
       if (status.connected && status.provider === 'alldata' && platformLaborStatus(env).alldata) {
-        return book('alldata', 'platform', async () => {
-          const results = await searchLicensedLabor(env, { vin, year: body.year, make: body.make, model: body.model, engine: body.engine, query: keyword }, { provider: 'alldata', fetch: fetcher });
-          const operations = results.filter(item => item.verified);
-          const lines = operations.map((operation, index) => {
-            const line = mapMotorLaborOperationToEstimateLine(operation, { laborRate, provider: 'alldata' }, index);
-            return { ...line, laborGuide: { ...line.laborGuide, bookTime: true, licensedBy: 'platform' } };
-          });
-          return { operations, lines };
-        });
+        const found = await alldataSearch();
+        if (found) return found;
       }
 
       // Book provider path: MOTOR via the shop's PartsTech account.
@@ -182,15 +190,20 @@ export function createLaborGuideHandlers({
         });
       }
 
-      if (status.connected && (status.provider === 'alldata' || status.provider === 'shopkey')) {
+      if (status.connected && (status.provider === 'shopkey' || (status.provider === 'alldata' && !platformLaborStatus(env).alldata))) {
         // Credentials may be stored, but live adapters are not wired yet — fail closed (no fake book times).
         throw new HttpError(501, `${status.provider} lookup is not enabled yet; disconnect it to use web estimates, or use manual entry`);
       }
 
       // No shop provider: use ShopCrank's MOTOR license when the platform holds one.
       const platformMotor = motorPlatformConfig(env);
-      if (!status.connected && platformMotor.configured && (vin || keyword)) {
-        return book('motor', 'platform', () => searchMotorLabor(platformMotor, { vin, keyword, laborRate, source: 'platform' }, { fetcher }));
+      if (!status.connected && motorCanSearch(platformMotor)) {
+        const found = await book('motor', 'platform', () => searchMotorLabor(platformMotor, { vin, keyword, laborRate, source: 'platform' }, { fetcher }));
+        if (found) return found;
+      }
+      if (!status.connected && platformLaborStatus(env).alldata && (vin || keyword)) {
+        const found = await alldataSearch();
+        if (found) return found;
       }
 
       // No book provider connected → automatic web fallback (clearly labeled, never as book time).

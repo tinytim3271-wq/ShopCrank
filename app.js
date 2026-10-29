@@ -2416,7 +2416,7 @@
     return `<div class="messaging-status ready"><div><strong>${escapeHtml4(label2)}</strong><span>Published book labor times${via ? ` ${escapeHtml4(via)}` : ""}.</span></div></div>`;
   }
   function laborGuidePanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
-    const status = laborGuideConnectionStatus(account);
+    const status = typeof account.connected === "boolean" && account.status ? account : laborGuideConnectionStatus(account);
     const platformMotor = !status.connected && account.platform?.motor;
     const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Book times from the connected provider</span></div></div>` : platformMotor ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>MOTOR labor guide (included with ShopCrank)</strong><span>Estimates use MOTOR book times. Web averages are only used when MOTOR has no match, and are labeled ${escapeHtml4(WEB_ESTIMATE_LABEL)}.</span></div></div>` : `<div class="messaging-status idle">${icon2("book-open", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Manual entry always works. With no MOTOR / ALLDATA / ShopKey connection, lookup uses a labeled web average (${escapeHtml4(WEB_ESTIMATE_LABEL)}) when search is configured \u2014 never as book time.</span></div></div>`;
     const form = canSave ? `<form id="labor-guide-connect-form" class="form-grid">

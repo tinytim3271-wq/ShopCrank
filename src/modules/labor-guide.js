@@ -312,7 +312,8 @@ export function laborBookTimeBanner(result = {}, escapeHtml = value => String(va
 }
 
 export function laborGuidePanelHtml(account = {}, { canSave = false, escapeHtml = v => String(v ?? ''), icon = () => '' } = {}) {
-  const status = laborGuideConnectionStatus(account);
+  // The Worker returns a sanitized status (no keys); recomputing it from that would read as disconnected.
+  const status = typeof account.connected === 'boolean' && account.status ? account : laborGuideConnectionStatus(account);
   const platformMotor = !status.connected && account.platform?.motor;
   const banner = status.connected
     ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>${escapeHtml(status.label)}</strong><span>Book times from the connected provider</span></div></div>`

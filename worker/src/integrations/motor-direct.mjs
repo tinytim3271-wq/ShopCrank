@@ -92,7 +92,7 @@ function operationList(payload) {
 
 /** MOTOR responses vary by product; accept the common PascalCase and camelCase shapes. */
 export function normalizeMotorOperation(item = {}) {
-  const hours = Number(item.BaseLaborTime ?? item.LaborTime ?? item.baseTime ?? item.hours ?? item.Hours ?? item.time);
+  const hours = Number(item.BaseLaborTime ?? item.baseLaborTime ?? item.LaborTime ?? item.laborTime ?? item.baseTime ?? item.hours ?? item.Hours ?? item.time);
   if (!Number.isFinite(hours) || hours < 0 || hours > 1_000) return null;
   return {
     id: text(item.ID ?? item.Id ?? item.id ?? item.OperationID ?? item.operationId, 120) || undefined,
