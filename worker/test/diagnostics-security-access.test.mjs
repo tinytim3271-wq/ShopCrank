@@ -80,6 +80,17 @@ test('live SecurityAccess keys are released only for an authorized live job on t
   assert.equal(granted.status, 200, JSON.stringify(granted.body));
   assert.equal(granted.body.keyBase64, 'q83vAA==');
   assert.equal(unlockCalls, 1);
+
+  // The level, not the caller's scope label, decides which unlock is released.
+  const unlock = (level, authorizationToken, scope) => call('tech@a.test', '/diagnostics/security-access', {
+    vin: VIN, level, seedBase64: 'oQ==', authorizationToken, ...(scope ? { scope } : {}),
+  });
+  assert.equal((await unlock(3, await mint({ procedure: 'module_flash' }), 'flash')).status, 400, 'flash label on the immobilizer level');
+  assert.equal((await unlock(7, await mint())).status, 400, 'unsupported level');
+  assert.equal((await unlock(5, await mint())).status, 403, 'an immobilizer job cannot unlock programming');
+  assert.equal((await unlock(5, await mint({ procedure: 'module_flash' }))).status, 200, 'flash job unlocks programming');
+  assert.equal((await unlock(5, await mint({ procedure: 'module_coding' }))).status, 200, 'coding job unlocks programming');
+  assert.equal(unlockCalls, 3);
 });
 
 test('capability tokens expire', async () => {

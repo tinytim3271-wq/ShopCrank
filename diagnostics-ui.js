@@ -501,6 +501,7 @@ async function oemCodeModule() {
   const mode = loadOemDiagState().programmingMode === 'live' ? 'live' : 'simulate';
   if (!confirm(`Write coding ${did} on ${target} (${mode} mode)? Confirm the VIN before continuing.`)) return;
   const { token, vin } = await oemAuthorize('module_coding');
+  if (loadOemDiagState().security?.scope !== 'flash' || mode === 'live') await oemUnlockSecurity('flash', token);
   const result = await oemDiagApi().codeModule({ target, did, data, authorizationToken: token });
   await oemAudit({ kind: 'diagnostics.coding', target, did, vin, mode, bytes: result.bytes });
   saveOemDiagState({
@@ -566,12 +567,17 @@ function bindOemDiagnostics() {
     render();
   }));
   if (!isOemDiagnosticsAvailable()) return;
-  document.querySelector('#oem-sec-immo')?.addEventListener('click', async () => {
-    try { await oemUnlockSecurity('immobilizer'); render(); } catch (e) { saveOemDiagState({ lastError: friendlyOemError(e) }); render(); }
-  });
-  document.querySelector('#oem-sec-flash')?.addEventListener('click', async () => {
-    try { await oemUnlockSecurity('flash'); render(); } catch (e) { saveOemDiagState({ lastError: friendlyOemError(e) }); render(); }
-  });
+  // Live unlocks belong to an authorized job, so the standalone buttons only drive the bench simulator.
+  const standaloneUnlock = scope => async () => {
+    if (loadOemDiagState().programmingMode === 'live') {
+      saveOemDiagState({ lastError: 'In Live mode SecurityAccess runs automatically when you start an authorized key, flash, or coding job.' });
+      render();
+      return;
+    }
+    try { await oemUnlockSecurity(scope); render(); } catch (e) { saveOemDiagState({ lastError: friendlyOemError(e) }); render(); }
+  };
+  document.querySelector('#oem-sec-immo')?.addEventListener('click', standaloneUnlock('immobilizer'));
+  document.querySelector('#oem-sec-flash')?.addEventListener('click', standaloneUnlock('flash'));
   document.querySelectorAll('[data-prog-key]').forEach((button) => button.addEventListener('click', async () => {
     try { await oemProgram(button.dataset.progKey); render(); } catch (e) { saveOemDiagState({ lastError: friendlyOemError(e) }); render(); }
   }));

@@ -79,7 +79,21 @@ export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, a
  * signature, shop, VIN, mode, and scope all match and it has not expired; null
  * otherwise. Not single-use here: one job can request SecurityAccess repeatedly.
  */
-export async function verifyCapabilityToken(env, token, { shopId, vin, mode, scope, nowMs = Date.now() }) {
+/**
+ * UDS SecurityAccess level for each unlock scope, as J2534.Host sends them
+ * (requestSeed 0x03 immobilizer, 0x05 programming). The Worker derives the scope
+ * from the level so a caller cannot ask for an immobilizer key under a flash job.
+ */
+export const SECURITY_ACCESS_LEVELS = Object.freeze({ immobilizer: 0x03, flash: 0x05 });
+
+/** Job scopes whose capability token may request each SecurityAccess unlock. Module coding writes need the programming unlock. */
+export const SECURITY_ACCESS_TOKEN_SCOPES = Object.freeze({ immobilizer: ['immobilizer'], flash: ['flash', 'coding'] });
+
+export function securityAccessScopeForLevel(level) {
+  return Object.entries(SECURITY_ACCESS_LEVELS).find(([, value]) => value === Number(level))?.[0] || null;
+}
+
+export async function verifyCapabilityToken(env, token, { shopId, vin, mode, scope, scopes = [scope], nowMs = Date.now() }) {
   const parts = String(token || '').split('.');
   if (parts.length !== 3 || parts[0] !== 'v2' || !env.DIAGNOSTICS_SIGNING_PRIVATE_KEY) return null;
   let payload;
@@ -94,7 +108,7 @@ export async function verifyCapabilityToken(env, token, { shopId, vin, mode, sco
     return null;
   }
   if (payload?.v !== 2 || payload.shopId !== shopId || payload.vin !== vin) return null;
-  if (payload.mode !== mode || payload.scope !== scope || procedureSpec(payload.procedure)?.klass !== scope) return null;
+  if (payload.mode !== mode || !scopes.includes(payload.scope) || procedureSpec(payload.procedure)?.klass !== payload.scope) return null;
   if (!(Number(payload.exp) > nowMs)) return null;
   return payload;
 }
