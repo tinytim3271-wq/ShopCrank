@@ -61,7 +61,7 @@ const api=${JSON.stringify(`/api/book/${shopId}`)},form=document.querySelector('
 const show=m=>{error.textContent=m;error.hidden=!m};
 async function load(date){slots.textContent='Loading…';time='';const r=await fetch(api+'/slots'+(date?'?date='+date:''));const b=await r.json().catch(()=>({}));slots.textContent='';const day=(b.days||[]).find(d=>!date||d.date===date)||(b.days||[])[0];if(!day){slots.textContent='No openings that day. Try another day or call the shop.';return}if(!date){form.date.value=day.date}if(day.date!==form.date.value){slots.textContent='No openings that day. Next opening: '+day.date;return}for(const t of day.slots){const btn=document.createElement('button');btn.type='button';btn.textContent=new Date('1970-01-01T'+t+':00').toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});btn.onclick=()=>{time=t;slots.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===btn))};slots.append(btn)}}
 form.date.addEventListener('change',()=>load(form.date.value));load('');
-form.addEventListener('submit',async e=>{e.preventDefault();show('');if(!time)return show('Pick a time.');const data=Object.fromEntries(new FormData(form));const service=data.service||data.notes;const r=await fetch(api,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,service,time})});const b=await r.json().catch(()=>({}));if(!r.ok){show(b.message||b.error||'Could not book. Please call the shop.');if(r.status===409)load(form.date.value);return}document.querySelector('main').innerHTML='<div class="done"><h1>You\\'re booked</h1><p>'+new Date(b.date+'T12:00:00').toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})+' at '+new Date('1970-01-01T'+b.time+':00').toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'. We\\'ll text you a confirmation.</p></div>'});
+form.addEventListener('submit',async e=>{e.preventDefault();show('');if(!time)return show('Pick a time.');const data=Object.fromEntries(new FormData(form));const service=data.service||data.notes;const r=await fetch(api,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,service,time})});const b=await r.json().catch(()=>({}));if(!r.ok){show(b.message||b.error||'Could not book. Please call the shop.');if(r.status===409)load(form.date.value);return}document.querySelector('main').innerHTML='<div class="done"><h1>You\\'re booked</h1><p>'+new Date(b.date+'T12:00:00').toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})+' at '+new Date('1970-01-01T'+b.time+':00').toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'.'+(b.confirmationSent?' We\\'ll text you a confirmation.':' Save this time; call the shop if you need to change it.')+'</p></div>'});
 </script></body></html>`;
 }
 
@@ -103,12 +103,14 @@ export async function handlePublicBooking(request, env, segments, { hashValue, g
     if (!phone) throw new HttpError(400, 'Enter a valid mobile number');
     try {
       const { appointment } = await bookAppointment(env, shopId, { ...body, phone }, { source: 'online_booking', createdBy: 'online-booking' });
+      let confirmationSent = false;
       try {
         const consent = await env.DB.prepare('SELECT status FROM sms_consent WHERE shop_id = ? AND phone = ?').bind(shopId, phone).first();
         const twilio = !automatedSmsEnabled(env) || consent?.status === 'opted_out' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
         if (twilio?.configured) {
           const text = `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.`;
           const result = await sendSms(env, { to: phone, body: text }, { config: twilio });
+          confirmationSent = true;
           await env.DB.prepare(`
             INSERT OR IGNORE INTO customer_messages (id, shop_id, customer_id, work_order_id, phone, direction, body, provider, provider_message_id, message_type, status, created_at)
             VALUES (?, ?, ?, NULL, ?, 'outbound', ?, ?, ?, 'booking_confirmation', ?, ?)
@@ -117,7 +119,7 @@ export async function handlePublicBooking(request, env, segments, { hashValue, g
       } catch {
         // Confirmation text is best-effort; the appointment is already on the calendar.
       }
-      return json({ booked: true, id: appointment.id, date: appointment.date, time: appointment.time }, 201);
+      return json({ booked: true, id: appointment.id, date: appointment.date, time: appointment.time, confirmationSent }, 201);
     } catch (error) {
       if (error instanceof BookingError) throw new HttpError(error.status, error.message);
       throw error;

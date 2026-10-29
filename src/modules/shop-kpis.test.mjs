@@ -116,5 +116,5 @@ test('review fixes: core deposits are not sales, and invoice discounts reduce co
   });
   assert.equal(kpis.partsSales, 90);
   assert.equal(kpis.partsMargin, 55.6);
-  assert.equal(kpis.sales, 85, '$135 discounted subtotal less the $50 refundable core');
+  assert.equal(kpis.sales, 90, '$135 discounted subtotal less the $45 discounted refundable core');
 });
