@@ -117,3 +117,37 @@ describe('isTrustedLocalDiagnosticsRequest', () => {
     );
   });
 });
+
+describe('Windows packaging', () => {
+  const root = path.join(__dirname, '..');
+  const configs = {
+    online: JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).build,
+    offline: JSON.parse(fs.readFileSync(path.join(__dirname, 'builder-offline.json'), 'utf8')),
+  };
+
+  for (const [name, config] of Object.entries(configs)) {
+    it(`${name} installer ships the public verification key and no shared secret`, () => {
+      const resources = JSON.stringify(config.extraResources);
+      assert.doesNotMatch(resources, /packaged-secrets|capability-secret|private/i);
+      assert.ok(config.files.includes('!desktop/packaged-secrets/**/*'));
+      assert.ok(config.extraResources.some(entry => entry.from === 'diagnostics/keys'
+        && entry.to === 'diagnostics-keys'
+        && entry.filter.length === 1 && entry.filter[0] === 'capability-public-key.pem'));
+    });
+  }
+
+  it('build scripts and the release workflow never bake a diagnostics secret', () => {
+    const scripts = JSON.stringify(JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts);
+    const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'windows-desktop.yml'), 'utf8');
+    const offline = fs.readFileSync(path.join(root, 'scripts', 'build-offline-windows.mjs'), 'utf8');
+    for (const text of [scripts, workflow, offline]) {
+      assert.doesNotMatch(text, /bake-diagnostics-secret|DIAGNOSTICS_CAPABILITY_SECRET/);
+    }
+  });
+
+  it('the committed production key is a public key', () => {
+    const pem = fs.readFileSync(path.join(root, 'diagnostics', 'keys', 'capability-public-key.pem'), 'utf8');
+    assert.match(pem, /BEGIN PUBLIC KEY/);
+    assert.doesNotMatch(pem, /PRIVATE/);
+  });
+});

@@ -159,8 +159,8 @@ function formatCommEntry(entry) {
 
 function friendlyOemError(error) {
   const message = String(error?.message || error || 'Diagnostic operation failed');
-  if (/SHOP_CRANK_DIAG_CAPABILITY_SECRET|DIAGNOSTICS_CAPABILITY_SECRET|capability secret/i.test(message)) {
-    return `${message} Reinstall ShopCrank Desktop from Downloads after CI rebuilds the Windows installer with the shop API secret.`;
+  if (/capability public key is not configured/i.test(message)) {
+    return `${message} Reinstall ShopCrank Desktop from Downloads so the diagnostics verification key is restored.`;
   }
   if (/did not become ready|host script not found|J2534 RPC timeout/i.test(message)) {
     return `${message} Confirm J2534.Host.exe is present, vendor drivers are installed, and antivirus is not blocking the diagnostic host.`;
@@ -470,8 +470,8 @@ async function oemAudit(event) {
   try { await apiFetch('/diagnostics/audit', { method: 'POST', body: JSON.stringify(event) }); } catch { /* audit is best-effort */ }
 }
 
-async function oemUnlockSecurity(scope) {
-  const result = await oemDiagApi().securityAccess({ scope });
+async function oemUnlockSecurity(scope, authorizationToken) {
+  const result = await oemDiagApi().securityAccess({ scope, ...(authorizationToken ? { authorizationToken } : {}) });
   saveOemDiagState({ security: { scope: result.scope, at: Date.now() }, lastError: null });
   toast(`SecurityAccess granted: ${result.scope}`);
 }
@@ -482,8 +482,8 @@ async function oemProgram(procedure) {
   if (!confirm(`${procedureLabel(procedure)} (${mode} mode)? Confirm the VIN and vehicle state before continuing.`)) return;
   const { token, vin } = await oemAuthorize(procedure);
   // Immobilizer procedures require SecurityAccess before RoutineControl.
-  if (!diag.security?.scope || diag.security.scope !== 'immobilizer') {
-    await oemUnlockSecurity('immobilizer');
+  if (!diag.security?.scope || diag.security.scope !== 'immobilizer' || mode === 'live') {
+    await oemUnlockSecurity('immobilizer', token);
   }
   const result = await oemDiagApi().programKey({ procedure, authorizationToken: token });
   await oemAudit({ kind: 'diagnostics.program', procedure, vin, mode, keys: result.keys, remotes: result.remotes });
@@ -533,6 +533,7 @@ async function oemFlashModule() {
   if (!confirm(`Flash ${target} with ${file.name} (${mode} mode)? Do not disconnect the adapter or interrupt power.`)) return;
   const size = file.size;
   const { token, vin } = await oemAuthorize('module_flash');
+  if (diag.security?.scope !== 'flash' || mode === 'live') await oemUnlockSecurity('flash', token);
   saveOemDiagState({ flashProgress: 5 });
   render();
   const result = await oemDiagApi().flashModule({

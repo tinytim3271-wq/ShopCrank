@@ -40,8 +40,8 @@
     "build:android": "npm run check:java && npm run sync",
     "desktop": "electron .",
     "build:j2534": "node scripts/build-j2534.mjs",
-    "build:windows": "npm run build:web && npm run build:j2534 && node scripts/bake-diagnostics-secret.mjs && electron-builder --win nsis --publish never",
-    "build:windows:zip": "npm run build:web && npm run build:j2534 && node scripts/bake-diagnostics-secret.mjs && electron-builder --win zip --publish never",
+    "build:windows": "npm run build:web && npm run build:j2534 && electron-builder --win nsis --publish never",
+    "build:windows:zip": "npm run build:web && npm run build:j2534 && electron-builder --win zip --publish never",
     "build:windows:offline": "node scripts/build-offline-windows.mjs",
     "build:windows:demo": "node scripts/build-offline-windows.mjs --demo",
     "test:j2534": "node diagnostics/j2534-host-node/test/host.test.js",
@@ -115,7 +115,8 @@
       "desktop/**/*",
       "diagnostics/j2534-host-node/**/*",
       "diagnostics/coverage/**/*",
-      "downloads/**"
+      "downloads/**",
+      "!desktop/packaged-secrets/**/*"
     ],
     "extraResources": [
       {
@@ -133,10 +134,10 @@
         ]
       },
       {
-        "from": "desktop/packaged-secrets",
-        "to": "diagnostics-secrets",
+        "from": "diagnostics/keys",
+        "to": "diagnostics-keys",
         "filter": [
-          "capability-secret.txt"
+          "capability-public-key.pem"
         ]
       }
     ],

@@ -296,10 +296,13 @@ async function clearDtcs(params = {}) {
   return rpcCall('clearDtcs', { authorizationToken });
 }
 
-/** UDS SecurityAccess (immobilizer or flash scope) — no capability token needed to request a seed. */
+/** UDS SecurityAccess. Live hosts forward the job's capability token so the Worker releases the OEM key only for an authorized job. */
 async function securityAccess(params = {}) {
   await ensureHost();
-  return rpcCall('securityAccess', { scope: params.scope === 'flash' ? 'flash' : 'immobilizer' });
+  return rpcCall('securityAccess', {
+    scope: params.scope === 'flash' ? 'flash' : 'immobilizer',
+    ...(params.authorizationToken ? { authorizationToken: String(params.authorizationToken) } : {}),
+  });
 }
 
 const KEY_PROCEDURE_RPC = {

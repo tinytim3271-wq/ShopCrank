@@ -19,27 +19,41 @@
     "desktop/**/*",
     "diagnostics/j2534-host-node/**/*",
     "diagnostics/coverage/**/*",
-    "downloads/**"
+    "downloads/**",
+    "!desktop/packaged-secrets/**/*"
   ],
   "extraResources": [
     {
       "from": "diagnostics/j2534-host-node",
       "to": "j2534-host-node",
-      "filter": ["**/*"]
+      "filter": [
+        "**/*"
+      ]
     },
     {
       "from": "diagnostics/j2534-service/publish/win-x64",
       "to": "j2534-host",
-      "filter": ["J2534.Host.exe"]
+      "filter": [
+        "J2534.Host.exe"
+      ]
     },
     {
-      "from": "desktop/packaged-secrets",
-      "to": "diagnostics-secrets",
-      "filter": ["capability-secret.txt"]
+      "from": "diagnostics/keys",
+      "to": "diagnostics-keys",
+      "filter": [
+        "capability-public-key.pem"
+      ]
     }
   ],
   "win": {
-    "target": [{ "target": "nsis", "arch": ["x64"] }]
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
   },
   "nsis": {
     "oneClick": false,

@@ -1,4 +1,4 @@
-import { base64UrlEncode, ecdsaP256SignBase64Url, importEcdsaPrivateKey } from './security.mjs';
+import { base64UrlDecode, base64UrlEncode, ecdsaP256SignBase64Url, importEcdsaPrivateKey, importEcdsaPublicKeyFromPrivate } from './security.mjs';
 
 const encoder = new TextEncoder();
 
@@ -75,6 +75,31 @@ export async function mintCapabilityToken(env, { procedure, vin, shopId, mode, a
 }
 
 /**
+ * Verify a capability token this Worker minted. Returns the payload only when the
+ * signature, shop, VIN, mode, and scope all match and it has not expired; null
+ * otherwise. Not single-use here: one job can request SecurityAccess repeatedly.
+ */
+export async function verifyCapabilityToken(env, token, { shopId, vin, mode, scope, nowMs = Date.now() }) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'v2' || !env.DIAGNOSTICS_SIGNING_PRIVATE_KEY) return null;
+  let payload;
+  try {
+    const publicKey = await importEcdsaPublicKeyFromPrivate(env.DIAGNOSTICS_SIGNING_PRIVATE_KEY);
+    const valid = await crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' }, publicKey, base64UrlDecode(parts[2]), encoder.encode(`v2.${parts[1]}`),
+    );
+    if (!valid) return null;
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
+  } catch {
+    return null;
+  }
+  if (payload?.v !== 2 || payload.shopId !== shopId || payload.vin !== vin) return null;
+  if (payload.mode !== mode || payload.scope !== scope || procedureSpec(payload.procedure)?.klass !== scope) return null;
+  if (!(Number(payload.exp) > nowMs)) return null;
+  return payload;
+}
+
+/**
  * Live key programming is authorized by a signed repair order in the shop's own
  * records rather than an AutoAuth login: the order must carry this VIN and have
  * an approved, signed estimateApproval recorded through the Worker approval path.
@@ -97,7 +122,9 @@ export async function signedRepairOrderForKeys(db, shopId, orderId, vin) {
   if (
     approval
     && approval.status === 'approved'
-    && approval.signedAt
+    && String(approval.type || 'signature').trim().toLowerCase() === 'signature'
+    && orderData.linesLockedAt
+    && Number.isFinite(Date.parse(approval.signedAt))
     && String(approval.authorizationName || '').trim()
   ) {
     return {

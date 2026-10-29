@@ -50,7 +50,7 @@ import {
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
 import { handleFiles as handleFileRoute } from './routes/files.mjs';
-import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, signedRepairOrderForKeys } from './diagnostics.mjs';
+import { PROGRAMMING_MODES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
@@ -1629,6 +1629,14 @@ async function handleSecurityAccessUnlock(request, env, context) {
   if (!validVin(vin)) throw new HttpError(400, 'A valid 17-character VIN is required');
   if (!Number.isInteger(level) || level < 1 || level > 0x7f) throw new HttpError(400, 'SecurityAccess level is required');
   if (!seedBase64) throw new HttpError(400, 'seedBase64 is required');
+  // The OEM key unlocks the immobilizer or ECU, so it is released only for a
+  // job POST /diagnostics/authorize already cleared (plan, signed RO, key license).
+  const authorization = await verifyCapabilityToken(env, body.authorizationToken, {
+    shopId: context.shopId, vin, mode: 'live', scope,
+  });
+  if (!authorization) {
+    throw new HttpError(403, 'Live SecurityAccess needs an active live authorization for this vehicle. Start the job from Key programming or Module programming so ShopCrank can authorize it first.');
+  }
   const login = await readAutoAuthLogin(env, context.shopId);
   if (!login) {
     throw new HttpError(501, 'Connect the shop AutoAuth account in OEM Diagnostics before live SecurityAccess.');
@@ -1668,6 +1676,8 @@ async function handleSecurityAccessUnlock(request, env, context) {
     scope,
     level,
     vin,
+    jti: authorization.jti,
+    procedure: authorization.procedure,
     provider: login.provider,
   });
   return json({ keyBase64: String(unlockBody.keyBase64), scope, level, vin });

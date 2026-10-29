@@ -9,8 +9,10 @@ namespace ShopCrank.J2534.Uds;
 /// The host never sees OEM seed→key algorithms; it posts the ECU seed to
 /// <c>POST /api/diagnostics/security-access</c>, which uses the shop's stored
 /// AutoAuth login (and optional <c>AUTOAUTH_UNLOCK_URL</c>) to obtain the key.
+/// The Worker only releases a key for the live capability token of an
+/// authorized job, so the token issued by <c>/diagnostics/authorize</c> rides along.
 /// </summary>
-public sealed class CloudSecurityAccessProvider : ISecurityAccessProvider
+public sealed class CloudSecurityAccessProvider(string? authorizationToken = null) : ISecurityAccessProvider
 {
     static readonly HttpClient Http = CreateClient();
     static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -26,6 +28,11 @@ public sealed class CloudSecurityAccessProvider : ISecurityAccessProvider
             throw new InvalidOperationException(
                 "Live SecurityAccess needs the ShopCrank desktop session. Sign in to ShopCrank Desktop, connect AutoAuth in OEM Diagnostics, then unlock again.");
         }
+        if (string.IsNullOrWhiteSpace(authorizationToken))
+        {
+            throw new InvalidOperationException(
+                "Live SecurityAccess needs an authorized job. Start the procedure from Key programming or Module programming so ShopCrank authorizes it first.");
+        }
 
         var payload = new
         {
@@ -33,6 +40,7 @@ public sealed class CloudSecurityAccessProvider : ISecurityAccessProvider
             level,
             scope = level >= 0x05 ? "flash" : "immobilizer",
             seedBase64 = Convert.ToBase64String(seed),
+            authorizationToken,
         };
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/diagnostics/security-access")
         {

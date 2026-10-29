@@ -273,3 +273,14 @@ test('handleGrokClientSecret mints from the official xAI client_secrets response
   assert.equal(payload.token, 'xai-realtime-client-secret-live');
   assert.equal(payload.voice, 'ara');
 });
+
+test('voice stream tokens never use the installer-shipped diagnostics secret and fail closed without a key', async () => {
+  const leaked = { DIAGNOSTICS_CAPABILITY_SECRET: 'secret-extracted-from-an-installer' };
+  await assert.rejects(() => signGrokStreamToken(leaked, { shopId: 'shop-test' }), /not configured/);
+  const forged = await signGrokStreamToken({ DEV_AUTH_BYPASS: '1' }, { shopId: 'shop-test' });
+  assert.equal(await verifyGrokStreamToken(leaked, forged, 'shop-test'), null, 'production refuses the dev fallback');
+  const configured = { INTEGRATION_ENCRYPTION_KEY: 'prod-key', DIAGNOSTICS_CAPABILITY_SECRET: 'secret-extracted-from-an-installer' };
+  const token = await signGrokStreamToken(configured, { shopId: 'shop-test' });
+  assert.equal((await verifyGrokStreamToken(configured, token, 'shop-test')).shopId, 'shop-test');
+  assert.equal(await verifyGrokStreamToken({ INTEGRATION_ENCRYPTION_KEY: 'secret-extracted-from-an-installer' }, token, 'shop-test'), null);
+});

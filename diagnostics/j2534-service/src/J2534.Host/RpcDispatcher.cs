@@ -23,7 +23,7 @@ public static class RpcDispatcher
                 "identifyEcus" => await session.IdentifyEcusAsync(),
                 "readDtcs" => await session.ReadDtcsAsync(),
                 "clearDtcs" => await ClearDtcs(request.Params, session),
-                "securityAccess" => await session.SecurityAccessAsync(GetString(request.Params, "scope") ?? "immobilizer"),
+                "securityAccess" => await session.SecurityAccessAsync(GetString(request.Params, "scope") ?? "immobilizer", GetString(request.Params, "authorizationToken")),
                 "addKey" => await ProgramKey("add_key", request.Params, session),
                 "programKey" => await ProgramKey(GetString(request.Params, "procedure") ?? "add_key", request.Params, session),
                 "allKeysLost" => await ProgramKey("all_keys_lost", request.Params, session),

@@ -1052,13 +1052,12 @@ export function transcodeGrokPcm24kToTwilioMulaw8k(pcm24kBase64) {
 
 // --- Twilio Stream Token Signing & Verification ---
 
+// The diagnostics secret was shipped inside every Windows installer, so it must
+// never sign anything; the dev fallback is only for DEV_AUTH_BYPASS sessions.
 function streamSigningSecret(env) {
-  return String(
-    env?.INTEGRATION_ENCRYPTION_KEY
-      || env?.DIAGNOSTICS_CAPABILITY_SECRET
-      || env?.TWILIO_AUTH_TOKEN
-      || 'shopcrank-dev-voice-stream-secret',
-  ).trim();
+  const secret = String(env?.INTEGRATION_ENCRYPTION_KEY || env?.TWILIO_AUTH_TOKEN || '').trim();
+  if (secret) return secret;
+  return env?.DEV_AUTH_BYPASS === '1' ? 'shopcrank-dev-voice-stream-secret' : '';
 }
 
 export async function signGrokStreamToken(env, { shopId, caller = '', callSid = '', expiresAt = Date.now() + STREAM_TOKEN_TTL_MS }) {
@@ -1068,8 +1067,10 @@ export async function signGrokStreamToken(env, { shopId, caller = '', callSid = 
     callSid: String(callSid || ''),
     exp: Number(expiresAt),
   });
+  const secret = streamSigningSecret(env);
+  if (!secret) throw new Error('Voice stream signing is not configured (set INTEGRATION_ENCRYPTION_KEY)');
   const encoded = btoa(payload).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-  const sig = await hmacBase64Url(streamSigningSecret(env), encoded);
+  const sig = await hmacBase64Url(secret, encoded);
   return `${encoded}.${sig}`;
 }
 
@@ -1077,7 +1078,9 @@ export async function verifyGrokStreamToken(env, token, expectedShopId) {
   const parts = String(token || '').split('.');
   if (parts.length !== 2) return null;
   const [encoded, sig] = parts;
-  const expectedSig = await hmacBase64Url(streamSigningSecret(env), encoded);
+  const secret = streamSigningSecret(env);
+  if (!secret) return null;
+  const expectedSig = await hmacBase64Url(secret, encoded);
   if (!constantTimeEqual(sig, expectedSig)) return null;
   try {
     const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
