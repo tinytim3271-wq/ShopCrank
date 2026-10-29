@@ -126,15 +126,22 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
   globalThis.fetch = async (url, init) => (String(url).includes('api.twilio.com') ? (twilioCalls += 1, Response.json({ sid: 'SM1', status: 'queued' })) : realFetch(url, init));
   try {
     const book = (phone, time) => worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'X', phone, vehicle: 'Civic', service: 'Oil', date: day.date, time }) }), env, {});
-    assert.equal((await book('806-555-0150', day.slots[0])).status, 201);
+    const optedOut = await book('806-555-0150', day.slots[0]);
+    assert.equal(optedOut.status, 201);
+    assert.equal((await optedOut.json()).confirmationSent, false);
     assert.equal(twilioCalls, 0, 'opted-out number gets no confirmation');
-    assert.equal((await book('806-555-0151', day.slots[1])).status, 201);
+    const confirmed = await book('806-555-0151', day.slots[1]);
+    assert.equal(confirmed.status, 201);
+    assert.equal((await confirmed.json()).confirmationSent, true);
     assert.equal(twilioCalls, 1);
     assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM customer_messages WHERE message_type = 'booking_confirmation'").get().n, 1);
     const smsOff = { ...env, AUTOMATED_SMS_ENABLED: '0' };
     const quiet = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Y', phone: '806-555-0152', vehicle: 'Civic', service: 'Oil', date: day.date, time: day.slots[2] }) }), smsOff, {});
     assert.equal(quiet.status, 201, 'booking still works with automated texts off');
+    assert.equal((await quiet.json()).confirmationSent, false);
     assert.equal(twilioCalls, 1, 'but no confirmation text goes out');
+    const page = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`), env, {})).text();
+    assert.match(page, /b\.confirmationSent\?/, 'the success screen only promises a text when one was sent');
   } finally {
     globalThis.fetch = realFetch;
   }

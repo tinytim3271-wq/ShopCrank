@@ -35,6 +35,7 @@ const WORKER = `http://127.0.0.1:${WORKER_PORT}`;
 const SHOP = 'Smoke Test Garage';
 
 const results = [];
+let smokeWorkerLog = () => '';
 const children = [];
 let server;
 
@@ -125,6 +126,7 @@ async function startStack() {
     detached: process.platform !== 'win32',
   });
   let workerLog = '';
+  smokeWorkerLog = () => workerLog;
   worker.stdout.on('data', data => { workerLog += data; });
   worker.stderr.on('data', data => { workerLog += data; });
   children.push(worker);
@@ -284,7 +286,7 @@ async function main() {
       }
       await page.waitForFunction(() => /(?<!PARTIALLY )PAID/.test(document.querySelector('main')?.innerText || '') && /2 payments/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
       const after = await row.innerText();
-      if (!/(?<!PARTIALLY )PAID/.test(after) || !/2 payments/.test(after)) throw new Error(after.replace(/\s+/g, ' ').slice(0, 200));
+      if (!/(?<!PARTIALLY )PAID/.test(after) || !/2 payments/.test(after)) throw new Error(`${after.replace(/\s+/g, ' ').slice(0, 200)} | toasts: ${toasts.slice(-4).join(' / ')}`);
     });
     await check('messaging shows the two-way texting inbox and shop ops shows declined work', async () => {
       pageErrors.length = 0;
@@ -327,7 +329,11 @@ async function main() {
       });
     }
   } finally {
-    if (results.some(result => !result.pass)) await page.screenshot({ path: join(artifactsDir, 'failure.png'), fullPage: true }).catch(() => {});
+    if (results.some(result => !result.pass)) {
+      await page.screenshot({ path: join(artifactsDir, 'failure.png'), fullPage: true }).catch(() => {});
+      writeFileSync(join(artifactsDir, 'worker.log'), smokeWorkerLog().slice(-200_000));
+      writeFileSync(join(artifactsDir, 'browser.log'), [...pageErrors.map(item => `pageerror: ${item}`), ...consoleErrors.map(item => `console: ${item}`), ...toasts.map(item => `toast: ${item}`)].join('\n'));
+    }
     await browser.close();
     rmSync(work, { recursive: true, force: true });
   }
