@@ -65,7 +65,11 @@ test('live SecurityAccess keys are released only for an authorized live job on t
     ['another vehicle', await mint({ vin: '1C6SRFHT0LN654321' })],
     ['another shop', await mint({ shopId: 'shop-b' })],
     ['flash token for an immobilizer key', await mint({ procedure: 'module_flash' })],
-    ['tampered token', (await mint()).replace(/.$/, c => (c === 'A' ? 'B' : 'A'))],
+    ['payload swapped under a valid signature', await (async () => {
+      const [, , signature] = (await mint({ vin: '1C6SRFHT0LN654321' })).split('.');
+      const [, payload] = (await mint()).split('.');
+      return `v2.${payload}.${signature}`;
+    })()],
   ]) {
     const response = await request(token);
     assert.equal(response.status, 403, label);
