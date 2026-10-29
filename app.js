@@ -1758,6 +1758,7 @@
         red: "red",
         soon: "yellow",
         monitor: "yellow",
+        attention: "yellow",
         yellow: "yellow",
         ok: "green",
         pass: "green",
@@ -1802,6 +1803,7 @@
     const value2 = String(key || "");
     if (value2.startsWith("data:image/")) return value2;
     if (value2.startsWith("http://") || value2.startsWith("https://") || value2.startsWith("/")) return value2;
+    if (apiUrl && /^shops\/[a-z0-9-]+\/[\w-]+\/[\w.-]+$/i.test(value2) && !value2.includes("..")) return `${apiUrl}/files/object?key=${encodeURIComponent(value2)}`;
     if (apiUrl && value2 && !value2.includes("..") && !value2.includes("/")) return `${apiUrl}/files/${encodeURIComponent(value2)}`;
     return "";
   }
@@ -5520,9 +5522,13 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       vehicles.add(vehicleKey(order, invoice));
       const lines = (invoice.lines?.length ? invoice.lines : order.estimate?.lines || []).filter((line) => line.approvalStatus !== "declined");
       const subtotal = Number(invoice.subtotal);
-      sales += Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
+      const coreDeposits = lines.filter((line) => lineType(line) === "part" && isCoreCharge(line)).reduce((total, line) => total + lineTotal(line), 0);
+      const invoiceSales = Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
+      sales += Math.max(0, invoiceSales - coreDeposits);
+      const discountPercent = Math.min(100, Math.max(0, Number(invoice.discountPercent ?? order.estimate?.discountPercent) || 0));
+      const factor = 1 - discountPercent / 100;
       for (const line of lines) {
-        const total = lineTotal(line);
+        const total = lineTotal(line) * factor;
         const type = lineType(line);
         if (type === "part" && isCoreCharge(line)) continue;
         if (type === "part") {
@@ -5834,6 +5840,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   });
 
   // src/modules/scan-to-estimate.js
+  function generalDiagnosticService(services, used, vehicleText) {
+    return services.find((service) => !used.has(service.id) && service.active !== false && serviceFitsVehicle(service, vehicleText) && GENERAL_DIAGNOSTIC.test(service.name || "") && !NARROW_DIAGNOSTIC.test(service.name || "")) || null;
+  }
   function textOf(service) {
     return `${service.name || ""} ${service.description || ""}`.toLowerCase();
   }
@@ -5867,7 +5876,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const normalized = [...new Set(codes.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean))];
     const used = /* @__PURE__ */ new Set();
     const matches = [];
-    const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used, vehicle);
+    const diagnostic = generalDiagnosticService(services, used, vehicle);
     if (diagnostic && normalized.length) {
       used.add(diagnostic.id);
       matches.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
@@ -5884,14 +5893,19 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   }
   function cannedServiceLines(match, { laborRate = 0, scanId = "" } = {}) {
     const { service, codes, reason } = match;
-    const base = { source: "scan", cannedServiceId: service.id, scanId, dtcCodes: codes, notes: `${service.description || ""}${service.description ? " " : ""}(${reason}: ${codes.join(", ")})`.trim() };
+    const discount = Math.min(100, Math.max(0, Number(service.discount) || 0));
+    const factor = 1 - discount / 100;
+    const discountNote = discount ? ` Includes ${discount}% menu discount.` : "";
+    const base = { source: "scan", cannedServiceId: service.id, scanId, dtcCodes: codes, notes: `${service.description || ""}${service.description ? " " : ""}(${reason}: ${codes.join(", ")})${discountNote}`.trim() };
     const menuPrice = Number(service.menuPrice);
     if (service.menuPrice != null && Number.isFinite(menuPrice)) {
-      return [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "fee", description: service.name, quantity: 1, unitPrice: round3(menuPrice), amount: round3(menuPrice), total: round3(menuPrice) }];
+      const price = round3(menuPrice * factor);
+      return [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "fee", description: service.name, quantity: 1, unitPrice: price, amount: price, total: price }];
     }
     const hours = Math.max(0, Number(service.laborHours) || 0);
-    const lines = [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "labor", description: service.name, hours, quantity: hours, laborRate, unitPrice: laborRate, total: round3(hours * laborRate) }];
-    const parts = Math.max(0, Number(service.partsPrice) || 0);
+    const rate = round3(laborRate * factor);
+    const lines = [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "labor", description: service.name, hours, quantity: hours, laborRate: rate, unitPrice: rate, total: round3(hours * rate) }];
+    const parts = round3(Math.max(0, Number(service.partsPrice) || 0) * factor);
     if (parts) lines.push({ ...base, id: `scan-${scanId || "x"}-${service.id}-parts`, type: "part", description: `${service.name} parts`, quantity: 1, unitPrice: parts, total: parts, priceStatus: "priced" });
     return lines;
   }
@@ -5907,7 +5921,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const canned = matches.map((match) => `${match.service.name} (${match.codes.join(", ")})`).join("; ");
     return `${lines.length} line${lines.length === 1 ? "" : "s"}${canned ? ` \xB7 canned: ${canned}` : ""}`;
   }
-  var range, DTC_SERVICE_RULES, DIAGNOSTIC_KEYWORDS, round3;
+  var range, DTC_SERVICE_RULES, GENERAL_DIAGNOSTIC, NARROW_DIAGNOSTIC, round3;
   var init_scan_to_estimate = __esm({
     "src/modules/scan-to-estimate.js"() {
       range = (prefix, from, to) => (code) => code[0] === prefix && Number.parseInt(code.slice(1), 16) >= Number.parseInt(from, 16) && Number.parseInt(code.slice(1), 16) <= Number.parseInt(to, 16);
@@ -5922,7 +5936,8 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         { id: "abs", label: "ABS / wheel speed", test: (code) => code[0] === "C", keywords: ["wheel speed", "abs"] },
         { id: "network", label: "Network communication", test: (code) => code[0] === "U", keywords: ["network", "module", "electrical diagnostic", "diagnostic"] }
       ]);
-      DIAGNOSTIC_KEYWORDS = ["check engine", "diagnostic", "diagnosis"];
+      GENERAL_DIAGNOSTIC = /check engine|engine light|general diagnos|diagnostic fee|diagnosis/i;
+      NARROW_DIAGNOSTIC = /no[- ]start|battery|starter|charging|electrical/i;
       round3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
     }
   });
@@ -5973,12 +5988,13 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function mapExportToCanonicalCsv(sourceId, type, text2) {
     const system = SOURCE_SYSTEMS[sourceId];
     const parsed = parseCsv(text2);
-    if (!system || !CANONICAL[type] || parsed.length < 2) return { csv: String(text2 || ""), rows: Math.max(0, parsed.length - 1), system: null };
+    if (!system || !CANONICAL[type] || parsed.length < 2) return { csv: String(text2 || ""), rows: Math.max(0, parsed.length - 1), system: null, rejected: [] };
     const headers = parsed.shift().map(normalizeHeader);
     const rows = parsed.map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""])));
     const get = (row, field2) => pick(row, aliasesFor(system, field2));
     const vehicleText = (row) => get(row, "vehicle") || [get(row, "year"), get(row, "make"), get(row, "model")].filter(Boolean).join(" ");
     const statusFor = (row) => mapStatus(system, get(row, "status"));
+    const rejected = [];
     const mapped = rows.map((row) => {
       const customer = displayName(row, system);
       if (type === "customers") return { name: customer, phone: get(row, "phone"), email: get(row, "email") };
@@ -5991,12 +6007,18 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         const raw = normalizeHeader(get(row, "status"));
         const balance = Number(String(get(row, "balance")).replace(/[$,\s]/g, ""));
         const paid = PAID_WORDS.has(raw) || PAID_WORDS.has(normalizeHeader(get(row, "payment_status"))) || get(row, "balance") !== "" && balance === 0;
-        return { number: get(row, "invoice_number") || get(row, "ro_number"), customer, ro: get(row, "ro_number"), date: get(row, "date"), status: paid ? "paid" : "sent", subtotal: get(row, "subtotal"), tax: get(row, "tax"), amount: get(row, "total") };
+        const total = Number(String(get(row, "total")).replace(/[$,\s]/g, ""));
+        if (get(row, "balance") !== "" && balance > 0 && Number.isFinite(total) && balance < total) {
+          rejected.push(`${get(row, "invoice_number") || get(row, "ro_number") || "Invoice"} is partly paid (${get(row, "balance")} of ${get(row, "total")} open); import it after recording its payment, or enter it by hand.`);
+          return null;
+        }
+        return { number: get(row, "invoice_number") || get(row, "ro_number"), customer, ro: get(row, "ro_number"), date: get(row, "date"), closeout_date: paid ? get(row, "closeout_date") : "", status: paid ? "paid" : "sent", subtotal: get(row, "subtotal"), tax: get(row, "tax"), amount: get(row, "total") };
       }
       const decision = ESTIMATE_DECISIONS[normalizeHeader(get(row, "status"))] || "pending";
       return { number: get(row, "ro_number"), customer, vehicle: vehicleText(row), summary: get(row, "complaint"), status: decision, subtotal: get(row, "subtotal"), tax: get(row, "tax"), total: get(row, "total"), email: get(row, "email"), phone: get(row, "phone") };
     });
-    return { csv: toCsv(CANONICAL[type], mapped), rows: mapped.length, system: system.name };
+    const kept = mapped.filter(Boolean);
+    return { csv: toCsv(CANONICAL[type], kept), rows: kept.length, system: system.name, rejected };
   }
   var COMMON, PAID_WORDS, ESTIMATE_DECISIONS, SOURCE_SYSTEMS, SOURCE_OPTIONS, CANONICAL;
   var init_import_mappers = __esm({
@@ -6021,7 +6043,8 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         total: ["total", "grand_total", "total_sale", "invoice_total", "ro_total", "amount", "total_amount"],
         subtotal: ["subtotal", "sub_total", "total_before_tax", "pre_tax_total"],
         tax: ["tax", "sales_tax", "tax_total", "total_tax"],
-        date: ["invoice_date", "posted_date", "date_posted", "completed_date", "closed_date", "date", "created_date", "created_at", "date_created"],
+        date: ["invoice_date", "posted_date", "date_posted", "date", "created_date", "created_at", "date_created", "completed_date"],
+        closeout_date: ["paid_date", "payment_date", "date_paid", "closed_date", "closeout_date", "date_closed"],
         mileage: ["mileage", "odometer", "miles_in", "mileage_in"],
         balance: ["balance", "balance_due", "amount_due", "outstanding", "open_balance", "remaining_balance"],
         payment_status: ["payment_status", "paid_status", "paid"]
@@ -6065,7 +6088,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
         customers: ["name", "phone", "email"],
         vehicles: ["customer", "year", "make", "model", "vin", "plate"],
         orders: ["ro_number", "customer", "vehicle", "vin", "complaint", "status", "total", "phone"],
-        invoices: ["number", "customer", "ro", "date", "status", "subtotal", "tax", "amount"],
+        invoices: ["number", "customer", "ro", "date", "closeout_date", "status", "subtotal", "tax", "amount"],
         estimates: ["number", "customer", "vehicle", "summary", "status", "subtotal", "tax", "total", "email", "phone"]
       });
     }
@@ -18435,7 +18458,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         if (source === "shopcrank") return prepareImportMapperCore(type, text2);
         const mapped = mapExportToCanonicalCsv(source, type, text2);
         const result = prepareImportMapperCore(type, mapped.csv);
-        return { ...result, sourceSystem: mapped.system };
+        return { ...result, errors: [...mapped.rejected, ...result.errors || []], skipped: (result.skipped || 0) + mapped.rejected.length, sourceSystem: mapped.system };
       };
       importsMapperCore = imports;
       imports = function() {

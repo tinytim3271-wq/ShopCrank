@@ -375,6 +375,7 @@ export function inspectionPhotoSrc(key, apiUrl = '') {
   const value = String(key || '');
   if (value.startsWith('data:image/')) return value;
   if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('/')) return value;
+  if (apiUrl && /^shops\/[a-z0-9-]+\/[\w-]+\/[\w.-]+$/i.test(value) && !value.includes('..')) return `${apiUrl}/files/object?key=${encodeURIComponent(value)}`;
   if (apiUrl && value && !value.includes('..') && !value.includes('/')) return `${apiUrl}/files/${encodeURIComponent(value)}`;
   return '';
 }

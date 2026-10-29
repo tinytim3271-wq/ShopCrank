@@ -6206,7 +6206,7 @@ prepareImport = function (type, text) {
   if (source === "shopcrank") return prepareImportMapperCore(type, text);
   const mapped = ImportMappers.mapExportToCanonicalCsv(source, type, text);
   const result = prepareImportMapperCore(type, mapped.csv);
-  return { ...result, sourceSystem: mapped.system };
+  return { ...result, errors: [...mapped.rejected, ...(result.errors || [])], skipped: (result.skipped || 0) + mapped.rejected.length, sourceSystem: mapped.system };
 };
 const importsMapperCore = imports;
 imports = function () {

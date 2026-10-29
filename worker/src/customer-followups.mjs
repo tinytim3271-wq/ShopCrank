@@ -248,7 +248,7 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
   if (!(await shopEntitled(env, shopId, 'sms', now))) return { ...report, skippedReason: 'not_entitled' };
   if (!(await acquireRunLock(env, shopId, now))) return { ...report, skippedReason: 'already_running' };
   const [settingsRows, orders, invoices, reminders, customers, shop] = await Promise.all([
-    env.DB.prepare("SELECT entity_id, data_json FROM entities WHERE shop_id = ? AND entity_type = 'shopsettings' AND entity_id IN ('followups', 'profile')").bind(shopId).all(),
+    env.DB.prepare("SELECT entity_id, data_json FROM entities WHERE shop_id = ? AND entity_type = 'shopsettings' AND entity_id IN ('followups', 'profile', 'booking')").bind(shopId).all(),
     list(env, shopId, 'orders'),
     list(env, shopId, 'invoices'),
     list(env, shopId, 'reminders'),
@@ -305,7 +305,7 @@ export async function runShopFollowups(env, shopId, { now = Date.now(), getSecre
       }
     }
     if (settings.serviceReminders.autoSend) {
-      const bookingUrl = bookingOrigin ? `${bookingOrigin}/api/book/${encodeURIComponent(shopId)}` : '';
+      const bookingUrl = bookingOrigin && byId.booking?.enabled !== false ? `${bookingOrigin}/api/book/${encodeURIComponent(shopId)}` : '';
       for (const reminder of dueReminders(all, { today, leadDays: settings.serviceReminders.leadDays })) {
         const customer = customers.find(item => item.id === reminder.customerId || item.name === reminder.customer);
         const sent = await textCustomer({

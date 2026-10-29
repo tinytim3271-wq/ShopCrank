@@ -67,3 +67,13 @@ test('review fixes: posted or AR invoices stay open unless paid; estimate decisi
   const estimates = run('shopmonkey', 'estimates', 'Order #,Customer,Vehicle,Status,Total\nE1,A B,2020 Civic,Approved,100\nE2,C D,2020 Civic,Declined,80\nE3,E F,2020 Civic,Open,60');
   assert.deepEqual(estimates.records.map(record => record.status), ['approved', 'declined', 'pending']);
 });
+
+test('review fixes: partly paid invoices are flagged, not imported as unpaid; paid dates become closeout dates', () => {
+  const mapped = mapExportToCanonicalCsv('tekmetric', 'invoices', 'Repair Order #,Customer First Name,Customer Last Name,Posted Date,Paid Date,Status,Total,Balance Due\n1,A,B,2026-09-01,2026-10-05,Paid,200,0\n2,C,D,2026-09-01,,Accounts Receivable,200,50');
+  assert.equal(mapped.rejected.length, 1);
+  assert.match(mapped.rejected[0], /partly paid \(50 of 200 open\)/);
+  const result = prepareImportRecords('invoices', mapped.csv, opts);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].closedAt, '2026-10-05');
+  assert.equal(result.records[0].closeoutSource, 'source_closeout_date');
+});

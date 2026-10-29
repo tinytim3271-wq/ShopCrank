@@ -35,7 +35,8 @@ const COMMON = Object.freeze({
   total: ['total', 'grand_total', 'total_sale', 'invoice_total', 'ro_total', 'amount', 'total_amount'],
   subtotal: ['subtotal', 'sub_total', 'total_before_tax', 'pre_tax_total'],
   tax: ['tax', 'sales_tax', 'tax_total', 'total_tax'],
-  date: ['invoice_date', 'posted_date', 'date_posted', 'completed_date', 'closed_date', 'date', 'created_date', 'created_at', 'date_created'],
+  date: ['invoice_date', 'posted_date', 'date_posted', 'date', 'created_date', 'created_at', 'date_created', 'completed_date'],
+  closeout_date: ['paid_date', 'payment_date', 'date_paid', 'closed_date', 'closeout_date', 'date_closed'],
   mileage: ['mileage', 'odometer', 'miles_in', 'mileage_in'],
   balance: ['balance', 'balance_due', 'amount_due', 'outstanding', 'open_balance', 'remaining_balance'],
   payment_status: ['payment_status', 'paid_status', 'paid'],
@@ -131,7 +132,7 @@ const CANONICAL = Object.freeze({
   customers: ['name', 'phone', 'email'],
   vehicles: ['customer', 'year', 'make', 'model', 'vin', 'plate'],
   orders: ['ro_number', 'customer', 'vehicle', 'vin', 'complaint', 'status', 'total', 'phone'],
-  invoices: ['number', 'customer', 'ro', 'date', 'status', 'subtotal', 'tax', 'amount'],
+  invoices: ['number', 'customer', 'ro', 'date', 'closeout_date', 'status', 'subtotal', 'tax', 'amount'],
   estimates: ['number', 'customer', 'vehicle', 'summary', 'status', 'subtotal', 'tax', 'total', 'email', 'phone'],
 });
 
@@ -142,12 +143,13 @@ const CANONICAL = Object.freeze({
 export function mapExportToCanonicalCsv(sourceId, type, text) {
   const system = SOURCE_SYSTEMS[sourceId];
   const parsed = parseCsv(text);
-  if (!system || !CANONICAL[type] || parsed.length < 2) return { csv: String(text || ''), rows: Math.max(0, parsed.length - 1), system: null };
+  if (!system || !CANONICAL[type] || parsed.length < 2) return { csv: String(text || ''), rows: Math.max(0, parsed.length - 1), system: null, rejected: [] };
   const headers = parsed.shift().map(normalizeHeader);
   const rows = parsed.map(cells => Object.fromEntries(headers.map((header, index) => [header, cells[index] || ''])));
   const get = (row, field) => pick(row, aliasesFor(system, field));
   const vehicleText = row => get(row, 'vehicle') || [get(row, 'year'), get(row, 'make'), get(row, 'model')].filter(Boolean).join(' ');
   const statusFor = row => mapStatus(system, get(row, 'status'));
+  const rejected = [];
   const mapped = rows.map(row => {
     const customer = displayName(row, system);
     if (type === 'customers') return { name: customer, phone: get(row, 'phone'), email: get(row, 'email') };
@@ -162,10 +164,16 @@ export function mapExportToCanonicalCsv(sourceId, type, text) {
       const raw = normalizeHeader(get(row, 'status'));
       const balance = Number(String(get(row, 'balance')).replace(/[$,\s]/g, ''));
       const paid = PAID_WORDS.has(raw) || PAID_WORDS.has(normalizeHeader(get(row, 'payment_status'))) || (get(row, 'balance') !== '' && balance === 0);
-      return { number: get(row, 'invoice_number') || get(row, 'ro_number'), customer, ro: get(row, 'ro_number'), date: get(row, 'date'), status: paid ? 'paid' : 'sent', subtotal: get(row, 'subtotal'), tax: get(row, 'tax'), amount: get(row, 'total') };
+      const total = Number(String(get(row, 'total')).replace(/[$,\s]/g, ''));
+      if (get(row, 'balance') !== '' && balance > 0 && Number.isFinite(total) && balance < total) {
+        rejected.push(`${get(row, 'invoice_number') || get(row, 'ro_number') || 'Invoice'} is partly paid (${get(row, 'balance')} of ${get(row, 'total')} open); import it after recording its payment, or enter it by hand.`);
+        return null;
+      }
+      return { number: get(row, 'invoice_number') || get(row, 'ro_number'), customer, ro: get(row, 'ro_number'), date: get(row, 'date'), closeout_date: paid ? get(row, 'closeout_date') : '', status: paid ? 'paid' : 'sent', subtotal: get(row, 'subtotal'), tax: get(row, 'tax'), amount: get(row, 'total') };
     }
     const decision = ESTIMATE_DECISIONS[normalizeHeader(get(row, 'status'))] || 'pending';
     return { number: get(row, 'ro_number'), customer, vehicle: vehicleText(row), summary: get(row, 'complaint'), status: decision, subtotal: get(row, 'subtotal'), tax: get(row, 'tax'), total: get(row, 'total'), email: get(row, 'email'), phone: get(row, 'phone') };
   });
-  return { csv: toCsv(CANONICAL[type], mapped), rows: mapped.length, system: system.name };
+  const kept = mapped.filter(Boolean);
+  return { csv: toCsv(CANONICAL[type], kept), rows: kept.length, system: system.name, rejected };
 }

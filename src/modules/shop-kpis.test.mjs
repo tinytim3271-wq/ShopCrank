@@ -104,3 +104,17 @@ test('review fixes: core deposits excluded, placeholder VINs do not merge cars, 
   assert.equal(kpis.laborCost, 40, 'September clock time on an October invoice');
   assert.equal(kpis.techs[0].clockedHours, 0, 'but it is not October activity');
 });
+
+test('review fixes: core deposits are not sales, and invoice discounts reduce component revenue', () => {
+  const kpis = computeShopKpis({
+    orders: [{ id: 'RO-1', vin: '4T1B11HK5KU123456' }],
+    invoices: [{ number: 'I1', ro: 'RO-1', date: '2026-10-05', subtotal: 135, discountPercent: 10, lines: [
+      { type: 'part', quantity: 1, unitPrice: 100, total: 100, partstech: { cost: 40 } },
+      { type: 'part', quantity: 1, unitPrice: 50, total: 50, partstech: { cost: 40, isCore: true } },
+    ] }],
+    from: '2026-10-01', to: '2026-10-31',
+  });
+  assert.equal(kpis.partsSales, 90);
+  assert.equal(kpis.partsMargin, 55.6);
+  assert.equal(kpis.sales, 85, '$135 discounted subtotal less the $50 refundable core');
+});

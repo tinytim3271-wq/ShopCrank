@@ -18,7 +18,15 @@ export const DTC_SERVICE_RULES = Object.freeze([
   { id: 'network', label: 'Network communication', test: code => code[0] === 'U', keywords: ['network', 'module', 'electrical diagnostic', 'diagnostic'] },
 ]);
 
-const DIAGNOSTIC_KEYWORDS = ['check engine', 'diagnostic', 'diagnosis'];
+// A general diagnostic service only: "No-Start Diagnostic" tests battery/starter/charging and
+// would add an unrelated charge to an EVAP or misfire estimate.
+const GENERAL_DIAGNOSTIC = /check engine|engine light|general diagnos|diagnostic fee|diagnosis/i;
+const NARROW_DIAGNOSTIC = /no[- ]start|battery|starter|charging|electrical/i;
+
+function generalDiagnosticService(services, used, vehicleText) {
+  return services.find(service => !used.has(service.id) && service.active !== false && serviceFitsVehicle(service, vehicleText)
+    && GENERAL_DIAGNOSTIC.test(service.name || '') && !NARROW_DIAGNOSTIC.test(service.name || '')) || null;
+}
 
 function textOf(service) {
   return `${service.name || ''} ${service.description || ''}`.toLowerCase();
@@ -58,7 +66,7 @@ export function cannedServicesForCodes(codes = [], services = [], { vehicle = ''
   const normalized = [...new Set(codes.map(code => String(code || '').trim().toUpperCase()).filter(Boolean))];
   const used = new Set();
   const matches = [];
-  const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used, vehicle);
+  const diagnostic = generalDiagnosticService(services, used, vehicle);
   if (diagnostic && normalized.length) { used.add(diagnostic.id); matches.push({ service: diagnostic, reason: 'Diagnosis', codes: normalized }); }
   for (const rule of DTC_SERVICE_RULES) {
     const hit = normalized.filter(code => rule.test(code));
@@ -76,14 +84,20 @@ const round = value => Math.round((Number(value) || 0) * 100) / 100;
 /** A canned service as an estimate line: flat menu price, or hours × shop rate plus parts. */
 export function cannedServiceLines(match, { laborRate = 0, scanId = '' } = {}) {
   const { service, codes, reason } = match;
-  const base = { source: 'scan', cannedServiceId: service.id, scanId, dtcCodes: codes, notes: `${service.description || ''}${service.description ? ' ' : ''}(${reason}: ${codes.join(', ')})`.trim() };
+  // The service's saved discount applies here as it does when the menu item is added by hand.
+  const discount = Math.min(100, Math.max(0, Number(service.discount) || 0));
+  const factor = 1 - discount / 100;
+  const discountNote = discount ? ` Includes ${discount}% menu discount.` : '';
+  const base = { source: 'scan', cannedServiceId: service.id, scanId, dtcCodes: codes, notes: `${service.description || ''}${service.description ? ' ' : ''}(${reason}: ${codes.join(', ')})${discountNote}`.trim() };
   const menuPrice = Number(service.menuPrice);
   if (service.menuPrice != null && Number.isFinite(menuPrice)) {
-    return [{ ...base, id: `scan-${scanId || 'x'}-${service.id}`, type: 'fee', description: service.name, quantity: 1, unitPrice: round(menuPrice), amount: round(menuPrice), total: round(menuPrice) }];
+    const price = round(menuPrice * factor);
+    return [{ ...base, id: `scan-${scanId || 'x'}-${service.id}`, type: 'fee', description: service.name, quantity: 1, unitPrice: price, amount: price, total: price }];
   }
   const hours = Math.max(0, Number(service.laborHours) || 0);
-  const lines = [{ ...base, id: `scan-${scanId || 'x'}-${service.id}`, type: 'labor', description: service.name, hours, quantity: hours, laborRate, unitPrice: laborRate, total: round(hours * laborRate) }];
-  const parts = Math.max(0, Number(service.partsPrice) || 0);
+  const rate = round(laborRate * factor);
+  const lines = [{ ...base, id: `scan-${scanId || 'x'}-${service.id}`, type: 'labor', description: service.name, hours, quantity: hours, laborRate: rate, unitPrice: rate, total: round(hours * rate) }];
+  const parts = round(Math.max(0, Number(service.partsPrice) || 0) * factor);
   if (parts) lines.push({ ...base, id: `scan-${scanId || 'x'}-${service.id}-parts`, type: 'part', description: `${service.name} parts`, quantity: 1, unitPrice: parts, total: parts, priceStatus: 'priced' });
   return lines;
 }

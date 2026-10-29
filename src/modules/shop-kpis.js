@@ -93,9 +93,14 @@ export function computeShopKpis({ invoices = [], orders = [], jobClockEntries = 
     vehicles.add(vehicleKey(order, invoice));
     const lines = (invoice.lines?.length ? invoice.lines : order.estimate?.lines || []).filter(line => line.approvalStatus !== 'declined');
     const subtotal = Number(invoice.subtotal);
-    sales += Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
+    const coreDeposits = lines.filter(line => lineType(line) === 'part' && isCoreCharge(line)).reduce((total, line) => total + lineTotal(line), 0);
+    const invoiceSales = Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
+    sales += Math.max(0, invoiceSales - coreDeposits);
+    // Invoice-level discounts are stored separately from line prices; scale component revenue by them.
+    const discountPercent = Math.min(100, Math.max(0, Number(invoice.discountPercent ?? order.estimate?.discountPercent) || 0));
+    const factor = 1 - discountPercent / 100;
     for (const line of lines) {
-      const total = lineTotal(line);
+      const total = lineTotal(line) * factor;
       const type = lineType(line);
       // Refundable core deposits are neither parts sales nor parts cost.
       if (type === 'part' && isCoreCharge(line)) continue;

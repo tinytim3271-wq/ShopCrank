@@ -174,3 +174,23 @@ test('review fixes: same-name callers never overwrite each other; sends only tou
   assert.equal(invoice.signature, 'signed');
   assert.ok(invoice.reviewRequestedAt);
 });
+
+test('review fixes: attention is yellow, shop-scoped photo keys print, new callers are named, and no dead booking links', async () => {
+  const { ratingForStatus } = await import('../../src/modules/inspection-ratings.js');
+  const { inspectionPhotoSrc } = await import('../../src/modules/shop-inspections.js');
+  const { buildCallSummary, callActionFromTool } = await import('../src/call-summaries.mjs');
+  assert.equal(ratingForStatus('attention'), 'yellow');
+  assert.equal(inspectionPhotoSrc('shops/shop-a/inspection-video/abc-123', '/api'), '/api/files/object?key=shops%2Fshop-a%2Finspection-video%2Fabc-123');
+  assert.equal(inspectionPhotoSrc('shops/shop-a/../x', '/api'), '');
+  const record = await buildCallSummary({}, { shopId: 's', transcript: [{ role: 'caller', text: 'I need an oil change' }], actions: [callActionFromTool('book_appointment', {}, { booked: true, appointmentId: 'a1', date: '2026-11-03', time: '09:00', service: 'Oil', customerName: 'Pat New' })] });
+  assert.equal(record.customer, 'Pat New');
+
+  const fixture = shop({ booking: { enabled: false } });
+  seedDue(fixture);
+  const sent = [];
+  await runShopFollowups({ DB: fixture.DB }, 'shop-r3v13w', { send: sender(sent), bookingOrigin: ORIGIN });
+  const reminder = sent.find(message => /is due/.test(message.body));
+  assert.ok(reminder);
+  assert.doesNotMatch(reminder.body, /\/api\/book\//);
+  assert.match(reminder.body, /Reply to this text to schedule/);
+});

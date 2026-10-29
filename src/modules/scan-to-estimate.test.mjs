@@ -47,3 +47,14 @@ test('cylinder counts are read from common spellings', async () => {
   const { cylinderCount } = await import('./scan-to-estimate.js');
   assert.deepEqual(['V6 Tune-Up', 'V-8', 'I4 engine', 'inline-4', '2.5L 4-cyl', '6 cylinder', 'Brake job'].map(cylinderCount), [6, 8, 4, 4, 4, 6, null]);
 });
+
+test('review fixes: no-start diagnostics are not a general baseline, and menu discounts apply', () => {
+  const evap = buildScanEstimateLines({ codes: ['P0455'], services: CANNED_MENU, laborRate: 150 });
+  assert.ok(!evap.lines.some(line => /No-Start/.test(line.description)), 'battery/starter testing is not added to an EVAP estimate');
+  const discounted = buildScanEstimateLines({ codes: ['P0455'], laborRate: 150, services: [
+    { id: 'cel', name: 'Check Engine Light Diagnosis', menuPrice: 100, discount: 10 },
+    { id: 'evap', name: 'EVAP Smoke Test', laborHours: 1, partsPrice: 20, discount: 10 },
+  ] }).lines;
+  assert.deepEqual(discounted.map(line => line.total), [90, 135, 18]);
+  assert.match(discounted[0].notes, /10% menu discount/);
+});

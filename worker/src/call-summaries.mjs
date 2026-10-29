@@ -18,10 +18,10 @@ function clean(value, max = 400) {
 export function callActionFromTool(name, args = {}, output = {}) {
   if (output?.error) return { type: 'error', tool: name, detail: clean(output.error, 200) };
   if (name === 'book_appointment' && output?.booked) {
-    return { type: 'booked', appointmentId: output.appointmentId, date: output.date, time: output.time, service: clean(output.service, 120) };
+    return { type: 'booked', appointmentId: output.appointmentId, date: output.date, time: output.time, service: clean(output.service, 120), customerName: clean(output.customerName, 120) };
   }
   if (name === 'save_call_intake_and_estimate' && output?.saved) {
-    return { type: 'estimate', orderId: output.orderId, total: Number(output.estimateTotal) || 0, complaint: clean(output.complaint, 160) };
+    return { type: 'estimate', orderId: output.orderId, total: Number(output.estimateTotal) || 0, complaint: clean(output.complaint, 160), customerName: clean(output.customer, 120) };
   }
   if (name === 'calculate_service_estimate') return { type: 'quoted', total: Number(output?.total) || 0 };
   if (name === 'check_appointment_availability') return { type: 'availability' };
@@ -73,7 +73,7 @@ async function aiCallSummary(env, transcript, fallback) {
 }
 
 export async function buildCallSummary(env, { shopId, callSid = '', caller = '', callerContext = null, transcript = [], actions = [], startedAt, endedAt = new Date().toISOString(), durationSeconds = 0, provider = 'grok_phone', reason = '' }) {
-  const callerName = clean(callerContext?.customer?.name || actions.find(action => action.customerName)?.customerName || '', 120);
+  const callerName = clean(callerContext?.customer?.name || [...actions].reverse().find(action => action.customerName)?.customerName || '', 120);
   const fallback = extractiveCallSummary({ transcript, actions, callerName });
   const aiSummary = await aiCallSummary(env, transcript, fallback);
   return {

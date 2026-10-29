@@ -2,7 +2,7 @@
  * Red / yellow / green inspection ratings, finding media, and declined-work
  * follow-up. Ratings map the existing DVI statuses so older inspections keep
  * their meaning:
- *   critical → red (needs attention now), soon / monitor / fail → yellow,
+ *   critical / fail → red (needs attention now), soon / monitor / attention → yellow,
  *   ok → green, skipped / blank → unrated.
  */
 
@@ -14,7 +14,7 @@ export const RATINGS = Object.freeze({
 
 const STATUS_RATING = Object.freeze({
   critical: 'red', fail: 'red', failed: 'red', red: 'red',
-  soon: 'yellow', monitor: 'yellow', yellow: 'yellow',
+  soon: 'yellow', monitor: 'yellow', attention: 'yellow', yellow: 'yellow',
   ok: 'green', pass: 'green', good: 'green', green: 'green',
 });
 
