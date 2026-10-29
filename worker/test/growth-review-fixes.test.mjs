@@ -118,19 +118,21 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
   const { DB } = shop();
   DB.sqlite.exec("INSERT INTO sms_consent (shop_id, phone, status, source, updated_at) VALUES ('shop-r3v13w', '+18065550150', 'opted_out', 'test', 'now')");
   const slots = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w/slots`), { ...FLAGS_ON, DB }, {})).json();
+  const day = slots.days.find(item => item.slots.length >= 3);
+  assert.ok(day, 'a day with three open slots');
   const env = { ...FLAGS_ON, DB, TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 't', TWILIO_FROM_NUMBER: '+18065550000' };
   const realFetch = globalThis.fetch;
   let twilioCalls = 0;
   globalThis.fetch = async (url, init) => (String(url).includes('api.twilio.com') ? (twilioCalls += 1, Response.json({ sid: 'SM1', status: 'queued' })) : realFetch(url, init));
   try {
-    const book = (phone, time) => worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'X', phone, vehicle: 'Civic', service: 'Oil', date: slots.days[0].date, time }) }), env, {});
-    assert.equal((await book('806-555-0150', slots.days[0].slots[0])).status, 201);
+    const book = (phone, time) => worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'X', phone, vehicle: 'Civic', service: 'Oil', date: day.date, time }) }), env, {});
+    assert.equal((await book('806-555-0150', day.slots[0])).status, 201);
     assert.equal(twilioCalls, 0, 'opted-out number gets no confirmation');
-    assert.equal((await book('806-555-0151', slots.days[0].slots[1])).status, 201);
+    assert.equal((await book('806-555-0151', day.slots[1])).status, 201);
     assert.equal(twilioCalls, 1);
     assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM customer_messages WHERE message_type = 'booking_confirmation'").get().n, 1);
     const smsOff = { ...env, AUTOMATED_SMS_ENABLED: '0' };
-    const quiet = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Y', phone: '806-555-0152', vehicle: 'Civic', service: 'Oil', date: slots.days.at(-1).date, time: slots.days.at(-1).slots.at(-1) }) }), smsOff, {});
+    const quiet = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Y', phone: '806-555-0152', vehicle: 'Civic', service: 'Oil', date: day.date, time: day.slots[2] }) }), smsOff, {});
     assert.equal(quiet.status, 201, 'booking still works with automated texts off');
     assert.equal(twilioCalls, 1, 'but no confirmation text goes out');
   } finally {
