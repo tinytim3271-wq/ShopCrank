@@ -9,6 +9,8 @@ import { PARTSTECH_SECRET_NAME } from '../../../src/modules/partstech.js';
 import { HttpError, json, requestJson } from '../http.mjs';
 import { partstechFetch } from './partstech.mjs';
 import { searchLaborWeb, webEstimateResponsePayload } from './labor-web-estimate.mjs';
+import { searchLicensedLabor } from './labor.mjs';
+import { motorPlatformConfig, motorShopConfig, searchMotorLabor } from './motor-direct.mjs';
 
 const ADMIN_ROLES = ['owner', 'admin', 'super_admin'];
 const USE_ROLES = ['owner', 'admin', 'service_writer', 'technician'];
@@ -17,6 +19,15 @@ async function readJsonSecret(getSecret, shopId, name) {
   const raw = await getSecret(shopId, name);
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
+}
+
+const PROVIDER_NAMES = { motor: 'MOTOR', alldata: 'ALLDATA', shopkey: 'ShopKey' };
+
+/** Book-time sources ShopCrank itself is licensed for (Worker env), offered to every shop. */
+export function platformLaborStatus(env = {}) {
+  const alldata = Boolean(env.ALLDATA_LABOR_BASE_URL && env.ALLDATA_LABOR_SEARCH_PATH
+    && (env.ALLDATA_LABOR_API_KEY || env.ALLDATA_LABOR_TOKEN || (env.ALLDATA_LABOR_USERNAME && env.ALLDATA_LABOR_PASSWORD)));
+  return { motor: motorPlatformConfig(env).configured, alldata };
 }
 
 export function createLaborGuideHandlers({
@@ -32,7 +43,7 @@ export function createLaborGuideHandlers({
     if (request.method === 'GET' && !action) {
       requireRole(context, USE_ROLES);
       const record = await readJsonSecret(getSecret, context.shopId, LABOR_GUIDE_SECRET_NAME);
-      return json(laborGuideConnectionStatus(record));
+      return json({ ...laborGuideConnectionStatus(record), platform: platformLaborStatus(env) });
     }
 
     if (request.method === 'POST' && !action) {
@@ -58,10 +69,9 @@ export function createLaborGuideHandlers({
         const viaPartstech = body.viaPartstech !== false;
         record.viaPartstech = viaPartstech;
         if (!viaPartstech) {
-          record.userId = String(body.userId || '').trim();
-          record.userKey = String(body.userKey || '').trim();
-          record.partnerId = String(body.partnerId || '').trim();
-          record.partnerKey = String(body.partnerKey || '').trim();
+          record.publicKey = String(body.publicKey || '').trim();
+          record.privateKey = String(body.privateKey || '').trim();
+          record.apiKey = String(body.apiKey || '').trim() || null;
         }
         if (viaPartstech) {
           const pt = await readJsonSecret(getSecret, context.shopId, PARTSTECH_SECRET_NAME);
@@ -109,15 +119,49 @@ export function createLaborGuideHandlers({
       const keyword = String(body.keyword || body.operation || '').trim();
       const vin = String(body.vin || '').trim();
 
-      // Book provider path (MOTOR via PartsTech today; ALLDATA/ShopKey fail closed until adapters ship).
-      if (status.connected && status.provider === 'motor') {
-        let credentials = record;
-        if (record.viaPartstech) {
-          credentials = await readJsonSecret(getSecret, context.shopId, PARTSTECH_SECRET_NAME);
-          if (!credentials) throw new HttpError(409, 'PartsTech is not connected');
-        }
+      const fetcher = env.fetch || fetch;
+      // Book results win only when they contain operations; an empty match falls
+      // through to the labeled web average instead of an empty book-time table.
+      const book = async (provider, licensedBy, run) => {
+        const result = await run();
+        await recordAudit?.(env, context, { kind: 'integrations.labor_guide.search', provider, licensedBy, count: result.lines.length });
+        if (!result.lines.length) return null;
+        return json({
+          connected: true, provider, bookTime: true, licensedBy, label: `${PROVIDER_NAMES[provider]} book time`,
+          groups: [], operations: result.operations, lines: result.lines,
+        });
+      };
+      const motorCanSearch = config => config.configured && (vin || (keyword && !config.laborPath.includes('{vin}')));
+      const alldataSearch = () => book('alldata', 'platform', async () => {
+        const results = await searchLicensedLabor(env, { vin, year: body.year, make: body.make, model: body.model, engine: body.engine, query: keyword }, { provider: 'alldata', fetch: fetcher });
+        const operations = results.filter(item => item.verified);
+        const lines = operations.map((operation, index) => {
+          const line = mapMotorLaborOperationToEstimateLine(operation, { laborRate, provider: 'alldata' }, index);
+          return { ...line, laborGuide: { ...line.laborGuide, bookTime: true, licensedBy: 'platform' } };
+        });
+        return { operations, lines };
+      });
+
+      // Shop's own MOTOR keys (not via PartsTech).
+      if (status.connected && status.provider === 'motor' && !record.viaPartstech) {
+        const config = motorShopConfig(env, record);
+        if (!config.configured) throw new HttpError(503, 'MOTOR direct lookup needs MOTOR_API_BASE_URL and MOTOR_LABOR_PATH on the Worker');
+        if (!motorCanSearch(config)) throw new HttpError(400, 'Enter the VIN to look up MOTOR labor times');
+        const found = await book('motor', 'shop', () => searchMotorLabor(config, { vin, keyword, laborRate, source: 'shop' }, { fetcher }));
+        if (found) return found;
+      }
+
+      // ALLDATA through the platform adapter when ShopCrank holds the license.
+      if (status.connected && status.provider === 'alldata' && platformLaborStatus(env).alldata) {
+        const found = await alldataSearch();
+        if (found) return found;
+      }
+
+      // Book provider path: MOTOR via the shop's PartsTech account.
+      if (status.connected && status.provider === 'motor' && record.viaPartstech) {
+        const credentials = await readJsonSecret(getSecret, context.shopId, PARTSTECH_SECRET_NAME);
+        if (!credentials) throw new HttpError(409, 'PartsTech is not connected');
         if (!vin && !body.vehicleParams) throw new HttpError(400, 'vin or vehicleParams is required');
-        const fetcher = env.fetch || fetch;
         const baseUrl = env.PARTSTECH_API_BASE || 'https://api.partstech.com';
         const searchParams = vin ? { vin } : { vehicleParams: body.vehicleParams };
         const laborParams = keyword ? { keyword } : body.laborParams || undefined;
@@ -129,22 +173,37 @@ export function createLaborGuideHandlers({
         });
         const operations = payload.operations || payload.laborOperations || payload.results || [];
         const groups = payload.groups || payload.laborGroups || [];
-        const lines = (Array.isArray(operations) ? operations : []).map((operation, index) => (
-          mapMotorLaborOperationToEstimateLine(operation, { laborRate, provider: 'motor' }, index)
-        ));
-        await recordAudit?.(env, context, { kind: 'integrations.labor_guide.search', provider: 'motor', count: lines.length });
+        const lines = (Array.isArray(operations) ? operations : []).map((operation, index) => {
+          const line = mapMotorLaborOperationToEstimateLine(operation, { laborRate, provider: 'motor' }, index);
+          return { ...line, laborGuide: { ...line.laborGuide, bookTime: true, licensedBy: 'partstech' } };
+        });
+        await recordAudit?.(env, context, { kind: 'integrations.labor_guide.search', provider: 'motor', licensedBy: 'partstech', count: lines.length });
         return json({
           connected: true,
           provider: 'motor',
+          bookTime: true,
+          licensedBy: 'partstech',
+          label: 'MOTOR book time',
           groups: Array.isArray(groups) ? groups : [],
           operations: Array.isArray(operations) ? operations : [],
           lines,
         });
       }
 
-      if (status.connected && (status.provider === 'alldata' || status.provider === 'shopkey')) {
+      if (status.connected && (status.provider === 'shopkey' || (status.provider === 'alldata' && !platformLaborStatus(env).alldata))) {
         // Credentials may be stored, but live adapters are not wired yet — fail closed (no fake book times).
         throw new HttpError(501, `${status.provider} lookup is not enabled yet; disconnect it to use web estimates, or use manual entry`);
+      }
+
+      // No shop provider: use ShopCrank's MOTOR license when the platform holds one.
+      const platformMotor = motorPlatformConfig(env);
+      if (!status.connected && motorCanSearch(platformMotor)) {
+        const found = await book('motor', 'platform', () => searchMotorLabor(platformMotor, { vin, keyword, laborRate, source: 'platform' }, { fetcher }));
+        if (found) return found;
+      }
+      if (!status.connected && platformLaborStatus(env).alldata && (vin || keyword)) {
+        const found = await alldataSearch();
+        if (found) return found;
       }
 
       // No book provider connected → automatic web fallback (clearly labeled, never as book time).

@@ -26,6 +26,7 @@ function bookCredentialsReady(provider, record = {}) {
   if (provider === 'motor') {
     return Boolean(
       record.apiKey
+      || (record.publicKey && record.privateKey)
       || (record.userId && record.userKey && record.partnerId && record.partnerKey)
       || record.viaPartstech === true,
     );
@@ -296,20 +297,42 @@ export function createLaborGuideProvider(kind, credentials = {}) {
   };
 }
 
+const LICENSE_LABELS = Object.freeze({
+  partstech: "through the shop's PartsTech account",
+  shop: "with the shop's own license",
+  platform: "included with ShopCrank",
+});
+
+/** Banner shown above book-time results so estimates show where the hours came from. */
+export function laborBookTimeBanner(result = {}, escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, '')) {
+  if (!result.bookTime) return '';
+  const label = result.label || `${PROVIDER_LABELS[result.provider] || 'Labor guide'} book time`;
+  const via = LICENSE_LABELS[result.licensedBy] || '';
+  return `<div class="messaging-status ready"><div><strong>${escapeHtml(label)}</strong><span>Published book labor times${via ? ` ${escapeHtml(via)}` : ''}.</span></div></div>`;
+}
+
 export function laborGuidePanelHtml(account = {}, { canSave = false, escapeHtml = v => String(v ?? ''), icon = () => '' } = {}) {
-  const status = laborGuideConnectionStatus(account);
+  // The Worker returns a sanitized status (no keys); recomputing it from that would read as disconnected.
+  const status = typeof account.connected === 'boolean' && account.status ? account : laborGuideConnectionStatus(account);
+  const platformMotor = !status.connected && account.platform?.motor;
   const banner = status.connected
     ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>${escapeHtml(status.label)}</strong><span>Book times from the connected provider</span></div></div>`
+    : platformMotor
+    ? `<div class="messaging-status ready">${icon('circle-check', 17)}<div><strong>MOTOR labor guide (included with ShopCrank)</strong><span>Estimates use MOTOR book times. Web averages are only used when MOTOR has no match, and are labeled ${escapeHtml(WEB_ESTIMATE_LABEL)}.</span></div></div>`
     : `<div class="messaging-status idle">${icon('book-open', 17)}<div><strong>${escapeHtml(status.label)}</strong><span>Manual entry always works. With no MOTOR / ALLDATA / ShopKey connection, lookup uses a labeled web average (${escapeHtml(WEB_ESTIMATE_LABEL)}) when search is configured — never as book time.</span></div></div>`;
   const form = canSave
     ? `<form id="labor-guide-connect-form" class="form-grid">
         <label>Provider<select name="provider">
-          <option value="motor" ${account.provider === 'motor' ? 'selected' : ''}>MOTOR (PartsTech)</option>
+          <option value="motor" ${account.provider === 'motor' ? 'selected' : ''}>MOTOR</option>
           <option value="alldata" ${account.provider === 'alldata' ? 'selected' : ''}>ALLDATA</option>
           <option value="shopkey" ${account.provider === 'shopkey' ? 'selected' : ''}>ShopKey</option>
           <option value="manual" ${!account.provider || account.provider === 'manual' ? 'selected' : ''}>Manual only</option>
         </select></label>
         <label class="toggle-field full"><input type="checkbox" name="viaPartstech" ${account.viaPartstech !== false ? 'checked' : ''}/><span>For MOTOR: use the shop's PartsTech credentials</span></label>
+        <label>MOTOR public key<input name="publicKey" autocomplete="off" placeholder="Only when not using PartsTech"/></label>
+        <label>MOTOR private key<input name="privateKey" type="password" autocomplete="off"/></label>
+        <label>ALLDATA / ShopKey subscription ID<input name="subscriptionId" autocomplete="off"/></label>
+        <label>ALLDATA / ShopKey API key<input name="apiKey" type="password" autocomplete="off"/></label>
         <button class="primary" type="submit">${icon('save', 14)} Save labor guide</button>
         ${status.connected ? `<button class="secondary danger" type="button" id="labor-guide-disconnect">${icon('log-out', 14)} Disconnect provider</button>` : ''}
       </form>`

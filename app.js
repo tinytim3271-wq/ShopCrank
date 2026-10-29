@@ -2328,7 +2328,7 @@
   function bookCredentialsReady(provider, record = {}) {
     if (provider === "motor") {
       return Boolean(
-        record.apiKey || record.userId && record.userKey && record.partnerId && record.partnerKey || record.viaPartstech === true
+        record.apiKey || record.publicKey && record.privateKey || record.userId && record.userKey && record.partnerId && record.partnerKey || record.viaPartstech === true
       );
     }
     if (provider === "alldata" || provider === "shopkey") {
@@ -2409,17 +2409,28 @@
       laborGuide: { provider: "manual" }
     };
   }
+  function laborBookTimeBanner(result = {}, escapeHtml4 = (value2) => String(value2 ?? "").replace(/[&<>"']/g, "")) {
+    if (!result.bookTime) return "";
+    const label2 = result.label || `${PROVIDER_LABELS[result.provider] || "Labor guide"} book time`;
+    const via = LICENSE_LABELS[result.licensedBy] || "";
+    return `<div class="messaging-status ready"><div><strong>${escapeHtml4(label2)}</strong><span>Published book labor times${via ? ` ${escapeHtml4(via)}` : ""}.</span></div></div>`;
+  }
   function laborGuidePanelHtml(account = {}, { canSave = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
-    const status = laborGuideConnectionStatus(account);
-    const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Book times from the connected provider</span></div></div>` : `<div class="messaging-status idle">${icon2("book-open", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Manual entry always works. With no MOTOR / ALLDATA / ShopKey connection, lookup uses a labeled web average (${escapeHtml4(WEB_ESTIMATE_LABEL)}) when search is configured \u2014 never as book time.</span></div></div>`;
+    const status = typeof account.connected === "boolean" && account.status ? account : laborGuideConnectionStatus(account);
+    const platformMotor = !status.connected && account.platform?.motor;
+    const banner = status.connected ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Book times from the connected provider</span></div></div>` : platformMotor ? `<div class="messaging-status ready">${icon2("circle-check", 17)}<div><strong>MOTOR labor guide (included with ShopCrank)</strong><span>Estimates use MOTOR book times. Web averages are only used when MOTOR has no match, and are labeled ${escapeHtml4(WEB_ESTIMATE_LABEL)}.</span></div></div>` : `<div class="messaging-status idle">${icon2("book-open", 17)}<div><strong>${escapeHtml4(status.label)}</strong><span>Manual entry always works. With no MOTOR / ALLDATA / ShopKey connection, lookup uses a labeled web average (${escapeHtml4(WEB_ESTIMATE_LABEL)}) when search is configured \u2014 never as book time.</span></div></div>`;
     const form = canSave ? `<form id="labor-guide-connect-form" class="form-grid">
         <label>Provider<select name="provider">
-          <option value="motor" ${account.provider === "motor" ? "selected" : ""}>MOTOR (PartsTech)</option>
+          <option value="motor" ${account.provider === "motor" ? "selected" : ""}>MOTOR</option>
           <option value="alldata" ${account.provider === "alldata" ? "selected" : ""}>ALLDATA</option>
           <option value="shopkey" ${account.provider === "shopkey" ? "selected" : ""}>ShopKey</option>
           <option value="manual" ${!account.provider || account.provider === "manual" ? "selected" : ""}>Manual only</option>
         </select></label>
         <label class="toggle-field full"><input type="checkbox" name="viaPartstech" ${account.viaPartstech !== false ? "checked" : ""}/><span>For MOTOR: use the shop's PartsTech credentials</span></label>
+        <label>MOTOR public key<input name="publicKey" autocomplete="off" placeholder="Only when not using PartsTech"/></label>
+        <label>MOTOR private key<input name="privateKey" type="password" autocomplete="off"/></label>
+        <label>ALLDATA / ShopKey subscription ID<input name="subscriptionId" autocomplete="off"/></label>
+        <label>ALLDATA / ShopKey API key<input name="apiKey" type="password" autocomplete="off"/></label>
         <button class="primary" type="submit">${icon2("save", 14)} Save labor guide</button>
         ${status.connected ? `<button class="secondary danger" type="button" id="labor-guide-disconnect">${icon2("log-out", 14)} Disconnect provider</button>` : ""}
       </form>` : '<p class="ops-note">Ask an owner or admin to connect a labor guide.</p>';
@@ -2449,7 +2460,7 @@
     ${search}
   </section>`;
   }
-  var LABOR_GUIDE_PROVIDERS, BOOK_LABOR_PROVIDERS, WEB_ESTIMATE_LABEL, PROVIDER_LABELS;
+  var LABOR_GUIDE_PROVIDERS, BOOK_LABOR_PROVIDERS, WEB_ESTIMATE_LABEL, PROVIDER_LABELS, LICENSE_LABELS;
   var init_labor_guide = __esm({
     "src/modules/labor-guide.js"() {
       LABOR_GUIDE_PROVIDERS = Object.freeze(["manual", "motor", "alldata", "shopkey"]);
@@ -2460,6 +2471,11 @@
         motor: "MOTOR labor guide",
         alldata: "ALLDATA labor guide",
         shopkey: "ShopKey labor guide"
+      });
+      LICENSE_LABELS = Object.freeze({
+        partstech: "through the shop's PartsTech account",
+        shop: "with the shop's own license",
+        platform: "included with ShopCrank"
       });
     }
   });
@@ -9731,7 +9747,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
         const data = readFormValues(event.target);
         laborGuideAccount = { ...await apiFetch("/integrations/labor-guide", {
           method: "POST",
-          body: JSON.stringify({ provider: data.provider, viaPartstech: data.viaPartstech === "on" })
+          body: JSON.stringify({ provider: data.provider, viaPartstech: data.viaPartstech === "on", publicKey: data.publicKey, privateKey: data.privateKey, apiKey: data.apiKey, username: data.username, password: data.password, subscriptionId: data.subscriptionId })
         }), loaded: true };
         toast("Labor guide saved");
         render();
@@ -9767,7 +9783,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
           if (panel) panel.innerHTML = `<div class="messaging-status idle"><div><strong>web estimate \u2014 not book time</strong><span>Average ${escapeHtml(String(result.averageHours))} hrs from ${escapeHtml(String(result.sourceCount || 0))} source(s). Not ALLDATA / MOTOR / ShopKey book time.</span></div></div><table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows}</tbody></table><ol class="ops-note">${sources}</ol>`;
         } else {
           const rows = (result.lines || []).map((line) => `<tr><td>${escapeHtml(line.description)}</td><td>${line.hours}</td><td>${money4(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
-          if (panel) panel.innerHTML = `<table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No operations returned</td></tr>"}</tbody></table>`;
+          if (panel) panel.innerHTML = `${laborBookTimeBanner(result, escapeHtml)}<table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No operations returned</td></tr>"}</tbody></table>`;
         }
         window.__SHOP_CRANK_LABOR_LINES__ = Object.fromEntries((result.lines || []).map((line) => [line.id, line]));
         document.querySelectorAll("[data-add-labor-line]").forEach((button) => {

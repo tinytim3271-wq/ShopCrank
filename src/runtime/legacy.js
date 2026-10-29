@@ -12,7 +12,7 @@ import { inspectionMenuHtml } from '../modules/shop-inspections.js';
 import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.js';
 import { partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
 import { diagnosticDraftToOrderLines, estimateDraftAction } from '../modules/diagnostic-ai.js';
-import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
+import { laborBookTimeBanner, laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
 import {
   GROK_VOICE_OPTIONS,
@@ -902,7 +902,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
       const data = readFormValues(event.target);
       laborGuideAccount = { ...(await apiFetch("/integrations/labor-guide", {
         method: "POST",
-        body: JSON.stringify({ provider: data.provider, viaPartstech: data.viaPartstech === "on" }),
+        body: JSON.stringify({ provider: data.provider, viaPartstech: data.viaPartstech === "on", publicKey: data.publicKey, privateKey: data.privateKey, apiKey: data.apiKey, username: data.username, password: data.password, subscriptionId: data.subscriptionId }),
       })), loaded: true };
       toast("Labor guide saved");
       render();
@@ -934,7 +934,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
         if (panel) panel.innerHTML = `<div class="messaging-status idle"><div><strong>web estimate — not book time</strong><span>Average ${escapeHtml(String(result.averageHours))} hrs from ${escapeHtml(String(result.sourceCount || 0))} source(s). Not ALLDATA / MOTOR / ShopKey book time.</span></div></div><table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows}</tbody></table><ol class="ops-note">${sources}</ol>`;
       } else {
         const rows = (result.lines || []).map(line => `<tr><td>${escapeHtml(line.description)}</td><td>${line.hours}</td><td>${money(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
-        if (panel) panel.innerHTML = `<table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No operations returned</td></tr>"}</tbody></table>`;
+        if (panel) panel.innerHTML = `${laborBookTimeBanner(result, escapeHtml)}<table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No operations returned</td></tr>"}</tbody></table>`;
       }
       window.__SHOP_CRANK_LABOR_LINES__ = Object.fromEntries((result.lines || []).map(line => [line.id, line]));
       document.querySelectorAll("[data-add-labor-line]").forEach(button => {
