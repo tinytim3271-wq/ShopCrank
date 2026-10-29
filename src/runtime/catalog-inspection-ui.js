@@ -17,6 +17,7 @@ function readItems(form, catalog, existing) {
     status: String(form.elements[`status-${item.id}`]?.value || ''),
     note: String(form.elements[`note-${item.id}`]?.value || ''),
     measurement: String(form.elements[`measure-${item.id}`]?.value || ''),
+    photoKeys: [...(item.photoKeys || [])],
   }));
 }
 
@@ -57,35 +58,20 @@ function readRecord(form, catalog, existing, app) {
   };
 }
 
-function fileToDataUrl(file) {
-  return new Promise(resolve => {
-    const image = new Image();
-    const url = URL.createObjectURL(file);
-    image.onload = () => {
-      const scale = Math.min(1, 1280 / Math.max(image.width, image.height, 1));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
-      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL('image/jpeg', 0.72));
-    };
-    image.onerror = () => { URL.revokeObjectURL(url); resolve(''); };
-    image.src = url;
-  });
-}
-
 async function attachPhotos(form, record, app) {
   const files = [...(form.elements.photos?.files || [])];
   const keys = [...record.photoKeys];
   for (const file of files) {
-    try {
-      keys.push(await app.uploadFileToR2(file, 'inspection', file.type || 'image/jpeg'));
-    } catch {
-      const dataUrl = await fileToDataUrl(file);
-      if (dataUrl) keys.push(dataUrl);
-    }
+    keys.push(await app.uploadFileToR2(file, 'inspection', file.type || 'image/jpeg'));
   }
+  record.items = await Promise.all(record.items.map(async item => {
+    const filesForItem = [...(form.elements[`photos-${item.id}`]?.files || [])];
+    const itemKeys = [...item.photoKeys];
+    for (const file of filesForItem) {
+      itemKeys.push(await app.uploadFileToR2(file, 'inspection', file.type || 'image/jpeg'));
+    }
+    return { ...item, photoKeys: itemKeys };
+  }));
   return keys;
 }
 
@@ -223,23 +209,34 @@ export function presentCatalogInspection(app, existing = null, catalogId = exist
     const intent = event.submitter?.dataset.intent || 'draft';
     const record = readRecord(form, catalog, existing, app);
     if (intent === 'close') {
-      const issues = closeInspectionIssues({ ...record, photoKeys: [...record.photoKeys, ...(form.elements.photos?.files?.length ? ['pending'] : [])] });
+      const items = record.items.map(item => ({
+        ...item,
+        photoKeys: [
+          ...item.photoKeys,
+          ...(form.elements[`photos-${item.id}`]?.files?.length ? ['pending'] : []),
+        ],
+      }));
+      const issues = closeInspectionIssues({
+        ...record,
+        items,
+        photoKeys: [...record.photoKeys, ...(form.elements.photos?.files?.length ? ['pending'] : [])],
+      });
       if (issues.length) {
         app.toast(issues[0]);
         return;
       }
-    }
-    record.photoKeys = await attachPhotos(form, record, app);
-    if (intent === 'close') {
-      const issues = closeInspectionIssues(record);
-      if (issues.length) {
-        app.toast(issues[0]);
-        return;
-      }
-      record.closedAt = app.now();
-      record.recordStatus = 'closed';
     }
     try {
+      record.photoKeys = await attachPhotos(form, record, app);
+      if (intent === 'close') {
+        const issues = closeInspectionIssues(record);
+        if (issues.length) {
+          app.toast(issues[0]);
+          return;
+        }
+        record.closedAt = app.now();
+        record.recordStatus = 'closed';
+      }
       const saved = await app.saveShopEntity('inspections', record);
       existing = saved;
       app.toast(intent === 'close' ? 'Inspection closed' : 'Inspection saved');

@@ -1679,8 +1679,10 @@
     const issues = [];
     const items = record?.items || [];
     const openFindings = items.filter((item) => item.status === "critical" || item.status === "soon");
-    const photos = record?.photoKeys || [];
-    if (openFindings.length && !photos.length) issues.push("Attach a photo of each key finding before closing.");
+    const missingFindingPhotos = openFindings.filter((item) => !(item.photoKeys || []).length);
+    if (missingFindingPhotos.length) {
+      issues.push(`Attach a photo to each critical or soon finding before closing (${missingFindingPhotos[0].label || missingFindingPhotos[0].name}).`);
+    }
     if (!String(record?.customerName || "").trim()) issues.push("Add the customer name on the acknowledgment.");
     if (record?.catalogId === "pre-purchase" && !record?.verdict) issues.push("Choose BUY, NEGOTIATE, or WALK AWAY.");
     const unmarked = items.filter((item) => !item.status);
@@ -1705,7 +1707,11 @@
       groups.get(title).push(item);
     }
     const sections = [...groups.entries()].map(([title, items]) => {
-      const rows = items.map((item) => `<tr><td>${escapeHtml4(item.label || item.name || "")}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`).join("");
+      const rows = items.map((item) => {
+        const findingPhotos = (item.photoKeys || []).map((key) => inspectionPhotoSrc(key, apiUrl)).filter(Boolean);
+        const findingPhotoHtml = findingPhotos.map((src) => `<img src="${escapeHtml4(src)}" alt="Photo for ${escapeHtml4(item.label || item.name || "inspection finding")}"/>`).join("");
+        return `<tr><td>${escapeHtml4(item.label || item.name || "")}${findingPhotoHtml ? `<div class="finding-photos">${findingPhotoHtml}</div>` : ""}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`;
+      }).join("");
       return `<h2>${escapeHtml4(title)}</h2><table><thead><tr><th>Item</th><th>Result</th><th>Measurement</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
     }).join("");
     const verdict = (catalog?.verdicts || []).find((item) => item.id === inspection.verdict);
@@ -1758,6 +1764,8 @@
       ${item.measure || item.measurement ? `<input name="measure-${escapeHtml4(item.id)}" value="${escapeHtml4(item.measurement || "")}" placeholder="${escapeHtml4(item.measure || "Measurement")}" aria-label="${escapeHtml4(item.measure || "Measurement")}"/>` : "<span></span>"}
       <input name="note-${escapeHtml4(item.id)}" value="${escapeHtml4(item.note || "")}" placeholder="Finding" aria-label="Note"/>
       <button type="button" class="secondary dictate" data-dictate="note-${escapeHtml4(item.id)}">Dictate</button>
+      <label class="inspect-row-photos">Finding photos<input name="photos-${escapeHtml4(item.id)}" type="file" accept="image/*" capture="environment" multiple/></label>
+      ${(item.photoKeys || []).map((key) => inspectionPhotoSrc(key, context.apiUrl)).filter(Boolean).map((src) => `<img class="finding-photo-preview" src="${escapeHtml4(src)}" alt="Attached photo for ${escapeHtml4(item.label || item.name || "finding")}"/>`).join("")}
     </div>`).join("");
       return `<section class="inspect-section"><div class="inspect-section-head"><h3>${escapeHtml4(section.title)}</h3><button type="button" class="mini-action" data-mark-section="${escapeHtml4(section.title)}">Mark unmarked OK</button></div>${rows}</section>`;
     }).join("");
@@ -5731,7 +5739,8 @@ button{margin-top:12px;padding:8px 14px}
       measure: item.measure || "",
       status: String(form.elements[`status-${item.id}`]?.value || ""),
       note: String(form.elements[`note-${item.id}`]?.value || ""),
-      measurement: String(form.elements[`measure-${item.id}`]?.value || "")
+      measurement: String(form.elements[`measure-${item.id}`]?.value || ""),
+      photoKeys: [...item.photoKeys || []]
     }));
   }
   function readRecord(form, catalog, existing, app) {
@@ -5774,37 +5783,20 @@ button{margin-top:12px;padding:8px 14px}
       damageZones: existing?.damageZones || []
     };
   }
-  function fileToDataUrl(file) {
-    return new Promise((resolve) => {
-      const image = new Image();
-      const url = URL.createObjectURL(file);
-      image.onload = () => {
-        const scale = Math.min(1, 1280 / Math.max(image.width, image.height, 1));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(image.width * scale));
-        canvas.height = Math.max(1, Math.round(image.height * scale));
-        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL("image/jpeg", 0.72));
-      };
-      image.onerror = () => {
-        URL.revokeObjectURL(url);
-        resolve("");
-      };
-      image.src = url;
-    });
-  }
   async function attachPhotos(form, record, app) {
     const files = [...form.elements.photos?.files || []];
     const keys = [...record.photoKeys];
     for (const file of files) {
-      try {
-        keys.push(await app.uploadFileToR2(file, "inspection", file.type || "image/jpeg"));
-      } catch {
-        const dataUrl = await fileToDataUrl(file);
-        if (dataUrl) keys.push(dataUrl);
-      }
+      keys.push(await app.uploadFileToR2(file, "inspection", file.type || "image/jpeg"));
     }
+    record.items = await Promise.all(record.items.map(async (item) => {
+      const filesForItem = [...form.elements[`photos-${item.id}`]?.files || []];
+      const itemKeys = [...item.photoKeys];
+      for (const file of filesForItem) {
+        itemKeys.push(await app.uploadFileToR2(file, "inspection", file.type || "image/jpeg"));
+      }
+      return { ...item, photoKeys: itemKeys };
+    }));
     return keys;
   }
   function bindDictation(form, toast2) {
@@ -5938,23 +5930,34 @@ button{margin-top:12px;padding:8px 14px}
       const intent = event.submitter?.dataset.intent || "draft";
       const record = readRecord(form, catalog, existing, app);
       if (intent === "close") {
-        const issues = closeInspectionIssues({ ...record, photoKeys: [...record.photoKeys, ...form.elements.photos?.files?.length ? ["pending"] : []] });
+        const items = record.items.map((item) => ({
+          ...item,
+          photoKeys: [
+            ...item.photoKeys,
+            ...form.elements[`photos-${item.id}`]?.files?.length ? ["pending"] : []
+          ]
+        }));
+        const issues = closeInspectionIssues({
+          ...record,
+          items,
+          photoKeys: [...record.photoKeys, ...form.elements.photos?.files?.length ? ["pending"] : []]
+        });
         if (issues.length) {
           app.toast(issues[0]);
           return;
         }
-      }
-      record.photoKeys = await attachPhotos(form, record, app);
-      if (intent === "close") {
-        const issues = closeInspectionIssues(record);
-        if (issues.length) {
-          app.toast(issues[0]);
-          return;
-        }
-        record.closedAt = app.now();
-        record.recordStatus = "closed";
       }
       try {
+        record.photoKeys = await attachPhotos(form, record, app);
+        if (intent === "close") {
+          const issues = closeInspectionIssues(record);
+          if (issues.length) {
+            app.toast(issues[0]);
+            return;
+          }
+          record.closedAt = app.now();
+          record.recordStatus = "closed";
+        }
         const saved = await app.saveShopEntity("inspections", record);
         existing = saved;
         app.toast(intent === "close" ? "Inspection closed" : "Inspection saved");
@@ -7702,9 +7705,28 @@ button{margin-top:12px;padding:8px 14px}
       }
     });
   }
+  function loadSmsInbox() {
+    if (smsInboxLoading) return;
+    smsInboxLoading = true;
+    void apiFetch("/messaging/threads").then((result) => {
+      smsInboxMessages = result.messages || [];
+      smsInboxError = "";
+    }).catch((error) => {
+      smsInboxError = error.message;
+    }).finally(() => {
+      smsInboxLoading = false;
+      smsInboxLoaded = true;
+      if (state.route === "messaging") render();
+    });
+  }
+  function smsInboxPanel() {
+    if (!smsInboxLoaded && !smsInboxLoading) loadSmsInbox();
+    const rows = smsInboxMessages.map((message) => `<tr><td>${escapeHtml(message.phone)}</td><td>${message.direction === "inbound" ? "Customer" : "Shop"}</td><td>${escapeHtml(message.body)}</td><td>${escapeHtml(message.status)}${message.direction === "outbound" ? ` \xB7 consent ${escapeHtml(message.consentStatus || "unknown")}` : ""}</td><td>${escapeHtml(message.createdAt || "")}</td></tr>`).join("");
+    return `<section class="messaging-panel"><div class="statement-head"><div><div class="eyebrow">Twilio SMS</div><h2>Customer texting inbox</h2><p>Inbound replies, consent, and provider delivery status are recorded per shop.</p></div><button type="button" class="secondary" id="refresh-sms-inbox">${icon("refresh-cw", 14)} Refresh</button></div>${smsInboxError ? `<p role="alert">${escapeHtml(smsInboxError)}</p>` : ""}<form class="form-grid" id="sms-consent-form"><label>Customer phone<input name="phone" type="tel" required placeholder="+18065550123"/></label><label>Consent action<select name="status"><option value="opted_in">Record explicit opt-in</option><option value="opted_out">Record opt-out</option></select></label><label class="toggle-field full"><input type="checkbox" name="confirmed"/><span>Customer explicitly agreed to receive SMS from this shop; consent was obtained and documented.</span></label><div class="full"><button type="submit" class="secondary">${icon("shield-check", 14)} Save consent</button></div></form><form class="form-grid" id="sms-send-form"><label>Customer phone<input name="to" type="tel" required placeholder="+18065550123"/></label><label>Customer ID<input name="customerId" maxlength="120"/></label><label>Work order ID<input name="workOrderId" maxlength="120"/></label><label class="full">Text message<textarea name="messageBody" required maxlength="1600" rows="3"></textarea></label><div class="full"><button type="submit" class="primary">${icon("send", 14)} Send text</button></div></form><div class="data-panel"><table><thead><tr><th>Phone</th><th>Direction</th><th>Message</th><th>Status / consent</th><th>Time</th></tr></thead><tbody>${rows || `<tr><td colspan="5">${smsInboxLoading ? "Loading messages\u2026" : "No messages yet."}</td></tr>`}</tbody></table></div></section>`;
+  }
   function messaging() {
     const config = state.messagingSettings;
-    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
+    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}${smsInboxPanel()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
   }
   async function loadIntegrationStatus() {
     try {
@@ -7720,15 +7742,16 @@ button{margin-top:12px;padding:8px 14px}
     if (!integrationStatus) void loadIntegrationStatus().then(render);
     const status = integrationStatus || {};
     const labor = status.labor || {}, parts = status.parts || {}, qbo = status.quickbooks || {};
+    const laborLicenseNotice = ["motor", "alldata"].some((provider) => labor[provider]?.credentialsConfigured && !labor[provider]?.licenseConfirmed) ? `<p class="ai-disclaimer">Provider credentials are present, but licensed usage has not been confirmed. Labor lookup remains disabled until the shop verifies its provider contract and sets the matching license confirmation.</p>` : "";
     const laborRows = laborLookupResults.map((item) => `<tr><td>${escapeHtml(item.description || "Labor operation")}</td><td><b>${item.hours == null ? "Enter manually" : `${Number(item.hours).toFixed(2)} h`}</b></td><td>${escapeHtml(item.source)}</td><td><span class="badge ${item.verified ? "paid" : "estimate"}">${item.verified ? "Verified" : "Unverified"}</span></td></tr>`).join("");
     const partsOutput = partsLookupResult ? `<pre class="service-contract">${escapeHtml(JSON.stringify(partsLookupResult, null, 2))}</pre>` : "";
     return shell(`${heading("Connected services", "Integrations", "Licensed labor, supplier ordering, accounting, and messaging connections.", false)}
-    <section class="messaging-panel"><h2>Licensed labor guide</h2>${integrationState("MOTOR", labor.motor?.configured)}${integrationState("ALLDATA", labor.alldata?.configured)}
+    <section class="messaging-panel"><h2>Licensed labor guide</h2>${integrationState("MOTOR", labor.motor?.configured)}${integrationState("ALLDATA", labor.alldata?.configured)}${laborLicenseNotice}
       <form class="form-grid" id="labor-lookup-form"><label>VIN<input name="vin" maxlength="17"/></label><label>Year<input name="year" type="number" min="1886" max="2200"/></label><label>Make<input name="make"/></label><label>Model<input name="model"/></label><label class="full">Operation<input name="query" required placeholder="Front brake pads and rotors"/></label><div class="full"><button class="primary" type="submit">${icon("search", 14)} Find labor time</button></div></form>
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank. Re-sync updates the mapped QuickBooks record; ShopCrank remains the source of truth.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
   }
   function support() {
     if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -10203,6 +10226,46 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
         return;
       }
       toast("Endpoint saved. Use your shop service test endpoint to verify SMTP and SMS credentials.");
+    });
+    document.querySelector("#refresh-sms-inbox")?.addEventListener("click", () => {
+      smsInboxLoaded = false;
+      loadSmsInbox();
+    });
+    document.querySelector("#sms-consent-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      const status = String(formData.get("status") || "");
+      try {
+        await apiFetch("/messaging/consent", {
+          method: "POST",
+          body: JSON.stringify({
+            phone: formData.get("phone"),
+            status,
+            confirmed: formData.get("confirmed") === "on"
+          })
+        });
+        toast(status === "opted_in" ? "SMS consent recorded" : "SMS opt-out recorded");
+        event.target.reset();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    document.querySelector("#sms-send-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = readFormValues(event.target);
+      const button = event.target.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try {
+        const result = await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify(data) });
+        toast(`Text ${result.status || "queued"} for delivery`);
+        event.target.reset();
+        smsInboxLoaded = false;
+        loadSmsInbox();
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
     });
   }
   async function loadStripePaymentStatus() {
@@ -14517,7 +14580,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -14571,6 +14634,10 @@ ${line}`.trim();
       posMode = "reader";
       posPhoneEntry = false;
       posStripe = null;
+      smsInboxMessages = [];
+      smsInboxLoaded = false;
+      smsInboxLoading = false;
+      smsInboxError = "";
       integrationStatus = null;
       laborLookupResults = [];
       partsLookupResult = null;

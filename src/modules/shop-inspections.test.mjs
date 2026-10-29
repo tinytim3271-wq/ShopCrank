@@ -48,22 +48,23 @@ test('scan inspections tell the tech not to clear codes', () => {
   }
 });
 
-test('closing requires a result, acknowledgment, verdict, and photos of urgent findings', () => {
+test('closing requires a result, acknowledgment, verdict, and photos on each urgent finding', () => {
   const items = inspectionItems(shopInspection('brakes')).map(item => ({ ...item, status: 'ok' }));
   items[1].status = 'critical';
   assert.deepEqual(closeInspectionIssues({ catalogId: 'brakes', items, customerName: '', photoKeys: [] }), [
-    'Attach a photo of each key finding before closing.',
+    `Attach a photo to each critical or soon finding before closing (${items[1].label}).`,
     'Add the customer name on the acknowledgment.',
   ]);
   const ppi = inspectionItems(shopInspection('pre-purchase')).map(item => ({ ...item, status: '' }));
   const issues = closeInspectionIssues({ catalogId: 'pre-purchase', items: ppi, customerName: 'Ada', photoKeys: [], verdict: '' });
   assert.equal(issues.some(item => item.includes('WALK AWAY')), true);
   assert.equal(issues.some(item => item.includes('need a result')), true);
+  items[1].photoKeys = ['photo-1'];
   assert.deepEqual(closeInspectionIssues({
     catalogId: 'brakes',
     items,
     customerName: 'Ada',
-    photoKeys: ['photo-1'],
+    photoKeys: [],
   }), []);
 });
 
@@ -83,11 +84,12 @@ test('the customer copy is a branded inspection sheet, not a repair quote', () =
     photoKeys: ['data:image/jpeg;base64,abc', 'r2-key'],
     customerName: 'Ada',
     customerSignature: 'data:image/png;base64,sig',
-    items: inspectionItems(catalog).map(item => ({ ...item, status: item.id === 'scan' ? 'soon' : 'ok', measurement: item.id === 'tread' ? '4/32' : '' })),
+    items: inspectionItems(catalog).map(item => ({ ...item, status: item.id === 'scan' ? 'soon' : 'ok', photoKeys: item.id === 'scan' ? ['r2-finding-photo'] : [], measurement: item.id === 'tread' ? '4/32' : '' })),
   }, { shopName: 'Reliable Automotive Services' }, escapeHtml, 'https://api.example.test');
   assert.match(html, /Inspection fee 229.00 USD/);
   assert.match(html, /Repairs, parts, and disassembly are quoted separately/);
   assert.match(html, /NEGOTIATE/);
+  assert.match(html, /Photo for All accessible modules scanned/i);
   assert.match(html, /Seller summary/);
   assert.match(html, /&lt;script&gt;/);
   assert.equal(html.includes('<script>'), false);

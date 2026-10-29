@@ -155,11 +155,29 @@ export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch, confi
 
   return Object.freeze({
     provider: 'twilio',
-    async send({ to, body }) {
+    async send({ to, body, statusCallback = '' }) {
       const form = new URLSearchParams({
         To: requireE164(to, 'to'),
         Body: requireText(body),
       });
+      if (statusCallback) {
+        let callback;
+        try {
+          callback = new URL(statusCallback);
+        } catch {
+          throw new SmsIntegrationError('SMS status callback must be an HTTPS URL', {
+            code: 'invalid_status_callback',
+            status: 400,
+          });
+        }
+        if (callback.protocol !== 'https:') {
+          throw new SmsIntegrationError('SMS status callback must be an HTTPS URL', {
+            code: 'invalid_status_callback',
+            status: 400,
+          });
+        }
+        form.set('StatusCallback', callback.toString());
+      }
       if (config.messagingServiceSid) form.set('MessagingServiceSid', config.messagingServiceSid);
       else form.set('From', requireE164(config.fromNumber, 'TWILIO_FROM_NUMBER'));
 
@@ -273,6 +291,7 @@ export async function parseTwilioInboundWebhook(request, env, { authToken: authT
       status: 503,
     });
   }
+
   const parameters = new URLSearchParams(await request.text());
   const publicUrl = new URL(request.url);
   try {
@@ -311,4 +330,54 @@ export async function parseTwilioInboundWebhook(request, env, { authToken: authT
     messageSid: String(parameters.get('MessageSid') || '').trim().slice(0, 64),
     classification: classifySmsKeyword(body),
   };
+}
+
+export async function parseTwilioStatusWebhook(request, env, { authToken: authTokenOverride = '' } = {}) {
+  const authToken = String(authTokenOverride || value(env, 'TWILIO_AUTH_TOKEN')).trim();
+  if (!authToken) {
+    throw new SmsIntegrationError('SMS webhook verification is not configured', {
+      code: 'sms_not_configured',
+      status: 503,
+    });
+  }
+  const parameters = new URLSearchParams(await request.text());
+  const publicUrl = new URL(request.url);
+  try {
+    const configuredUrl = value(env, 'TWILIO_WEBHOOK_URL');
+    if (configuredUrl) {
+      const configured = new URL(configuredUrl);
+      publicUrl.protocol = configured.protocol;
+      publicUrl.hostname = configured.hostname;
+      publicUrl.port = configured.port;
+    }
+  } catch {
+    throw new SmsIntegrationError('TWILIO_WEBHOOK_URL is invalid', {
+      code: 'sms_not_configured',
+      status: 503,
+    });
+  }
+  const valid = await verifyTwilioWebhookSignature({
+    authToken,
+    url: publicUrl.toString(),
+    parameters,
+    signature: request.headers.get('X-Twilio-Signature'),
+  });
+  if (!valid) {
+    throw new SmsIntegrationError('Invalid Twilio signature', {
+      code: 'invalid_webhook_signature',
+      status: 401,
+    });
+  }
+  const messageSid = String(parameters.get('MessageSid') || '').trim();
+  const status = String(parameters.get('MessageStatus') || parameters.get('SmsStatus') || '').toLowerCase();
+  if (!/^SM[a-zA-Z0-9]{2,64}$/.test(messageSid) || ![
+    'accepted', 'scheduled', 'queued', 'sending', 'sent', 'delivered',
+    'undelivered', 'failed', 'canceled', 'read',
+  ].includes(status)) {
+    throw new SmsIntegrationError('Invalid Twilio delivery status', {
+      code: 'invalid_delivery_status',
+      status: 400,
+    });
+  }
+  return { messageSid, status };
 }

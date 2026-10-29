@@ -360,8 +360,10 @@ export function closeInspectionIssues(record) {
   const issues = [];
   const items = record?.items || [];
   const openFindings = items.filter(item => item.status === 'critical' || item.status === 'soon');
-  const photos = record?.photoKeys || [];
-  if (openFindings.length && !photos.length) issues.push('Attach a photo of each key finding before closing.');
+  const missingFindingPhotos = openFindings.filter(item => !(item.photoKeys || []).length);
+  if (missingFindingPhotos.length) {
+    issues.push(`Attach a photo to each critical or soon finding before closing (${missingFindingPhotos[0].label || missingFindingPhotos[0].name}).`);
+  }
   if (!String(record?.customerName || '').trim()) issues.push('Add the customer name on the acknowledgment.');
   if (record?.catalogId === 'pre-purchase' && !record?.verdict) issues.push('Choose BUY, NEGOTIATE, or WALK AWAY.');
   const unmarked = items.filter(item => !item.status);
@@ -388,7 +390,11 @@ export function customerInspectionDocument(inspection, profile = {}, escapeHtml 
     groups.get(title).push(item);
   }
   const sections = [...groups.entries()].map(([title, items]) => {
-    const rows = items.map(item => `<tr><td>${escapeHtml(item.label || item.name || '')}</td><td class="result ${escapeHtml(item.status || 'skipped')}">${escapeHtml(statusLabel(item.status))}</td><td>${escapeHtml(item.measurement || '')}</td><td>${escapeHtml(item.note || '')}</td></tr>`).join('');
+    const rows = items.map(item => {
+      const findingPhotos = (item.photoKeys || []).map(key => inspectionPhotoSrc(key, apiUrl)).filter(Boolean);
+      const findingPhotoHtml = findingPhotos.map(src => `<img src="${escapeHtml(src)}" alt="Photo for ${escapeHtml(item.label || item.name || 'inspection finding')}"/>`).join('');
+      return `<tr><td>${escapeHtml(item.label || item.name || '')}${findingPhotoHtml ? `<div class="finding-photos">${findingPhotoHtml}</div>` : ''}</td><td class="result ${escapeHtml(item.status || 'skipped')}">${escapeHtml(statusLabel(item.status))}</td><td>${escapeHtml(item.measurement || '')}</td><td>${escapeHtml(item.note || '')}</td></tr>`;
+    }).join('');
     return `<h2>${escapeHtml(title)}</h2><table><thead><tr><th>Item</th><th>Result</th><th>Measurement</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
   }).join('');
   const verdict = (catalog?.verdicts || []).find(item => item.id === inspection.verdict);
@@ -444,6 +450,8 @@ export function catalogInspectionFormHtml(catalog, record = null, context = {}, 
       ${item.measure || item.measurement ? `<input name="measure-${escapeHtml(item.id)}" value="${escapeHtml(item.measurement || '')}" placeholder="${escapeHtml(item.measure || 'Measurement')}" aria-label="${escapeHtml(item.measure || 'Measurement')}"/>` : '<span></span>'}
       <input name="note-${escapeHtml(item.id)}" value="${escapeHtml(item.note || '')}" placeholder="Finding" aria-label="Note"/>
       <button type="button" class="secondary dictate" data-dictate="note-${escapeHtml(item.id)}">Dictate</button>
+      <label class="inspect-row-photos">Finding photos<input name="photos-${escapeHtml(item.id)}" type="file" accept="image/*" capture="environment" multiple/></label>
+      ${(item.photoKeys || []).map(key => inspectionPhotoSrc(key, context.apiUrl)).filter(Boolean).map(src => `<img class="finding-photo-preview" src="${escapeHtml(src)}" alt="Attached photo for ${escapeHtml(item.label || item.name || 'finding')}"/>`).join('')}
     </div>`).join('');
     return `<section class="inspect-section"><div class="inspect-section-head"><h3>${escapeHtml(section.title)}</h3><button type="button" class="mini-action" data-mark-section="${escapeHtml(section.title)}">Mark unmarked OK</button></div>${rows}</section>`;
   }).join('');

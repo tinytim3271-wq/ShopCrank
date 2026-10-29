@@ -186,8 +186,11 @@ async function main() {
         throw new Error(`no confirm page at ${page.url()}: ${(await page.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ').slice(0, 120)} | errors: ${[...pageErrors, ...consoleErrors].join(' / ').slice(0, 300)}`);
       });
       await page.click('text=Continue to ShopCrank');
-      await page.waitForSelector('[data-route=home]', { timeout: 20_000 });
-      await page.waitForTimeout(2500);
+      await page.waitForFunction(
+        shop => document.body.innerText.includes(shop) && Boolean(document.querySelector('[data-route=home]')),
+        SHOP,
+        { timeout: 45_000 },
+      );
       return true;
     });
     await check('new shop shows its own name and no demo identity or data', async () => {
@@ -245,8 +248,11 @@ async function main() {
       await modal.locator('[name=line-hours]').first().fill('1.8');
       await page.click('#intake-next');
       await page.click('#intake-convert');
-      await page.waitForTimeout(3500);
-      if (await page.locator('.modal').count()) throw new Error('intake dialog still open');
+      await page.waitForFunction(
+        () => !document.querySelector('#modal-root #intake-form'),
+        null,
+        { timeout: 30_000 },
+      );
     });
     await check('work order estimate carries the shop name, approves, and completes', async () => {
       await route('orders');
@@ -353,4 +359,3 @@ main()
     console.log(`\n${results.length - failed.length}/${results.length} smoke checks passed`);
     setTimeout(() => process.exit(failed.length ? 1 : 0), 500);
   });
-

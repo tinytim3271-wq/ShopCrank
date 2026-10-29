@@ -69,6 +69,9 @@ function providerConfig(env, spec) {
   const username = env?.[`${prefix}_USERNAME`] || env?.[`${vendorPrefix}_USERNAME`] || '';
   const password = env?.[`${prefix}_PASSWORD`] || env?.[`${vendorPrefix}_PASSWORD`] || '';
   const hasCredential = Boolean(apiKey || (username && password));
+  const licenseConfirmed = String(
+    env?.[`${prefix}_LICENSE_CONFIRMED`] ?? env?.[`${vendorPrefix}_LABOR_LICENSE_CONFIRMED`] ?? '',
+  ).toLowerCase() === 'true';
   return {
     baseUrl,
     path,
@@ -87,7 +90,9 @@ function providerConfig(env, spec) {
       env?.[`${prefix}_SEARCH_METHOD`] || env?.[`${vendorPrefix}_SEARCH_METHOD`] || 'POST',
       8,
     ).toUpperCase(),
-    configured: Boolean(baseUrl && path && hasCredential),
+    credentialsConfigured: Boolean(baseUrl && path && hasCredential),
+    licenseConfirmed,
+    configured: Boolean(baseUrl && path && hasCredential && licenseConfirmed),
   };
 }
 
@@ -105,6 +110,8 @@ export function getLaborProviderStatus(env = {}) {
     return [spec.id, {
       provider: spec.provider,
       configured: config.configured && !configurationError,
+      credentialsConfigured: config.credentialsConfigured && !configurationError,
+      licenseConfirmed: config.licenseConfirmed,
       hasPunchout: false,
       configurationError,
     }];

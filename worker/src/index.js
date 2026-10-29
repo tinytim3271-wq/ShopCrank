@@ -99,6 +99,7 @@ import {
   handleQuickBooksCallback,
   handleSupport,
   handleTwilioWebhook,
+  handleTwilioStatusWebhook,
 } from './integration-routes.mjs';
 import { handleCustomerLookup } from './customer-search.mjs';
 import { buildDiagnosticAiMessage, normalizeDtcs } from '../../src/modules/diagnostic-ai.js';
@@ -3536,6 +3537,11 @@ async function route(request, env, analytics) {
   if (segments[0] === 'agentphone' && segments[1] === 'webhook') return handleAgentPhoneWebhook(request, env, decodeURIComponent(segments[2] || ''));
   if (segments[0] === 'messaging' && segments[1] === 'twilio' && segments[2] === 'webhook') {
     return handleTwilioWebhook(request, env, decodeURIComponent(segments[3] || ''), {
+      getSecret: getIntegrationSecret,
+    });
+  }
+  if (segments[0] === 'messaging' && segments[1] === 'twilio' && segments[2] === 'status') {
+    return handleTwilioStatusWebhook(request, env, decodeURIComponent(segments[3] || ''), {
       getSecret: getIntegrationSecret,
     });
   }
