@@ -299,3 +299,11 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .call-log-row small { display: block; color: var(--muted, #64748b); }
 .call-log-row p { grid-column: 1 / -1; margin: 0; }
 .call-log-row .mini-action { justify-self: start; }
+
+/* Shop KPI dashboard (Reports) */
+.kpi-dashboard { margin-bottom: 18px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+.kpi-card { padding: 14px; border: 1px solid var(--line, #d7dde3); border-radius: 8px; background: var(--surface, #fff); }
+.kpi-card span { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #64748b); }
+.kpi-card strong { display: block; font-size: 26px; margin: 4px 0; }
+.kpi-card small { color: var(--muted, #64748b); }

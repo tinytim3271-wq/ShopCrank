@@ -4192,11 +4192,11 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     if (!float32Samples?.length) return "";
     let samples = float32Samples;
     if (inputSampleRate !== targetRate && inputSampleRate > 0) {
-      const ratio = inputSampleRate / targetRate;
-      const outLength = Math.max(1, Math.round(float32Samples.length / ratio));
+      const ratio2 = inputSampleRate / targetRate;
+      const outLength = Math.max(1, Math.round(float32Samples.length / ratio2));
       const resampled = new Float32Array(outLength);
       for (let i = 0; i < outLength; i += 1) {
-        const srcIdx = i * ratio;
+        const srcIdx = i * ratio2;
         const i0 = Math.floor(srcIdx);
         const i1 = Math.min(float32Samples.length - 1, i0 + 1);
         const frac = srcIdx - i0;
@@ -5446,6 +5446,184 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   }
   var init_growth_settings = __esm({
     "src/modules/growth-settings.js"() {
+    }
+  });
+
+  // src/modules/shop-kpis.js
+  function isoDay(value2) {
+    const text2 = String(value2 || "");
+    if (/^\d{4}-\d{2}-\d{2}/.test(text2)) return text2.slice(0, 10);
+    const date = new Date(text2);
+    return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+  }
+  function periodRange(period, today = /* @__PURE__ */ new Date()) {
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const day = (date) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
+    if (period === "week") {
+      const start = new Date(today);
+      start.setDate(today.getDate() - (today.getDay() + 6) % 7);
+      return { from: day(start), to: day(today), label: "This week" };
+    }
+    if (period === "last_month") return { from: day(new Date(y, m - 1, 1)), to: day(new Date(y, m, 0)), label: "Last month" };
+    if (period === "ytd") return { from: day(new Date(y, 0, 1)), to: day(today), label: "Year to date" };
+    return { from: day(new Date(y, m, 1)), to: day(today), label: "This month" };
+  }
+  function lineType(line) {
+    return ["part", "fee"].includes(line.type) ? line.type : "labor";
+  }
+  function lineTotal(line) {
+    if (Number.isFinite(Number(line.total))) return Number(line.total);
+    if (lineType(line) === "labor") return Number(line.hours || 0) * Number(line.laborRate || 0);
+    return Number(line.quantity || 1) * Number(line.unitPrice || line.price || 0);
+  }
+  function partUnitCost(line, inventoryBySku) {
+    const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find((value2) => Number.isFinite(value2) && value2 > 0);
+    if (direct) return direct;
+    const sku = String(line.inventorySku || line.partNumber || "").trim().toLowerCase();
+    const stocked = sku ? inventoryBySku.get(sku) : null;
+    const cost = Number(stocked?.cost);
+    return Number.isFinite(cost) && cost > 0 ? cost : null;
+  }
+  function hourlyRate(user) {
+    const rate = Number(user?.payRate);
+    if (!Number.isFinite(rate) || rate <= 0) return null;
+    return String(user.employmentType || "").toLowerCase() === "salary" ? rate / 2080 : rate;
+  }
+  function inRange(day, from, to) {
+    return Boolean(day) && day >= from && day <= to;
+  }
+  function computeShopKpis({ invoices: invoices2 = [], orders: orders2 = [], jobClockEntries = [], shiftEntries = [], users = [], inventory = [], from, to }) {
+    const inventoryBySku = new Map(inventory.map((item) => [String(item.sku || item.partNumber || "").trim().toLowerCase(), item]).filter(([key]) => key));
+    const ordersById = new Map(orders2.map((order) => [order.id, order]));
+    const invoiced = invoices2.filter((invoice) => !VOID.has(String(invoice.status || "").toLowerCase()) && inRange(isoDay(invoice.date || invoice.createdAt), from, to));
+    const vehicles = /* @__PURE__ */ new Set();
+    let sales = 0;
+    let partsSales = 0;
+    let partsCost = 0;
+    let partsSalesCosted = 0;
+    let laborSales = 0;
+    let feeSales = 0;
+    const billedByTech = /* @__PURE__ */ new Map();
+    const invoicedOrderIds = /* @__PURE__ */ new Set();
+    for (const invoice of invoiced) {
+      const order = ordersById.get(invoice.ro) || {};
+      invoicedOrderIds.add(invoice.ro);
+      vehicles.add(String(order.vin || invoice.vin || `${invoice.customer}|${invoice.vehicle || order.vehicle}`).toUpperCase());
+      const lines = (invoice.lines?.length ? invoice.lines : order.estimate?.lines || []).filter((line) => line.approvalStatus !== "declined");
+      const subtotal = Number(invoice.subtotal);
+      sales += Number.isFinite(subtotal) && subtotal > 0 ? subtotal : Math.max(0, Number(invoice.amount || 0) - Number(invoice.tax || 0));
+      for (const line of lines) {
+        const total = lineTotal(line);
+        const type = lineType(line);
+        if (type === "part") {
+          partsSales += total;
+          const unit = partUnitCost(line, inventoryBySku);
+          if (unit !== null) {
+            partsCost += unit * Number(line.quantity || 1);
+            partsSalesCosted += total;
+          }
+        } else if (type === "fee") {
+          feeSales += total;
+        } else {
+          laborSales += total;
+          const techs2 = Array.isArray(line.technicianIds) && line.technicianIds.length ? line.technicianIds : (order.assignments || []).map((item) => item.employeeId).filter(Boolean);
+          const hours = Number(line.hours || 0);
+          for (const tech of techs2) billedByTech.set(tech, (billedByTech.get(tech) || 0) + hours / techs2.length);
+        }
+      }
+    }
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const clockedByTech = /* @__PURE__ */ new Map();
+    let laborCost = 0;
+    let laborHoursCosted = 0;
+    let laborHoursClocked = 0;
+    for (const entry of jobClockEntries) {
+      if (!inRange(isoDay(entry.clockIn), from, to)) continue;
+      const hours = Number(entry.hours) || (entry.clockOut ? (Date.parse(entry.clockOut) - Date.parse(entry.clockIn)) / 36e5 : 0);
+      if (!(hours > 0)) continue;
+      clockedByTech.set(entry.userId, (clockedByTech.get(entry.userId) || 0) + hours);
+      if (!invoicedOrderIds.has(entry.workOrderId)) continue;
+      laborHoursClocked += hours;
+      const rate = hourlyRate(usersById.get(entry.userId));
+      if (rate !== null) {
+        laborCost += hours * rate;
+        laborHoursCosted += hours;
+      }
+    }
+    const shiftByTech = /* @__PURE__ */ new Map();
+    for (const shift of shiftEntries) {
+      if (!inRange(isoDay(shift.clockIn), from, to)) continue;
+      const hours = Number(shift.hours) || (shift.clockOut ? (Date.parse(shift.clockOut) - Date.parse(shift.clockIn)) / 36e5 : 0);
+      if (hours > 0) shiftByTech.set(shift.userId, (shiftByTech.get(shift.userId) || 0) + hours);
+    }
+    const techIds = /* @__PURE__ */ new Set([...billedByTech.keys(), ...clockedByTech.keys(), ...users.filter((user) => user.role === "technician" && user.active !== false).map((user) => user.id)]);
+    const techs = [...techIds].map((id) => {
+      const user = usersById.get(id) || {};
+      const billed = billedByTech.get(id) || 0;
+      const clocked = clockedByTech.get(id) || 0;
+      const shift = shiftByTech.get(id) || 0;
+      return {
+        id,
+        name: user.name || user.techName || id,
+        billedHours: round(billed, 1),
+        clockedHours: round(clocked, 1),
+        shiftHours: round(shift, 1),
+        efficiency: ratio(billed, clocked) === null ? null : round(ratio(billed, clocked) * 100, 0),
+        productivity: ratio(clocked, shift) === null ? null : round(ratio(clocked, shift) * 100, 0)
+      };
+    }).filter((tech) => tech.billedHours || tech.clockedHours || tech.shiftHours).sort((a, b) => b.billedHours - a.billedHours);
+    const roCount = invoiced.length;
+    const grossProfit = sales - partsCost - laborCost;
+    return {
+      from,
+      to,
+      carCount: vehicles.size,
+      roCount,
+      sales: round(sales),
+      aro: roCount ? round(sales / roCount) : 0,
+      partsSales: round(partsSales),
+      partsCost: round(partsCost),
+      laborSales: round(laborSales),
+      laborCost: round(laborCost),
+      feeSales: round(feeSales),
+      grossProfit: round(grossProfit),
+      grossMargin: sales > 0 ? round(grossProfit / sales * 100, 1) : null,
+      partsMargin: partsSalesCosted > 0 ? round((partsSalesCosted - partsCost) / partsSalesCosted * 100, 1) : null,
+      laborMargin: laborSales > 0 && laborHoursCosted > 0 ? round((laborSales - laborCost) / laborSales * 100, 1) : null,
+      partsCostCoverage: partsSales > 0 ? round(partsSalesCosted / partsSales * 100, 0) : null,
+      laborCostCoverage: laborHoursClocked > 0 ? round(laborHoursCosted / laborHoursClocked * 100, 0) : null,
+      techs
+    };
+  }
+  function kpiDashboardHtml(kpis, { period = "month", label: label2 = "", money: money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), icon: icon2 = () => "" } = {}) {
+    const periods = [["week", "This week"], ["month", "This month"], ["last_month", "Last month"], ["ytd", "Year to date"]];
+    const caveats = [
+      kpis.partsCostCoverage !== null && kpis.partsCostCoverage < 100 ? `Parts cost is known for ${kpis.partsCostCoverage}% of parts sales; add costs in Inventory or order through PartsTech for exact margin.` : "",
+      kpis.laborCostCoverage !== null && kpis.laborCostCoverage < 100 ? `Labor cost uses pay rates for ${kpis.laborCostCoverage}% of clocked hours; add hourly pay rates on Employees.` : "",
+      kpis.roCount && kpis.laborCostCoverage === null ? "No job-clock time on these orders, so labor cost is not included in gross profit." : ""
+    ].filter(Boolean);
+    const card2 = (title, value2, detail = "") => `<article class="kpi-card"><span>${escapeHtml4(title)}</span><strong>${value2}</strong>${detail ? `<small>${detail}</small>` : ""}</article>`;
+    const techRows = kpis.techs.map((tech) => `<tr><td><b>${escapeHtml4(tech.name)}</b></td><td>${tech.billedHours}</td><td>${tech.clockedHours}</td><td>${tech.shiftHours}</td><td><b>${pct(tech.efficiency)}</b></td><td>${pct(tech.productivity)}</td></tr>`).join("");
+    return `<section class="kpi-dashboard"><div class="statement-head"><div><div class="eyebrow">Shop performance</div><h2>${escapeHtml4(label2 || "This month")}</h2><p>${escapeHtml4(kpis.from)} to ${escapeHtml4(kpis.to)} \xB7 based on invoices issued in the period.</p></div><div class="accounting-tabs">${periods.map(([id, name]) => `<button type="button" class="tab ${period === id ? "active" : ""}" data-kpi-period="${id}">${name}</button>`).join("")}</div></div>
+  <div class="kpi-grid">
+    ${card2("Car count", String(kpis.carCount), `${kpis.roCount} repair order${kpis.roCount === 1 ? "" : "s"}`)}
+    ${card2("Average repair order", money5(kpis.aro), `${money5(kpis.sales)} sales before tax`)}
+    ${card2("Gross profit", money5(kpis.grossProfit), `${pct(kpis.grossMargin)} of sales`)}
+    ${card2("Parts gross margin", pct(kpis.partsMargin), `${money5(kpis.partsSales)} parts sales \xB7 ${money5(kpis.partsCost)} cost`)}
+    ${card2("Labor gross margin", pct(kpis.laborMargin), `${money5(kpis.laborSales)} labor sales \xB7 ${money5(kpis.laborCost)} tech pay`)}
+  </div>
+  ${caveats.length ? `<p class="ops-note">${icon2("info", 14)} ${caveats.map(escapeHtml4).join(" ")}</p>` : ""}
+  <div class="data-panel"><table><thead><tr><th>Technician</th><th>Billed hrs</th><th>Clocked on jobs</th><th>On shift</th><th>Efficiency</th><th>Productivity</th></tr></thead><tbody>${techRows || '<tr><td colspan="6">No technician time in this period.</td></tr>'}</tbody></table><p class="ops-note">Efficiency = billed hours \xF7 hours clocked on jobs. Productivity = hours clocked on jobs \xF7 hours on shift.</p></div>
+  </section>`;
+  }
+  var round, ratio, VOID, pct;
+  var init_shop_kpis = __esm({
+    "src/modules/shop-kpis.js"() {
+      round = (value2, places = 2) => Math.round((Number(value2) || 0) * 10 ** places) / 10 ** places;
+      ratio = (numerator, denominator) => denominator > 0 ? numerator / denominator : null;
+      VOID = /* @__PURE__ */ new Set(["void", "voided", "cancelled", "canceled", "draft"]);
+      pct = (value2) => value2 === null || value2 === void 0 ? "\u2014" : `${value2}%`;
     }
   });
 
@@ -10291,8 +10469,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       const d = new Date(payment.receivedAt);
       return d >= from && d <= to;
     }).map((payment) => {
-      const invoice = invoices2.get(payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100, tax: Math.round(bd.tax * ratio * 100) / 100 };
+      const invoice = invoices2.get(payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+      return { date: payment.receivedAt, invoiceNumber: payment.invoiceNumber, customer: payment.customer, gross: payment.amount, taxable: Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio2 * 100) / 100, tax: Math.round(bd.tax * ratio2 * 100) / 100 };
     }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const totals = rows.reduce((acc, row) => ({ gross: acc.gross + row.gross, taxable: acc.taxable + row.taxable, tax: acc.tax + row.tax }), { gross: 0, taxable: 0, tax: 0 });
     return { from: fromDate, to: toDate, rows, totals };
@@ -11741,8 +11919,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function finance() {
     const paid = paymentRecords(), open = state.invoices.filter((invoice) => invoiceBalance(invoice) > 0), income = paid.reduce((s, payment) => s + payment.amount, 0), expenses = state.expenses.reduce((s, x) => s + Number(x.amount || 0), 0), tax = paid.reduce((s, payment) => {
-      const invoice = state.invoices.find((item) => item.number === payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      return s + bd.tax * ratio;
+      const invoice = state.invoices.find((item) => item.number === payment.invoiceNumber), bd = invoiceTaxBreakdown(invoice), ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+      return s + bd.tax * ratio2;
     }, 0), manualIncome = state.journalEntries.filter((x) => x.creditAccount === "4000").reduce((s, x) => s + x.amount, 0), manualExpense = state.journalEntries.filter((x) => /^5|^6/.test(x.debitAccount)).reduce((s, x) => s + x.amount, 0);
     return { income: income + manualIncome, expenses: expenses + manualExpense, net: income + manualIncome - expenses - manualExpense, receivable: open.reduce((s, invoice) => s + invoiceBalance(invoice), 0), overdue: open.filter((invoice) => invoice.status === "overdue").reduce((s, invoice) => s + invoiceBalance(invoice), 0), tax, open };
   }
@@ -13746,9 +13924,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     for (const payment of payments2) {
       const invoice = state.invoices.find((item) => item.number === payment.invoiceNumber);
       const bd = invoiceTaxBreakdown(invoice);
-      const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
-      salesTax += bd.tax * ratio;
-      revenue += payment.amount - bd.tax * ratio;
+      const ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+      salesTax += bd.tax * ratio2;
+      revenue += payment.amount - bd.tax * ratio2;
     }
     const manualIncome = journals.filter((x) => x.creditAccount === "4000").reduce((s, x) => s + Number(x.amount || 0), 0);
     const manualExpense = journals.filter((x) => /^5|^6/.test(x.debitAccount)).reduce((s, x) => s + Number(x.amount || 0), 0);
@@ -15372,7 +15550,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15402,6 +15580,7 @@ ${line}`.trim();
       init_inspection_ratings();
       init_call_log();
       init_growth_settings();
+      init_shop_kpis();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -17043,10 +17222,10 @@ ${line}`.trim();
         }).map((payment) => {
           const invoice = invoices2.get(payment.invoiceNumber);
           const bd = invoiceTaxBreakdown(invoice);
-          const ratio = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
+          const ratio2 = invoice ? payment.amount / (invoice.amount || payment.amount) : 0;
           const gross = Number(payment.amount);
-          const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio * 100) / 100;
-          const tax = Math.round(bd.tax * ratio * 100) / 100;
+          const taxable = Math.round((bd.taxableSubtotal ?? bd.subtotal) * ratio2 * 100) / 100;
+          const tax = Math.round(bd.tax * ratio2 * 100) / 100;
           const nontaxable = Math.max(0, Math.round((gross - taxable - tax) * 100) / 100);
           return {
             date: payment.receivedAt,
@@ -17637,6 +17816,26 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
       bind = function() {
         bindGrowthSettingsCore();
         if (state.route === "settings") bindGrowthSettings();
+      };
+      kpiPeriod = "month";
+      reportsKpiCore = reports;
+      reports = function() {
+        const page = reportsKpiCore();
+        const range = periodRange(kpiPeriod);
+        const kpis = computeShopKpis({ invoices: state.invoices, orders: state.orders, jobClockEntries: state.jobClockEntries || [], shiftEntries: state.shiftEntries || [], users: state.users, inventory: state.inventory || [], from: range.from, to: range.to });
+        const dashboard = kpiDashboardHtml(kpis, { period: kpiPeriod, label: range.label, money: money4, escapeHtml, icon });
+        const marker = '<section class="messaging-panel">';
+        return page.includes(marker) ? page.replace(marker, `${dashboard}${marker}`) : page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${dashboard}</main>`);
+      };
+      bindKpiCore = bind;
+      bind = function() {
+        bindKpiCore();
+        if (state.route === "reports") document.querySelectorAll("[data-kpi-period]").forEach((button) => {
+          button.onclick = () => {
+            kpiPeriod = button.dataset.kpiPeriod;
+            render();
+          };
+        });
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
       activeGrokSession = null;

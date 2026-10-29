@@ -41,6 +41,7 @@ import * as SmsInbox from '../modules/sms-inbox.js';
 import * as InspectionRatings from '../modules/inspection-ratings.js';
 import * as CallLog from '../modules/call-log.js';
 import * as GrowthSettings from '../modules/growth-settings.js';
+import * as ShopKpis from '../modules/shop-kpis.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -6061,6 +6062,23 @@ const bindGrowthSettingsCore = bind;
 bind = function () {
   bindGrowthSettingsCore();
   if (state.route === "settings") bindGrowthSettings();
+};
+
+// --- Shop KPIs on Reports: car count, ARO, gross profit, tech efficiency ---
+let kpiPeriod = "month";
+const reportsKpiCore = reports;
+reports = function () {
+  const page = reportsKpiCore();
+  const range = ShopKpis.periodRange(kpiPeriod);
+  const kpis = ShopKpis.computeShopKpis({ invoices: state.invoices, orders: state.orders, jobClockEntries: state.jobClockEntries || [], shiftEntries: state.shiftEntries || [], users: state.users, inventory: state.inventory || [], from: range.from, to: range.to });
+  const dashboard = ShopKpis.kpiDashboardHtml(kpis, { period: kpiPeriod, label: range.label, money, escapeHtml, icon });
+  const marker = '<section class="messaging-panel">';
+  return page.includes(marker) ? page.replace(marker, `${dashboard}${marker}`) : page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${dashboard}</main>`);
+};
+const bindKpiCore = bind;
+bind = function () {
+  bindKpiCore();
+  if (state.route === "reports") document.querySelectorAll("[data-kpi-period]").forEach(button => { button.onclick = () => { kpiPeriod = button.dataset.kpiPeriod; render() } });
 };
 
 // --- Grok Realtime Voice & Phone Call Forwarding ---
