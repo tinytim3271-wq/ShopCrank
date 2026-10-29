@@ -78,7 +78,7 @@
     "test:shell-defects": "node --test src/runtime/shell-defects.test.mjs src/runtime/audit-showstoppers.test.mjs"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.5.3",
+    "@capacitor/cli": "^8.6.0",
     "electron": "^45.1.0",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
