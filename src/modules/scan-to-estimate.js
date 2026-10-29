@@ -1,0 +1,91 @@
+/**
+ * Scan-to-estimate: trouble codes from the scan tool (RLink X7 / J2534 / OBD
+ * bay) pick matching canned services from the shop's menu, merge with the AI
+ * diagnosis draft, and become an estimate the customer approves from a link.
+ */
+
+const range = (prefix, from, to) => code => code[0] === prefix && Number.parseInt(code.slice(1), 16) >= Number.parseInt(from, 16) && Number.parseInt(code.slice(1), 16) <= Number.parseInt(to, 16);
+
+export const DTC_SERVICE_RULES = Object.freeze([
+  { id: 'misfire', label: 'Misfire / ignition', test: code => range('P', '0300', '0312')(code) || range('P', '0350', '0362')(code), keywords: ['tune-up', 'tune up', 'spark plug', 'ignition coil', 'coil'] },
+  { id: 'fuel-trim', label: 'Lean / rich fuel trim', test: code => ['P0171', 'P0172', 'P0174', 'P0175', 'P0101', 'P0102', 'P0103'].includes(code), keywords: ['fuel system', 'injector', 'mass air', 'maf', 'vacuum leak', 'smoke test'] },
+  { id: 'catalyst', label: 'Catalyst efficiency', test: code => ['P0420', 'P0430'].includes(code) || range('P', '0130', '0167')(code), keywords: ['catalytic', 'oxygen sensor', 'o2 sensor', 'exhaust'] },
+  { id: 'cooling', label: 'Cooling system', test: code => ['P0115', 'P0116', 'P0117', 'P0118', 'P0125', 'P0128', 'P0217'].includes(code), keywords: ['coolant', 'thermostat', 'cooling'] },
+  { id: 'evap', label: 'EVAP leak', test: range('P', '0440', '0457'), keywords: ['evap', 'smoke test', 'gas cap', 'purge'] },
+  { id: 'transmission', label: 'Transmission', test: range('P', '0700', '0799'), keywords: ['transmission'] },
+  { id: 'charging', label: 'Charging / battery', test: code => ['P0560', 'P0562', 'P0563', 'P0620', 'P0621', 'P0622', 'P0A80'].includes(code), keywords: ['battery', 'alternator', 'charging'] },
+  { id: 'abs', label: 'ABS / wheel speed', test: code => code[0] === 'C', keywords: ['wheel speed', 'abs'] },
+  { id: 'network', label: 'Network communication', test: code => code[0] === 'U', keywords: ['network', 'module', 'electrical diagnostic', 'diagnostic'] },
+]);
+
+const DIAGNOSTIC_KEYWORDS = ['check engine', 'diagnostic', 'diagnosis'];
+
+function textOf(service) {
+  return `${service.name || ''} ${service.description || ''}`.toLowerCase();
+}
+
+function wordPattern(keyword) {
+  return new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+}
+
+function bestService(services, keywords, used) {
+  let best = null;
+  let bestScore = 0;
+  for (const service of services) {
+    if (used.has(service.id) || service.active === false) continue;
+    const text = textOf(service);
+    const score = keywords.reduce((total, keyword, index) => total + (wordPattern(keyword).test(text) ? keywords.length - index : 0), 0);
+    if (score > bestScore) { best = service; bestScore = score; }
+  }
+  return best;
+}
+
+/** Canned services that match the scanned codes, plus the shop's diagnostic service first. */
+export function cannedServicesForCodes(codes = [], services = []) {
+  const normalized = [...new Set(codes.map(code => String(code || '').trim().toUpperCase()).filter(Boolean))];
+  const used = new Set();
+  const matches = [];
+  const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used);
+  if (diagnostic && normalized.length) { used.add(diagnostic.id); matches.push({ service: diagnostic, reason: 'Diagnosis', codes: normalized }); }
+  for (const rule of DTC_SERVICE_RULES) {
+    const hit = normalized.filter(code => rule.test(code));
+    if (!hit.length) continue;
+    const service = bestService(services, rule.keywords, used);
+    if (!service) continue;
+    used.add(service.id);
+    matches.push({ service, reason: rule.label, codes: hit });
+  }
+  return matches;
+}
+
+const round = value => Math.round((Number(value) || 0) * 100) / 100;
+
+/** A canned service as an estimate line: flat menu price, or hours × shop rate plus parts. */
+export function cannedServiceLines(match, { laborRate = 0, scanId = '' } = {}) {
+  const { service, codes, reason } = match;
+  const base = { source: 'scan', cannedServiceId: service.id, scanId, dtcCodes: codes, notes: `${service.description || ''}${service.description ? ' ' : ''}(${reason}: ${codes.join(', ')})`.trim() };
+  const menuPrice = Number(service.menuPrice);
+  if (service.menuPrice != null && Number.isFinite(menuPrice)) {
+    return [{ ...base, id: `scan-${scanId || 'x'}-${service.id}`, type: 'fee', description: service.name, quantity: 1, unitPrice: round(menuPrice), amount: round(menuPrice), total: round(menuPrice) }];
+  }
+  const hours = Math.max(0, Number(service.laborHours) || 0);
+  const lines = [{ ...base, id: `scan-${scanId || 'x'}-${service.id}`, type: 'labor', description: service.name, hours, quantity: hours, laborRate, unitPrice: laborRate, total: round(hours * laborRate) }];
+  const parts = Math.max(0, Number(service.partsPrice) || 0);
+  if (parts) lines.push({ ...base, id: `scan-${scanId || 'x'}-${service.id}-parts`, type: 'part', description: `${service.name} parts`, quantity: 1, unitPrice: parts, total: parts, priceStatus: 'priced' });
+  return lines;
+}
+
+/** Canned lines first, then AI-draft lines whose description isn't already covered. */
+export function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = '' } = {}) {
+  const matches = cannedServicesForCodes(codes, services);
+  const canned = matches.flatMap(match => cannedServiceLines(match, { laborRate, scanId }));
+  const seen = new Set(canned.map(line => String(line.description).toLowerCase()));
+  const extra = aiLines.filter(line => !seen.has(String(line.description || '').toLowerCase()));
+  return { lines: [...canned, ...extra], matches };
+}
+
+export function scanEstimateSummary({ matches = [], lines = [] }) {
+  if (!lines.length) return 'No canned services or AI lines matched these codes.';
+  const canned = matches.map(match => `${match.service.name} (${match.codes.join(', ')})`).join('; ');
+  return `${lines.length} line${lines.length === 1 ? '' : 's'}${canned ? ` · canned: ${canned}` : ''}`;
+}

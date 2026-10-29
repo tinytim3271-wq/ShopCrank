@@ -5813,6 +5813,91 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/scan-to-estimate.js
+  function textOf(service) {
+    return `${service.name || ""} ${service.description || ""}`.toLowerCase();
+  }
+  function wordPattern(keyword) {
+    return new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  }
+  function bestService(services, keywords, used) {
+    let best = null;
+    let bestScore = 0;
+    for (const service of services) {
+      if (used.has(service.id) || service.active === false) continue;
+      const text2 = textOf(service);
+      const score = keywords.reduce((total, keyword, index) => total + (wordPattern(keyword).test(text2) ? keywords.length - index : 0), 0);
+      if (score > bestScore) {
+        best = service;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+  function cannedServicesForCodes(codes = [], services = []) {
+    const normalized = [...new Set(codes.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean))];
+    const used = /* @__PURE__ */ new Set();
+    const matches = [];
+    const diagnostic = bestService(services, DIAGNOSTIC_KEYWORDS, used);
+    if (diagnostic && normalized.length) {
+      used.add(diagnostic.id);
+      matches.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
+    }
+    for (const rule of DTC_SERVICE_RULES) {
+      const hit = normalized.filter((code) => rule.test(code));
+      if (!hit.length) continue;
+      const service = bestService(services, rule.keywords, used);
+      if (!service) continue;
+      used.add(service.id);
+      matches.push({ service, reason: rule.label, codes: hit });
+    }
+    return matches;
+  }
+  function cannedServiceLines(match, { laborRate = 0, scanId = "" } = {}) {
+    const { service, codes, reason } = match;
+    const base = { source: "scan", cannedServiceId: service.id, scanId, dtcCodes: codes, notes: `${service.description || ""}${service.description ? " " : ""}(${reason}: ${codes.join(", ")})`.trim() };
+    const menuPrice = Number(service.menuPrice);
+    if (service.menuPrice != null && Number.isFinite(menuPrice)) {
+      return [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "fee", description: service.name, quantity: 1, unitPrice: round3(menuPrice), amount: round3(menuPrice), total: round3(menuPrice) }];
+    }
+    const hours = Math.max(0, Number(service.laborHours) || 0);
+    const lines = [{ ...base, id: `scan-${scanId || "x"}-${service.id}`, type: "labor", description: service.name, hours, quantity: hours, laborRate, unitPrice: laborRate, total: round3(hours * laborRate) }];
+    const parts = Math.max(0, Number(service.partsPrice) || 0);
+    if (parts) lines.push({ ...base, id: `scan-${scanId || "x"}-${service.id}-parts`, type: "part", description: `${service.name} parts`, quantity: 1, unitPrice: parts, total: parts, priceStatus: "priced" });
+    return lines;
+  }
+  function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = "" } = {}) {
+    const matches = cannedServicesForCodes(codes, services);
+    const canned = matches.flatMap((match) => cannedServiceLines(match, { laborRate, scanId }));
+    const seen = new Set(canned.map((line) => String(line.description).toLowerCase()));
+    const extra = aiLines.filter((line) => !seen.has(String(line.description || "").toLowerCase()));
+    return { lines: [...canned, ...extra], matches };
+  }
+  function scanEstimateSummary({ matches = [], lines = [] }) {
+    if (!lines.length) return "No canned services or AI lines matched these codes.";
+    const canned = matches.map((match) => `${match.service.name} (${match.codes.join(", ")})`).join("; ");
+    return `${lines.length} line${lines.length === 1 ? "" : "s"}${canned ? ` \xB7 canned: ${canned}` : ""}`;
+  }
+  var range, DTC_SERVICE_RULES, DIAGNOSTIC_KEYWORDS, round3;
+  var init_scan_to_estimate = __esm({
+    "src/modules/scan-to-estimate.js"() {
+      range = (prefix, from, to) => (code) => code[0] === prefix && Number.parseInt(code.slice(1), 16) >= Number.parseInt(from, 16) && Number.parseInt(code.slice(1), 16) <= Number.parseInt(to, 16);
+      DTC_SERVICE_RULES = Object.freeze([
+        { id: "misfire", label: "Misfire / ignition", test: (code) => range("P", "0300", "0312")(code) || range("P", "0350", "0362")(code), keywords: ["tune-up", "tune up", "spark plug", "ignition coil", "coil"] },
+        { id: "fuel-trim", label: "Lean / rich fuel trim", test: (code) => ["P0171", "P0172", "P0174", "P0175", "P0101", "P0102", "P0103"].includes(code), keywords: ["fuel system", "injector", "mass air", "maf", "vacuum leak", "smoke test"] },
+        { id: "catalyst", label: "Catalyst efficiency", test: (code) => ["P0420", "P0430"].includes(code) || range("P", "0130", "0167")(code), keywords: ["catalytic", "oxygen sensor", "o2 sensor", "exhaust"] },
+        { id: "cooling", label: "Cooling system", test: (code) => ["P0115", "P0116", "P0117", "P0118", "P0125", "P0128", "P0217"].includes(code), keywords: ["coolant", "thermostat", "cooling"] },
+        { id: "evap", label: "EVAP leak", test: range("P", "0440", "0457"), keywords: ["evap", "smoke test", "gas cap", "purge"] },
+        { id: "transmission", label: "Transmission", test: range("P", "0700", "0799"), keywords: ["transmission"] },
+        { id: "charging", label: "Charging / battery", test: (code) => ["P0560", "P0562", "P0563", "P0620", "P0621", "P0622", "P0A80"].includes(code), keywords: ["battery", "alternator", "charging"] },
+        { id: "abs", label: "ABS / wheel speed", test: (code) => code[0] === "C", keywords: ["wheel speed", "abs"] },
+        { id: "network", label: "Network communication", test: (code) => code[0] === "U", keywords: ["network", "module", "electrical diagnostic", "diagnostic"] }
+      ]);
+      DIAGNOSTIC_KEYWORDS = ["check engine", "diagnostic", "diagnosis"];
+      round3 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+    }
+  });
+
   // src/modules/filing/withholding.js
   function roundCents(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
@@ -14128,8 +14213,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function taxPackageView() {
     const presets = filingPeriodPresets();
-    const range = taxPackageRange || presets.ytd;
-    const pack = buildTaxPackage(range.from, range.to);
+    const range2 = taxPackageRange || presets.ytd;
+    const pack = buildTaxPackage(range2.from, range2.to);
     const catRows = Object.entries(pack.byCategory).map(([cat, amt]) => `<div class="statement-line"><span>${escapeHtml(cat)}</span><b>${money4(amt)}</b></div>`).join("") || '<div class="statement-line"><span>No expenses in range</span><b>$0.00</b></div>';
     return `<div class="tax-package-print" id="tax-package-printable">
 <div class="payroll-period-controls no-print" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
@@ -14156,8 +14241,8 @@ ${catRows}
   }
   function exportTaxPackagePl() {
     const presets = filingPeriodPresets();
-    const range = taxPackageRange || presets.ytd;
-    const pack = buildTaxPackage(range.from, range.to);
+    const range2 = taxPackageRange || presets.ytd;
+    const pack = buildTaxPackage(range2.from, range2.to);
     const rows = [
       ["Cash-basis profit and loss"],
       ["From", pack.from],
@@ -14176,8 +14261,8 @@ ${catRows}
   }
   function exportTaxPackageExpenses() {
     const presets = filingPeriodPresets();
-    const range = taxPackageRange || presets.ytd;
-    const pack = buildTaxPackage(range.from, range.to);
+    const range2 = taxPackageRange || presets.ytd;
+    const pack = buildTaxPackage(range2.from, range2.to);
     const rows = [
       ["Date", "Vendor", "Category", "Account", "Amount", "Memo"],
       ...pack.expenses.map((x) => [x.date, x.vendor, x.category, x.account || expenseAccount(x.category), x.amount, x.memo || ""])
@@ -15585,6 +15670,22 @@ ${line}`.trim();
       };
     });
   }
+  async function sendScanEstimateForApproval(scanId) {
+    const scan = state.diagnosticSessions.find((item) => item.id === scanId);
+    const order = state.orders.find((item) => item.id === scan?.orderId);
+    if (!scan || !order) return toast("Link this scan to a repair order first");
+    const codes = scan.aiAnalysis?.codes?.length ? scan.aiAnalysis.codes : (scan.dtcs || []).map((item) => item.code || item);
+    const aiLines = scan.aiAnalysis?.draft && !scan.aiAnalysis.appliedAt ? diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes }) : [];
+    const { lines, matches } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id });
+    const existing = new Set((order.estimate?.lines || []).map((line) => line.id));
+    const fresh = lines.filter((line) => !existing.has(line.id));
+    if (!fresh.length && !(order.estimate?.lines || []).length) return toast("No canned services or AI lines matched these codes");
+    if (fresh.length && !await addLinesToTargetOrder(fresh, "the scan estimate", order.id)) return;
+    await sendJobEstimate(state.orders.find((item) => item.id === order.id), "sms");
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: scan.aiAnalysis.appliedAt || now(), approvalSentAt: now(), cannedServices: matches.map((match) => match.service.id) } });
+    toast(scanEstimateSummary({ matches, lines: fresh }));
+    render();
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -15766,7 +15867,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15799,6 +15900,7 @@ ${line}`.trim();
       init_shop_kpis();
       init_vehicle_lookups();
       init_pricing_matrix();
+      init_scan_to_estimate();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -18042,9 +18144,9 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
       reportsKpiCore = reports;
       reports = function() {
         const page = reportsKpiCore();
-        const range = periodRange(kpiPeriod);
-        const kpis = computeShopKpis({ invoices: state.invoices, orders: state.orders, jobClockEntries: state.jobClockEntries || [], shiftEntries: state.shiftEntries || [], users: state.users, inventory: state.inventory || [], from: range.from, to: range.to });
-        const dashboard = kpiDashboardHtml(kpis, { period: kpiPeriod, label: range.label, money: money4, escapeHtml, icon });
+        const range2 = periodRange(kpiPeriod);
+        const kpis = computeShopKpis({ invoices: state.invoices, orders: state.orders, jobClockEntries: state.jobClockEntries || [], shiftEntries: state.shiftEntries || [], users: state.users, inventory: state.inventory || [], from: range2.from, to: range2.to });
+        const dashboard = kpiDashboardHtml(kpis, { period: kpiPeriod, label: range2.label, money: money4, escapeHtml, icon });
         const marker = '<section class="messaging-panel">';
         return page.includes(marker) ? page.replace(marker, `${dashboard}${marker}`) : page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${dashboard}</main>`);
       };
@@ -18129,6 +18231,24 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           } catch (error) {
             toast(error.message || "Pricing could not be saved");
           }
+        });
+      };
+      scanAiPanelEstimateCore = scanAiPanel;
+      scanAiPanel = function(scan) {
+        const panel = scanAiPanelEstimateCore(scan);
+        if (!scan?.aiAnalysis || !scan.orderId || isOfflineDesktop()) return panel;
+        const sent = scan.aiAnalysis.approvalSentAt;
+        const button = `<button class="primary" type="button" data-scan-estimate-send="${escapeAttr(scan.id)}" ${sent ? "disabled" : ""}>${icon("send", 14)} ${sent ? "Estimate sent for approval" : "Build canned estimate & text approval link"}</button>`;
+        return panel.replace(/<\/div>$/, `<div class="messaging-actions">${button}</div></div>`);
+      };
+      bindScanEstimateCore = bind;
+      bind = function() {
+        bindScanEstimateCore();
+        document.querySelectorAll("[data-scan-estimate-send]").forEach((button) => {
+          button.onclick = () => {
+            button.disabled = true;
+            void sendScanEstimateForApproval(button.dataset.scanEstimateSend);
+          };
         });
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
