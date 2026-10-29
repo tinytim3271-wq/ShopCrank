@@ -53,7 +53,7 @@
     "test:desktop": "node --test desktop/start-url.test.js desktop/auth-deep-link.test.js desktop/diagnostics-secrets.test.js desktop/diagnostics-bridge.test.js desktop/local-vault.test.js desktop/portable-data.test.js desktop/print-window.test.js",
     "test:offline": "node --test src/modules/offline-desktop.test.mjs",
     "test:mutation": "node --test src/runtime/prepare-entity-mutation.test.mjs src/runtime/entity-persistence.test.mjs src/runtime/mutation-queue-store.test.mjs",
-    "test:imports": "node --test src/modules/imports.test.mjs",
+    "test:imports": "node --test src/modules/imports.test.mjs src/modules/import-mappers.test.mjs",
     "test:canned": "node --test src/modules/canned-services.test.mjs",
     "test:guides": "node --test src/modules/repair-guide.test.mjs",
     "test:inspections": "node --test src/modules/shop-inspections.test.mjs",

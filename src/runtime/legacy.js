@@ -45,6 +45,7 @@ import * as ShopKpis from '../modules/shop-kpis.js';
 import * as VehicleLookups from '../modules/vehicle-lookups.js';
 import * as Pricing from '../modules/pricing-matrix.js';
 import * as ScanToEstimate from '../modules/scan-to-estimate.js';
+import * as ImportMappers from '../modules/import-mappers.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -6191,6 +6192,29 @@ const bindScanEstimateCore = bind;
 bind = function () {
   bindScanEstimateCore();
   document.querySelectorAll("[data-scan-estimate-send]").forEach(button => { button.onclick = () => { button.disabled = true; void sendScanEstimateForApproval(button.dataset.scanEstimateSend) } });
+};
+
+// --- Free migration from Tekmetric, Shopmonkey, AutoLeap, Shop-Ware, Mitchell 1 ---
+let importSource = "auto";
+const prepareImportMapperCore = prepareImport;
+prepareImport = function (type, text) {
+  const source = importSource === "auto" ? ImportMappers.detectSourceSystem(text) || "shopcrank" : importSource;
+  if (source === "shopcrank") return prepareImportMapperCore(type, text);
+  const mapped = ImportMappers.mapExportToCanonicalCsv(source, type, text);
+  const result = prepareImportMapperCore(type, mapped.csv);
+  return { ...result, sourceSystem: mapped.system };
+};
+const importsMapperCore = imports;
+imports = function () {
+  const page = importsMapperCore();
+  const options = [["auto", "Detect automatically"], ...ImportMappers.SOURCE_OPTIONS].map(([id, name]) => `<option value="${id}" ${importSource === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+  const picker = `<section class="settings-panel import-source"><div class="statement-head"><div><div class="eyebrow">Free data migration</div><h2>Coming from another shop system?</h2><p>Export customers, vehicles, repair orders, and invoices as CSV from Tekmetric, Shopmonkey, AutoLeap, Shop-Ware, or Mitchell 1 and choose the matching card below. ShopCrank maps their columns and status names, then shows a preview before anything is saved.</p></div>${icon("arrow-right-left", 20)}</div><label>Exported from<select id="import-source">${options}</select></label>${importPreview?.sourceSystem ? `<p class="ops-note">Mapped from ${escapeHtml(importPreview.sourceSystem)} columns.</p>` : ""}</section>`;
+  return page.replace(/(<div class="import-grid">|<section class="import-preview">)/, `${picker}$1`);
+};
+const bindImportMapperCore = bind;
+bind = function () {
+  bindImportMapperCore();
+  document.querySelector("#import-source")?.addEventListener("change", event => { importSource = event.target.value });
 };
 
 // --- Grok Realtime Voice & Phone Call Forwarding ---

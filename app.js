@@ -5898,6 +5898,143 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/import-mappers.js
+  function normalizeHeader(header) {
+    return String(header || "").toLowerCase().replace(/#/g, " number ").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  }
+  function pick(row, keys) {
+    for (const key of keys) {
+      const value2 = row[key];
+      if (value2 !== void 0 && String(value2).trim() !== "") return String(value2).trim();
+    }
+    return "";
+  }
+  function aliasesFor(system, field2) {
+    return [.../* @__PURE__ */ new Set([...system?.aliases?.[field2] || [], ...COMMON[field2] || []])];
+  }
+  function displayName(row, system) {
+    const first = pick(row, aliasesFor(system, "first_name"));
+    const last = pick(row, aliasesFor(system, "last_name"));
+    if (first || last) return [first, last].filter(Boolean).join(" ");
+    const name = pick(row, aliasesFor(system, "name"));
+    const reversed = /^([^,]+),\s*(.+)$/.exec(name);
+    return reversed ? `${reversed[2]} ${reversed[1]}` : name;
+  }
+  function mapStatus(system, raw) {
+    const key = normalizeHeader(raw);
+    return system?.statuses?.[key] || key;
+  }
+  function csvCell(value2) {
+    const text2 = String(value2 ?? "");
+    return /[",\n\r]/.test(text2) ? `"${text2.replace(/"/g, '""')}"` : text2;
+  }
+  function toCsv(headers, rows) {
+    return [headers.join(","), ...rows.map((row) => headers.map((header) => csvCell(row[header])).join(","))].join("\n");
+  }
+  function detectSourceSystem(text2) {
+    const [headerRow = []] = parseCsv(text2);
+    const headers = new Set(headerRow.map(normalizeHeader));
+    let best = null;
+    for (const [id, system] of Object.entries(SOURCE_SYSTEMS)) {
+      const hits = system.signature.filter((header) => headers.has(header)).length;
+      if (hits === system.signature.length && (!best || hits > best.hits)) best = { id, hits };
+    }
+    return best?.id || null;
+  }
+  function mapExportToCanonicalCsv(sourceId, type, text2) {
+    const system = SOURCE_SYSTEMS[sourceId];
+    const parsed = parseCsv(text2);
+    if (!system || !CANONICAL[type] || parsed.length < 2) return { csv: String(text2 || ""), rows: Math.max(0, parsed.length - 1), system: null };
+    const headers = parsed.shift().map(normalizeHeader);
+    const rows = parsed.map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""])));
+    const get = (row, field2) => pick(row, aliasesFor(system, field2));
+    const vehicleText = (row) => get(row, "vehicle") || [get(row, "year"), get(row, "make"), get(row, "model")].filter(Boolean).join(" ");
+    const statusFor = (row) => mapStatus(system, get(row, "status"));
+    const mapped = rows.map((row) => {
+      const customer = displayName(row, system);
+      if (type === "customers") return { name: customer, phone: get(row, "phone"), email: get(row, "email") };
+      if (type === "vehicles") return { customer, year: get(row, "year"), make: get(row, "make"), model: get(row, "model"), vin: get(row, "vin"), plate: get(row, "plate") };
+      if (type === "orders") {
+        const status = statusFor(row);
+        return { ro_number: get(row, "ro_number"), customer, vehicle: vehicleText(row), vin: get(row, "vin"), complaint: get(row, "complaint") || `Imported from ${system.name}`, status: status === "invoiced" ? "invoiced" : status, total: get(row, "total"), phone: get(row, "phone") };
+      }
+      if (type === "invoices") {
+        const status = statusFor(row);
+        return { number: get(row, "invoice_number") || get(row, "ro_number"), customer, ro: get(row, "ro_number"), date: get(row, "date"), status: ["invoiced", "completed", "paid"].includes(status) ? "paid" : status, subtotal: get(row, "subtotal"), tax: get(row, "tax"), amount: get(row, "total") };
+      }
+      return { number: get(row, "ro_number"), customer, vehicle: vehicleText(row), summary: get(row, "complaint"), status: "pending", subtotal: get(row, "subtotal"), tax: get(row, "tax"), total: get(row, "total"), email: get(row, "email"), phone: get(row, "phone") };
+    });
+    return { csv: toCsv(CANONICAL[type], mapped), rows: mapped.length, system: system.name };
+  }
+  var COMMON, SOURCE_SYSTEMS, SOURCE_OPTIONS, CANONICAL;
+  var init_import_mappers = __esm({
+    "src/modules/import-mappers.js"() {
+      init_imports();
+      COMMON = Object.freeze({
+        first_name: ["first_name", "firstname", "customer_first_name", "customer_first", "first"],
+        last_name: ["last_name", "lastname", "customer_last_name", "customer_last", "last"],
+        name: ["customer_name", "name", "customer", "full_name", "company_name", "owner", "owner_name", "customer_full_name"],
+        phone: ["phone", "phone_number", "primary_phone", "mobile", "mobile_phone", "cell_phone", "cell", "phone_1", "home_phone", "work_phone"],
+        email: ["email", "email_address", "e_mail", "primary_email"],
+        year: ["year", "vehicle_year", "model_year"],
+        make: ["make", "vehicle_make"],
+        model: ["model", "vehicle_model"],
+        vin: ["vin", "vehicle_vin", "vin_number"],
+        plate: ["plate", "license_plate", "license", "lic_plate", "license_plate_number", "tag"],
+        vehicle: ["vehicle", "vehicle_description", "vehicle_name", "year_make_model"],
+        ro_number: ["ro_number", "repair_order_number", "repair_order", "ro", "order_number", "work_order_number", "work_order"],
+        invoice_number: ["invoice_number", "invoice", "invoice_id"],
+        complaint: ["complaint", "concern", "concerns", "customer_concern", "description", "work_requested", "reason_for_visit", "notes"],
+        status: ["status", "ro_status", "order_status", "workflow_status", "stage"],
+        total: ["total", "grand_total", "total_sale", "invoice_total", "ro_total", "amount", "total_amount"],
+        subtotal: ["subtotal", "sub_total", "total_before_tax", "pre_tax_total"],
+        tax: ["tax", "sales_tax", "tax_total", "total_tax"],
+        date: ["invoice_date", "posted_date", "date_posted", "completed_date", "closed_date", "date", "created_date", "created_at", "date_created"],
+        mileage: ["mileage", "odometer", "miles_in", "mileage_in"]
+      });
+      SOURCE_SYSTEMS = Object.freeze({
+        tekmetric: {
+          name: "Tekmetric",
+          aliases: { ro_number: ["ro_number", "repair_order_number"], date: ["posted_date", "completed_date"], complaint: ["concerns"] },
+          statuses: { estimate: "estimate", work_in_progress: "in_progress", complete: "completed", posted: "invoiced", accounts_receivable: "invoiced", saved_for_later: "estimate" },
+          signature: ["repair_order_number", "posted_date"]
+        },
+        shopmonkey: {
+          name: "Shopmonkey",
+          aliases: { ro_number: ["order_number", "order"], complaint: ["complaint", "order_name"] },
+          statuses: { estimate: "estimate", work_in_progress: "in_progress", in_progress: "in_progress", invoice: "completed", paid: "invoiced", completed: "completed" },
+          signature: ["order_number", "order_name"]
+        },
+        autoleap: {
+          name: "AutoLeap",
+          aliases: { name: ["customer_name"], ro_number: ["ro_number", "ro"], total: ["invoice_total", "total"] },
+          statuses: { estimate: "estimate", in_progress: "in_progress", work_in_progress: "in_progress", completed: "completed", invoiced: "invoiced", paid: "invoiced" },
+          signature: ["ro_number", "invoice_total"]
+        },
+        shopware: {
+          name: "Shop-Ware",
+          aliases: { first_name: ["customer_first"], last_name: ["customer_last"], ro_number: ["ro_number", "repair_order"] },
+          statuses: { estimate: "estimate", wip: "in_progress", work_in_progress: "in_progress", complete: "completed", invoiced: "invoiced", closed: "invoiced" },
+          signature: ["customer_first", "customer_last"]
+        },
+        mitchell1: {
+          name: "Mitchell 1 Manager SE",
+          aliases: { ro_number: ["ro_number", "repair_order_number"], invoice_number: ["invoice_number"], total: ["total_sale", "invoice_total", "total"], phone: ["cell_phone", "home_phone", "work_phone", "phone"], email: ["e_mail", "email"], plate: ["lic_plate", "license"] },
+          statuses: { estimate: "estimate", open: "in_progress", work_order: "in_progress", finalized: "invoiced", invoice: "invoiced", closed: "invoiced" },
+          signature: ["total_sale", "lic_plate"]
+        }
+      });
+      SOURCE_OPTIONS = Object.freeze([["shopcrank", "ShopCrank template"], ...Object.entries(SOURCE_SYSTEMS).map(([id, system]) => [id, system.name])]);
+      CANONICAL = Object.freeze({
+        customers: ["name", "phone", "email"],
+        vehicles: ["customer", "year", "make", "model", "vin", "plate"],
+        orders: ["ro_number", "customer", "vehicle", "vin", "complaint", "status", "total", "phone"],
+        invoices: ["number", "customer", "ro", "date", "status", "subtotal", "tax", "amount"],
+        estimates: ["number", "customer", "vehicle", "summary", "status", "subtotal", "tax", "total", "email", "phone"]
+      });
+    }
+  });
+
   // src/modules/filing/withholding.js
   function roundCents(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
@@ -15867,7 +16004,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15901,6 +16038,7 @@ ${line}`.trim();
       init_vehicle_lookups();
       init_pricing_matrix();
       init_scan_to_estimate();
+      init_import_mappers();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -18249,6 +18387,29 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
             button.disabled = true;
             void sendScanEstimateForApproval(button.dataset.scanEstimateSend);
           };
+        });
+      };
+      importSource = "auto";
+      prepareImportMapperCore = prepareImport;
+      prepareImport = function(type, text2) {
+        const source = importSource === "auto" ? detectSourceSystem(text2) || "shopcrank" : importSource;
+        if (source === "shopcrank") return prepareImportMapperCore(type, text2);
+        const mapped = mapExportToCanonicalCsv(source, type, text2);
+        const result = prepareImportMapperCore(type, mapped.csv);
+        return { ...result, sourceSystem: mapped.system };
+      };
+      importsMapperCore = imports;
+      imports = function() {
+        const page = importsMapperCore();
+        const options = [["auto", "Detect automatically"], ...SOURCE_OPTIONS].map(([id, name]) => `<option value="${id}" ${importSource === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+        const picker = `<section class="settings-panel import-source"><div class="statement-head"><div><div class="eyebrow">Free data migration</div><h2>Coming from another shop system?</h2><p>Export customers, vehicles, repair orders, and invoices as CSV from Tekmetric, Shopmonkey, AutoLeap, Shop-Ware, or Mitchell 1 and choose the matching card below. ShopCrank maps their columns and status names, then shows a preview before anything is saved.</p></div>${icon("arrow-right-left", 20)}</div><label>Exported from<select id="import-source">${options}</select></label>${importPreview?.sourceSystem ? `<p class="ops-note">Mapped from ${escapeHtml(importPreview.sourceSystem)} columns.</p>` : ""}</section>`;
+        return page.replace(/(<div class="import-grid">|<section class="import-preview">)/, `${picker}$1`);
+      };
+      bindImportMapperCore = bind;
+      bind = function() {
+        bindImportMapperCore();
+        document.querySelector("#import-source")?.addEventListener("change", (event) => {
+          importSource = event.target.value;
         });
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
