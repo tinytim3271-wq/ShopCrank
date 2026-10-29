@@ -10,7 +10,7 @@ import { CANNED_MENU, cannedServiceGroups, estimateLineFromService, missingCanne
 import { buildRepairGuide, repairDiagram, safeVideoUrl, stepText } from '../modules/repair-guide.js';
 import { inspectionMenuHtml } from '../modules/shop-inspections.js';
 import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.js';
-import { partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
+import { buildPartstechOrderRequest, partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
 import { diagnosticDraftToOrderLines, estimateDraftAction } from '../modules/diagnostic-ai.js';
 import { laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
@@ -679,12 +679,18 @@ async function addLinesToTargetOrder(lines, label, orderId = orderingTargetOrder
 async function orderTargetPartstechParts() {
   const order = state.orders.find(item => item.id === orderingTargetOrderId);
   if (!order) { toast("Choose an open repair order first"); return }
-  const lines = (order.estimate?.lines || []).filter(line => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
-  if (!lines.length) { toast(`${order.id} has no un-ordered PartsTech part lines`); return }
+  const lines = (order.estimate?.lines || []).filter(line => line.source === "partstech" && line.type === "part" && !line.partstech?.isCore && !line.partstechOrder);
+  const storeId = lines[0]?.partstech?.storeId || partstechAccount.storeId || "";
+  try {
+    buildPartstechOrderRequest({ storeId, lines, vin: order.vin, poNumber: order.id });
+  } catch (error) {
+    toast(error.message || "PartsTech order needs approved, priced part lines and a valid store");
+    return;
+  }
   const checkout = window.open("about:blank", "_blank");
   if (checkout) checkout.opener = null;
   try {
-    const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+    const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId, lines }) });
     const placedAt = now();
     const revised = { ...order, partsOrders: [...(order.partsOrders || []), { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map(line => lines.some(item => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
     const saved = await updateOrderInApi(revised, { throwOnError: true });

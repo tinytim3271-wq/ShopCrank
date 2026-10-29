@@ -3622,6 +3622,7 @@ async function route(request, env, analytics) {
       deleteSecret: deleteIntegrationSecret,
       requireRole,
       recordAudit: recordDiagnosticAudit,
+      getEntity,
     })(request, env, context, segments);
   }
   if (segments[0] === 'integrations' && segments[1] === 'labor-guide') {

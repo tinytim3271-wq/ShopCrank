@@ -167,25 +167,47 @@ function cleanString(value, max = 120) {
  * technician data) never leave Shop Crank. Throws on invalid input.
  */
 export function buildPartstechOrderRequest({ storeId, lines = [], vin = '', poNumber = '', callbackUrl = '' } = {}) {
-  const store = cleanString(storeId, 60);
+  if (!['string', 'number'].includes(typeof storeId) || (typeof storeId === 'number' && !Number.isFinite(storeId))) {
+    throw new TypeError('storeId must be a valid PartsTech store identifier');
+  }
+  const rawStore = String(storeId ?? '').trim();
+  const store = cleanString(rawStore, 60);
   if (!store) throw new TypeError('storeId is required to order from PartsTech');
-  const parts = (Array.isArray(lines) ? lines : [])
-    .filter(line => line && line.type !== 'labor' && line.type !== 'fee' && line.approvalStatus !== 'declined' && !line.partstech?.isCore)
-    .map(line => {
-      const partNumber = cleanString(line.partstech?.partNumber || line.partNumber, 60);
-      const quantity = Math.trunc(Number(line.quantity ?? 1));
-      if (!partNumber) throw new TypeError(`"${cleanString(line.description, 60) || 'Part'}" needs a part number to order`);
-      if (!Number.isFinite(quantity) || quantity < 1 || quantity > 999) {
-        throw new TypeError(`Quantity for ${partNumber} must be a whole number from 1 to 999`);
-      }
-      const part = { partNumber, quantity };
-      const brand = cleanString(line.partstech?.brand, 80);
-      if (brand) part.brand = brand;
-      if (line.partstech?.lineCardId !== null && line.partstech?.lineCardId !== undefined) part.lineCardId = line.partstech.lineCardId;
-      if (line.partstech?.partTypeId !== null && line.partstech?.partTypeId !== undefined) part.partTypeId = line.partstech.partTypeId;
-      if (line.partstech?.partId) part.partId = String(line.partstech.partId);
-      return part;
-    });
+  if (rawStore.length > 60 || /[\u0000-\u001f\u007f]/.test(rawStore)) {
+    throw new TypeError('storeId must be a valid PartsTech store identifier');
+  }
+  if (!Array.isArray(lines) || lines.length === 0) {
+    throw new TypeError('Add at least one approved, priced PartsTech part line before ordering');
+  }
+  const parts = lines.map(line => {
+    const description = cleanString(line?.description, 60) || 'Part';
+    if (!line || line.type !== 'part' || line.source !== 'partstech' || line.partstech?.isCore) {
+      throw new TypeError(`"${description}" is not an orderable PartsTech part line`);
+    }
+    if (line.partstech?.storeId && String(line.partstech.storeId).trim() !== store) {
+      throw new TypeError(`"${description}" was quoted for a different PartsTech store`);
+    }
+    if (line.partstechOrder) throw new TypeError(`"${description}" has already been sent to PartsTech`);
+    if (line.approvalStatus !== 'approved') {
+      throw new TypeError(`"${description}" must be approved before ordering`);
+    }
+    if (line.priceStatus !== 'priced' || !Number.isFinite(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+      throw new TypeError(`"${description}" must have a valid price before ordering`);
+    }
+    const partNumber = cleanString(line.partstech?.partNumber || line.partNumber, 60);
+    const quantity = Math.trunc(Number(line.quantity ?? 1));
+    if (!partNumber) throw new TypeError(`"${description}" needs a part number to order`);
+    if (!Number.isFinite(quantity) || quantity < 1 || quantity > 999) {
+      throw new TypeError(`Quantity for ${partNumber} must be a whole number from 1 to 999`);
+    }
+    const part = { partNumber, quantity };
+    const brand = cleanString(line.partstech?.brand, 80);
+    if (brand) part.brand = brand;
+    if (line.partstech?.lineCardId !== null && line.partstech?.lineCardId !== undefined) part.lineCardId = line.partstech.lineCardId;
+    if (line.partstech?.partTypeId !== null && line.partstech?.partTypeId !== undefined) part.partTypeId = line.partstech.partTypeId;
+    if (line.partstech?.partId) part.partId = String(line.partstech.partId);
+    return part;
+  });
   if (!parts.length) throw new TypeError('Add at least one priced part line before ordering');
   if (parts.length > MAX_ORDER_LINES) throw new TypeError(`PartsTech orders are limited to ${MAX_ORDER_LINES} lines`);
   const request = { storeId: store, parts };

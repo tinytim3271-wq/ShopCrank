@@ -2233,6 +2233,65 @@
     }
     return lines;
   }
+  function cleanString(value2, max = 120) {
+    return String(value2 ?? "").trim().slice(0, max);
+  }
+  function buildPartstechOrderRequest({ storeId, lines = [], vin = "", poNumber = "", callbackUrl = "" } = {}) {
+    if (!["string", "number"].includes(typeof storeId) || typeof storeId === "number" && !Number.isFinite(storeId)) {
+      throw new TypeError("storeId must be a valid PartsTech store identifier");
+    }
+    const rawStore = String(storeId ?? "").trim();
+    const store = cleanString(rawStore, 60);
+    if (!store) throw new TypeError("storeId is required to order from PartsTech");
+    if (rawStore.length > 60 || /[\u0000-\u001f\u007f]/.test(rawStore)) {
+      throw new TypeError("storeId must be a valid PartsTech store identifier");
+    }
+    if (!Array.isArray(lines) || lines.length === 0) {
+      throw new TypeError("Add at least one approved, priced PartsTech part line before ordering");
+    }
+    const parts = lines.map((line) => {
+      const description = cleanString(line?.description, 60) || "Part";
+      if (!line || line.type !== "part" || line.source !== "partstech" || line.partstech?.isCore) {
+        throw new TypeError(`"${description}" is not an orderable PartsTech part line`);
+      }
+      if (line.partstech?.storeId && String(line.partstech.storeId).trim() !== store) {
+        throw new TypeError(`"${description}" was quoted for a different PartsTech store`);
+      }
+      if (line.partstechOrder) throw new TypeError(`"${description}" has already been sent to PartsTech`);
+      if (line.approvalStatus !== "approved") {
+        throw new TypeError(`"${description}" must be approved before ordering`);
+      }
+      if (line.priceStatus !== "priced" || !Number.isFinite(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+        throw new TypeError(`"${description}" must have a valid price before ordering`);
+      }
+      const partNumber = cleanString(line.partstech?.partNumber || line.partNumber, 60);
+      const quantity = Math.trunc(Number(line.quantity ?? 1));
+      if (!partNumber) throw new TypeError(`"${description}" needs a part number to order`);
+      if (!Number.isFinite(quantity) || quantity < 1 || quantity > 999) {
+        throw new TypeError(`Quantity for ${partNumber} must be a whole number from 1 to 999`);
+      }
+      const part = { partNumber, quantity };
+      const brand = cleanString(line.partstech?.brand, 80);
+      if (brand) part.brand = brand;
+      if (line.partstech?.lineCardId !== null && line.partstech?.lineCardId !== void 0) part.lineCardId = line.partstech.lineCardId;
+      if (line.partstech?.partTypeId !== null && line.partstech?.partTypeId !== void 0) part.partTypeId = line.partstech.partTypeId;
+      if (line.partstech?.partId) part.partId = String(line.partstech.partId);
+      return part;
+    });
+    if (!parts.length) throw new TypeError("Add at least one priced part line before ordering");
+    if (parts.length > MAX_ORDER_LINES) throw new TypeError(`PartsTech orders are limited to ${MAX_ORDER_LINES} lines`);
+    const request = { storeId: store, parts };
+    const cleanVin = cleanString(vin, 17).toUpperCase();
+    if (/^[A-HJ-NPR-Z0-9]{17}$/.test(cleanVin)) request.searchParams = { vin: cleanVin };
+    const po = cleanString(poNumber, 40);
+    if (po) request.poNumber = po;
+    if (callbackUrl) {
+      const url = new URL(callbackUrl);
+      if (url.protocol !== "https:") throw new TypeError("callbackUrl must use HTTPS");
+      request.callbackUrl = url.toString();
+    }
+    return request;
+  }
   function partstechQuoteRowHtml(item, { escapeHtml: escapeHtml4 = (v) => String(v ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, money: money5 = (v) => `$${Number(v).toFixed(2)}`, canAdd = true } = {}) {
     const price = item.priceStatus === "pending" ? '<span class="login-error">Price unavailable</span>' : escapeHtml4(money5(item.unitPrice));
     const cost = item.partstech?.cost ? `<small>Cost ${escapeHtml4(money5(item.partstech.cost))}</small>` : "";
@@ -2271,9 +2330,10 @@
     ${search}
   </section>`;
   }
-  var roundMoney2;
+  var MAX_ORDER_LINES, roundMoney2;
   var init_partstech = __esm({
     "src/modules/partstech.js"() {
+      MAX_ORDER_LINES = 50;
       roundMoney2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
     }
   });
@@ -8818,15 +8878,18 @@ button{margin-top:12px;padding:8px 14px}
       toast("Choose an open repair order first");
       return;
     }
-    const lines = (order.estimate?.lines || []).filter((line) => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
-    if (!lines.length) {
-      toast(`${order.id} has no un-ordered PartsTech part lines`);
+    const lines = (order.estimate?.lines || []).filter((line) => line.source === "partstech" && line.type === "part" && !line.partstech?.isCore && !line.partstechOrder);
+    const storeId = lines[0]?.partstech?.storeId || partstechAccount.storeId || "";
+    try {
+      buildPartstechOrderRequest({ storeId, lines, vin: order.vin, poNumber: order.id });
+    } catch (error) {
+      toast(error.message || "PartsTech order needs approved, priced part lines and a valid store");
       return;
     }
     const checkout = window.open("about:blank", "_blank");
     if (checkout) checkout.opener = null;
     try {
-      const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+      const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId, lines }) });
       const placedAt = now();
       const revised = { ...order, partsOrders: [...order.partsOrders || [], { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map((line) => lines.some((item) => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
       const saved = await updateOrderInApi(revised, { throwOnError: true });

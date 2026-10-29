@@ -92,10 +92,7 @@ test('order request sends only vendor fields from RO part lines', () => {
     vin: '1c6srfht0ln123456',
     poNumber: 'RO-1050',
     lines: [
-      { ...part, quantity: 2, technicianIds: ['t1'], total: 137.98 },
-      core,
-      { type: 'labor', description: 'Labor', hours: 1 },
-      { ...part, id: 'declined', approvalStatus: 'declined' },
+      { ...part, quantity: 2, technicianIds: ['t1'], total: 137.98, approvalStatus: 'approved' },
     ],
   });
   assert.deepEqual(request, {
@@ -105,14 +102,37 @@ test('order request sends only vendor fields from RO part lines', () => {
     poNumber: 'RO-1050',
   });
   assert.equal(JSON.stringify(request).includes('undefined'), false);
+  assert.throws(() => buildPartstechOrderRequest({
+    storeId: '77',
+    lines: [{ ...part, approvalStatus: 'approved' }, core],
+  }), /not an orderable/);
 });
 
 test('order request rejects malformed carts', () => {
   assert.throws(() => buildPartstechOrderRequest({ lines: [{ partNumber: 'A1' }] }), /storeId/);
   assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [] }), /at least one/);
-  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ type: 'part', description: 'Mystery' }] }), /part number/);
-  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ partNumber: 'A1', quantity: 0 }] }), /whole number/);
-  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ partNumber: 'A1' }], callbackUrl: 'http://x.test/cb' }), /HTTPS/);
+  const valid = {
+    type: 'part', source: 'partstech', description: 'Mystery', partNumber: 'A1',
+    quantity: 1, unitPrice: 1, priceStatus: 'priced', approvalStatus: 'approved',
+  };
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, description: 'Labor', type: 'labor' }] }), /not an orderable/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, source: 'manual' }] }), /not an orderable/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, description: 'Mystery', partNumber: '' }] }), /part number/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, quantity: 0 }] }), /whole number/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, approvalStatus: 'pending' }] }), /must be approved/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, priceStatus: 'pending' }] }), /valid price/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, unitPrice: 0 }] }), /valid price/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1', lines: [{ ...valid, partstechOrder: { sessionId: 'sess-1' } }] }), /already been sent/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: '1'.repeat(61), lines: [valid] }), /valid PartsTech store identifier/);
+  assert.throws(() => buildPartstechOrderRequest({ storeId: {}, lines: [valid] }), /valid PartsTech store identifier/);
+  assert.throws(() => buildPartstechOrderRequest({
+    storeId: '1',
+    lines: [{
+      type: 'part', source: 'partstech', partNumber: 'A1', quantity: 1,
+      unitPrice: 1, priceStatus: 'priced', approvalStatus: 'approved',
+    }],
+    callbackUrl: 'http://x.test/cb',
+  }), /HTTPS/);
 });
 
 test('order status summaries read nested PartsTech orders', () => {
