@@ -5370,6 +5370,32 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/call-log.js
+  function recentCalls(calls = [], limit = 10) {
+    return [...calls].sort((a, b) => String(b.endedAt || b.createdAt || "").localeCompare(String(a.endedAt || a.createdAt || ""))).slice(0, limit);
+  }
+  function callLogHtml(calls = [], { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, icon: icon2 = () => "", time = (value2) => String(value2 || "") } = {}) {
+    const rows = recentCalls(calls).map((call) => {
+      const outcome = OUTCOMES[call.outcome] || OUTCOMES.info;
+      const who = call.customer || call.caller || "Unknown caller";
+      const minutes = call.durationSeconds ? ` \xB7 ${Math.max(1, Math.round(call.durationSeconds / 60))} min` : "";
+      return `<article class="call-log-row"><div><strong>${escapeHtml4(who)}</strong>${call.returningCaller ? ' <span class="badge approved">Returning</span>' : ""}<small>${escapeHtml4(call.caller || "")} \xB7 ${escapeHtml4(time(call.endedAt || call.createdAt))}${minutes}</small></div><span class="badge ${outcome.badge}">${escapeHtml4(outcome.label)}</span><p>${escapeHtml4(call.summary || "")}</p>${call.appointmentId ? `<button type="button" class="mini-action" data-edit-appointment="${escapeAttr4(call.appointmentId)}">${icon2("calendar", 13)} Open appointment</button>` : ""}</article>`;
+    }).join("");
+    return `<section class="data-panel call-log"><div class="statement-head"><div><div class="eyebrow">AI phone line</div><h2>Recent calls</h2><p>Every call the AI receptionist answers is summarized here. Appointments it books land on this calendar.</p></div>${icon2("phone-call", 20)}</div>${rows || '<p class="ops-note">No AI phone calls yet.</p>'}</section>`;
+  }
+  var OUTCOMES;
+  var init_call_log = __esm({
+    "src/modules/call-log.js"() {
+      OUTCOMES = Object.freeze({
+        booked: { label: "Booked", badge: "paid" },
+        estimate: { label: "Estimate saved", badge: "approved" },
+        quoted: { label: "Quoted", badge: "approved" },
+        status_check: { label: "Status check", badge: "sent" },
+        info: { label: "Question", badge: "sent" }
+      });
+    }
+  });
+
   // src/modules/filing/withholding.js
   function roundCents(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
@@ -15276,6 +15302,7 @@ ${line}`.trim();
       init_vehicle_key_license();
       init_sms_inbox();
       init_inspection_ratings();
+      init_call_log();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -15330,6 +15357,7 @@ ${line}`.trim();
         services: [],
         inspectionTemplates: [],
         inspections: [],
+        calls: [],
         reminders: [],
         appointments: [
           { id: "apt-1048", sampleData: true, customer: "Demo Customer A", vehicle: "2018 Ford F-150 XLT", date: "2026-09-09", time: "09:00", service: "Brake inspection follow-up", tech: "Tech A", bay: "Bay 2", status: "confirmed" },
@@ -15440,7 +15468,7 @@ ${line}`.trim();
         pill.outerHTML = safeHtml(syncStatusBadge());
         lucide.createIcons();
       }));
-      shopEntityCollections = { vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
+      shopEntityCollections = { calls: "calls", vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
       shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
       roleLabel = { super_admin: "Super Admin", admin: "Admin", technician: "Technician", office: "Office", service_writer: "Service Writer" };
       roleRoutes = { super_admin: ["superadmin"], admin: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "accounting", "payroll", "messaging", "payments", "integrations", "support", "imports", "reports", "settings", "employees"], technician: ["dispatch", "orders", "schedule", "shopops", "oem-diagnostics", "obd", "keys", "chat", "ai", "payroll", "integrations", "support"], office: ["customers", "shopops", "chat", "invoices", "pos", "accounting", "messaging", "integrations", "support"], service_writer: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "messaging", "integrations", "support"] };
@@ -15477,7 +15505,7 @@ ${line}`.trim();
         return shell(`${heading("Administration", "Shop settings", "Branding, invoice defaults, tax, and optional provider readiness.", false)}<form class="settings-panel form-grid" id="shop-profile-form"><label>Shop name<input name="shopName" value="${escapeHtml(profile.shopName)}" required/></label><label>Phone<input name="phone" value="${escapeHtml(profile.phone)}"/></label><label class="full">Address<input name="address" value="${escapeHtml(profile.address)}"/></label><label>Logo URL<input name="logoUrl" type="url" value="${escapeHtml(profile.logoUrl)}"/></label><label>Default labor rate<input name="laborRate" type="number" step=".01" value="${Number(profile.laborRate)}"/></label><label>Mileage rate ($/mi)<input name="mileageRate" type="number" min="0" step=".01" value="${Number(profile.mileageRate ?? 0.68)}"/></label><label class="full">Invoice footer<input name="invoiceFooter" value="${escapeHtml(profile.invoiceFooter)}"/></label><div class="full service-contract"><h2>Commercial integrations</h2><p>CarFax service history and license-plate recognition require provider contracts and server-side credentials. They remain unavailable until configured by the platform operator.</p></div><label class="toggle-field"><input type="checkbox" disabled ${profile.carfaxEnabled ? "checked" : ""}/><span>CarFax provider configured</span></label><label class="toggle-field"><input type="checkbox" disabled ${profile.plateProviderEnabled ? "checked" : ""}/><span>Plate recognition configured</span></label><div class="full"><button class="primary">${icon("save", 14)} Save business profile</button></div></form><div class="settings-panel"><form class="form-grid" id="tax-settings-form"><label>Filing state<select name="state">${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${escapeHtml(t.taxId)}"/></label><label>Sales tax rate %<input name="rate" type="number" step=".01" min="0" value="${t.rate}"/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary">Save tax settings</button></div></form></div>`);
       };
       schedule = function() {
-        return scheduleWorkspace();
+        return scheduleWorkspace().replace(/<\/main>(?![\s\S]*<\/main>)/, `${callLogHtml(state.calls || [], { escapeHtml, escapeAttr, icon, time: (value2) => value2 ? new Date(value2).toLocaleString() : "" })}</main>`);
       };
       newOrderEstimateRow = function(line = { service: "Custom service", notes: "Describe the inspection, labor, parts, and verification included with this service.", hours: 1, parts: 0, discount: 0 }) {
         const inventoryOptions = state.inventory.map((item) => `<option value="${escapeHtml(item.id)}" ${line.inventoryId === item.id ? "selected" : ""}>${escapeHtml(item.sku || "No SKU")} \xB7 ${escapeHtml(item.name)} (${Number(item.quantity || 0)} on hand)</option>`).join("");

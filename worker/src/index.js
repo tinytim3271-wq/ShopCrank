@@ -90,6 +90,7 @@ import {
 import { AiChatSession } from './chat-session.mjs';
 import { AiVoiceSession } from './voice-session.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
+import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
 import {
   handleIntegrationStatus,
   handleLaborIntegration,
@@ -1810,7 +1811,10 @@ async function handleAgentPhoneWebhook(request, env, shopId) {
   const account = await env.DB.prepare('SELECT suspended FROM accounts WHERE shop_id = ?').bind(shopId).first();
   if (account && Number(account.suspended) === 1) throw new HttpError(403, 'Shop account is suspended');
   const body = parseJson(payload);
-  if (body.event === 'agent.call_ended') return json({ received: true });
+  if (body.event === 'agent.call_ended') {
+    await saveCallSummary(env, await agentPhoneCallSummary(env, shopId, body));
+    return json({ received: true });
+  }
   if (body.event !== 'agent.message' || !['voice', 'sms', 'mms', 'imessage'].includes(String(body.channel))) return json({ received: true });
   const transcript = String(body.data?.transcript || body.data?.message || '').trim().slice(0, 4000);
   if (!transcript) return json({ text: 'How can I help you today?' });

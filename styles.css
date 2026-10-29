@@ -293,3 +293,9 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .declined-work tr.due td { background: color-mix(in srgb, #c78a00 10%, transparent); }
 .declined-work td small { display: block; color: var(--muted, #64748b); }
 .customer-inspection video { width: 220px; max-width: 100%; border-radius: 6px; }
+
+/* AI phone call log (Schedule page) */
+.call-log-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line, #d7dde3); }
+.call-log-row small { display: block; color: var(--muted, #64748b); }
+.call-log-row p { grid-column: 1 / -1; margin: 0; }
+.call-log-row .mini-action { justify-self: start; }
