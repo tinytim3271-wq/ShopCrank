@@ -5193,6 +5193,71 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/sms-inbox.js
+  function phoneKey(value2) {
+    const digits = String(value2 || "").replace(/\D/g, "");
+    return digits.length >= 10 ? digits.slice(-10) : digits;
+  }
+  function toE164(value2) {
+    const raw = String(value2 || "").trim();
+    if (/^\+[1-9]\d{6,14}$/.test(raw)) return raw;
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length === 10) return `+1${digits}`;
+    if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+    return raw;
+  }
+  function customerForPhone(customers2, key) {
+    return (customers2 || []).find((customer) => phoneKey(customer.phone) === key) || null;
+  }
+  function groupThreads(messages = [], customers2 = [], readAt = {}) {
+    const threads = /* @__PURE__ */ new Map();
+    for (const message of messages) {
+      const key = phoneKey(message.phone);
+      if (!key) continue;
+      if (!threads.has(key)) {
+        const customer = customerForPhone(customers2, key);
+        threads.set(key, { key, phone: message.phone, customer: customer?.name || "", customerId: message.customerId || customer?.id || "", messages: [], unread: 0, lastAt: "" });
+      }
+      const thread = threads.get(key);
+      thread.messages.push(message);
+      if (!thread.customerId && message.customerId) thread.customerId = message.customerId;
+      if (String(message.createdAt) > thread.lastAt) thread.lastAt = String(message.createdAt);
+      if (message.direction === "inbound" && String(message.createdAt) > String(readAt[key] || "")) thread.unread += 1;
+    }
+    for (const thread of threads.values()) {
+      thread.messages.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      const last = thread.messages[thread.messages.length - 1];
+      thread.preview = String(last?.body || "").slice(0, 90);
+      const consent = thread.messages.filter((message) => ["opt_out", "opt_in"].includes(message.messageType));
+      thread.optedOut = consent.length > 0 && consent[consent.length - 1].messageType === "opt_out";
+    }
+    return [...threads.values()].sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  }
+  function smsInboxHtml({ threads = [], selectedKey = "", enabled = false, loading = false, error = "" }, { escapeHtml: escapeHtml4, escapeAttr: escapeAttr4 = escapeHtml4, icon: icon2 = () => "", time = (value2) => value2 } = {}) {
+    if (!enabled) {
+      return `<section class="messaging-panel sms-inbox"><div class="messaging-status idle">${icon2("message-square", 17)}<div><strong>Two-way texting is not connected</strong><span>Texting and text-to-pay are included on every plan. Connect the shop's Twilio number below (or ask ShopCrank to provision one) and customer replies will appear here.</span></div></div></section>`;
+    }
+    const selected = threads.find((thread) => thread.key === selectedKey) || threads[0] || null;
+    const list = threads.map((thread) => `<button type="button" class="sms-thread${thread === selected ? " active" : ""}" data-sms-thread="${escapeAttr4(thread.key)}"><strong>${escapeHtml4(thread.customer || thread.phone)}</strong>${thread.unread ? `<span class="badge">${thread.unread}</span>` : ""}<small>${escapeHtml4(thread.preview)}</small></button>`).join("");
+    const bubbles = selected ? selected.messages.map((message) => `<div class="sms-bubble ${message.direction === "inbound" ? "in" : "out"}"><p>${escapeHtml4(message.body)}</p><small>${escapeHtml4(time(message.createdAt))}${TYPE_LABELS[message.messageType] ? ` \xB7 ${escapeHtml4(TYPE_LABELS[message.messageType])}` : ""}${message.direction === "outbound" && message.status ? ` \xB7 ${escapeHtml4(message.status)}` : ""}</small></div>`).join("") : "";
+    const composer = selected ? selected.optedOut ? `<p class="ops-note">${icon2("ban", 14)} This customer replied STOP. ShopCrank won't text them until they reply START.</p>` : `<form id="sms-reply-form" class="sms-composer"><input type="hidden" name="to" value="${escapeAttr4(selected.phone)}"/><input type="hidden" name="customerId" value="${escapeAttr4(selected.customerId)}"/><textarea name="messageBody" maxlength="1600" rows="2" required placeholder="Reply to ${escapeAttr4(selected.customer || selected.phone)}"></textarea><button class="primary" type="submit">${icon2("send", 14)} Send</button></form>` : "";
+    const start = `<form id="sms-new-form" class="sms-composer"><input name="to" required placeholder="Customer mobile number" autocomplete="off"/><textarea name="messageBody" maxlength="1600" rows="2" required placeholder="New text message"></textarea><button class="secondary" type="submit">${icon2("message-square-plus", 14)} Start text</button></form>`;
+    return `<section class="messaging-panel sms-inbox"><div class="statement-head"><div><div class="eyebrow">Two-way texting</div><h2>Customer texts</h2><p>Replies from customers land here. Texting and text-to-pay are included on every plan.</p></div>${icon2("messages-square", 20)}</div>${error ? `<p class="login-error">${escapeHtml4(error)}</p>` : ""}${loading && !threads.length ? "<p>Loading conversations\u2026</p>" : ""}<div class="sms-inbox-grid"><div class="sms-thread-list">${list || '<p class="ops-note">No conversations yet.</p>'}</div><div class="sms-conversation">${bubbles || '<p class="ops-note">Pick a conversation or start a new text.</p>'}${composer}</div></div>${start}</section>`;
+  }
+  var TYPE_LABELS;
+  var init_sms_inbox = __esm({
+    "src/modules/sms-inbox.js"() {
+      TYPE_LABELS = Object.freeze({
+        text_to_pay: "Text-to-pay link",
+        estimate: "Estimate",
+        reminder: "Reminder",
+        review_request: "Review request",
+        opt_out: "Opted out (STOP)",
+        opt_in: "Opted back in"
+      });
+    }
+  });
+
   // src/modules/filing/withholding.js
   function roundCents(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
@@ -10113,7 +10178,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       if (textToPay) {
         const customer = state.customers.find((item) => item.id === invoice.customerId || item.name === invoice.customer), phone = invoice.phone || customer?.phone;
         if (!phone) throw new Error("Add a customer phone number before sending text-to-pay");
-        const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${state.messagingSettings.shopName || "Your shop"} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
+        const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${shopDisplayName()} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
         toast(result.mode === "shopcrank_sms" ? `Text-to-pay sent for ${invoice.number}` : `Text-to-pay opened in the device messaging app`);
       } else if (checkoutWindow) checkoutWindow.location = data.url;
       else window.location.assign(data.url);
@@ -14769,6 +14834,80 @@ ${line}`.trim();
       };
     });
   }
+  function smsReadMarks() {
+    try {
+      return JSON.parse(localStorage.getItem(SMS_READ_MARKS) || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+  function markSmsThreadRead(key) {
+    if (!key) return;
+    const marks = smsReadMarks();
+    marks[key] = (/* @__PURE__ */ new Date()).toISOString();
+    localStorage.setItem(SMS_READ_MARKS, JSON.stringify(marks));
+  }
+  function smsThreads() {
+    return groupThreads(smsInbox.messages, state.customers, smsReadMarks());
+  }
+  function smsComposerBusy() {
+    return Boolean(document.querySelector("#sms-reply-form textarea, #sms-new-form textarea")?.value || document.activeElement?.closest?.(".sms-composer"));
+  }
+  async function loadSmsInbox({ quiet = false } = {}) {
+    if (smsInbox.loading) return;
+    smsInbox.loading = true;
+    const before = smsInbox.messages[0]?.id;
+    try {
+      const result = await apiFetch("/messaging/threads");
+      smsInbox = { ...smsInbox, loaded: true, enabled: Boolean(result.enabled), messages: result.messages || [], error: "" };
+    } catch (error) {
+      smsInbox = { ...smsInbox, loaded: true, error: error.message || "Could not load customer texts" };
+    } finally {
+      smsInbox.loading = false;
+    }
+    if (state.route !== "messaging") return;
+    if (!quiet || smsInbox.messages[0]?.id !== before && !smsComposerBusy()) render();
+  }
+  async function sendSmsFromInbox(form, data) {
+    const button = form.querySelector("button[type=submit]");
+    const to = toE164(data.to);
+    const body = String(data.body || "").trim();
+    if (!body) return;
+    button.disabled = true;
+    try {
+      const customer = state.customers.find((item) => phoneKey(item.phone) === phoneKey(to));
+      await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+      smsInbox.selectedKey = phoneKey(to);
+      toast("Text sent");
+      await loadSmsInbox();
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "Text could not be sent");
+    }
+  }
+  function bindSmsInbox() {
+    document.querySelectorAll("[data-sms-thread]").forEach((button) => {
+      button.onclick = () => {
+        smsInbox.selectedKey = button.dataset.smsThread;
+        render();
+      };
+    });
+    for (const id of ["#sms-reply-form", "#sms-new-form"]) {
+      document.querySelector(id)?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void sendSmsFromInbox(event.target, readFormValues(event.target));
+      });
+    }
+    document.querySelector(".sms-conversation")?.scrollTo?.({ top: 1e6 });
+    clearInterval(smsInboxTimer);
+    if (state.route === "messaging" && smsInbox.enabled) smsInboxTimer = setInterval(() => {
+      if (state.route !== "messaging") {
+        clearInterval(smsInboxTimer);
+        return;
+      }
+      void loadSmsInbox({ quiet: true });
+    }, 2e4);
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -14950,7 +15089,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -14976,6 +15115,7 @@ ${line}`.trim();
       init_ai_workflow();
       init_customer_intake();
       init_vehicle_key_license();
+      init_sms_inbox();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -17166,6 +17306,22 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           return;
         }
         renderKeyLicenseCore();
+      };
+      SMS_READ_MARKS = "shopcrank-sms-read-v1";
+      smsInbox = { loaded: false, loading: false, enabled: false, messages: [], selectedKey: "", error: "" };
+      smsInboxTimer = 0;
+      messagingTwilioPanelSmsCore = messagingTwilioPanelHtml;
+      messagingTwilioPanelHtml = function() {
+        if (!smsInbox.loaded) void loadSmsInbox();
+        const threads = smsThreads();
+        const selectedKey = smsInbox.selectedKey || threads[0]?.key || "";
+        if (selectedKey && state.route === "messaging") markSmsThreadRead(selectedKey);
+        return `${smsInboxHtml({ ...smsInbox, threads, selectedKey }, { escapeHtml, escapeAttr, icon, time: (value2) => new Date(value2).toLocaleString() })}${messagingTwilioPanelSmsCore()}`;
+      };
+      bindSmsInboxCore = bind;
+      bind = function() {
+        bindSmsInboxCore();
+        if (state.route === "messaging") bindSmsInbox();
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
       activeGrokSession = null;

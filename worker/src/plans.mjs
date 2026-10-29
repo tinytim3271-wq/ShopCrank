@@ -138,12 +138,13 @@ export function stripePriceForPlan(env, planId, interval = 'monthly') {
   return /^price_[A-Za-z0-9]+$/.test(priceId) && !isPlaceholderPrice(priceId) ? priceId : '';
 }
 
+// Two-way texting and text-to-pay are on every plan.
 export const PLAN_CAPABILITIES = Object.freeze({
-  solo: ['labor_guides', 'parts_ordering', 'support'],
+  solo: ['labor_guides', 'parts_ordering', 'sms', 'support'],
   shop: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'support'],
   shop_pro: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'live_diagnostics', 'support'],
   enterprise: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'live_diagnostics', 'multi_location', 'support'],
-  founding_solo: ['labor_guides', 'parts_ordering', 'support'],
+  founding_solo: ['labor_guides', 'parts_ordering', 'sms', 'support'],
   founding_shop: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'support'],
   founding_pro: ['labor_guides', 'parts_ordering', 'sms', 'quickbooks', 'live_diagnostics', 'support'],
 });

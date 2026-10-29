@@ -37,6 +37,7 @@ import {
   shouldSearchCustomers,
 } from '../modules/customer-intake.js';
 import * as KeyLicense from '../modules/vehicle-key-license.js';
+import * as SmsInbox from '../modules/sms-inbox.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -1096,7 +1097,7 @@ async function startInvoiceCheckout(number, textToPay = false) {
     if (textToPay) {
       const customer = state.customers.find(item => item.id === invoice.customerId || item.name === invoice.customer), phone = invoice.phone || customer?.phone;
       if (!phone) throw new Error("Add a customer phone number before sending text-to-pay");
-      const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${state.messagingSettings.shopName || "Your shop"} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
+      const result = await deliverShopMessage({ channel: "sms", to: phone, subject: "", body: `${shopDisplayName()} invoice ${invoice.number}: pay securely at ${data.url}`, metadata: { type: "text_to_pay", customerId: customer?.id, invoiceNumber: invoice.number } });
       toast(result.mode === "shopcrank_sms" ? `Text-to-pay sent for ${invoice.number}` : `Text-to-pay opened in the device messaging app`);
     } else if (checkoutWindow) checkoutWindow.location = data.url;
     else window.location.assign(data.url);
@@ -5899,6 +5900,69 @@ render = function () {
   }
   renderKeyLicenseCore();
 };
+// --- Two-way customer texting: inbox on the Messaging page ---
+const SMS_READ_MARKS = "shopcrank-sms-read-v1";
+let smsInbox = { loaded: false, loading: false, enabled: false, messages: [], selectedKey: "", error: "" };
+let smsInboxTimer = 0;
+function smsReadMarks() { try { return JSON.parse(localStorage.getItem(SMS_READ_MARKS) || "{}") || {} } catch { return {} } }
+function markSmsThreadRead(key) { if (!key) return; const marks = smsReadMarks(); marks[key] = new Date().toISOString(); localStorage.setItem(SMS_READ_MARKS, JSON.stringify(marks)) }
+function smsThreads() { return SmsInbox.groupThreads(smsInbox.messages, state.customers, smsReadMarks()) }
+function smsComposerBusy() { return Boolean(document.querySelector("#sms-reply-form textarea, #sms-new-form textarea")?.value || document.activeElement?.closest?.(".sms-composer")) }
+async function loadSmsInbox({ quiet = false } = {}) {
+  if (smsInbox.loading) return;
+  smsInbox.loading = true;
+  const before = smsInbox.messages[0]?.id;
+  try {
+    const result = await apiFetch("/messaging/threads");
+    smsInbox = { ...smsInbox, loaded: true, enabled: Boolean(result.enabled), messages: result.messages || [], error: "" };
+  } catch (error) {
+    smsInbox = { ...smsInbox, loaded: true, error: error.message || "Could not load customer texts" };
+  } finally {
+    smsInbox.loading = false;
+  }
+  if (state.route !== "messaging") return;
+  if (!quiet || (smsInbox.messages[0]?.id !== before && !smsComposerBusy())) render();
+}
+const messagingTwilioPanelSmsCore = messagingTwilioPanelHtml;
+messagingTwilioPanelHtml = function () {
+  if (!smsInbox.loaded) void loadSmsInbox();
+  const threads = smsThreads();
+  const selectedKey = smsInbox.selectedKey || threads[0]?.key || "";
+  if (selectedKey && state.route === "messaging") markSmsThreadRead(selectedKey);
+  return `${SmsInbox.smsInboxHtml({ ...smsInbox, threads, selectedKey }, { escapeHtml, escapeAttr, icon, time: value => new Date(value).toLocaleString() })}${messagingTwilioPanelSmsCore()}`;
+};
+async function sendSmsFromInbox(form, data) {
+  const button = form.querySelector("button[type=submit]");
+  const to = SmsInbox.toE164(data.to);
+  const body = String(data.body || "").trim();
+  if (!body) return;
+  button.disabled = true;
+  try {
+    const customer = state.customers.find(item => SmsInbox.phoneKey(item.phone) === SmsInbox.phoneKey(to));
+    await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+    smsInbox.selectedKey = SmsInbox.phoneKey(to);
+    toast("Text sent");
+    await loadSmsInbox();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message || "Text could not be sent");
+  }
+}
+function bindSmsInbox() {
+  document.querySelectorAll("[data-sms-thread]").forEach(button => { button.onclick = () => { smsInbox.selectedKey = button.dataset.smsThread; render() } });
+  for (const id of ["#sms-reply-form", "#sms-new-form"]) {
+    document.querySelector(id)?.addEventListener("submit", event => { event.preventDefault(); void sendSmsFromInbox(event.target, readFormValues(event.target)) });
+  }
+  document.querySelector(".sms-conversation")?.scrollTo?.({ top: 1e6 });
+  clearInterval(smsInboxTimer);
+  if (state.route === "messaging" && smsInbox.enabled) smsInboxTimer = setInterval(() => { if (state.route !== "messaging") { clearInterval(smsInboxTimer); return } void loadSmsInbox({ quiet: true }) }, 20000);
+}
+const bindSmsInboxCore = bind;
+bind = function () {
+  bindSmsInboxCore();
+  if (state.route === "messaging") bindSmsInbox();
+};
+
 // --- Grok Realtime Voice & Phone Call Forwarding ---
 let grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
 let activeGrokSession = null;
