@@ -79,7 +79,7 @@
     "test:growth": "node --test src/modules/sms-inbox.test.mjs src/modules/growth-settings.test.mjs src/modules/shop-kpis.test.mjs src/modules/vehicle-lookups.test.mjs src/modules/pricing-matrix.test.mjs src/modules/scan-to-estimate.test.mjs"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.5.3",
+    "@capacitor/cli": "^8.6.0",
     "electron": "^45.1.0",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
