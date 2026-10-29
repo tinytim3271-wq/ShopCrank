@@ -5650,6 +5650,169 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/pricing-matrix.js
+  function sortedTiers(tiers) {
+    const valid = (Array.isArray(tiers) ? tiers : []).map((tier) => ({
+      upTo: tier.upTo === null || tier.upTo === "" || tier.upTo === void 0 || !Number.isFinite(Number(tier.upTo)) ? null : Number(tier.upTo),
+      multiplier: Number(tier.multiplier)
+    })).filter((tier) => Number.isFinite(tier.multiplier) && tier.multiplier >= 1 && tier.multiplier <= 10);
+    valid.sort((a, b) => (a.upTo ?? Infinity) - (b.upTo ?? Infinity));
+    return valid.length ? valid : [...DEFAULT_PARTS_MATRIX];
+  }
+  function pricingSettings(record = {}) {
+    return {
+      enabled: record.enabled !== false,
+      partsMatrix: sortedTiers(record.partsMatrix),
+      minPartsMarginPercent: Number.isFinite(Number(record.minPartsMarginPercent)) ? Math.min(90, Math.max(0, Number(record.minPartsMarginPercent))) : DEFAULT_PRICING.minPartsMarginPercent,
+      laborRates: { ...DEFAULT_PRICING.laborRates, ...record.laborRates || {} }
+    };
+  }
+  function partsMultiplier(cost, settings2 = pricingSettings()) {
+    const value2 = Number(cost);
+    const tier = settings2.partsMatrix.find((item) => item.upTo === null || value2 <= item.upTo) || settings2.partsMatrix[settings2.partsMatrix.length - 1];
+    return tier.multiplier;
+  }
+  function matrixPartPrice(cost, settings2 = pricingSettings()) {
+    const value2 = Number(cost);
+    if (!Number.isFinite(value2) || value2 <= 0) return null;
+    return round2(value2 * partsMultiplier(value2, settings2));
+  }
+  function marginPercent(price, cost) {
+    const p = Number(price);
+    const c = Number(cost);
+    return p > 0 && c >= 0 ? Math.round((p - c) / p * 1e3) / 10 : null;
+  }
+  function lineCost(line = {}, inventory = []) {
+    const direct = [line.cost, line.unitCost, line.partstech?.cost].map(Number).find((value2) => Number.isFinite(value2) && value2 > 0);
+    if (direct) return direct;
+    const stocked = inventory.find((item) => line.inventoryId && item.id === line.inventoryId || line.inventorySku && String(item.sku || "").toLowerCase() === String(line.inventorySku).toLowerCase());
+    const cost = Number(stocked?.cost);
+    return Number.isFinite(cost) && cost > 0 ? cost : null;
+  }
+  function applyPartsMatrix(lines = [], settings2 = pricingSettings(), inventory = []) {
+    if (!settings2.enabled) return lines;
+    return lines.map((line) => {
+      const costPriced = ["cost", "cost_markup"].includes(line.partstech?.priceBasis);
+      if (line.type !== "part" || Number(line.unitPrice) > 0 && !costPriced) return line;
+      const cost = lineCost(line, inventory);
+      const price = matrixPartPrice(cost, settings2);
+      if (price === null) return line;
+      const quantity = Math.max(1, Number(line.quantity) || 1);
+      return { ...line, cost, unitPrice: price, total: round2(price * quantity), priceStatus: "priced", priceSource: "matrix" };
+    });
+  }
+  function marginWarnings(lines = [], settings2 = pricingSettings(), inventory = []) {
+    const warnings = [];
+    for (const line of lines) {
+      if (line.type !== "part" || line.approvalStatus === "declined") continue;
+      const cost = lineCost(line, inventory);
+      const price = Number(line.unitPrice);
+      if (cost === null || !(price > 0)) continue;
+      const margin = marginPercent(price, cost);
+      if (margin !== null && margin < settings2.minPartsMarginPercent) {
+        warnings.push({ lineId: line.id, description: line.description, cost, price, margin, suggestedPrice: matrixPartPrice(cost, settings2) });
+      }
+    }
+    return warnings;
+  }
+  function laborRateFor(category, settings2 = pricingSettings(), fallback = 0) {
+    const rate = Number(settings2.laborRates?.[category]);
+    return rate > 0 ? rate : Number(fallback) || 0;
+  }
+  function laborCategoryFor(line = {}) {
+    if (line.laborCategory) return String(line.laborCategory);
+    const text2 = `${line.description || ""} ${line.notes || ""}`;
+    return Object.entries(LABOR_CATEGORY_PATTERNS).find(([, pattern]) => pattern.test(text2))?.[0] || "standard";
+  }
+  function applyLaborMatrix(lines = [], settings2 = pricingSettings(), shopRate = 0) {
+    if (!settings2.enabled) return lines;
+    return lines.map((line) => {
+      if (line.type === "part" || line.type === "fee") return line;
+      const current = Number(line.laborRate ?? line.unitPrice);
+      if (current > 0 && current !== Number(shopRate)) return line;
+      const category = laborCategoryFor(line);
+      const rate = laborRateFor(category, settings2, 0);
+      if (!(rate > 0)) return line;
+      const hours = Number(line.hours ?? line.quantity) || 0;
+      return { ...line, laborCategory: category, laborRate: rate, unitPrice: rate, total: round2(hours * rate) };
+    });
+  }
+  function matrixText(tiers = DEFAULT_PARTS_MATRIX) {
+    return sortedTiers(tiers).map((tier) => `${tier.upTo === null ? "over" : `up to ${tier.upTo}`}: ${tier.multiplier}`).join("\n");
+  }
+  function parseMatrixText(text2) {
+    const tiers = String(text2 || "").split("\n").map((line) => {
+      const match = /^\s*(?:up\s*to\s*\$?([\d.]+)|over|above|\*)\s*[:=]\s*([\d.]+)\s*x?\s*$/i.exec(line);
+      if (!match) return null;
+      return { upTo: match[1] === void 0 ? null : Number(match[1]), multiplier: Number(match[2]) };
+    }).filter(Boolean);
+    if (!tiers.some((tier) => tier.upTo === null) && tiers.length) tiers.push({ upTo: null, multiplier: tiers[tiers.length - 1].multiplier });
+    return sortedTiers(tiers);
+  }
+  function marginWarningsHtml(warnings = [], { money: money5 = (value2) => `$${Number(value2).toFixed(2)}`, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? "") } = {}) {
+    if (!warnings.length) return "";
+    return `<div class="margin-warning" role="alert"><strong>Margin check</strong>${warnings.map((item) => `<p>${escapeHtml4(item.description)}: ${item.margin}% margin at ${money5(item.price)} (cost ${money5(item.cost)}). Matrix price ${money5(item.suggestedPrice)}. <button type="button" class="mini-action" data-apply-matrix="${escapeHtml4(item.lineId)}">Use matrix price</button></p>`).join("")}</div>`;
+  }
+  function pricingSettingsHtml(record = {}, { canSave = false, escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), icon: icon2 = () => "" } = {}) {
+    const settings2 = pricingSettings(record);
+    const disabled = canSave ? "" : "disabled";
+    return `<section class="settings-panel pricing-matrix"><div class="statement-head"><div><div class="eyebrow">Margin protection</div><h2>Parts &amp; labor pricing matrix</h2><p>Parts with a known cost (PartsTech, inventory) are priced from the matrix, and estimates warn when a part sells below your minimum margin.</p></div>${icon2("percent", 20)}</div>
+  <form id="pricing-matrix-form" class="form-grid">
+    <label class="toggle-field full"><input type="checkbox" name="matrixEnabled" ${settings2.enabled ? "checked" : ""} ${disabled}/><span>Price parts from the matrix</span></label>
+    <label class="full">Parts markup by cost (one tier per line, cost \xD7 multiplier)<textarea name="partsMatrix" rows="8" ${disabled}>${escapeHtml4(matrixText(settings2.partsMatrix))}</textarea></label>
+    <label>Minimum parts margin %<input name="minPartsMarginPercent" type="number" min="0" max="90" step="1" value="${escapeHtml4(settings2.minPartsMarginPercent)}" ${disabled}/></label>
+    ${Object.entries(settings2.laborRates).map(([key, value2]) => `<label>${escapeHtml4(key[0].toUpperCase() + key.slice(1))} labor rate<input name="laborRate_${escapeHtml4(key)}" type="number" min="0" step="0.01" value="${escapeHtml4(value2 || "")}" placeholder="Shop default" ${disabled}/></label>`).join("")}
+    ${canSave ? `<div class="full"><button class="primary" type="submit">${icon2("save", 14)} Save pricing</button></div>` : ""}
+  </form></section>`;
+  }
+  function pricingRecordFromForm(values = {}, current = {}) {
+    const laborRates = {};
+    for (const [key, value2] of Object.entries(values)) {
+      if (!key.startsWith("laborRate_")) continue;
+      const rate = Number(value2);
+      laborRates[key.slice("laborRate_".length)] = rate > 0 ? Math.round(rate * 100) / 100 : 0;
+    }
+    return {
+      ...current,
+      id: "pricing",
+      enabled: values.matrixEnabled === "on",
+      partsMatrix: parseMatrixText(values.partsMatrix),
+      minPartsMarginPercent: Math.min(90, Math.max(0, Number(values.minPartsMarginPercent) || 0)),
+      laborRates: { ...current.laborRates || {}, ...laborRates }
+    };
+  }
+  function editorCarryFields(line = {}) {
+    return Object.fromEntries(EDITOR_CARRY_FIELDS.filter((key) => line[key] !== void 0 && line[key] !== null && line[key] !== "").map((key) => [key, line[key]]));
+  }
+  var DEFAULT_PARTS_MATRIX, DEFAULT_PRICING, round2, LABOR_CATEGORY_PATTERNS, EDITOR_CARRY_FIELDS;
+  var init_pricing_matrix = __esm({
+    "src/modules/pricing-matrix.js"() {
+      DEFAULT_PARTS_MATRIX = Object.freeze([
+        { upTo: 10, multiplier: 2.5 },
+        { upTo: 25, multiplier: 2.25 },
+        { upTo: 50, multiplier: 2 },
+        { upTo: 100, multiplier: 1.8 },
+        { upTo: 250, multiplier: 1.6 },
+        { upTo: 500, multiplier: 1.45 },
+        { upTo: 1e3, multiplier: 1.35 },
+        { upTo: null, multiplier: 1.25 }
+      ]);
+      DEFAULT_PRICING = Object.freeze({
+        enabled: true,
+        partsMatrix: DEFAULT_PARTS_MATRIX,
+        minPartsMarginPercent: 35,
+        laborRates: { standard: 0, diagnostic: 0, heavy: 0, electrical: 0 }
+      });
+      round2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
+      LABOR_CATEGORY_PATTERNS = Object.freeze({
+        diagnostic: /diagnos|troubleshoot|check engine|no[- ]start|inspection/i,
+        electrical: /electric|wiring|battery|alternator|starter|module|sensor/i,
+        heavy: /engine (replace|rebuild|overhaul)|transmission (replace|rebuild|overhaul)|head gasket|timing (chain|belt)|differential|clutch/i
+      });
+      EDITOR_CARRY_FIELDS = Object.freeze(["cost", "unitCost", "partstech", "partstechOrder", "priceSource", "source", "laborGuide", "inspectionStatus", "inspectionItemId", "photoKeys", "videoKeys", "mediaKeys", "laborCategory"]);
+    }
+  });
+
   // src/modules/filing/withholding.js
   function roundCents(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
@@ -9510,7 +9673,7 @@ button{margin-top:12px;padding:8px 14px}
       return false;
     }
     try {
-      const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+      const revised = appendEstimateLinesToOrder(order, applyLaborMatrix(applyPartsMatrix(lines, shopPricing(), state.inventory), shopPricing(), Number(shopProfile().laborRate) || 0), { editedAt: now(), taxRate: state.taxSettings.rate });
       const saved = await updateOrderInApi(revised, { throwOnError: true });
       Object.assign(order, saved?.queued ? revised : saved);
       save();
@@ -15392,6 +15555,36 @@ ${line}`.trim();
       }
     });
   }
+  function shopPricing() {
+    return pricingSettings(state.shopSettingsRecords.find((item) => item.id === "pricing") || {});
+  }
+  function editorCarry(row) {
+    try {
+      return JSON.parse(row.dataset.carry || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+  function showMarginWarnings(root, lines) {
+    const host = root.parentElement || root;
+    let panel = host.querySelector(".margin-warnings");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.className = "margin-warnings";
+      root.insertAdjacentElement("afterend", panel);
+    }
+    panel.innerHTML = safeHtml(marginWarningsHtml(marginWarnings(lines, shopPricing(), state.inventory), { money: money4, escapeHtml }));
+    panel.querySelectorAll("[data-apply-matrix]").forEach((button) => {
+      button.onclick = () => {
+        const row = [...root.querySelectorAll(".job-estimate-line")].find((item) => item.dataset.lineId === button.dataset.applyMatrix);
+        const line = lines.find((item) => item.id === button.dataset.applyMatrix);
+        const price = line ? matrixPartPrice(lineCost(line, state.inventory), shopPricing()) : null;
+        if (!row || price === null) return;
+        row.querySelector(".job-line-rate").value = price.toFixed(2);
+        refreshEstimateEditor(root);
+      };
+    });
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -15573,7 +15766,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -15605,6 +15798,7 @@ ${line}`.trim();
       init_growth_settings();
       init_shop_kpis();
       init_vehicle_lookups();
+      init_pricing_matrix();
       init_mileage();
       init_filing();
       init_customer_metrics();
@@ -16934,7 +17128,7 @@ ${line}`.trim();
       };
       estimateEditorLine = function(line = {}, index = 0, removable = true) {
         const item = normalizeEstimateLine(line, index), description = estimateEditorDescription(line, item.description), part = item.type === "part", fee = item.type === "fee", laborSource = item.laborSource || "Unverified shop estimate";
-        return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}">
+        return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}" data-carry="${escapeAttr(JSON.stringify(editorCarryFields(line)))}">
     <div class="estimate-line-head"><strong>${part ? "Part" : fee ? "Fee" : "Labor"} line</strong><div>${!part && !fee ? `<button class="mini-action lookup-labor-time" type="button">${icon("badge-check", 13)} Labor guide</button>` : ""}${removable ? `<button class="icon-button remove-job-line" type="button" title="Remove line">${icon("trash-2", 14)}</button>` : ""}</div></div>
     <div class="form-grid">
       <label>Type<select class="job-line-type" ${item.code ? "disabled" : ""}><option value="labor" ${!part && !fee ? "selected" : ""}>Labor</option><option value="part" ${part ? "selected" : ""}>Part</option><option value="fee" ${fee ? "selected" : ""}>Fee</option></select></label>
@@ -16957,6 +17151,8 @@ ${line}`.trim();
           const inventory = type === "part" ? state.inventory.find((item) => item.id === row.querySelector(".job-line-inventory").value) : null;
           const partNumber = type === "part" ? (row.querySelector(".job-line-part-number")?.value || "").trim() : "";
           return normalizeEstimateLine({
+            ...editorCarry(row),
+            ...inventory && Number(inventory.cost) > 0 ? { cost: Number(inventory.cost) } : {},
             id: row.dataset.lineId || `line-${Date.now()}-${index}`,
             type,
             description: row.querySelector(".job-line-description").value.trim(),
@@ -17013,6 +17209,7 @@ ${line}`.trim();
         if (summary) summary.innerHTML = `<span>Parts <b>${money4(estimate.parts)}</b></span><span>Labor <b>${money4(estimate.labor)}</b></span><span>Fees <b>${money4(estimate.lineFees)}</b></span><span>Supplies <b>${money4(supplies)}</b></span><span>Discount <b>-${money4(estimate.discountAmount)}</b></span><span>Tax <b>${money4(estimate.tax)}</b></span><strong>Total ${money4(estimate.total)}</strong>`;
         const total = document.querySelector("#new-estimate-total");
         if (total && root.id === "new-estimate-lines") total.value = estimate.total.toFixed(2);
+        showMarginWarnings(root, estimate.lines);
       };
       coherentOrderEstimate = function(order) {
         const source = order.estimate || {};
@@ -17909,6 +18106,28 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
             status.textContent = error.message || "CARFAX lookup failed";
           } finally {
             event.currentTarget.disabled = false;
+          }
+        });
+      };
+      settingsPricingCore = settings;
+      settings = function() {
+        const page = settingsPricingCore();
+        const panel = pricingSettingsHtml(state.shopSettingsRecords.find((item) => item.id === "pricing") || {}, { canSave: currentUser()?.role === "admin", escapeHtml, icon });
+        return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+      };
+      bindPricingCore = bind;
+      bind = function() {
+        bindPricingCore();
+        if (state.route !== "settings") return;
+        document.querySelector("#pricing-matrix-form")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          try {
+            const current = state.shopSettingsRecords.find((item) => item.id === "pricing") || {};
+            await saveShopEntity("shopsettings", pricingRecordFromForm(readFormValues(event.target), current));
+            toast("Pricing matrix saved");
+            render();
+          } catch (error) {
+            toast(error.message || "Pricing could not be saved");
           }
         });
       };

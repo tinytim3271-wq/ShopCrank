@@ -307,3 +307,7 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .kpi-card span { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #64748b); }
 .kpi-card strong { display: block; font-size: 26px; margin: 4px 0; }
 .kpi-card small { color: var(--muted, #64748b); }
+
+/* Margin protection */
+.margin-warning { margin: 10px 0; padding: 10px 12px; border-left: 4px solid #c78a00; border-radius: 6px; background: color-mix(in srgb, #c78a00 10%, transparent); }
+.margin-warning p { margin: 4px 0 0; }

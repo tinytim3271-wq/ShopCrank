@@ -43,6 +43,7 @@ import * as CallLog from '../modules/call-log.js';
 import * as GrowthSettings from '../modules/growth-settings.js';
 import * as ShopKpis from '../modules/shop-kpis.js';
 import * as VehicleLookups from '../modules/vehicle-lookups.js';
+import * as Pricing from '../modules/pricing-matrix.js';
 import * as Mileage from '../modules/mileage.js';
 import * as Filing from '../modules/filing/index.js';
 import { customerLifetimeSpend } from '../modules/customer-metrics.js';
@@ -673,7 +674,7 @@ async function addLinesToTargetOrder(lines, label, orderId = orderingTargetOrder
   const order = state.orders.find(item => item.id === orderId);
   if (!order) { toast("Choose an open repair order first"); return false }
   try {
-    const revised = appendEstimateLinesToOrder(order, lines, { editedAt: now(), taxRate: state.taxSettings.rate });
+    const revised = appendEstimateLinesToOrder(order, Pricing.applyLaborMatrix(Pricing.applyPartsMatrix(lines, shopPricing(), state.inventory), shopPricing(), Number(shopProfile().laborRate) || 0), { editedAt: now(), taxRate: state.taxSettings.rate });
     const saved = await updateOrderInApi(revised, { throwOnError: true });
     Object.assign(order, saved?.queued ? revised : saved);
     save();
@@ -3412,7 +3413,7 @@ function showEstimatePreview(estimate) {
 
 estimateEditorLine = function (line = {}, index = 0, removable = true) {
   const item = normalizeEstimateLine(line, index), description = estimateEditorDescription(line, item.description), part = item.type === "part", fee = item.type === "fee", laborSource = item.laborSource || "Unverified shop estimate";
-  return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}">
+  return `<article class="job-estimate-line" data-line-id="${escapeAttr(item.id)}" data-price-status="${escapeAttr(item.priceStatus || "priced")}" data-labor-source="${escapeAttr(laborSource)}" data-labor-verified="${item.laborVerified ? "1" : "0"}" data-technician-ids="${escapeAttr(JSON.stringify(item.technicianIds || []))}" data-fee-code="${escapeAttr(item.code || "")}" data-carry="${escapeAttr(JSON.stringify(Pricing.editorCarryFields(line)))}">
     <div class="estimate-line-head"><strong>${part ? "Part" : fee ? "Fee" : "Labor"} line</strong><div>${!part && !fee ? `<button class="mini-action lookup-labor-time" type="button">${icon("badge-check", 13)} Labor guide</button>` : ""}${removable ? `<button class="icon-button remove-job-line" type="button" title="Remove line">${icon("trash-2", 14)}</button>` : ""}</div></div>
     <div class="form-grid">
       <label>Type<select class="job-line-type" ${item.code ? "disabled" : ""}><option value="labor" ${!part && !fee ? "selected" : ""}>Labor</option><option value="part" ${part ? "selected" : ""}>Part</option><option value="fee" ${fee ? "selected" : ""}>Fee</option></select></label>
@@ -3436,6 +3437,8 @@ estimateFromEditor = function (root) {
     const inventory = type === "part" ? state.inventory.find(item => item.id === row.querySelector(".job-line-inventory").value) : null;
     const partNumber = type === "part" ? (row.querySelector(".job-line-part-number")?.value || "").trim() : "";
     return normalizeEstimateLine({
+      ...editorCarry(row),
+      ...(inventory && Number(inventory.cost) > 0 ? { cost: Number(inventory.cost) } : {}),
       id: row.dataset.lineId || `line-${Date.now()}-${index}`,
       type,
       description: row.querySelector(".job-line-description").value.trim(),
@@ -3493,6 +3496,7 @@ refreshEstimateEditor = function (root) {
   if (summary) summary.innerHTML = `<span>Parts <b>${money(estimate.parts)}</b></span><span>Labor <b>${money(estimate.labor)}</b></span><span>Fees <b>${money(estimate.lineFees)}</b></span><span>Supplies <b>${money(supplies)}</b></span><span>Discount <b>-${money(estimate.discountAmount)}</b></span><span>Tax <b>${money(estimate.tax)}</b></span><strong>Total ${money(estimate.total)}</strong>`;
   const total = document.querySelector("#new-estimate-total");
   if (total && root.id === "new-estimate-lines") total.value = estimate.total.toFixed(2);
+  showMarginWarnings(root, estimate.lines);
 };
 
 coherentOrderEstimate = function (order) {
@@ -6114,6 +6118,46 @@ openVehicleForm = function (existing = null) {
       status.textContent = "";
       if (existing) { existing.carfaxHistory = { retrievedAt: result.retrievedAt, records: result.records }; void saveShopEntity("vehicles", existing).catch(() => {}) }
     } catch (error) { status.textContent = error.message || "CARFAX lookup failed" } finally { event.currentTarget.disabled = false }
+  });
+};
+
+// --- Parts & labor pricing matrix with margin protection ---
+function shopPricing() { return Pricing.pricingSettings(state.shopSettingsRecords.find(item => item.id === "pricing") || {}) }
+function editorCarry(row) { try { return JSON.parse(row.dataset.carry || "{}") || {} } catch { return {} } }
+function showMarginWarnings(root, lines) {
+  const host = root.parentElement || root;
+  let panel = host.querySelector(".margin-warnings");
+  if (!panel) { panel = document.createElement("div"); panel.className = "margin-warnings"; root.insertAdjacentElement("afterend", panel) }
+  panel.innerHTML = safeHtml(Pricing.marginWarningsHtml(Pricing.marginWarnings(lines, shopPricing(), state.inventory), { money, escapeHtml }));
+  panel.querySelectorAll("[data-apply-matrix]").forEach(button => {
+    button.onclick = () => {
+      const row = [...root.querySelectorAll(".job-estimate-line")].find(item => item.dataset.lineId === button.dataset.applyMatrix);
+      const line = lines.find(item => item.id === button.dataset.applyMatrix);
+      const price = line ? Pricing.matrixPartPrice(Pricing.lineCost(line, state.inventory), shopPricing()) : null;
+      if (!row || price === null) return;
+      row.querySelector(".job-line-rate").value = price.toFixed(2);
+      refreshEstimateEditor(root);
+    };
+  });
+}
+const settingsPricingCore = settings;
+settings = function () {
+  const page = settingsPricingCore();
+  const panel = Pricing.pricingSettingsHtml(state.shopSettingsRecords.find(item => item.id === "pricing") || {}, { canSave: currentUser()?.role === "admin", escapeHtml, icon });
+  return page.replace(/<\/main>(?![\s\S]*<\/main>)/, `${panel}</main>`);
+};
+const bindPricingCore = bind;
+bind = function () {
+  bindPricingCore();
+  if (state.route !== "settings") return;
+  document.querySelector("#pricing-matrix-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const current = state.shopSettingsRecords.find(item => item.id === "pricing") || {};
+      await saveShopEntity("shopsettings", Pricing.pricingRecordFromForm(readFormValues(event.target), current));
+      toast("Pricing matrix saved");
+      render();
+    } catch (error) { toast(error.message || "Pricing could not be saved") }
   });
 };
 
