@@ -362,6 +362,11 @@ async function buildImportWrites(env, context, result, orders, fileName, now) {
         closedAt: invoice.record.closedAt,
         closeoutSource: invoice.record.closeoutSource,
       } : null);
+    const legacyRecognition = invoice.record.paymentImportLegacyRecognition
+      || (legacyCloseout ? {
+        amount: invoice.record.amount,
+        receivedAt: legacyCloseout.paidAt || legacyCloseout.closedAt || invoice.record.date,
+      } : null);
     // Keep the closeout dates an already-paid migrated invoice came in with, so
     // filed tax periods do not move.
     const paidAt = summary.status === 'paid'
@@ -376,6 +381,7 @@ async function buildImportWrites(env, context, result, orders, fileName, now) {
     writes.push(entityWriteStatement(env, context, 'invoices', invoice.record.id, {
       ...invoice.record,
       ...(legacyCloseout ? { paymentImportLegacyCloseout: legacyCloseout } : {}),
+      ...(legacyRecognition ? { paymentImportLegacyRecognition: legacyRecognition } : {}),
       paidAmount: summary.paid,
       balanceDue: summary.balance,
       paymentStatus: summary.status,

@@ -164,6 +164,10 @@ test('partial imports preserve migrated closeout dates and provenance when a lat
     closedAt,
     closeoutSource: 'source_closeout_date',
   });
+  assert.deepEqual(invoice.paymentImportLegacyRecognition, {
+    amount: 120,
+    receivedAt: paidAt,
+  });
 
   const completionCsv = 'invoice,amount,date,method\nINV-1002,80,2026-10-05,cash';
   const completionPreview = await preview(env, completionCsv);

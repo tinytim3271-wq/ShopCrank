@@ -11124,9 +11124,12 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     };
   }
   function taxReport(fromDate, toDate) {
-    const from = new Date(fromDate), to = new Date(toDate), invoices2 = getFinanceDerived().invoiceByNumber;
+    const from = new Date(fromDate), to = new Date(toDate), invoices2 = getFinanceDerived().invoiceByNumber, recognitionByInvoice = new Map(state.invoices.filter((invoice) => invoice.paymentImportLegacyRecognition || invoice.paymentImportLegacyCloseout).map((invoice) => {
+      const recognition = invoice.paymentImportLegacyRecognition || { amount: invoice.amount, receivedAt: invoice.paymentImportLegacyCloseout.paidAt || invoice.paymentImportLegacyCloseout.closedAt || invoice.date };
+      return [invoice.number, { invoiceNumber: invoice.number, customer: invoice.customer, amount: recognition.amount, receivedAt: recognition.receivedAt, status: "completed" }];
+    })), payments2 = [...paymentRecords().filter((payment) => !recognitionByInvoice.has(payment.invoiceNumber)), ...recognitionByInvoice.values()];
     to.setHours(23, 59, 59, 999);
-    const rows = paymentRecords().filter((payment) => {
+    const rows = payments2.filter((payment) => {
       const d = new Date(payment.receivedAt);
       return d >= from && d <= to;
     }).map((payment) => {

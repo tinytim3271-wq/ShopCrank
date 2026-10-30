@@ -54,6 +54,34 @@ test('invoice editor roundtrips date-only values without UTC drift', () => {
   assert.equal(dateValue('2024-02-29'), '2024-02-29');
 });
 
+test('tax reports keep migrated recognition dates while payment history keeps CSV receipt dates', () => {
+  const invoice = {
+    number: 'INV-MIGRATED',
+    customer: 'Maria',
+    amount: 120,
+    status: 'partial',
+    paymentImportLegacyCloseout: { paidAt: '2025-03-15T12:00:00.000Z' },
+  };
+  const payment = {
+    invoiceNumber: invoice.number,
+    customer: invoice.customer,
+    amount: 40,
+    receivedAt: '2026-09-05T12:00:00.000Z',
+    status: 'completed',
+  };
+  const context = {
+    state: { invoices: [invoice], payments: [payment] },
+    getFinanceDerived: () => ({ invoiceByNumber: new Map([[invoice.number, invoice]]) }),
+    invoiceTaxBreakdown: () => ({ subtotal: 110, tax: 10 }),
+  };
+  const report = vm.runInNewContext(`${functionSource('function paymentRecords(')}; ${functionSource('function taxReport(')}; taxReport('2025-03-01', '2025-03-31')`, context);
+  const history = vm.runInNewContext(`${functionSource('function paymentRecords(')}; paymentRecords()`, context);
+
+  assert.equal(report.totals.gross, 120);
+  assert.equal(report.rows[0].date, '2025-03-15T12:00:00.000Z');
+  assert.equal(history[0].receivedAt, '2026-09-05T12:00:00.000Z');
+});
+
 test('Texas filing mismatches block generation, exports, and printing but not other states', async () => {
   const state = { taxSettings: { state: 'TX', rate: 8.25, jurisdictions: null } };
   const context = {
