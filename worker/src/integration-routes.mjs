@@ -234,7 +234,7 @@ export async function handleMessagingIntegration(request, env, context, segments
         to: phone,
         body: message,
         statusCallback: callbackUrl.toString(),
-      }, { config: twilioOverrides || undefined });
+      }, { config: twilioOverrides || undefined, shopId: context.shopId });
       const createdAt = new Date().toISOString();
       await storeCustomerMessage(env, {
         id: `sms-${crypto.randomUUID()}`, shopId: context.shopId,

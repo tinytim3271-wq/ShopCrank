@@ -194,6 +194,7 @@ test('Anthropic turn executes read-only tools and accumulates token usage', asyn
   };
   const result = await runAnthropicTurn(env, {
     shopId: 'shop-a',
+    role: 'admin',
     message: 'Is INV-9 paid?',
     fetcher: async (url, init) => {
       requests.push({ url, init, body: JSON.parse(init.body) });

@@ -1,3 +1,5 @@
+import { getOnboarding } from '../onboarding/store.mjs';
+
 const TWILIO_API_BASE = 'https://api.twilio.com/2010-04-01';
 const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
 const OPT_OUT_KEYWORDS = new Set(['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT']);
@@ -79,6 +81,7 @@ export async function resolveTwilioShopConfig(env, shopId, getSecret = null) {
   }
   return {
     configured: true,
+    shopId,
     ...config,
     keySource: hasShopCreds ? 'shop' : 'platform',
   };
@@ -141,7 +144,7 @@ async function safeTwilioResponse(response) {
   }
 }
 
-export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch, config: configOverride = null } = {}) {
+export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch, config: configOverride = null, shopId = configOverride?.shopId || '' } = {}) {
   const config = configOverride || twilioConfig(env);
   if (!config) {
     throw new SmsIntegrationError('SMS delivery is not configured', {
@@ -156,6 +159,13 @@ export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch, confi
   return Object.freeze({
     provider: 'twilio',
     async send({ to, body, statusCallback = '' }) {
+      if (env?.DB) {
+        if (!shopId) throw new SmsIntegrationError('Shop identity is required for SMS delivery', { code: 'sms_shop_required', status: 400 });
+        const onboarding = await getOnboarding(env, shopId);
+        if (onboarding && onboarding.state.smsLive !== true) {
+          throw new SmsIntegrationError('SMS is not live for this shop. Complete onboarding SMS go-live first.', { code: 'sms_onboarding_gated', status: 403 });
+        }
+      }
       const form = new URLSearchParams({
         To: requireE164(to, 'to'),
         Body: requireText(body),

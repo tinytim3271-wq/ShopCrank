@@ -4504,7 +4504,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
             navigator.mediaDevices.getUserMedia(micConstraints),
             apiFetch2("/ai/voice/client-secret", {
               method: "POST",
-              body: JSON.stringify({ voice: voice || void 0, callerPhone: callerPhone || void 0 })
+              body: JSON.stringify({ persona: greetAsReceptionist ? "front_desk" : "tech_assistant", voice: voice || void 0, callerPhone: callerPhone || void 0 })
             })
           ]);
         } catch (parallelErr) {
@@ -4522,7 +4522,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             secretPayload = await apiFetch2("/ai/voice/client-secret", {
               method: "POST",
-              body: JSON.stringify({ voice: voice || void 0, callerPhone: callerPhone || void 0 })
+              body: JSON.stringify({ persona: greetAsReceptionist ? "front_desk" : "tech_assistant", voice: voice || void 0, callerPhone: callerPhone || void 0 })
             });
           } else {
             throw parallelErr;
@@ -4666,7 +4666,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
             try {
               const response = await apiFetch2("/ai/voice/tool", {
                 method: "POST",
-                body: JSON.stringify({ name: toolName, arguments: args, callerPhone })
+                body: JSON.stringify({ persona: greetAsReceptionist ? "front_desk" : "tech_assistant", name: toolName, arguments: args, callerPhone })
               });
               const toolResult = response?.result || {};
               if (toolName === "calculate_service_estimate") {

@@ -16,6 +16,17 @@
 - Apply migrations (`npm run db:migrate:remote`) before traffic-sensitive changes.
 - Deploy (`npm run deploy:worker`) and verify Worker logs/health.
 
+### Shop onboarding, phone and SMS safety
+- Apply `0017_sms_delivery_callbacks.sql`, `0018_onboarding_knowledge_handoff.sql`, and `0019_onboarding_executions.sql` before deploying this onboarding flow. Migration 0017 remains the existing SMS migration.
+- `ONBOARDING_LIVE_MODE` defaults to `0`. Plans and executions default to dry-run. Only a platform `super_admin` can provision a shop using `/api/onboarding`; shop admins can read `/api/onboarding/self`.
+- For paid steps, POST `/api/onboarding/{shop}/steps/{step}/plan`, then `/approve` with the returned `planHash` and `confirm: "APPROVE"`. `/execute` needs `mode: "live"`, an unexpired matching approval, and `ONBOARDING_LIVE_MODE=1`. The platform flag also gates `calls_go_live` and `sms_go_live`.
+- Set master Twilio credentials through Worker secrets (`TWILIO_MASTER_ACCOUNT_SID`, `TWILIO_MASTER_AUTH_TOKEN`), plus `INTEGRATION_ENCRYPTION_KEY` for encrypted shop credentials. Configure `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` and `ONBOARDING_TEST_CALLER_NUMBER` for the provider-approved onboarding setup. Never put subaccount auth tokens in onboarding state, events, or checkpoints.
+- Each live step takes a durable atomic claim before provider requests. Check `onboarding_executions` for the run ID, approved plan hash, sanitized results, and pending request. A running/interrupted or ambiguous request never times out into an automatic retry. An ordinary failed run resumes completed requests only under the same plan hash.
+- For a stuck `running`/`reconcile` claim, first verify the original run has stopped and inspect Twilio for the pending request's actual outcome. Reconcile resource IDs, encrypted credentials, and onboarding state before changing the claim. If no resource was created, an operator may clear `pending_key` and mark the claim `failed`; preserve its plan hash and completed results. If a resource exists, record its sanitized result and securely store any credentials before retrying the original plan. Never clear checkpoints or change a partially executed plan merely to retry: this can purchase duplicate resources. Completed provisioning is not automatically replayable.
+- Test-call checks require a connected outbound call and a matching inbound caller/number/time window with both Media Stream and xAI `session.updated` evidence for that same call/stream. A call duration or a successful forward alone cannot pass. Live Twilio/xAI and A2P approval still require provider-side verification.
+- Before phone go-live, ordinary calls forward to the shop's existing number; the configured test caller can reach the bot. Before SMS go-live, the shared SMS sending boundary blocks **all** real texts for onboarded shops, including staff notifications and automated follow-ups. Shops without onboarding records retain their existing behavior. Voice credential resolution is not SMS-gated.
+- The 15:00 UTC follow-up cron remains separate. The 08:00 UTC job also refreshes due knowledge sources and polls pending A2P submissions (polling requires live mode).
+
 ### Cloudflare R2 (`.github/workflows/deploy-r2.yml`)
 - Confirm R2 credentials and bucket variable/secret are configured.
 - Confirm upload artifact path is present before upload step.

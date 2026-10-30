@@ -16,6 +16,7 @@ function createDb({ beforeReconcile = () => {} } = {}) {
   sqlite.exec('CREATE TABLE subscriptions (id TEXT PRIMARY KEY);');
   sqlite.exec(readFileSync(new URL('../migrations/0008_integrations_support.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0017_sms_delivery_callbacks.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0018_onboarding_knowledge_handoff.sql', import.meta.url), 'utf8'));
   return {
     sqlite,
     get messages() {

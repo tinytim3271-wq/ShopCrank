@@ -313,7 +313,7 @@ export function createGrokVoiceSession({
           navigator.mediaDevices.getUserMedia(micConstraints),
           apiFetch('/ai/voice/client-secret', {
             method: 'POST',
-            body: JSON.stringify({ voice: voice || undefined, callerPhone: callerPhone || undefined }),
+            body: JSON.stringify({ persona: greetAsReceptionist ? 'front_desk' : 'tech_assistant', voice: voice || undefined, callerPhone: callerPhone || undefined }),
           }),
         ]);
       } catch (parallelErr) {
@@ -332,7 +332,7 @@ export function createGrokVoiceSession({
           stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           secretPayload = await apiFetch('/ai/voice/client-secret', {
             method: 'POST',
-            body: JSON.stringify({ voice: voice || undefined, callerPhone: callerPhone || undefined }),
+            body: JSON.stringify({ persona: greetAsReceptionist ? 'front_desk' : 'tech_assistant', voice: voice || undefined, callerPhone: callerPhone || undefined }),
           });
         } else {
           throw parallelErr;
@@ -501,7 +501,7 @@ export function createGrokVoiceSession({
           try {
             const response = await apiFetch('/ai/voice/tool', {
               method: 'POST',
-              body: JSON.stringify({ name: toolName, arguments: args, callerPhone }),
+              body: JSON.stringify({ persona: greetAsReceptionist ? 'front_desk' : 'tech_assistant', name: toolName, arguments: args, callerPhone }),
             });
             const toolResult = response?.result || {};
             if (toolName === 'calculate_service_estimate') {

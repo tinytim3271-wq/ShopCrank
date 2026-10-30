@@ -89,6 +89,11 @@ import {
 } from './grok-voice.mjs';
 import { AiChatSession } from './chat-session.mjs';
 import { AiVoiceSession } from './voice-session.mjs';
+import { handleTwilioAfterStream, handleTwilioHandoffAction } from './front-desk/handoff-routes.mjs';
+import { handleFrontDeskRoutes } from './front-desk/routes.mjs';
+import { handleKnowledgeRoutes } from './knowledge/routes.mjs';
+import { refreshDueKnowledgeSources } from './knowledge/web.mjs';
+import { handleOnboardingRoutes, pollPendingA2p } from './onboarding/routes.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
 import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
 import { FOLLOWUP_CRON, runScheduledFollowups, runShopFollowups } from './customer-followups.mjs';
@@ -1403,6 +1408,7 @@ async function runAssistantSessionTurn(env, context, body, message) {
   headers.set('X-MechPro-User-Id', context.userId);
   headers.set('X-ShopCrank-Ai-Session-Id', sessionId);
   headers.set('X-MechPro-Ai-Session-Id', sessionId);
+  headers.set('X-ShopCrank-User-Role', String(context.role || 'technician'));
   const sessionResponse = await stub.fetch(new Request('https://ai-session.internal/turn', {
     method: 'POST',
     headers,
@@ -3585,6 +3591,21 @@ async function route(request, env, analytics) {
       getSecret: getIntegrationSecret,
     });
   }
+  if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'after-stream') {
+    return handleTwilioAfterStream(request, env, decodeURIComponent(segments[3] || ''), {
+      getSecret: getIntegrationSecret,
+    });
+  }
+  if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'handoff') {
+    return handleTwilioHandoffAction(
+      request,
+      env,
+      decodeURIComponent(segments[3] || ''),
+      decodeURIComponent(segments[4] || ''),
+      segments[5] || '',
+      { getSecret: getIntegrationSecret },
+    );
+  }
   if (segments[0] === 'quickbooks' && segments[1] === 'callback') {
     return handleQuickBooksCallback(request, env, {
       getSecret: getIntegrationSecret,
@@ -3677,6 +3698,14 @@ async function route(request, env, analytics) {
     })(request, env, context, segments);
   }
   if (path === '/onboarding/start') return handleOnboarding(request, env, context, analytics);
+  if (segments[0] === 'onboarding') {
+    return handleOnboardingRoutes(request, env, context, segments, {
+      getSecret: getIntegrationSecret,
+      saveSecret: saveIntegrationSecret,
+    });
+  }
+  if (segments[0] === 'knowledge') return handleKnowledgeRoutes(request, env, context, segments, { listEntities });
+  if (segments[0] === 'front-desk') return handleFrontDeskRoutes(request, env, context, segments);
   if (path === '/payroll/sync') return handlePayroll(request, env, context, analytics);
   if (path === '/tax-report') return handleTaxReport(request, env, context);
   if (path === '/settings/ai') return handleShopAiSettings(request, env, context, { recordAudit: recordDiagnosticAudit });
@@ -3806,6 +3835,12 @@ export default {
       else await followups;
       return;
     }
+    const background = Promise.allSettled([
+      refreshDueKnowledgeSources(env).then(results => console.log(JSON.stringify({ message: 'knowledge source refresh cron', refreshed: results.length, failed: results.filter(item => !item.ok).length }))),
+      pollPendingA2p(env, { getSecret: getIntegrationSecret }).then(results => console.log(JSON.stringify({ message: 'a2p status poll cron', shops: results.length }))),
+    ]);
+    if (executionCtx?.waitUntil) executionCtx.waitUntil(background);
+    else await background;
     const run = runScheduledRevenueRecognitionExports(env)
       .then((results) => {
         console.log(JSON.stringify({
@@ -3837,7 +3872,7 @@ export default {
       // WebSocket upgrade), so their callbacks are answered on whatever host they hit.
       const providerCallback = (
         request.method === 'POST'
-        && /^\/api\/(?:payments\/webhook\/[^/]+|billing\/webhook|agentphone\/webhook\/[^/]+|messaging\/twilio\/webhook\/[^/]+|voice\/twilio\/(?:incoming|status)\/[^/]+)$/.test(requestUrl.pathname)
+        && /^\/api\/(?:payments\/webhook\/[^/]+|billing\/webhook|agentphone\/webhook\/[^/]+|messaging\/twilio\/webhook\/[^/]+|voice\/twilio\/(?:incoming|status|after-stream)\/[^/]+|voice\/twilio\/handoff\/[^/]+\/[^/]+\/(?:dial|voicemail))$/.test(requestUrl.pathname)
       ) || (
         request.method === 'GET'
         && request.headers.get('Upgrade')?.toLowerCase() === 'websocket'

@@ -16,6 +16,8 @@
     // then the optional platform ANTHROPIC_API_KEY secret, otherwise the included
     // Workers AI binding below.
     "AI_ENABLED": "1",
+    // Paid onboarding and both go-live switches require explicit operator enablement.
+    "ONBOARDING_LIVE_MODE": "0",
     "WORKERS_AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     // Default Claude model for shops that bring their own Anthropic key.
     "SHOP_ANTHROPIC_MODEL": "claude-sonnet-5",

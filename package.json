@@ -49,7 +49,7 @@
     "test:j2534": "node diagnostics/j2534-host-node/test/host.test.js",
     "merge:open-prs": "bash scripts/merge-open-prs.sh",
     "test:html": "node --test src/shared/html.test.mjs src/shared/form-fields.test.mjs src/shared/dates.test.mjs",
-    "test:chat": "node --test src/modules/chat/utils.test.mjs",
+    "test:chat": "node --test src/modules/chat/utils.test.mjs src/modules/grok-voice-client.test.mjs",
     "test:storage": "node --test src/modules/storage.test.mjs",
     "test:upload": "node --test src/modules/file-upload.test.mjs",
     "test:desktop": "node --test desktop/start-url.test.js desktop/auth-deep-link.test.js desktop/diagnostics-secrets.test.js desktop/diagnostics-bridge.test.js desktop/local-vault.test.js desktop/portable-data.test.js desktop/print-window.test.js",

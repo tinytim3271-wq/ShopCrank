@@ -142,12 +142,16 @@ test('executeGrokShopTool save_call_intake_and_estimate saves Customer, Vehicle,
   assert.deepEqual(types, ['customers', 'estimates', 'orders', 'vehicles']);
 
   const savedOrder = savedEntities.find((e) => e.entityType === 'orders').record;
+  const savedCustomer = savedEntities.find((e) => e.entityType === 'customers').record;
+  assert.equal(savedOrder.customerId, savedCustomer.id);
+  assert.equal(savedEntities.find(e => e.entityType === 'vehicles').record.customerId, savedCustomer.id);
   assert.equal(savedOrder.source, 'grok_voice_call');
   assert.equal(savedOrder.intake.customer.firstName, 'Maria');
   assert.equal(savedOrder.intake.vehicle.vin, '4T1G11AK5MU123456');
   assert.equal(savedOrder.intake.aiFilledFields['vehicle.vin'], true);
   assert.equal(savedOrder.intake.aiFilledFields['concern.description'], true);
   const savedEstimate = savedEntities.find((e) => e.entityType === 'estimates').record;
+  assert.equal(savedEstimate.customerId, savedCustomer.id);
   for (const record of [savedEstimate, savedOrder.estimate]) {
     assert.equal(record.laborRate, 160);
     assert.equal(record.taxRate, 8);
