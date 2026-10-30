@@ -41,6 +41,13 @@ import { notifyHandoffStaff } from '../front-desk/handoff-routes.mjs';
 import { aiPhoneBookingEnabled } from '../growth-flags.mjs';
 import { redactToolInput, serializeError } from '../redact.mjs';
 import { checkToolOutput } from '../health/schema.mjs';
+import {
+  parseYouTubeVideoId,
+  searchYouTubeVideos,
+  youtubeConfigured,
+  youtubeEmbedUrl,
+  youtubeWatchUrl,
+} from '../integrations/youtube.mjs';
 
 const fromGrok = name => {
   const tool = GROK_SHOP_TOOLS.find(item => item.name === name);
@@ -182,7 +189,26 @@ const FRONT_DESK_TOOLS = [
   },
 ];
 
-const TECH_TOOL_NAMES = new Set(TECH_TOOLS.map(tool => tool.name));
+// Video tools show thumbnails and a player on screen, so they exist only in the
+// text assistant: a spoken reply must never read out raw links.
+const TEXT_ONLY_TOOLS = [
+  {
+    name: 'search_youtube_videos',
+    description: 'Search YouTube for repair or how-to videos. The app shows the results as thumbnails with play buttons under your reply; mention videos by title and never paste their URLs.',
+    parameters: object({
+      query: str('What to search for, e.g. "2015 F-150 rear brake pad replacement".'),
+      maxResults: { type: 'integer', minimum: 1, maximum: 8, description: 'How many videos to return (default 5).' },
+    }, ['query']),
+  },
+  {
+    name: 'show_youtube_video',
+    description: 'Open a YouTube video in the in-app player, by video id from search_youtube_videos or a YouTube link the user gave. The player appears under your reply; do not paste the link.',
+    parameters: object({ video: str('YouTube video id or URL.'), title: str('Video title, if known.') }, ['video']),
+  },
+];
+
+const TECH_TOOL_NAMES = new Set([...TECH_TOOLS, ...TEXT_ONLY_TOOLS].map(tool => tool.name));
+const TEXT_ONLY_TOOL_NAMES = new Set(TEXT_ONLY_TOOLS.map(tool => tool.name));
 const ACCOUNTING_TOOL_NAMES = new Set(ACCOUNTING_TOOLS.map(tool => tool.name));
 const FRONT_DESK_TOOL_NAMES = new Set(FRONT_DESK_TOOLS.map(tool => tool.name));
 
@@ -191,12 +217,22 @@ export const PERSONA_TOOL_NAMES = Object.freeze({
   [PERSONAS.FRONT_DESK]: Object.freeze([...FRONT_DESK_TOOL_NAMES]),
 });
 export const ACCOUNTING_TOOL_LIST = Object.freeze([...ACCOUNTING_TOOL_NAMES]);
+export const TEXT_ONLY_TOOL_LIST = Object.freeze([...TEXT_ONLY_TOOL_NAMES]);
+export const ACCESS_DENIED_CHANNEL = 'Videos can only be shown in the text assistant on screen. Describe the repair instead, or suggest opening the ShopCrank assistant to watch a video.';
+
+/** "text" only when the caller says so; anything else is treated as voice (fail closed). */
+export function normalizeChannel(channel) {
+  return channel === 'text' ? 'text' : 'voice';
+}
 
 /**
  * Server-side authorization for one tool call. Independent of what the model
  * was shown, so prompt injection or a forged client request cannot widen it.
  */
-export function authorizeAssistantTool({ persona, role, name }) {
+export function authorizeAssistantTool({ persona, role, name, channel }) {
+  if (TEXT_ONLY_TOOL_NAMES.has(name) && normalizeChannel(channel) !== 'text') {
+    return { allowed: false, code: 'channel_denied', message: ACCESS_DENIED_CHANNEL };
+  }
   if (persona === PERSONAS.FRONT_DESK) {
     return FRONT_DESK_TOOL_NAMES.has(name)
       ? { allowed: true }
@@ -213,11 +249,18 @@ export function authorizeAssistantTool({ persona, role, name }) {
   return { allowed: false, code: 'unknown_tool', message: ACCESS_DENIED_PERSONA };
 }
 
-/** Tools shown to the model for a persona and role (a subset of what authorize allows). */
-export function toolsFor(persona, role, format = 'grok') {
+/**
+ * Tools shown to the model for a persona, role and channel (a subset of what
+ * authorize allows). Video tools appear only for channel "text"; YouTube search
+ * also needs YOUTUBE_API_KEY when `env` is given.
+ */
+export function toolsFor(persona, role, format = 'grok', { channel, env } = {}) {
+  const textOnly = normalizeChannel(channel) === 'text'
+    ? TEXT_ONLY_TOOLS.filter(tool => !env || tool.name !== 'search_youtube_videos' || youtubeConfigured(env))
+    : [];
   const list = persona === PERSONAS.FRONT_DESK
     ? FRONT_DESK_TOOLS
-    : [...TECH_TOOLS, ...(canUseAccounting(role) ? ACCOUNTING_TOOLS : [])];
+    : [...TECH_TOOLS, ...textOnly, ...(canUseAccounting(role) ? ACCOUNTING_TOOLS : [])];
   if (format === 'anthropic') return list.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.parameters }));
   return list.map(tool => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.parameters }));
 }
@@ -373,6 +416,36 @@ async function runTechTool(env, { shopId, role, userId, name, args, callerPhone,
       return { kind: 'quickbooks_sync_request', entity: args.entity, requiresUserReview: true, saved: false, message: `Ready to sync ${args.entity} to QuickBooks. Confirm it under Integrations → QuickBooks.` };
     case 'prepare_refund':
       return { kind: 'refund_draft', invoiceNumber: String(args.invoiceNumber || ''), amount: Number(args.amount) || 0, reason: String(args.reason || ''), requiresUserReview: true, saved: false };
+    case 'search_youtube_videos': {
+      if (!youtubeConfigured(env)) return { error: 'YouTube search is not set up for ShopCrank yet. Describe the repair instead.' };
+      try {
+        const found = await searchYouTubeVideos(env, { query: args.query, maxResults: args.maxResults });
+        return {
+          kind: 'youtube_search_results',
+          ...found,
+          displayedInApp: true,
+          note: found.videos.length
+            ? 'These videos are shown on screen with play buttons. Refer to them by title; do not paste URLs.'
+            : 'No embeddable videos matched. Suggest a different search.',
+        };
+      } catch (error) {
+        console.warn(JSON.stringify({ message: 'youtube search failed', tool: name, shopId, input: redactToolInput(args), error: serializeError(error) }));
+        return { error: `YouTube search failed${error.status === 403 ? ' (quota or key restriction)' : ''}. Describe the repair instead.` };
+      }
+    }
+    case 'show_youtube_video': {
+      const videoId = parseYouTubeVideoId(args.video);
+      if (!videoId) return { error: 'That is not a YouTube video id or link.' };
+      return {
+        kind: 'youtube_player',
+        videoId,
+        title: String(args.title || '').slice(0, 200),
+        url: youtubeWatchUrl(videoId),
+        embedUrl: youtubeEmbedUrl(videoId),
+        displayedInApp: true,
+        note: 'The player is shown on screen under your reply; do not paste the link.',
+      };
+    }
     case 'prepare_pricing_change':
       return { kind: 'pricing_change_draft', laborRate: Number.isFinite(Number(args.laborRate)) ? Number(args.laborRate) : null, note: String(args.note || ''), requiresUserReview: true, saved: false };
     default:
@@ -504,11 +577,13 @@ async function runFrontDeskTool(env, { shopId, name, args, callerPhone, callSid 
  * Every call is wrapped so failures are never silent: a throw is logged with the
  * tool name, the redacted input and the full error, then rethrown; an { error }
  * result and output that drifts from tool-contracts.mjs are logged as warnings.
+ * `channel` is "text" only for on-screen chat; voice callers omit it, which
+ * keeps text-only tools (video search and playback) unavailable to them.
  */
-export async function executeAssistantTool(env, { shopId, persona, role = '', userId = '', name, args = {}, callerPhone = '', callSid = '' }) {
-  const decision = authorizeAssistantTool({ persona, role, name });
+export async function executeAssistantTool(env, { shopId, persona, role = '', userId = '', name, args = {}, callerPhone = '', callSid = '', channel = 'voice' }) {
+  const decision = authorizeAssistantTool({ persona, role, name, channel });
   if (!decision.allowed) {
-    console.warn(JSON.stringify({ message: 'assistant tool denied', shopId, persona, role, tool: name, code: decision.code }));
+    console.warn(JSON.stringify({ message: 'assistant tool denied', shopId, persona, role, channel: normalizeChannel(channel), tool: name, code: decision.code }));
     return { error: 'access_denied', denied: true, code: decision.code, message: decision.message };
   }
   const safeArgs = args && typeof args === 'object' ? args : {};

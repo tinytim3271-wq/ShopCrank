@@ -10,9 +10,18 @@
 // Shapes use a small JSON-Schema subset (type, properties, required, items, enum,
 // anyOf, additionalProperties); see ./schema.mjs.
 
-export const TOOL_CONTRACTS_VERSION = '1.0.0';
+export const TOOL_CONTRACTS_VERSION = '1.1.0';
 
 export const TOOL_CONTRACTS_CHANGELOG = Object.freeze([
+  {
+    version: '1.1.0',
+    date: '2026-10-30',
+    changes: [
+      'Added search_youtube_videos: { kind: "youtube_search_results", query, videos: [{ videoId, title, channelTitle, publishedAt, thumbnailUrl, url }], displayedInApp, note }.',
+      'Added show_youtube_video: { kind: "youtube_player", videoId, title, url, embedUrl, displayedInApp, note }.',
+      'Both are text-channel only (tech assistant chat); voice sessions never see or run them.',
+    ],
+  },
   {
     version: '1.0.0',
     date: '2026-10-30',
@@ -53,7 +62,8 @@ const FRONT_DESK = { persona: 'front_desk' };
 // `dependencies` names what a tool needs at runtime (health-check dependency ids).
 // `canary` is a read-only call the health check makes to compare live output with
 // `returns`; tools that write records or book time have no canary. `network: true`
-// canaries reach a third party and are skipped in dry runs.
+// canaries reach a third party and are skipped in dry runs; `requires` names the
+// env var without which the canary reports not_configured; `channel` defaults to voice.
 export const TOOL_CONTRACTS = Object.freeze({
   // --- Tech assistant -------------------------------------------------------
   get_shop_info: {
@@ -162,6 +172,28 @@ export const TOOL_CONTRACTS = Object.freeze({
     dependencies: ['d1'],
     returns: obj({ saved: B, id: S, permission: S }, ['saved', 'id']),
     canary: null,
+  },
+
+  // --- Tech assistant, text channel only -----------------------------------
+  search_youtube_videos: {
+    since: '1.1.0',
+    summary: 'Embeddable, safe-search YouTube videos for a query; the chat UI shows thumbnails with play buttons.',
+    dependencies: ['youtube'],
+    returns: obj({
+      kind: literal('youtube_search_results'),
+      query: S,
+      videos: arr(obj({ videoId: S, title: S, channelTitle: S, publishedAt: S, thumbnailUrl: S, url: S })),
+      displayedInApp: { type: 'boolean', enum: [true] },
+      note: S,
+    }),
+    canary: { ...TECH, channel: 'text', args: { query: 'brake pad replacement', maxResults: 1 }, network: true, requires: 'YOUTUBE_API_KEY' },
+  },
+  show_youtube_video: {
+    since: '1.1.0',
+    summary: 'Player directive for one YouTube video; the chat UI renders the embedded player.',
+    dependencies: [],
+    returns: obj({ kind: literal('youtube_player'), videoId: S, title: S, url: S, embedUrl: S, displayedInApp: { type: 'boolean', enum: [true] }, note: S }),
+    canary: { ...TECH, channel: 'text', args: { video: 'https://youtu.be/dQw4w9WgXcQ' } },
   },
 
   // --- Accounting (tech assistant, accounting roles) -------------------------

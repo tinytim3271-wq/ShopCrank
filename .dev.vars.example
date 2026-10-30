@@ -156,6 +156,12 @@ AI_ENABLED=1
 # STRIPE_PRICE_FOUNDING_PRO_MONTHLY=price_...
 # STRIPE_PRICE_FOUNDING_PRO_ANNUAL=price_...
 
+# YouTube Data API v3 key for the text assistant's video search tool (Google Cloud
+# API key restricted to "YouTube Data API v3"). Unset hides search_youtube_videos.
+# Each search costs 100 of the default 10,000 daily quota units.
+# Production: npx wrangler secret put YOUTUBE_API_KEY
+# YOUTUBE_API_KEY=replace-with-your-youtube-data-api-key
+
 # Support notifications and public service status.
 # SUPPORT_EMAIL_TO=support@shopcrank.com
 # SUPPORT_EMAIL_FROM=support@shopcrank.com

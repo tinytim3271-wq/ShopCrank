@@ -103,8 +103,8 @@ test('every non-network canary returns output that matches its contract on a rea
   const failures = [];
   for (const [name, contract] of Object.entries(TOOL_CONTRACTS)) {
     if (!contract.canary || contract.canary.network) continue;
-    const { persona, role = '', args } = contract.canary;
-    const result = await executeAssistantTool(env, { shopId: 'healthcheck-canary', persona, role, name, args });
+    const { persona, role = '', args, channel } = contract.canary;
+    const result = await executeAssistantTool(env, { shopId: 'healthcheck-canary', persona, role, name, args, channel });
     const check = checkToolOutput(name, result);
     if (check.kind !== 'ok') failures.push({ name, kind: check.kind, issues: check.issues, result });
   }

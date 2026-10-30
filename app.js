@@ -5388,6 +5388,70 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/assistant-media.js
+  function speakableText(text2) {
+    return String(text2 || "").replace(URL_IN_TEXT, (url) => url.match(/[.,;:!?]+$/)?.[0] || "").replace(/[ \t]{2,}/g, " ").replace(/\s+([.,;:!?])/g, "$1").trim();
+  }
+  function createYouTubePlayer(doc, videoId, title = "", { autoplay = false } = {}) {
+    if (!isYouTubeVideoId(videoId)) return null;
+    const wrapper = doc.createElement("div");
+    wrapper.className = "assistant-video-player";
+    const frame = doc.createElement("iframe");
+    frame.src = youtubeEmbedUrl(videoId, { autoplay });
+    frame.title = String(title || "YouTube video");
+    frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+    frame.setAttribute("allow", "accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen");
+    frame.setAttribute("allowfullscreen", "");
+    wrapper.append(frame);
+    return wrapper;
+  }
+  function videoCard(video, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    if (!isYouTubeVideoId(video?.videoId)) return "";
+    const thumb = THUMBNAIL.test(video.thumbnailUrl || "") ? `<img src="${escapeHtml4(video.thumbnailUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="assistant-video-placeholder">${icon2("play", 22)}</span>`;
+    return `<article class="assistant-video-card" data-youtube-card="${video.videoId}"><button type="button" class="assistant-video-thumb" data-youtube-play="${video.videoId}" data-youtube-title="${escapeHtml4(video.title || "")}" aria-label="Play ${escapeHtml4(video.title || "video")}">${thumb}<span class="assistant-video-play">${icon2("play", 18)}</span></button><div class="assistant-video-meta"><b>${escapeHtml4(video.title || "YouTube video")}</b><small>${escapeHtml4(video.channelTitle || "")}</small><a href="${youtubeWatchUrl(video.videoId)}" target="_blank" rel="noopener noreferrer">${icon2("external-link", 12)} Open on YouTube</a></div></article>`;
+  }
+  function assistantMediaHtml(media, helpers) {
+    const blocks = (Array.isArray(media) ? media : []).map((item) => {
+      if (item?.kind === "youtube_search_results") {
+        const cards = (item.videos || []).map((video) => videoCard(video, helpers)).join("");
+        return cards ? `<div class="assistant-video-grid">${cards}</div>` : "";
+      }
+      if (item?.kind === "youtube_player" && isYouTubeVideoId(item.videoId)) {
+        return `<div class="assistant-video-card is-playing" data-youtube-card="${item.videoId}"><div data-youtube-mount="${item.videoId}" data-youtube-title="${helpers.escapeHtml(item.title || "")}"></div><div class="assistant-video-meta"><b>${helpers.escapeHtml(item.title || "YouTube video")}</b><a href="${youtubeWatchUrl(item.videoId)}" target="_blank" rel="noopener noreferrer">${helpers.icon("external-link", 12)} Open on YouTube</a></div></div>`;
+      }
+      return "";
+    }).join("");
+    return blocks ? `<div class="assistant-media">${blocks}</div>` : "";
+  }
+  function bindAssistantMedia(root) {
+    if (!root?.querySelectorAll) return;
+    const doc = root.ownerDocument || root;
+    root.querySelectorAll("[data-youtube-mount]").forEach((mount) => {
+      if (mount.firstChild) return;
+      const player = createYouTubePlayer(doc, mount.dataset.youtubeMount, mount.dataset.youtubeTitle);
+      if (player) mount.append(player);
+    });
+    root.querySelectorAll("[data-youtube-play]").forEach((button) => {
+      button.onclick = () => {
+        const player = createYouTubePlayer(doc, button.dataset.youtubePlay, button.dataset.youtubeTitle, { autoplay: true });
+        if (!player) return;
+        button.closest("[data-youtube-card]")?.classList.add("is-playing");
+        button.replaceWith(player);
+      };
+    });
+  }
+  var VIDEO_ID, THUMBNAIL, URL_IN_TEXT, isYouTubeVideoId, youtubeWatchUrl, youtubeEmbedUrl;
+  var init_assistant_media = __esm({
+    "src/modules/assistant-media.js"() {
+      VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+      THUMBNAIL = /^https:\/\/i\.ytimg\.com\/[^\s"'<>]+$/;
+      URL_IN_TEXT = /\b(?:https?:\/\/|www\.)[^\s<>()]+/gi;
+      isYouTubeVideoId = (value2) => VIDEO_ID.test(String(value2 || ""));
+      youtubeWatchUrl = (videoId) => `https://www.youtube.com/watch?v=${videoId}`;
+      youtubeEmbedUrl = (videoId, { autoplay = false } = {}) => `https://www.youtube-nocookie.com/embed/${videoId}?rel=0${autoplay ? "&autoplay=1" : ""}`;
+    }
+  });
+
   // src/modules/health-check.js
   function badge2(status, escapeHtml4) {
     return `<span class="badge ${STATUS_BADGE2[status] ?? ""}">${escapeHtml4(STATUS_LABEL[status] || status || "")}</span>`;
@@ -11757,7 +11821,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
         append("assistant", answer);
         if (!assistantPaused && "speechSynthesis" in window) {
           speechSynthesis.cancel();
-          speechSynthesis.speak(new SpeechSynthesisUtterance(answer));
+          speechSynthesis.speak(new SpeechSynthesisUtterance(speakableText(answer)));
         }
       } catch (error) {
         append("assistant", error.message || "The live assistant is unavailable.");
@@ -14382,7 +14446,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function assistantMessageMarkup(item, index) {
     const actions = (item.actions || []).map((action, actionIndex) => action.kind === "estimate_work_order_draft" ? `<button type="button" class="assistant-draft-action" data-assistant-draft="${index}:${actionIndex}">${icon("clipboard-plus", 14)} Save estimate & fill work order</button>` : "").join("");
-    return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${actions}</article>`;
+    return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${assistantMediaHtml(item.media, { escapeHtml, icon })}${actions}</article>`;
   }
   function assistantProviderLabel(provider = "") {
     const value2 = String(provider || "").trim().toLowerCase();
@@ -16464,6 +16528,7 @@ ${line}`.trim();
       list.innerHTML = assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
       list.scrollTop = list.scrollHeight;
       bindAssistantDraftActions();
+      bindAssistantMedia(list);
     };
     activeGrokSession = createGrokVoiceSession({
       apiFetch,
@@ -16582,6 +16647,7 @@ ${line}`.trim();
       init_ai_workflow();
       init_customer_intake();
       init_vehicle_key_license();
+      init_assistant_media();
       init_health_check();
       init_sms_inbox();
       init_inspection_ratings();
@@ -18039,9 +18105,10 @@ ${line}`.trim();
           list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
           list.scrollTop = list.scrollHeight;
           bindAssistantDraftActions();
+          bindAssistantMedia(list);
         };
-        const append = (role, content, actions = []) => {
-          assistantConversation.push({ role, content, actions });
+        const append = (role, content, actions = [], media = []) => {
+          assistantConversation.push({ role, content, actions, media });
           renderMessages();
         };
         form.onsubmit = async (event) => {
@@ -18059,10 +18126,10 @@ ${line}`.trim();
             assistantActiveProvider = String(result.provider || assistantActiveProvider || "gemini").trim().toLowerCase();
             renderAssistantProvider();
             const answer = result.message || "The assistant did not return an answer.";
-            append("assistant", answer, result.actions || []);
+            append("assistant", answer, result.actions || [], result.media || []);
             if (!assistantPaused && "speechSynthesis" in window) {
               speechSynthesis.cancel();
-              speechSynthesis.speak(new SpeechSynthesisUtterance(answer));
+              speechSynthesis.speak(new SpeechSynthesisUtterance(speakableText(answer)));
             }
           } catch (error) {
             append("assistant", error.message || "The assistant is unavailable.");
@@ -18109,6 +18176,7 @@ ${line}`.trim();
           }
         });
         bindAssistantDraftActions();
+        bindAssistantMedia(document.querySelector("#assistant-messages"));
       };
       bindReferenceEstimatesCore = bindEstimateActions;
       bindEstimateActions = function() {
