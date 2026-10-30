@@ -36,6 +36,16 @@ export async function listOnboardings(env) {
   return (result.results || []).map(rowToOnboarding);
 }
 
+export async function listPendingA2pOnboardings(env) {
+  const result = await env.DB.prepare(`
+    SELECT * FROM shop_onboarding
+    WHERE NULLIF(CASE WHEN json_valid(state_json) THEN json_extract(state_json, '$.a2p.brandSid') END, '') IS NOT NULL
+      AND COALESCE(UPPER(CASE WHEN json_valid(state_json) THEN json_extract(state_json, '$.a2p.campaignStatus') END), '') != 'VERIFIED'
+    ORDER BY started_at ASC
+  `).all();
+  return (result.results || []).map(rowToOnboarding);
+}
+
 export async function createOnboarding(env, { shopId, intake, actor, startedAt = new Date().toISOString() }) {
   await env.DB.prepare(`
     INSERT INTO shop_onboarding (shop_id, status, intake_json, state_json, started_at, created_by, updated_at)

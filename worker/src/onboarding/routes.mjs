@@ -2,7 +2,7 @@
 // own admins can read their progress at /api/onboarding/self.
 
 import { HttpError, json, requestJson } from '../http.mjs';
-import { createOnboarding, getOnboarding, listOnboardingEvents, listOnboardings, recordOnboardingEvent, saveOnboarding } from './store.mjs';
+import { createOnboarding, getOnboarding, listOnboardingEvents, listOnboardings, listPendingA2pOnboardings, recordOnboardingEvent, saveOnboarding } from './store.mjs';
 import { validateIntake } from './intake.mjs';
 import { STEP_BY_ID } from './timeline.mjs';
 import {
@@ -126,9 +126,8 @@ export async function handleOnboardingRoutes(request, env, context, segments, { 
 export async function pollPendingA2p(env, { getSecret, fetcher = fetch } = {}) {
   if (String(env?.ONBOARDING_LIVE_MODE || '') !== '1' || !env?.DB) return [];
   const results = [];
-  for (const onboarding of await listOnboardings(env)) {
+  for (const onboarding of await listPendingA2pOnboardings(env)) {
     const a2p = onboarding.state.a2p || {};
-    if (!a2p.brandSid || String(a2p.campaignStatus || '').toUpperCase() === 'VERIFIED') continue;
     try {
       const outcome = await pollA2pStatus(env, onboarding, { mode: 'live', getSecret, fetcher });
       results.push({ shopId: onboarding.shopId, changed: outcome.changed?.length || 0 });
