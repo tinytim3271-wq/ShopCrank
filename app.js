@@ -7322,6 +7322,60 @@ button{margin-top:12px;padding:8px 14px}
     }
   });
 
+  // src/modules/payment-import.js
+  function skippedTable(skippedRows, { escapeHtml: escapeHtml4 }) {
+    if (!skippedRows?.length) return "";
+    const body = skippedRows.map((row) => `<tr><td>${row.line}</td><td class="mono">${escapeHtml4(row.invoiceNumber || "\u2014")}</td><td>${escapeHtml4(row.reason)}</td></tr>`).join("");
+    return `<div class="import-errors payment-import-skipped"><strong>${skippedRows.length} row${skippedRows.length === 1 ? "" : "s"} will be skipped</strong><div class="data-panel"><table><thead><tr><th>Line</th><th>Invoice</th><th>Reason</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+  }
+  function rowsTable(rows, { escapeHtml: escapeHtml4, money: money5 }) {
+    const body = rows.map((row) => `<tr${row.warnings.length ? ' class="has-warning"' : ""}><td>${row.line}</td><td class="mono"><b>${escapeHtml4(row.invoiceNumber)}</b></td><td>${escapeHtml4(row.customer || "\u2014")}</td><td>${escapeHtml4(row.date)}</td><td>${escapeHtml4(METHOD_LABELS[row.method] || row.method)}${row.reference ? `<small>${escapeHtml4(row.reference)}</small>` : ""}</td><td><b>${money5(row.amount)}</b></td><td>${row.warnings.map((warning) => `<span class="payment-import-warning">${escapeHtml4(warning)}</span>`).join("") || "\u2014"}</td></tr>`).join("");
+    return `<div class="data-panel"><table><thead><tr><th>Line</th><th>Invoice</th><th>Customer</th><th>Received</th><th>Method</th><th>Amount</th><th>Warnings</th></tr></thead><tbody>${body || '<tr><td colspan="7">No rows in this file can be posted.</td></tr>'}</tbody></table></div>`;
+  }
+  function paymentImportPanelHtml(state2, helpers = {}) {
+    const { escapeHtml: escapeHtml4, icon: icon2, money: money5 } = { ...defaults, ...helpers };
+    const head = `<div class="statement-head"><div><div class="eyebrow">After an invoice migration</div><h2>Import payments</h2><p>Upload a CSV of payments for invoices already in ShopCrank. Each row is checked against the invoice balance and existing payments, and nothing is saved until you confirm.</p></div>${icon2("banknote", 20)}</div>`;
+    const columns = '<p class="import-columns">Required: invoice_number, amount, date_received, payment_method \xB7 Optional: reference, note. A reference (check number, card authorization) stops the same payment from being posted twice.</p>';
+    const picker = `<input id="payment-import-input" type="file" accept=".csv,text/csv" hidden/><div class="import-preview-actions"><button class="secondary" id="payment-import-choose" ${state2?.busy ? "disabled" : ""}>${icon2("upload", 14)} Choose payments CSV</button><button class="template-link" id="payment-import-template">${icon2("download", 13)} Template</button></div>`;
+    const error = state2?.error ? `<p class="login-error">${escapeHtml4(state2.error)}</p>` : "";
+    if (state2?.result) {
+      const result = state2.result;
+      const posted = result.mode === "commit";
+      const title = posted ? `${result.posted} payment${result.posted === 1 ? "" : "s"} posted` : `Dry run: ${result.wouldPost} payment${result.wouldPost === 1 ? "" : "s"} would post`;
+      const detail = posted ? `${money5(result.totals.amount)} across ${result.invoicesUpdated} invoice${result.invoicesUpdated === 1 ? "" : "s"} \xB7 ${result.skipped} row${result.skipped === 1 ? "" : "s"} skipped. Logged to the audit trail.` : `${money5(result.totals.amount)} validated \xB7 ${result.skipped} row${result.skipped === 1 ? "" : "s"} would be skipped. Nothing was saved.`;
+      const actions = posted ? `<button class="primary" id="payment-import-done">${icon2("check", 15)} Done</button>` : `<button class="secondary" id="payment-import-cancel">Cancel</button><button class="primary" id="payment-import-commit" ${state2.busy || !result.wouldPost ? "disabled" : ""}>${icon2("check", 15)} Post ${result.wouldPost} payments</button>`;
+      return `<section class="settings-panel payment-import">${head}<div class="messaging-status ${posted ? "ready" : "idle"}">${icon2(posted ? "circle-check" : "flask-conical", 17)}<div><strong>${escapeHtml4(title)}</strong><span>${escapeHtml4(detail)}</span></div></div>${error}<div class="import-preview-actions">${actions}</div>${skippedTable(result.skippedRows, { escapeHtml: escapeHtml4 })}</section>`;
+    }
+    if (state2?.preview) {
+      const { totals, rows, skippedRows } = state2.preview;
+      const summary = `<div><div class="eyebrow">${escapeHtml4(state2.fileName || "payments.csv")}</div><h3>${totals.valid} of ${totals.rows} payment${totals.rows === 1 ? "" : "s"} ready \xB7 ${money5(totals.amount)}</h3><p>${totals.invoices} invoice${totals.invoices === 1 ? "" : "s"}${totals.warnings ? ` \xB7 ${totals.warnings} with warnings to review` : ""}${totals.skipped ? ` \xB7 ${totals.skipped} skipped` : ""}. Posting is all or nothing.</p></div>`;
+      const actions = `<div class="import-preview-actions"><button class="secondary" id="payment-import-cancel" ${state2.busy ? "disabled" : ""}>Cancel</button><button class="secondary" id="payment-import-dry-run" ${state2.busy || !totals.valid ? "disabled" : ""}>${icon2("flask-conical", 14)} Dry run</button><button class="primary" id="payment-import-commit" ${state2.busy || !totals.valid ? "disabled" : ""}>${icon2("check", 15)} Post ${totals.valid} payments</button></div>`;
+      return `<section class="settings-panel payment-import">${head}${error}<div class="import-preview">${summary}${actions}</div>${rowsTable(rows, { escapeHtml: escapeHtml4, money: money5 })}${skippedTable(skippedRows, { escapeHtml: escapeHtml4 })}</section>`;
+    }
+    return `<section class="settings-panel payment-import">${head}${columns}${error}${picker}${state2?.busy ? '<p class="ops-note">Checking the file\u2026</p>' : ""}</section>`;
+  }
+  function paymentImportConfirmText(preview) {
+    const { totals } = preview;
+    return `Post ${totals.valid} payment${totals.valid === 1 ? "" : "s"} totaling $${Number(totals.amount).toFixed(2)} to ${totals.invoices} invoice${totals.invoices === 1 ? "" : "s"}?${totals.skipped ? ` ${totals.skipped} row${totals.skipped === 1 ? "" : "s"} will be skipped.` : ""} This cannot be undone from the import screen.`;
+  }
+  var PAYMENT_IMPORT_ROLES, PAYMENT_IMPORT_TEMPLATE, METHOD_LABELS, defaults;
+  var init_payment_import = __esm({
+    "src/modules/payment-import.js"() {
+      PAYMENT_IMPORT_ROLES = ["owner", "admin"];
+      PAYMENT_IMPORT_TEMPLATE = [
+        "invoice_number,amount,date_received,payment_method,reference,note",
+        "INV-2042,108.25,2026-09-15,check,CHK-1182,",
+        "INV-2043,50.00,09/18/2026,card,AUTH-55821,Deposit"
+      ].join("\n");
+      METHOD_LABELS = { cash: "Cash", check: "Check", card: "Card", bank: "Bank / ACH", processor: "Processor", other: "Other" };
+      defaults = {
+        escapeHtml: (value2) => String(value2 ?? ""),
+        icon: () => "",
+        money: (value2) => `$${Number(value2 || 0).toFixed(2)}`
+      };
+    }
+  });
+
   // src/modules/card-terminal.js
   function recoveryWriteup({ customer, vehicle, when = RECOVERY_WHEN } = {}) {
     const name = String(customer || "").trim();
@@ -16145,6 +16199,24 @@ ${line}`.trim();
     toast(scanEstimateSummary({ matches, lines: fresh }));
     render();
   }
+  async function runPaymentImport(mode, extra = {}) {
+    const current = paymentImport;
+    if (!current?.csv) return;
+    paymentImport = { ...current, busy: true, error: "" };
+    render();
+    try {
+      const result = await apiFetch("/payments/import", { method: "POST", body: JSON.stringify({ csv: current.csv, fileName: current.fileName, mode, ...extra }) });
+      if (result.mode === "preview") paymentImport = { ...current, busy: false, error: "", preview: result, result: null };
+      else paymentImport = { ...current, busy: false, error: "", result };
+      if (result.mode === "commit") {
+        toast(`${result.posted} payment${result.posted === 1 ? "" : "s"} posted`);
+        await Promise.all([loadInvoicesFromApi(), loadPaymentsFromApi(), loadOrdersFromApi()]);
+      }
+    } catch (error) {
+      paymentImport = { ...current, busy: false, error: error.message || "The payment import failed", ...error.status === 409 ? { preview: null, result: null } : {} };
+    }
+    render();
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -16326,7 +16398,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -16370,6 +16442,7 @@ ${line}`.trim();
       init_mutation_queue_store();
       init_shop_entity_load();
       init_payments();
+      init_payment_import();
       init_card_terminal();
       init_help_menu();
       init_print_document();
@@ -18676,6 +18749,53 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         bindImportMapperCore();
         document.querySelector("#import-source")?.addEventListener("change", (event) => {
           importSource = event.target.value;
+        });
+      };
+      paymentImport = null;
+      canImportPayments = () => PAYMENT_IMPORT_ROLES.includes(currentUser()?.role || "") && !isOfflineDesktop();
+      importsPaymentCore = imports;
+      imports = function() {
+        const page = importsPaymentCore();
+        if (!canImportPayments()) return page;
+        return page.replace("</main>", `${paymentImportPanelHtml(paymentImport, { escapeHtml, icon, money: money4 })}</main>`);
+      };
+      bindPaymentImportCore = bind;
+      bind = function() {
+        bindPaymentImportCore();
+        if (state.route !== "imports" || !canImportPayments()) return;
+        const input = document.querySelector("#payment-import-input");
+        document.querySelector("#payment-import-choose")?.addEventListener("click", () => input?.click());
+        input?.addEventListener("change", async () => {
+          const file = input.files?.[0];
+          if (!file) return;
+          if (file.size > 512 * 1024) {
+            paymentImport = { error: "The CSV file is larger than 512 KB; split it into smaller files" };
+            render();
+            return;
+          }
+          paymentImport = { fileName: file.name, csv: await file.text() };
+          await runPaymentImport("preview");
+        });
+        document.querySelector("#payment-import-template")?.addEventListener("click", () => {
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(new Blob([PAYMENT_IMPORT_TEMPLATE], { type: "text/csv" }));
+          link.download = "shopcrank-payments-template.csv";
+          link.click();
+          URL.revokeObjectURL(link.href);
+        });
+        document.querySelector("#payment-import-cancel")?.addEventListener("click", () => {
+          paymentImport = null;
+          render();
+        });
+        document.querySelector("#payment-import-done")?.addEventListener("click", () => {
+          paymentImport = null;
+          render();
+        });
+        document.querySelector("#payment-import-dry-run")?.addEventListener("click", () => void runPaymentImport("commit", { dryRun: true, fingerprint: paymentImport?.preview?.fingerprint }));
+        document.querySelector("#payment-import-commit")?.addEventListener("click", () => {
+          const preview = paymentImport?.preview;
+          if (!preview?.fingerprint || !confirm(paymentImportConfirmText(preview))) return;
+          void runPaymentImport("commit", { fingerprint: preview.fingerprint });
         });
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
