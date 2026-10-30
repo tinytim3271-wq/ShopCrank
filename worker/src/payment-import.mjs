@@ -356,23 +356,33 @@ async function buildImportWrites(env, context, result, orders, fileName, now) {
     }
     const summary = paymentStatus(entry.total, entry.paid);
     const lastReceived = [...entry.prior, ...entry.batch].map(item => item.receivedAt).filter(Boolean).sort().at(-1);
+    const legacyCloseout = invoice.record.paymentImportLegacyCloseout
+      || (entry.legacyPaid ? {
+        paidAt: invoice.record.paidAt,
+        closedAt: invoice.record.closedAt,
+        closeoutSource: invoice.record.closeoutSource,
+      } : null);
     // Keep the closeout dates an already-paid migrated invoice came in with, so
     // filed tax periods do not move.
     const paidAt = summary.status === 'paid'
-      ? (entry.legacyPaid && invoice.record.paidAt) || lastReceived
+      ? (legacyCloseout?.paidAt || lastReceived)
       : invoice.record.paidAt;
     const closedAt = summary.status === 'paid'
-      ? (entry.legacyPaid && invoice.record.closedAt) || lastReceived
+      ? (legacyCloseout?.closedAt || lastReceived)
       : invoice.record.closedAt;
+    const closeoutSource = summary.status === 'paid'
+      ? legacyCloseout?.closeoutSource || (legacyCloseout?.closedAt ? invoice.record.closeoutSource : 'payment_date')
+      : invoice.record.closeoutSource;
     writes.push(entityWriteStatement(env, context, 'invoices', invoice.record.id, {
       ...invoice.record,
+      ...(legacyCloseout ? { paymentImportLegacyCloseout: legacyCloseout } : {}),
       paidAmount: summary.paid,
       balanceDue: summary.balance,
       paymentStatus: summary.status,
       status: summary.status,
       paidAt,
       closedAt,
-      closeoutSource: summary.status === 'paid' && !(entry.legacyPaid && invoice.record.closedAt) ? 'payment_date' : invoice.record.closeoutSource,
+      closeoutSource,
     }, invoice.row, now).statement);
     guard.push({ type: 'invoices', id: invoice.record.id, updatedAt: invoice.row.updated_at });
     const order = invoice.record.ro ? orders.get(invoice.record.ro) : null;

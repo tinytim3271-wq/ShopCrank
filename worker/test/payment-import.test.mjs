@@ -141,6 +141,46 @@ test('commit posts every payment, updates balances and logs the audit entry in o
   assert.ok(again.skippedRows.some(row => row.line === 2 && /already recorded/.test(row.reason)));
 });
 
+test('partial imports preserve migrated closeout dates and provenance when a later import completes payment', async () => {
+  const { db, env } = setup();
+  const paidAt = '2025-03-15T12:00:00.000Z';
+  const closedAt = '2025-03-17T12:00:00.000Z';
+  db.sqlite.prepare('UPDATE entities SET data_json = json_set(data_json, ?, ?, ?, ?, ?, ?) WHERE entity_id = ?')
+    .run('$.paidAt', paidAt, '$.closedAt', closedAt, '$.closeoutSource', 'source_closeout_date', 'inv-2');
+
+  const partialCsv = 'invoice,amount,date,method\nINV-1002,40,2026-09-05,cash';
+  const firstPreview = await preview(env, partialCsv);
+  await importPayments(env, context, {
+    csv: partialCsv,
+    fileName: 'first.csv',
+    mode: 'commit',
+    fingerprint: firstPreview.fingerprint,
+  });
+
+  let invoice = rows(db).find(row => row.type === 'invoices' && row.id === 'inv-2');
+  assert.equal(invoice.paymentStatus, 'partial');
+  assert.deepEqual(invoice.paymentImportLegacyCloseout, {
+    paidAt,
+    closedAt,
+    closeoutSource: 'source_closeout_date',
+  });
+
+  const completionCsv = 'invoice,amount,date,method\nINV-1002,80,2026-10-05,cash';
+  const completionPreview = await preview(env, completionCsv);
+  await importPayments(env, context, {
+    csv: completionCsv,
+    fileName: 'second.csv',
+    mode: 'commit',
+    fingerprint: completionPreview.fingerprint,
+  });
+
+  invoice = rows(db).find(row => row.type === 'invoices' && row.id === 'inv-2');
+  assert.equal(invoice.paymentStatus, 'paid');
+  assert.equal(invoice.paidAt, paidAt);
+  assert.equal(invoice.closedAt, closedAt);
+  assert.equal(invoice.closeoutSource, 'source_closeout_date');
+});
+
 test('dry run validates and logs but writes no payments', async () => {
   const { db, env } = setup();
   const before = rows(db);
