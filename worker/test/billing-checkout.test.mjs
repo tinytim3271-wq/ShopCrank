@@ -120,3 +120,46 @@ test('admin and super_admin billing portals use only the authenticated tenant cu
     globalThis.fetch = originalFetch;
   }
 });
+
+test('configured cross-origin frontend controls checkout defaults, redirects and portal returns', async () => {
+  const frontend = 'https://frontend.example.test';
+  const env = { ...billingEnv(), ALLOWED_ORIGINS: `https://another.example.test, ${frontend}` };
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, params: new URLSearchParams(options.body) });
+    return Response.json({ url: 'https://stripe.example.test/session' });
+  };
+  const request = (action, body = {}, requestingOrigin = frontend) => {
+    const result = billingRequest(action, body);
+    result.headers.set('Origin', requestingOrigin);
+    return result;
+  };
+  try {
+    assert.equal((await worker.fetch(request('checkout', {
+      successUrl: `${frontend}/app?paid=1`, cancelUrl: `${frontend}/pricing`,
+    }), env)).status, 200);
+    assert.equal(calls[0].params.get('success_url'), `${frontend}/app?paid=1`);
+    assert.equal(calls[0].params.get('cancel_url'), `${frontend}/pricing`);
+    assert.equal((await worker.fetch(request('checkout'), env)).status, 200);
+    assert.equal(calls[1].params.get('success_url'), `${frontend}/?billing=success`);
+    assert.equal(calls[1].params.get('cancel_url'), `${frontend}/?billing=cancelled`);
+    assert.equal((await worker.fetch(request('portal'), env)).status, 200);
+    assert.equal(calls[2].params.get('return_url'), `${frontend}/app`);
+    for (const successUrl of [
+      `${origin}/paid`, 'https://another.example.test/paid',
+      `${frontend}.attacker.example/paid`, 'http://frontend.example.test/paid',
+      `https://frontend.example.test@attacker.example/paid`, 'javascript:alert(1)', 'data:text/html,test',
+    ]) {
+      assert.equal((await worker.fetch(request('checkout', { successUrl }), env)).status, 400, successUrl);
+    }
+    assert.equal(calls.length, 3);
+    for (const hostile of ['https://attacker.example', `${frontend}.attacker.example`, 'null', 'javascript:alert(1)']) {
+      assert.equal((await worker.fetch(request('checkout', { successUrl: `${frontend}/paid` }, hostile), env)).status, 400);
+      assert.equal((await worker.fetch(request('portal', {}, hostile), env)).status, 200);
+      assert.equal(calls.at(-1).params.get('return_url'), `${origin}/app`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

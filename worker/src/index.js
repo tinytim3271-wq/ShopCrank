@@ -49,7 +49,7 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
-import { handleFiles as handleFileRoute } from './routes/files.mjs';
+import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
@@ -509,7 +509,7 @@ export async function putEntity(
   body,
   expectedUpdatedAt = null,
   createdBy = context.userId,
-  { requireUnlockedEstimate = false } = {},
+  { requireUnlockedEstimate = false, expectedOrderSnapshot } = {},
 ) {
   const now = new Date().toISOString();
   const existing = await env.DB.prepare(
@@ -540,6 +540,10 @@ export async function putEntity(
           NOT IN ('approved', 'declined')
     `;
     const binds = [JSON.stringify(record), now, context.shopId, type, id];
+    if (expectedOrderSnapshot !== undefined) {
+      sql += ' AND data_json = ?';
+      binds.push(expectedOrderSnapshot);
+    }
     if (casToken) {
       sql += ' AND updated_at = ?';
       binds.push(casToken);
@@ -563,6 +567,19 @@ export async function putEntity(
     }
     return record;
   }
+  if (expectedOrderSnapshot !== undefined) {
+    const outcome = expectedOrderSnapshot === null
+      ? await env.DB.prepare(`
+        INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+      `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run()
+      : await env.DB.prepare(`
+        UPDATE entities SET data_json = ?, updated_at = ?
+        WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
+      `).bind(JSON.stringify(record), now, context.shopId, type, id, expectedOrderSnapshot).run();
+    if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
+    return record;
+  }
   await env.DB.prepare(`
     INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -574,6 +591,13 @@ export async function putEntity(
 }
 
 const ESTIMATE_APPROVAL_WRITE_ROLES = new Set(['owner', 'admin', 'service_writer']);
+const approvalVin = value => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+function assertApprovalVehicle(body, existingOrder) {
+  if (approvalVin(body.vin) !== approvalVin(existingOrder.vin)) {
+    throw new HttpError(409, 'Revise the estimate before changing the approved vehicle VIN');
+  }
+}
 
 function preserveRecordedApproval(body, existingOrder) {
   const requestedLines = new Map((body.estimate?.lines || []).map((line, index) => [
@@ -612,6 +636,7 @@ export function validatedOrderApproval(body, context, existingOrder = null, time
     if (explicitRevision && !ESTIMATE_APPROVAL_WRITE_ROLES.has(context.role)) {
       throw new HttpError(403, 'This role cannot revise an approved estimate');
     }
+    if (!explicitRevision) assertApprovalVehicle(body, existingOrder);
     return explicitRevision ? body : preserveRecordedApproval(body, existingOrder);
   }
   if (!requestedApproval || requestedApproval.status !== 'approved') return body;
@@ -622,6 +647,7 @@ export function validatedOrderApproval(body, context, existingOrder = null, time
   if (!ESTIMATE_APPROVAL_WRITE_ROLES.has(context.role)) {
     throw new HttpError(403, 'This role cannot record estimate approvals');
   }
+  assertApprovalVehicle(body, existingOrder);
 
   const sourceLines = existingOrder.estimate?.lines || [];
   if (!sourceLines.length) throw new HttpError(409, 'Add estimate lines before recording approval');
@@ -692,6 +718,33 @@ export async function verifyOrderApprovalSignature(env, context, approval) {
   if (contentType !== 'image/png') {
     throw new HttpError(400, 'Stored signature must be a PNG image');
   }
+}
+
+export async function protectOrderApprovalSignature(env, context, approval) {
+  await verifyOrderApprovalSignature(env, context, approval);
+  const normalized = normalizeEstimateApproval(approval);
+  if (normalized?.status !== 'approved' || normalized.type !== 'signature'
+    || !normalized.signatureKey || isSignatureEvidenceKey(normalized.signatureKey)) return;
+  if (!env.FILES?.get) throw new HttpError(503, 'Signature storage is unavailable');
+  // Read metadata and bytes from the same R2 object version, not a prior HEAD.
+  const object = await env.FILES.get(normalized.signatureKey);
+  if (!object || String(object.httpMetadata?.contentType || '').toLowerCase() !== 'image/png') {
+    throw new HttpError(400, 'Stored signature must be a PNG image');
+  }
+  const key = `shops/${context.shopId}/signatures/${crypto.randomUUID()}.png`;
+  await storeUploadedFile(env.FILES, key, object.body, {
+    httpMetadata: { contentType: 'image/png' },
+    customMetadata: { shopId: context.shopId, uploadedBy: context.userId },
+  }, 1024 * 1024);
+  approval.signatureKey = key;
+}
+
+async function protectInvoiceSignature(env, context, body, existingInvoice = null) {
+  if (!body.signature?.signatureKey) return;
+  if (body.signature.signatureKey === existingInvoice?.signature?.signatureKey) return;
+  const approval = { ...body.signature, status: 'approved', type: 'signature' };
+  await protectOrderApprovalSignature(env, context, approval);
+  body.signature = { ...body.signature, signatureKey: approval.signatureKey };
 }
 
 function members(record) {
@@ -836,6 +889,7 @@ async function handleEntities(request, env, context, segments, analytics) {
   if (request.method === 'POST' && !id) {
     let body = normalizeEntityPayload(sourceType, await requestJson(request));
     if (type === 'orders') body = validatedOrderApproval(body, context);
+    if (type === 'invoices') await protectInvoiceSignature(env, context, body);
     const naturalId = type === 'invoices' ? body.number : type === 'customers' ? body.name : null;
     const newId = String(body.id || naturalId || crypto.randomUUID());
     if (type === 'conversations') {
@@ -862,7 +916,8 @@ async function handleEntities(request, env, context, segments, analytics) {
     if (type === 'orders' && await getEntity(env, context.shopId, type, newId)) {
       throw new HttpError(409, `Work order ${newId} already exists`);
     }
-    const saved = await putEntity(env, context, type, newId, body);
+    const saved = await putEntity(env, context, type, newId, body, null, context.userId,
+      type === 'orders' ? { expectedOrderSnapshot: null } : {});
     captureForContext(analytics, context, 'entity_created', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_created', {
       entity_type: type,
@@ -873,15 +928,23 @@ async function handleEntities(request, env, context, segments, analytics) {
   if (request.method === 'PUT' && id) {
     let body = normalizeEntityPayload(sourceType, await requestJson(request));
     let requireUnlockedEstimate = false;
+    let expectedOrderSnapshot;
     if (type === 'orders') {
-      const existingOrder = await getEntity(env, context.shopId, type, id);
+      const existingRow = await env.DB.prepare(
+        'SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+      ).bind(context.shopId, type, id).first();
+      const existingOrder = entityRecord(existingRow, type);
+      expectedOrderSnapshot = existingRow?.data_json ?? null;
       requireUnlockedEstimate = Boolean(
         existingOrder
         && body.estimateApproval?.status === 'approved'
         && existingOrder.estimateApproval?.status !== 'approved',
       );
       body = validatedOrderApproval(body, context, existingOrder);
-      if (requireUnlockedEstimate) await verifyOrderApprovalSignature(env, context, body.estimateApproval);
+      if (requireUnlockedEstimate) await protectOrderApprovalSignature(env, context, body.estimateApproval);
+    }
+    if (type === 'invoices' && body.signature?.signatureKey) {
+      await protectInvoiceSignature(env, context, body, await getEntity(env, context.shopId, type, id));
     }
     if (type === 'chatmessages') throw new HttpError(405, 'Chat messages cannot be edited');
     if (type === 'conversations') {
@@ -901,7 +964,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       body,
       request.headers.get('If-Match'),
       context.userId,
-      { requireUnlockedEstimate },
+      { requireUnlockedEstimate, expectedOrderSnapshot },
     );
     captureForContext(analytics, context, 'entity_updated', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_updated', {
@@ -3213,6 +3276,14 @@ async function handleAuth(request, env, segments, analytics) {
 
 async function handleBilling(request, env, context, segments) {
   const action = segments[1] || '';
+  let origin = new URL(request.url).origin;
+  const trustedOrigin = allowedOrigin(request, env);
+  if (trustedOrigin) {
+    try {
+      const url = new URL(trustedOrigin);
+      if (['http:', 'https:'].includes(url.protocol) && url.origin === trustedOrigin) origin = trustedOrigin;
+    } catch { /* Invalid configured origins never become redirect destinations. */ }
+  }
   if (action === 'checkout' && request.method === 'POST') {
     const body = await requestJson(request);
     const planId = String(body.planId || 'shop').trim() || 'shop';
@@ -3226,7 +3297,6 @@ async function handleBilling(request, env, context, segments) {
     const stripeKey = env.STRIPE_SECRET_KEY || '';
     const priceId = stripePriceForPlan(env, plan.id, interval);
     if (stripeKey && priceId) {
-      const origin = new URL(request.url).origin;
       const validRedirect = value => {
         try {
           const url = new URL(String(value));
@@ -3303,7 +3373,6 @@ async function handleBilling(request, env, context, segments) {
     if (!customer?.stripe_customer_id || !env.STRIPE_SECRET_KEY) {
       throw new HttpError(503, 'Stripe billing is not configured for this shop');
     }
-    const origin = new URL(request.url).origin;
     const params = new URLSearchParams({
       customer: customer.stripe_customer_id,
       return_url: `${origin}/app`,

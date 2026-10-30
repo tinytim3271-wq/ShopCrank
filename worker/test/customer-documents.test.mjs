@@ -113,7 +113,10 @@ function mockEnvironment() {
       DB,
       FILES: {
         async put(objectKey, body, options) {
+          assert.deepEqual(options.onlyIf, { etagDoesNotMatch: '*' });
+          if (files.has(objectKey)) return null;
           files.set(objectKey, { body, options });
+          return {};
         },
       },
     },
@@ -298,6 +301,28 @@ test('remote estimate signature requires a decision for every line', async () =>
     }), fixture.env, token),
     error => error.status === 400 && /every estimate line/i.test(error.message),
   );
+});
+
+test('a remote immutable-signature conflict cannot record consent or consume its customer link', async () => {
+  const fixture = mockEnvironment();
+  fixture.entities.set(fixture.key('shop-1', 'orders', 'RO-1100'), estimateOrder());
+  const link = await issueLink(fixture, 'estimate', 'RO-1100');
+  const token = new URL(link.url).pathname.split('/').pop();
+  fixture.env.FILES.put = async (_key, _body, options) => {
+    assert.deepEqual(options.onlyIf, { etagDoesNotMatch: '*' });
+    return null;
+  };
+  await assert.rejects(() => handleCustomerDocument(new Request(link.url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      authorizationName: 'Pat Customer',
+      decisions: { labor: 'approved', part: 'declined' },
+      signatureDataUrl: `data:image/png;base64,${Buffer.from('signature').toString('base64')}`,
+      action: 'sign',
+    }),
+  }), fixture.env, token), error => error.status === 409);
+  assert.equal(fixture.entities.get(fixture.key('shop-1', 'orders', 'RO-1100')).estimateApproval, undefined);
+  assert.equal(fixture.links[0].consumed_at, null);
 });
 
 test('remote estimate signature rejects stale decision keys', async () => {

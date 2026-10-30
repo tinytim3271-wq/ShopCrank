@@ -13,6 +13,7 @@ import {
   storeUploadedFile,
 } from '../src/routes/files.mjs';
 import { HttpError } from '../src/http.mjs';
+import { createD1 } from './helpers/d1-sqlite.mjs';
 
 function mockDb() {
   const statements = [];
@@ -222,7 +223,61 @@ test('file storage buffers the capped stream into an R2-compatible body', async 
   assert.equal(stored.key, 'shops/shop-1/signature/test');
   assert.ok(stored.body instanceof ArrayBuffer);
   assert.deepEqual([...new Uint8Array(stored.body)], [1, 2, 3]);
-  assert.equal(stored.metadata, metadata);
+  assert.deepEqual(stored.metadata, { ...metadata, onlyIf: { etagDoesNotMatch: '*' } });
+});
+
+test('both signature namespaces use atomic create-only writes, including concurrent uploads', async () => {
+  const objects = new Map();
+  const env = {
+    FILES: {
+      async put(key, bytes, options) {
+        assert.deepEqual(options.onlyIf, { etagDoesNotMatch: '*' });
+        if (objects.has(key)) return null;
+        objects.set(key, new TextDecoder().decode(bytes));
+        return {};
+      },
+    },
+  };
+  for (const kind of ['signature', 'signatures']) {
+    const key = `shops/shop-1/${kind}/existing.png`;
+    const upload = value => handleFiles(new Request(`https://example.test/api/files/upload?key=${key}`, {
+      method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: value,
+    }), env, { shopId: 'shop-1', userId: 'tech' }, ['files', 'upload']);
+    const results = await Promise.allSettled([upload('original'), upload('replacement')]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(results.find(result => result.status === 'rejected').reason.status, 409);
+    assert.equal(objects.get(key), 'original');
+    await assert.rejects(() => upload('replacement'), error => error.status === 409);
+  }
+});
+
+test('legacy evidence at ordinary paths is protected without blocking unrelated file replacement', async () => {
+  const DB = createD1();
+  const protectedKeys = ['shops/shop-1/photos/estimate.png', 'shops/shop-1/file/invoice.png'];
+  for (const [type, field, key] of [
+    ['orders', 'estimateApproval', protectedKeys[0]],
+    ['invoices', 'signature', protectedKeys[1]],
+  ]) {
+    await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind('shop-1', type, type, JSON.stringify({ [field]: { signatureKey: key } }), 'writer', 'now', 'now').run();
+  }
+  const writes = [];
+  const env = { DB, FILES: { async put(key, bytes, options) {
+    assert.equal(options.onlyIf, undefined);
+    writes.push({ key, bytes });
+  } } };
+  const upload = key => handleFiles(new Request(`https://example.test/api/files/upload?key=${key}`, {
+    method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: 'replacement',
+  }), env, { shopId: 'shop-1', userId: 'tech' }, ['files', 'upload']);
+  for (const key of protectedKeys) await assert.rejects(() => upload(key), error => error.status === 409);
+  assert.equal(writes.length, 0);
+  const ordinaryKey = 'shops/shop-1/photos/ordinary.png';
+  assert.equal((await upload(ordinaryKey)).status, 204);
+  assert.equal((await upload(ordinaryKey)).status, 204);
+  assert.equal(writes.length, 2);
+  await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind('shop-other', 'orders', 'other', JSON.stringify({ estimateApproval: { signatureKey: ordinaryKey } }), 'writer', 'now', 'now').run();
+  assert.equal((await upload(ordinaryKey)).status, 204, 'foreign tenant records do not lock this shop uploads');
 });
 
 test('files route rejects streamed uploads that exceed the 15 MB limit', async () => {
@@ -237,6 +292,7 @@ test('files route rejects streamed uploads that exceed the 15 MB limit', async (
   });
   const context = { shopId: 'shop-1', userId: 'u1' };
   const env = {
+    DB: createD1(),
     FILES: {
       async put(_key, body) {
         const reader = body.getReader();
@@ -262,6 +318,7 @@ test('files route reports non-size upload storage failures as unavailable', asyn
   });
   const context = { shopId: 'shop-1', userId: 'u1' };
   const env = {
+    DB: createD1(),
     FILES: {
       async put() {
         throw new Error('R2 unavailable');
@@ -285,6 +342,7 @@ test('files route preserves an upstream storage status without misreporting a si
   });
   const context = { shopId: 'shop-1', userId: 'u1' };
   const env = {
+    DB: createD1(),
     FILES: {
       async put() {
         throw Object.assign(new Error('R2 rate limited'), { status: 429 });
