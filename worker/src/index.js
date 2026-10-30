@@ -629,6 +629,10 @@ function preserveRecordedApproval(body, existingOrder) {
 export function validatedOrderApproval(body, context, existingOrder = null, timestamp = new Date().toISOString()) {
   const requestedApproval = body?.estimateApproval;
   const existingApproval = normalizeEstimateApproval(existingOrder?.estimateApproval);
+  if (existingOrder && !Object.hasOwn(body, 'vin')
+    && (existingApproval?.status === 'approved' || requestedApproval?.status === 'approved')) {
+    body = { ...body, vin: existingOrder.vin };
+  }
   if (existingApproval?.status === 'approved') {
     const explicitRevision = requestedApproval == null
       && body.estimateRevisionPending === true

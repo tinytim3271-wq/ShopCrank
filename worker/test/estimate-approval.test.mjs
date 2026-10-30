@@ -167,6 +167,27 @@ test('VIN normalization and legacy approvals preserve legitimate operational edi
   assert.equal(validatedOrderApproval({ ...revision, estimateApproval: otherApproval('Phone').estimateApproval }, context, revision).vin, revision.vin);
 });
 
+test('omitted VINs retain recorded consent during partial edits, approvals and revisions', () => {
+  const vin = '1C6SRFHT0LN123456';
+  const draft = { ...existingOrder(), vin };
+  const approved = validatedOrderApproval(otherApproval('Phone'), context, draft);
+  assert.equal(approved.vin, vin);
+  const edited = validatedOrderApproval({ notes: 'Ready for dispatch' },
+    { ...context, role: 'technician' }, approved);
+  assert.equal(edited.vin, vin);
+  assert.equal(edited.notes, 'Ready for dispatch');
+  assert.deepEqual(edited.estimateApproval, approved.estimateApproval);
+  const revised = validatedOrderApproval({
+    estimateApproval: null, linesLockedAt: null, estimateRevisionPending: true,
+  }, context, approved);
+  assert.equal(revised.vin, vin);
+  assert.equal(revised.estimateApproval, null);
+  for (const value of ['', null, undefined]) {
+    assert.throws(() => validatedOrderApproval({ vin: value }, context, approved),
+      error => error.status === 409);
+  }
+});
+
 test('ordinary upload evidence is promoted from one object version with an atomic create-only write', async () => {
   const sourceKey = 'shops/shop-1/photos/legacy.png';
   const approval = { status: 'approved', signatureKey: sourceKey };
@@ -262,6 +283,12 @@ test('entity routes enforce VIN consent and promote both staff estimate and invo
   assert.equal(objects.get(approved.estimateApproval.signatureKey), 'original signature');
   assert.equal((await save('orders', original.id, { ...approved, vin: '' })).status, 409);
   assert.equal((await save('orders', original.id, { ...approved, notes: 'Ready to dispatch', status: 'in_progress' })).status, 200);
+  const partialResponse = await save('orders', original.id, { status: 'in_progress', notes: 'Partial dispatch update' });
+  assert.equal(partialResponse.status, 200);
+  const partialOrder = await partialResponse.json();
+  assert.equal(partialOrder.vin, vin);
+  assert.equal(partialOrder.notes, 'Partial dispatch update');
+  assert.deepEqual(partialOrder.estimateApproval, approved.estimateApproval);
   assert.equal((await save('orders', '', { ...original, notes: 'Overwrite attempt' }, 'POST')).status, 409);
   const invoiceResponse = await save('invoices', '', { id: 'INV-1', number: 'INV-1', signature }, 'POST');
   assert.equal(invoiceResponse.status, 201);
