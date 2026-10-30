@@ -3835,9 +3835,9 @@
     return { ok: problems.length === 0, problems };
   }
   function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
-    const badge3 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    const badge4 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
     const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
-    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge3}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
+    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge4}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
   }
   function aiAcceptBanner(draft, prefix) {
     const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
@@ -3883,8 +3883,8 @@
   function concernStep(draft) {
     const concern = draft.concern;
     const ai = draft.aiFilledFields || {};
-    const badge3 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
-    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge3}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
+    const badge4 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge4}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
 <div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
   }
   function diagnosisStep(draft) {
@@ -5385,6 +5385,94 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       saveStoredUnlock = (value2) => writeRecord("unlock", value2);
       PROOF_TYPES = /* @__PURE__ */ new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
       STATUS_BADGE = { active: "paid", suspended: "estimate", revoked: "overdue", pending: "estimate", approved: "paid", denied: "overdue" };
+    }
+  });
+
+  // src/modules/health-check.js
+  function badge2(status, escapeHtml4) {
+    return `<span class="badge ${STATUS_BADGE2[status] ?? ""}">${escapeHtml4(STATUS_LABEL[status] || status || "")}</span>`;
+  }
+  function formatDateTime2(value2) {
+    return value2 ? new Date(value2).toLocaleString() : "";
+  }
+  function healthRows(run) {
+    if (!run) return [];
+    const probes = (run.probes || []).map((item) => ({
+      check: item.probe,
+      dependency: item.dependency,
+      shopId: item.shopId || "",
+      status: item.status,
+      latencyMs: item.latencyMs,
+      message: item.error?.message || item.detail || "",
+      issues: item.error?.issues || []
+    }));
+    const canaries = (run.canaries || []).map((item) => ({
+      check: item.tool,
+      dependency: "tool-contract",
+      shopId: item.shopId || "",
+      status: item.status,
+      latencyMs: item.latencyMs,
+      message: item.error?.message || "",
+      issues: item.error?.issues || []
+    }));
+    return [...probes, ...canaries].sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
+  }
+  function runFromEntries(entries = []) {
+    const first = entries[0] || {};
+    const probes = /* @__PURE__ */ new Map();
+    const canaries = [];
+    for (const entry of entries) {
+      if (entry.dependency === "tool-contract") {
+        canaries.push({ tool: entry.tool, shopId: entry.shopId, status: entry.status, latencyMs: entry.latencyMs, error: entry.error });
+        continue;
+      }
+      const key = `${entry.probe}|${entry.shopId || ""}`;
+      if (!probes.has(key)) {
+        probes.set(key, { dependency: entry.dependency, probe: entry.probe, shopId: entry.shopId, status: entry.status, latencyMs: entry.latencyMs, error: entry.error, detail: entry.detail });
+      }
+    }
+    const all = [...probes.values(), ...canaries];
+    return {
+      runId: first.runId || "",
+      trigger: first.trigger || "",
+      dryRun: Boolean(first.dryRun),
+      contractVersion: first.contractVersion || "",
+      startedAt: first.timestamp || "",
+      ok: !all.some((item) => item.status === "down" || item.status === "degraded"),
+      probes: [...probes.values()],
+      canaries,
+      entries
+    };
+  }
+  function runJsonl(run) {
+    const entries = run?.entries || [];
+    return entries.map((entry) => JSON.stringify(entry)).join("\n") + (entries.length ? "\n" : "");
+  }
+  function countsText(counts) {
+    if (!counts) return "";
+    return Object.entries(counts).filter(([, count]) => count > 0).map(([status, count]) => `${STATUS_LABEL[status] || status} ${count}`).join(" \xB7 ");
+  }
+  function issuesText(issues) {
+    return issues.slice(0, 3).map((issue) => `${issue.path} ${issue.problem} (expected ${issue.expected}, got ${issue.actual})`).join("; ");
+  }
+  function healthCheckHtml(data, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    if (!data?.overview) return "<p>Loading health checks\u2026</p>";
+    const { overview, run = null, running = false } = data;
+    const rows = healthRows(run);
+    const failing = rows.filter((row) => row.status === "down" || row.status === "degraded").length;
+    const kpis = run ? `<div class="platform-kpis"><article><span>Last run</span><strong>${run.ok ? "Healthy" : "Failing"}</strong></article><article><span>Failing checks</span><strong>${failing}</strong></article><article><span>Checks</span><strong>${rows.length}</strong></article><article><span>Contract</span><strong>v${escapeHtml4(run.contractVersion || overview.contractVersion)}</strong></article></div>` : "";
+    const runRows = rows.map((row) => `<tr><td><b>${escapeHtml4(row.check)}</b><small>${escapeHtml4(row.dependency)}</small></td><td>${badge2(row.status, escapeHtml4)}</td><td class="mono">${escapeHtml4(row.shopId)}</td><td class="mono">${Number.isFinite(row.latencyMs) ? `${row.latencyMs} ms` : ""}</td><td>${escapeHtml4(row.message)}${row.issues.length ? `<small class="mono">${escapeHtml4(issuesText(row.issues))}</small>` : ""}</td></tr>`).join("");
+    const history = (overview.runs || []).map((item) => `<tr><td class="mono">${escapeHtml4(formatDateTime2(item.startedAt))}</td><td>${badge2(item.ok ? "ok" : "down", escapeHtml4)}</td><td>${escapeHtml4(item.trigger)}</td><td>${escapeHtml4(countsText(item.counts))}</td><td><button class="mini-action" type="button" data-health-run="${escapeHtml4(item.name)}">${icon2("eye", 13)} View</button><button class="mini-action" type="button" data-health-download="${escapeHtml4(item.name)}">${icon2("download", 13)} JSONL</button></td></tr>`).join("");
+    const current = run ? `<h2>${run.dryRun ? "Dry run" : "Run"} \xB7 <span class="mono">${escapeHtml4(formatDateTime2(run.startedAt))}</span>${run.trigger ? ` \xB7 ${escapeHtml4(run.trigger)}` : ""}</h2>${run.storage?.key ? `<p class="ops-note">Stored as <span class="mono">${escapeHtml4(run.storage.key)}</span></p>` : ""}<div class="platform-action-buttons"><button class="mini-action" type="button" id="health-download-current">${icon2("download", 13)} Download JSONL</button></div><div class="data-panel"><table><thead><tr><th>Check</th><th>Status</th><th>Shop</th><th>Latency</th><th>Detail</th></tr></thead><tbody>${runRows || '<tr><td colspan="5">No checks ran.</td></tr>'}</tbody></table></div>` : '<p class="ops-note">Run a dry run to validate configuration without calling QuickBooks, Stripe or PartsTech, or a full run to ping every dependency.</p>';
+    const latestChange = overview.changelog?.[0];
+    return `${kpis}<div class="access-note platform-security">${icon2("activity", 15)} Pings D1, the inventory service (D1 inventory records and each shop's PartsTech connection), QuickBooks Online and Stripe webhooks, and checks every assistant tool's output against contract v${escapeHtml4(overview.contractVersion)}. Scheduled <span class="mono">${escapeHtml4(overview.schedule)}</span> (UTC); failures are emailed (${escapeHtml4(overview.emailMode)}).</div><div class="platform-action-buttons"><button class="secondary" type="button" id="health-dry-run" ${running ? "disabled" : ""}>${icon2("flask-conical", 15)} Dry run</button><button class="primary" type="button" id="health-run-now" ${running ? "disabled" : ""}>${icon2("activity", 15)} ${running ? "Running\u2026" : "Run full check"}</button></div>${current}<h2>Recent runs</h2><div class="data-panel"><table><thead><tr><th>Started</th><th>Result</th><th>Trigger</th><th>Counts</th><th></th></tr></thead><tbody>${history || '<tr><td colspan="5">No stored runs yet. Dry runs are never stored.</td></tr>'}</tbody></table></div>${latestChange ? `<h2>Tool contract changelog</h2><div class="data-panel"><table><thead><tr><th>Version</th><th>Date</th><th>Changes</th></tr></thead><tbody>${(overview.changelog || []).map((entry) => `<tr><td class="mono">v${escapeHtml4(entry.version)}</td><td class="mono">${escapeHtml4(entry.date)}</td><td>${entry.changes.map((change) => escapeHtml4(change)).join("<br>")}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+  }
+  var STATUS_BADGE2, STATUS_LABEL, STATUS_ORDER;
+  var init_health_check = __esm({
+    "src/modules/health-check.js"() {
+      STATUS_BADGE2 = { ok: "paid", degraded: "estimate", down: "overdue", not_configured: "", skipped: "" };
+      STATUS_LABEL = { ok: "OK", degraded: "Degraded", down: "Down", not_configured: "Not configured", skipped: "Skipped" };
+      STATUS_ORDER = { down: 0, degraded: 1, ok: 2, not_configured: 3, skipped: 4 };
     }
   });
 
@@ -9934,7 +10022,7 @@ button{margin-top:12px;padding:8px 14px}
   function label(status) {
     return { estimate: "Estimate", approved: "Approved", in_progress: "In progress", waiting_parts: "Waiting parts", completed: "Completed", invoiced: "Invoiced", paid: "Paid", sent: "Sent", overdue: "Overdue" }[status] || status;
   }
-  function badge2(status) {
+  function badge3(status) {
     return `<span class="badge ${status}">${label(status)}</span>`;
   }
   function toast(message) {
@@ -10021,7 +10109,7 @@ button{margin-top:12px;padding:8px 14px}
     return shell(`${heading(shopDayLabel(), "Dispatch board", "Live shop workload, technician assignments, and promise times.")}${stats()}${toolbar()}<div class="board">${lanes}</div>`);
   }
   function orders() {
-    const rows = filtered().map((x) => `<tr data-order="${x.id}"><td class="mono strong">${x.id}</td><td><b>${escapeHtml(x.customer)}</b><small>${escapeHtml(x.phone)}</small></td><td><b>${escapeHtml(x.vehicle)}</b><small class="mono">${escapeHtml(x.vin)}</small></td><td>${badge2(x.status)}</td><td>${escapeHtml(x.tech)}<small>${escapeHtml(x.bay)}</small></td><td>${escapeHtml(x.promise)}</td><td><b>${money4(x.total)}</b></td></tr>`).join("");
+    const rows = filtered().map((x) => `<tr data-order="${x.id}"><td class="mono strong">${x.id}</td><td><b>${escapeHtml(x.customer)}</b><small>${escapeHtml(x.phone)}</small></td><td><b>${escapeHtml(x.vehicle)}</b><small class="mono">${escapeHtml(x.vin)}</small></td><td>${badge3(x.status)}</td><td>${escapeHtml(x.tech)}<small>${escapeHtml(x.bay)}</small></td><td>${escapeHtml(x.promise)}</td><td><b>${money4(x.total)}</b></td></tr>`).join("");
     return shell(`${heading("Operations", "Work orders", "Every estimate, repair, and completed job in one searchable queue.")}${toolbar()}<div class="data-panel"><table><thead><tr><th>RO number</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Assignment</th><th>Promise</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("No matching work orders")}</div>`);
   }
   function schedule() {
@@ -10085,8 +10173,8 @@ button{margin-top:12px;padding:8px 14px}
   }
   function operationsInspections() {
     const rows = [...state.inspections].reverse().map((item) => {
-      const counts = (item.items || []).reduce((total, row) => (total[row.status] = (total[row.status] || 0) + 1, total), {}), results = item.catalogId ? `<span class="inspection-count fail">${counts.critical || 0} safety</span> <span class="inspection-count warn">${counts.soon || 0} soon</span> <span class="inspection-count good">${counts.ok || 0} ok</span>` : `<span class="inspection-count good">${counts.pass || 0} pass</span> <span class="inspection-count warn">${counts.attention || 0} attention</span> <span class="inspection-count fail">${counts.fail || 0} fail</span>`, badge3 = item.recordStatus === "closed" ? `<span class="badge paid">Closed</span>` : item.catalogId ? `<span class="badge estimate">Draft</span>` : item.approvalStatus === "approved" ? `<span class="badge paid">Approved</span>` : item.approvalStatus === "rejected" ? `<span class="badge overdue">Rejected</span>` : `<span class="badge estimate">Pending</span>`;
-      return `<tr><td><b>${escapeHtml(item.number)}</b><small>${escapeHtml(item.inspectionName || "Checklist")} \xB7 ${new Date(item.createdAt).toLocaleDateString()}</small></td><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.workOrderId || "Unlinked")}</td><td>${results}</td><td>${badge3}</td><td><button class="mini-action" data-edit-inspection="${item.id}">${icon("clipboard-check", 13)} Open</button><button class="mini-action" data-estimate-from-inspection="${item.id}">${icon("file-text", 13)} Estimate</button></td></tr>`;
+      const counts = (item.items || []).reduce((total, row) => (total[row.status] = (total[row.status] || 0) + 1, total), {}), results = item.catalogId ? `<span class="inspection-count fail">${counts.critical || 0} safety</span> <span class="inspection-count warn">${counts.soon || 0} soon</span> <span class="inspection-count good">${counts.ok || 0} ok</span>` : `<span class="inspection-count good">${counts.pass || 0} pass</span> <span class="inspection-count warn">${counts.attention || 0} attention</span> <span class="inspection-count fail">${counts.fail || 0} fail</span>`, badge4 = item.recordStatus === "closed" ? `<span class="badge paid">Closed</span>` : item.catalogId ? `<span class="badge estimate">Draft</span>` : item.approvalStatus === "approved" ? `<span class="badge paid">Approved</span>` : item.approvalStatus === "rejected" ? `<span class="badge overdue">Rejected</span>` : `<span class="badge estimate">Pending</span>`;
+      return `<tr><td><b>${escapeHtml(item.number)}</b><small>${escapeHtml(item.inspectionName || "Checklist")} \xB7 ${new Date(item.createdAt).toLocaleDateString()}</small></td><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.workOrderId || "Unlinked")}</td><td>${results}</td><td>${badge4}</td><td><button class="mini-action" data-edit-inspection="${item.id}">${icon("clipboard-check", 13)} Open</button><button class="mini-action" data-estimate-from-inspection="${item.id}">${icon("file-text", 13)} Estimate</button></td></tr>`;
     }).join("");
     return `<div class="ops-actions"><span class="ops-note">Lubbock flat rates. Repairs, parts, and disassembly are quoted separately.</span><button class="secondary" id="manage-templates">${icon("list-plus", 14)} Templates</button><button class="secondary" id="add-inspection">${icon("clipboard-check", 14)} Custom checklist</button></div><div class="inspection-catalog">${inspectionMenuHtml(escapeHtml)}</div><div class="data-panel"><table><thead><tr><th>Inspection</th><th>Customer & vehicle</th><th>Work order</th><th>Results</th><th>Status</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6">No inspections yet. Start one from the menu above.</td></tr>`}</tbody></table></div>`;
   }
@@ -11139,7 +11227,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function invoices() {
     const q = query.toLowerCase(), rows = state.invoices.filter((x) => !q || Object.values(x).join(" ").toLowerCase().includes(q)).map((x) => {
       const paid = invoicePaid(x), balance = invoiceBalance(x), bd = invoiceTaxBreakdown(x);
-      return `<tr><td class="mono"><b>${x.number}</b></td><td class="mono">${x.ro}</td><td><b>${x.customer}</b></td><td>${x.date}</td><td>${x.due}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(x.status)}</td><td><b>${money4(x.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments">${balance > 0 ? `<button class="mini-action" data-record-payment="${x.number}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${x.number}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${x.number}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${x.number}">${icon("message-square", 13)} Text to pay</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${x.number}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
+      return `<tr><td class="mono"><b>${x.number}</b></td><td class="mono">${x.ro}</td><td><b>${x.customer}</b></td><td>${x.date}</td><td>${x.due}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(x.status)}</td><td><b>${money4(x.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments">${balance > 0 ? `<button class="mini-action" data-record-payment="${x.number}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${x.number}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${x.number}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${x.number}">${icon("message-square", 13)} Text to pay</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${x.number}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
     }).join("");
     return shell(`${heading("Accounts receivable", "Invoices", "Track open balances, invoice tax, and record cash or processor payments.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   }
@@ -12136,7 +12224,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const item = state.inventory.find((record) => record.id === line.inventoryId || line.inventorySku && record.sku === line.inventorySku);
       return `<p><b>${escapeHtml(item?.sku || line.inventorySku || "Unknown SKU")}</b> \xB7 ${escapeHtml(item?.name || line.service)} \xB7 ${Number(line.committedQuantity || 0)} committed</p>`;
     }).join("")}${x.inventoryDeducted ? `<small>Deducted ${new Date(x.inventoryCommittedAt).toLocaleString()}</small>` : ""}</section>` : "", assignment = canManage ? `<label>Assigned technician<select id="detail-tech"><option>Unassigned</option>${technicians.map((t) => `<option ${t === x.tech ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select></label><label>Labor hours<select id="detail-hours">${[0, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8].map((h) => `<option value="${h}" ${Number(x.laborHours ?? 0) === h ? "selected" : ""}>${h === 0 ? "Not set" : h.toFixed(2) + " hours"}</option>`).join("")}</select></label>` : `<section><h3>Assignment</h3><p>${escapeHtml(x.tech)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} labor hours</p></section>`;
-    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge2(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button><button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
+    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge3(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button><button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
     bindWorkOrderMileage(".modal");
     if (canManage) {
       const baySelect = document.querySelector("#detail-bay");
@@ -12291,7 +12379,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const customer = state.customers.find((c) => c.name === name);
     if (!customer) return;
     const vehicles = state.vehicles.filter((v) => v.customer === name), orders2 = state.orders.filter((o) => o.customer === name), invs = state.invoices.filter((i) => i.customer === name), payments2 = state.payments.filter((p) => p.customer === name), balance = customerBalance(name);
-    showModal(`<div class="modal wide" id="customer-detail"><div class="modal-head"><h2>${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="customer-detail-top"><div class="avatar">${initials(customer.name)}</div><div><p>${escapeHtml(customer.phone || "")} \xB7 ${escapeHtml(customer.email || "")}</p><p class="customer-balance ${balance > 0 ? "has-balance" : ""}">Account balance: <b>${money4(balance)}</b></p></div><div class="customer-detail-actions"><button class="secondary" id="cd-message">${icon("send", 14)} Message</button><button class="secondary" id="cd-statement">${icon("printer", 14)} Statement</button></div></div><div class="form-grid"><label>Billing address<textarea name="billingAddress" rows="2">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes" rows="2">${escapeHtml(customer.billingNotes || "")}</textarea></label><div class="full"><button class="mini-action" id="cd-save-billing">${icon("save", 13)} Save billing</button></div></div><h3>Vehicles (${vehicles.length})</h3><table class="mini-table"><thead><tr><th>Vehicle</th><th>VIN</th><th>Mileage</th></tr></thead><tbody>${vehicles.map((v) => `<tr class="clickable-row" data-cd-vehicle="${v.id}"><td><b>${escapeHtml(vehicleLabel3(v))}</b></td><td class="mono">${escapeHtml(v.vin || "")}</td><td>${v.mileage || ""}</td></tr>`).join("") || `<tr><td colspan="3">No vehicles linked</td></tr>`}</tbody></table><h3>Work Orders (${orders2.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Total</th></tr></thead><tbody>${orders2.slice(0, 10).map((o) => `<tr><td class="mono">${o.id}</td><td>${badge2(o.status)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="3">No work orders</td></tr>`}</tbody></table><h3>Invoices (${invs.length})</h3><table class="mini-table"><thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invs.map((i) => `<tr><td class="mono">${i.number}</td><td>${badge2(i.status)}</td><td>${money4(i.amount)}</td><td>${money4(invoiceBalance(i))}</td></tr>`).join("") || `<tr><td colspan="4">No invoices</td></tr>`}</tbody></table><h3>Payments (${payments2.length})</h3><table class="mini-table"><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${payments2.slice(0, 10).map((p) => `<tr><td>${p.receivedAt || ""}</td><td>${p.method || ""}</td><td>${money4(p.amount)}</td><td class="mono">${p.invoiceNumber || ""}</td></tr>`).join("") || `<tr><td colspan="4">No payments</td></tr>`}</tbody></table></div></div>`);
+    showModal(`<div class="modal wide" id="customer-detail"><div class="modal-head"><h2>${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="customer-detail-top"><div class="avatar">${initials(customer.name)}</div><div><p>${escapeHtml(customer.phone || "")} \xB7 ${escapeHtml(customer.email || "")}</p><p class="customer-balance ${balance > 0 ? "has-balance" : ""}">Account balance: <b>${money4(balance)}</b></p></div><div class="customer-detail-actions"><button class="secondary" id="cd-message">${icon("send", 14)} Message</button><button class="secondary" id="cd-statement">${icon("printer", 14)} Statement</button></div></div><div class="form-grid"><label>Billing address<textarea name="billingAddress" rows="2">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes" rows="2">${escapeHtml(customer.billingNotes || "")}</textarea></label><div class="full"><button class="mini-action" id="cd-save-billing">${icon("save", 13)} Save billing</button></div></div><h3>Vehicles (${vehicles.length})</h3><table class="mini-table"><thead><tr><th>Vehicle</th><th>VIN</th><th>Mileage</th></tr></thead><tbody>${vehicles.map((v) => `<tr class="clickable-row" data-cd-vehicle="${v.id}"><td><b>${escapeHtml(vehicleLabel3(v))}</b></td><td class="mono">${escapeHtml(v.vin || "")}</td><td>${v.mileage || ""}</td></tr>`).join("") || `<tr><td colspan="3">No vehicles linked</td></tr>`}</tbody></table><h3>Work Orders (${orders2.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Total</th></tr></thead><tbody>${orders2.slice(0, 10).map((o) => `<tr><td class="mono">${o.id}</td><td>${badge3(o.status)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="3">No work orders</td></tr>`}</tbody></table><h3>Invoices (${invs.length})</h3><table class="mini-table"><thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invs.map((i) => `<tr><td class="mono">${i.number}</td><td>${badge3(i.status)}</td><td>${money4(i.amount)}</td><td>${money4(invoiceBalance(i))}</td></tr>`).join("") || `<tr><td colspan="4">No invoices</td></tr>`}</tbody></table><h3>Payments (${payments2.length})</h3><table class="mini-table"><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${payments2.slice(0, 10).map((p) => `<tr><td>${p.receivedAt || ""}</td><td>${p.method || ""}</td><td>${money4(p.amount)}</td><td class="mono">${p.invoiceNumber || ""}</td></tr>`).join("") || `<tr><td colspan="4">No payments</td></tr>`}</tbody></table></div></div>`);
     document.querySelector("#cd-message")?.addEventListener("click", () => {
       closeModal();
       openCustomerMessage(customer.name, customer.phone, customer.email);
@@ -12323,7 +12411,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const vehicle = state.vehicles.find((v) => v.id === id);
     if (!vehicle) return;
     const history = linkedOrders(vehicle), photos = vehicle.photoKeys || [];
-    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge2(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions"><button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
+    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge3(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions"><button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
     document.querySelector("#vd-edit")?.addEventListener("click", () => {
       closeModal();
       openVehicleForm(vehicle);
@@ -12639,7 +12727,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return `<div class="finance-kpis"><article><span>Cash received</span><strong>${money4(data.income)}</strong><small>Paid invoices and posted income</small></article><article><span>Operating expenses</span><strong>${money4(data.expenses)}</strong><small>${state.expenses.length} recorded expenses</small></article><article class="${data.net >= 0 ? "positive" : "negative"}"><span>Net income</span><strong>${money4(data.net)}</strong><small>Cash-basis operating result</small></article><article><span>Accounts receivable</span><strong>${money4(data.receivable)}</strong><small>${money4(data.overdue)} overdue</small></article><article><span>Sales tax payable</span><strong>${money4(data.tax)}</strong><small>From paid work orders</small></article></div><div class="accounting-grid"><section class="statement"><div class="statement-head"><div><div class="eyebrow">Profit & loss</div><h2>Current activity</h2></div><span class="badge paid">Cash basis</span></div><div class="statement-line"><span>Service revenue</span><b>${money4(data.income)}</b></div><div class="statement-line"><span>Operating expenses</span><b>(${money4(data.expenses)})</b></div><div class="statement-line total"><span>Net income</span><b>${money4(data.net)}</b></div></section><section class="statement"><div class="statement-head"><div><div class="eyebrow">Controls</div><h2>Month-end checklist</h2></div>${icon("list-checks", 18)}</div><p>Review overdue receivables, reconcile the operating account, and set aside sales tax before filing.</p><small>Financial reporting is generated from records stored in this application.</small></section></div>`;
   }
   function arView(data) {
-    const rows = data.open.map((x) => `<tr><td class="mono"><b>${x.number}</b></td><td>${x.customer}</td><td>${x.due}</td><td>${badge2(x.status)}</td><td><b>${money4(x.amount)}</b></td></tr>`).join("");
+    const rows = data.open.map((x) => `<tr><td class="mono"><b>${x.number}</b></td><td>${x.customer}</td><td>${x.due}</td><td>${badge3(x.status)}</td><td><b>${money4(x.amount)}</b></td></tr>`).join("");
     return `<div class="accounting-summary"><span>${data.open.length} open invoices</span><strong>${money4(data.receivable)} outstanding</strong></div><div class="data-panel"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Due</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No open receivables.</td></tr>`}</tbody></table></div>`;
   }
   function expenseView() {
@@ -13006,7 +13094,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const detail = item.type === "overdue" ? `${item.detail.split(" \xB7 ")[0]} \xB7 ${money4(item.amount || 0)}` : item.detail;
       return `<button class="home-row ${tone}" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : `data-route="invoices"`}><span class="home-row-icon">${icon(item.type === "overdue" ? "clock-alert" : item.type === "parts" ? "package" : "user-plus", 16)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail)}</small></span>${icon("chevron-right", 14)}</button>`;
     }).join("");
-    const todayJobs = model.todayJobs.map((order) => `<button class="home-job" type="button" data-order="${escapeHtml(order.id)}"><div><span class="mono">${escapeHtml(order.id)}</span>${badge2(order.status)}</div><strong>${escapeHtml(order.customer)}</strong><small>${escapeHtml(order.vehicle)}</small><span class="home-job-meta">${icon("clock-3", 12)}${escapeHtml(order.promise || "Unscheduled")} \xB7 ${escapeHtml(order.tech || "Unassigned")}</span></button>`).join("");
+    const todayJobs = model.todayJobs.map((order) => `<button class="home-job" type="button" data-order="${escapeHtml(order.id)}"><div><span class="mono">${escapeHtml(order.id)}</span>${badge3(order.status)}</div><strong>${escapeHtml(order.customer)}</strong><small>${escapeHtml(order.vehicle)}</small><span class="home-job-meta">${icon("clock-3", 12)}${escapeHtml(order.promise || "Unscheduled")} \xB7 ${escapeHtml(order.tech || "Unassigned")}</span></button>`).join("");
     const appointments = model.todaysAppointments.map((item) => `<article class="home-appointment"><strong>${escapeHtml(item.time)} \xB7 ${escapeHtml(item.customer)}</strong><small>${escapeHtml(item.service)} \xB7 ${escapeHtml(item.bay || "Unassigned")}</small></article>`).join("");
     const activity = model.activity.map((item) => `<button class="home-row" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : 'data-route="invoices"'}><span class="home-row-icon muted">${icon("activity", 15)}</span><span><strong>${escapeHtml(item.title)} \xB7 ${escapeHtml(item.customer || "")}</strong><small>${escapeHtml(item.vehicle || item.meta || "")} \xB7 ${escapeHtml(label(item.status))}</small></span></button>`).join("");
     const start = model.isEmpty ? `<section class="home-start"><div><div class="eyebrow">Get started</div><h2>Your shop dashboard is ready</h2><p>Create a work order, book a visit, or open the dispatch board. Metrics, today's jobs, and recent activity fill in as soon as records land.</p></div><div class="home-start-actions"><button class="primary" type="button" data-open-new>${icon("plus", 15)} New work order</button>${canAccess("dispatch") ? `<button class="secondary" type="button" data-route="dispatch">${icon("layout-dashboard", 15)} Open dispatch</button>` : ""}</div></section>` : "";
@@ -15984,6 +16072,76 @@ ${line}`.trim();
       };
     });
   }
+  async function loadHealthCheck({ keepRun = true } = {}) {
+    if (healthCheckLoading) return;
+    healthCheckLoading = true;
+    try {
+      const overview = await platformApi("/admin/health-check");
+      healthCheckData = { ...keepRun ? healthCheckData : {}, overview, running: false };
+    } catch (error) {
+      healthCheckData = { overview: { runs: [], changelog: [], schedule: "", contractVersion: "", emailMode: "" }, running: false };
+      toast(error.message || "Could not load health checks");
+    } finally {
+      healthCheckLoading = false;
+    }
+    if (state.route === "health") render();
+  }
+  function healthCheckView() {
+    if (healthCheckData === null) void loadHealthCheck();
+    return platformShell(`${heading("Platform control", "System health", "Ping D1, inventory, QuickBooks and Stripe webhooks, and check every assistant tool against its output contract.", false)}${healthCheckHtml(healthCheckData, { escapeHtml, icon })}`);
+  }
+  async function runHealthCheckNow(dryRun) {
+    healthCheckData = { ...healthCheckData, running: true };
+    render();
+    try {
+      const run = await platformApi("/admin/health-check", { method: "POST", body: JSON.stringify({ dryRun }) });
+      healthCheckData = { ...healthCheckData, run, running: false };
+      toast(run.ok ? "All dependencies healthy" : "Some dependencies are failing");
+      await loadHealthCheck();
+    } catch (error) {
+      healthCheckData = { ...healthCheckData, running: false };
+      toast(error.message || "Health check failed to run");
+      render();
+    }
+  }
+  function downloadHealthJsonl(text2, name) {
+    const url = URL.createObjectURL(new Blob([text2], { type: "application/x-ndjson" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `shopcrank-health-${name}.jsonl`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3e4);
+  }
+  function bindHealthCheck() {
+    document.querySelector("#refresh-platform")?.addEventListener("click", () => {
+      healthCheckData = null;
+      render();
+    });
+    document.querySelector("#health-dry-run")?.addEventListener("click", () => runHealthCheckNow(true));
+    document.querySelector("#health-run-now")?.addEventListener("click", () => runHealthCheckNow(false));
+    document.querySelector("#health-download-current")?.addEventListener("click", () => {
+      const run = healthCheckData?.run;
+      if (run) downloadHealthJsonl(runJsonl(run), run.runId || "run");
+    });
+    document.querySelectorAll("[data-health-run]").forEach((button) => button.addEventListener("click", async () => {
+      try {
+        const detail = await platformApi(`/admin/health-check/runs/${encodeURIComponent(button.dataset.healthRun)}`);
+        healthCheckData = { ...healthCheckData, run: runFromEntries(detail.entries) };
+        render();
+      } catch (error) {
+        toast(error.message);
+      }
+    }));
+    document.querySelectorAll("[data-health-download]").forEach((button) => button.addEventListener("click", async () => {
+      try {
+        const response = await authorizedApiRequest(`/admin/health-check/runs/${encodeURIComponent(button.dataset.healthDownload)}?format=jsonl`);
+        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Could not download the log");
+        downloadHealthJsonl(await response.text(), button.dataset.healthDownload);
+      } catch (error) {
+        toast(error.message);
+      }
+    }));
+  }
   function smsReadMarks() {
     try {
       return JSON.parse(localStorage.getItem(SMS_READ_MARKS) || "{}") || {};
@@ -16398,7 +16556,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -16424,6 +16582,7 @@ ${line}`.trim();
       init_ai_workflow();
       init_customer_intake();
       init_vehicle_key_license();
+      init_health_check();
       init_sms_inbox();
       init_inspection_ratings();
       init_call_log();
@@ -16882,7 +17041,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${escapeHtml(invoice.number)}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${escapeHtml(invoice.number)}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Track open balances, invoice tax, payments, and branded print copies.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows}</tbody></table></div>`);
       };
@@ -16968,7 +17127,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice), key = escapeHtml(invoiceRecordKey(invoice));
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button><button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button><button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Edit invoice details and safely remove invoices without payment history.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows || `<tr><td colspan="7">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
@@ -17307,7 +17466,7 @@ ${line}`.trim();
         };
       };
       orders = function() {
-        const rows = filtered().map((order) => `<tr data-order="${escapeAttr(order.id)}"><td class="mono strong">${escapeHtml(order.id)}</td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "")}</small></td><td><b>${escapeHtml(order.vehicle)}</b><small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${badge2(order.status)}</td><td>${escapeHtml(assignmentSummary(order, state.users))}<small>${escapeHtml(order.bay || "Unassigned")}</small></td><td>${escapeHtml(order.promise || "Unscheduled")}</td><td><b>${money4(order.total)}</b></td><td><button class="mini-action" type="button" data-edit-order="${escapeAttr(order.id)}">${icon("pencil", 13)} Edit</button></td></tr>`).join("");
+        const rows = filtered().map((order) => `<tr data-order="${escapeAttr(order.id)}"><td class="mono strong">${escapeHtml(order.id)}</td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "")}</small></td><td><b>${escapeHtml(order.vehicle)}</b><small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${badge3(order.status)}</td><td>${escapeHtml(assignmentSummary(order, state.users))}<small>${escapeHtml(order.bay || "Unassigned")}</small></td><td>${escapeHtml(order.promise || "Unscheduled")}</td><td><b>${money4(order.total)}</b></td><td><button class="mini-action" type="button" data-edit-order="${escapeAttr(order.id)}">${icon("pencil", 13)} Edit</button></td></tr>`).join("");
         return shell(`${heading("Operations", "Work orders", "Open and edit customer, vehicle, assignment, status, and service details.")}${toolbar()}<div class="data-panel"><table><thead><tr><th>RO number</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Assignment</th><th>Promise</th><th>Total</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("No matching work orders")}</div>`);
       };
       updateOrderInApi = async function(record) {
@@ -17451,7 +17610,7 @@ ${line}`.trim();
         const editor = canEditEstimate && !paidInvoice ? `<section class="job-editor"><div class="job-section-head"><div><h3>Edit line items</h3><p>${terminalOrder ? "After-midnight fee changes are locked after completion or invoicing. Reopen the work order before adding or replacing that fee." : editNotice}</p></div><div><button class="secondary" id="job-add-after-midnight-fee" type="button" ${terminalOrder ? `disabled title="Reopen this work order before adding the after-midnight fee"` : ""}>${icon("moon-star", 14)} Add after-midnight fee</button><button class="secondary" id="job-add-labor" type="button">${icon("wrench", 14)} Add labor</button><button class="secondary" id="job-add-part" type="button">${icon("package-plus", 14)} Add part</button></div></div><div id="job-estimate-editor" data-shop-supplies="${Number(estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount ?? "")}" data-discount-percent="${Number(estimate.discountPercent || 0)}" data-discount-reason="${escapeAttr(estimate.discountReason || "")}" data-exclusions="${escapeAttr(JSON.stringify(estimate.exclusions || []))}" data-insurance="${escapeAttr(JSON.stringify(estimate.insurance || {}))}">${estimate.lines.map((line, index) => estimateEditorLine(line, index)).join("")}</div><div class="job-estimate-summary"></div><button class="primary" id="save-job-lines" type="button">${icon("save", 14)} Save line items</button></section>` : "";
         const approvalActions = (order.status === "estimate" || order.estimateRevisionPending) && canManage && !["completed", "invoiced"].includes(order.status) ? `<div class="job-actions"><button class="secondary" data-send-job-estimate="email">${icon("mail", 14)} Email link</button><button class="secondary" data-send-job-estimate="sms">${icon("message-square", 14)} Text link</button>${canApprove ? `<button class="primary" id="sign-job-estimate">${icon("circle-check", 14)} Record approval</button>` : ""}</div>` : "";
         const workActions = canManage && order.status === "approved" ? `<div class="job-actions"><button class="primary" id="start-job-work">${icon("play", 14)} Start work</button></div>` : canManage && ["in_progress", "waiting_parts"].includes(order.status) ? `<div class="job-actions"><button class="primary" id="complete-job-card">${icon("circle-check", 14)} Complete job & generate invoice</button></div>` : "";
-        const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge2(invoice.status)} \xB7 ${money4(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
+        const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge3(invoice.status)} \xB7 ${money4(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
         const assignments = canManage ? laborAssignmentPanel(order, estimate) : "";
         showModal(`<div class="modal wide job-card-modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Job card</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body">${jobWorkflowSteps(order, invoice)}${detailsEditor}${estimatePresentation(order, estimate, { locked: false })}${assignments}${editor}${approvalActions}${workActions}${invoiceCard}</div><div class="modal-actions"><button class="secondary" type="button" id="print-job-card">${icon("printer", 14)} Print job card</button><button class="secondary" data-close>Close</button></div></div>`);
         const editorRoot = document.querySelector("#job-estimate-editor");
@@ -17657,7 +17816,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge2(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Balance ${money4(balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Balance ${money4(balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Review the completed job, capture a mobile signature, and collect payment.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`);
       };
@@ -17853,7 +18012,7 @@ ${line}`.trim();
         openNewWithDraft();
       };
       savedEstimates = function() {
-        const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge2(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
+        const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge3(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
         return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
       };
       liveAssistant = function() {
@@ -17978,7 +18137,7 @@ ${line}`.trim();
         const rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const summary = invoicePaymentSummary(invoice);
           const bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge2(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge3(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Record partial or full payments, monitor remaining balances, and review collection history.", false)}${receivableStats()}<div class="data-panel invoice-register"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Closeout</th><th>Status</th><th>Total</th><th>Payments</th></tr></thead><tbody>${rows || `<tr><td colspan="8">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
@@ -18003,7 +18162,7 @@ ${line}`.trim();
         });
         document.querySelector("#edit-assignments")?.addEventListener("click", () => openAssignmentEditor(order));
         const summary = workOrderPaymentSummary(order);
-        modalBody.insertAdjacentHTML("beforeend", `<section class="work-order-payments"><div class="job-section-head"><div><h3>Payments</h3><p>Record deposits or partial collections against this work order.</p></div>${summary.balance > 0 ? `<button class="primary" type="button" id="record-work-order-payment">${icon("badge-dollar-sign", 14)} Record payment</button>` : ""}</div><div class="payment-balance-grid"><div><span>Total</span><b>${money4(summary.total)}</b></div><div><span>Paid</span><b>${money4(summary.paid)}</b></div><div><span>Remaining</span><b>${money4(summary.balance)}</b></div><div><span>Status</span>${badge2(summary.status)}</div></div>${paymentHistoryMarkup(summary)}</section>`);
+        modalBody.insertAdjacentHTML("beforeend", `<section class="work-order-payments"><div class="job-section-head"><div><h3>Payments</h3><p>Record deposits or partial collections against this work order.</p></div>${summary.balance > 0 ? `<button class="primary" type="button" id="record-work-order-payment">${icon("badge-dollar-sign", 14)} Record payment</button>` : ""}</div><div class="payment-balance-grid"><div><span>Total</span><b>${money4(summary.total)}</b></div><div><span>Paid</span><b>${money4(summary.paid)}</b></div><div><span>Remaining</span><b>${money4(summary.balance)}</b></div><div><span>Status</span>${badge3(summary.status)}</div></div>${paymentHistoryMarkup(summary)}</section>`);
         document.querySelector("#record-work-order-payment")?.addEventListener("click", () => recordTargetPayment("work_order", order.id));
         lucide.createIcons();
       };
@@ -18571,6 +18730,31 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           return;
         }
         renderKeyLicenseCore();
+      };
+      if (!roleRoutes.super_admin.includes("health")) roleRoutes.super_admin.push("health");
+      healthCheckData = null;
+      healthCheckLoading = false;
+      platformShellHealthCore = platformShell;
+      platformShell = function(content) {
+        const licensesNav = nav("licenses", "key-round", "Key licenses");
+        return platformShellHealthCore(content).replace(licensesNav, `${licensesNav}${nav("health", "activity", "System health")}`);
+      };
+      bindHealthCheckCore = bind;
+      bind = function() {
+        bindHealthCheckCore();
+        if (state.route === "health" && currentUser()?.role === "super_admin") bindHealthCheck();
+      };
+      renderHealthCheckCore = render;
+      render = function() {
+        if (currentUser()?.role === "super_admin" && state.route === "health") {
+          const root = document.querySelector("#root");
+          root.innerHTML = safeHtml(healthCheckView());
+          lucide.createIcons();
+          bind();
+          bindPlatformAdmin();
+          return;
+        }
+        renderHealthCheckCore();
       };
       SMS_READ_MARKS = "shopcrank-sms-read-v1";
       smsInbox = { loaded: false, loading: false, enabled: false, messages: [], selectedKey: "", error: "" };
