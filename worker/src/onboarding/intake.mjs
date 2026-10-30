@@ -1,7 +1,7 @@
 // Operator intake for a new shop. Everything A2P, Twilio, and the Grok
 // templates need is collected here once.
 
-import { normalizePhone, isE164Phone, GROK_VOICE_IDS } from '../../../src/modules/front-desk-questionnaire.js';
+import { normalizePhone, isE164Phone, isEmail, GROK_VOICE_IDS } from '../../../src/modules/front-desk-questionnaire.js';
 
 export const SHOP_STAFF_ROLES = Object.freeze(['admin', 'office', 'service_writer', 'technician']);
 export const A2P_BUSINESS_TYPES = Object.freeze(['Partnership', 'Limited Liability Corporation', 'Co-operative', 'Non-profit Corporation', 'Corporation']);
@@ -12,7 +12,8 @@ const str = (value, max = 200) => String(value ?? '').trim().slice(0, max);
 const list = value => (Array.isArray(value) ? value : String(value ?? '').split(/\r?\n|,/)).map(item => str(item, 120)).filter(Boolean).slice(0, 60);
 
 export function slugifyShopId(value) {
-  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  const slug = String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return slug.slice(slug.startsWith('-') ? 1 : 0, slug.endsWith('-') ? -1 : undefined).slice(0, 48);
 }
 
 export function areaCodeFrom(phone) {
@@ -67,8 +68,6 @@ export function normalizeIntake(input = {}) {
   };
 }
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export function validateIntake(input = {}) {
   const intake = normalizeIntake(input);
   const errors = [];
@@ -82,7 +81,7 @@ export function validateIntake(input = {}) {
   need(/^\d{5}(-\d{4})?$/.test(intake.address.postalCode), 'address.postalCode', 'ZIP code is required.');
   need(/^https:\/\/[^\s]+\.[^\s]+/.test(intake.website), 'website', 'Website must start with https:// (A2P requires a working site).');
   need(intake.contact.firstName && intake.contact.lastName, 'contact.name', 'Authorized contact first and last name are required.');
-  need(EMAIL.test(intake.contact.email), 'contact.email', 'Authorized contact email is required.');
+  need(isEmail(intake.contact.email), 'contact.email', 'Authorized contact email is required.');
   need(isE164Phone(intake.contact.mobile), 'contact.mobile', 'Authorized contact mobile must be a phone number like +18065550199.');
   need(A2P_JOB_POSITIONS.includes(intake.contact.jobPosition), 'contact.jobPosition', `Job position must be one of: ${A2P_JOB_POSITIONS.join(', ')}.`);
   need(intake.hours, 'hours', 'Hours are required.');
@@ -91,8 +90,8 @@ export function validateIntake(input = {}) {
   need(isE164Phone(intake.currentPhone), 'currentPhone', 'Current shop phone must be a phone number like +18065550199.');
   need(/^\d{3}$/.test(intake.areaCode), 'areaCode', 'Area code is required.');
   need(intake.optInWording.length >= 20, 'optInWording', 'SMS opt-in wording is required (how customers agree to receive texts).');
-  need(EMAIL.test(intake.shopEmail), 'shopEmail', 'Shop email (receives voicemails) is required.');
-  for (const [index, member] of intake.staff.entries()) need(EMAIL.test(member.email), `staff.${index}.email`, `Staff member ${index + 1} needs a valid email.`);
+  need(isEmail(intake.shopEmail), 'shopEmail', 'Shop email (receives voicemails) is required.');
+  for (const [index, member] of intake.staff.entries()) need(isEmail(member.email), `staff.${index}.email`, `Staff member ${index + 1} needs a valid email.`);
   return { valid: errors.length === 0, errors, intake };
 }
 

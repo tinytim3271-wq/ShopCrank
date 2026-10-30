@@ -7,12 +7,32 @@ import vm from 'node:vm';
 import { buildPartstechOrderRequest } from '../modules/partstech.js';
 import * as Filing from '../modules/filing/index.js';
 import { toLocalIsoDate } from '../shared/dates.js';
+import { escapeHtml } from '../shared/html.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const legacy = readFileSync(join(root, 'runtime', 'legacy.js'), 'utf8');
+
+test('HTML sinks fail closed if DOMPurify is unavailable, including decoded DOM text', () => {
+  const attack = '<img src=x onerror=alert(1)><script>alert(1)</script>';
+  for (const DOMPurify of [undefined, {}]) {
+    const render = vm.runInNewContext(`${functionSource('function safeHtml(')}; safeHtml`, { DOMPurify, escapeHtml });
+    assert.equal(render(attack), escapeHtml(attack));
+    assert.equal(render('<b>Trusted formatting</b>'), '&lt;b&gt;Trusted formatting&lt;/b&gt;');
+  }
+  const render = vm.runInNewContext(`${functionSource('function safeHtml(')}; safeHtml`, {
+    escapeHtml,
+    DOMPurify: { sanitize: (markup, options) => {
+      assert.equal(options.USE_PROFILES.html, true);
+      assert.deepEqual([...options.ADD_ATTR], ['target']);
+      return markup === '<b>Trusted formatting</b>' ? markup : '';
+    } },
+  });
+  assert.equal(render('<b>Trusted formatting</b>'), '<b>Trusted formatting</b>');
+  assert.equal(render(attack), '');
+});
 
 test('fresh cloud shops use state-only Texas tax without changing demo or saved rates', () => {
   for (const demo of [false, true]) {

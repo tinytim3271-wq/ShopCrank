@@ -26,7 +26,10 @@ export const ESTIMATED_COSTS = Object.freeze({
 });
 
 export function publicOrigin(env) {
-  return String(env?.SHOPCRANK_PUBLIC_ORIGIN || 'https://www.shopcrank.com').replace(/\/+$/, '');
+  const origin = String(env?.SHOPCRANK_PUBLIC_ORIGIN || 'https://www.shopcrank.com');
+  let end = origin.length;
+  while (end > 0 && origin[end - 1] === '/') end--;
+  return origin.slice(0, end);
 }
 
 export function tenantVoiceUrl(env, shopId) {

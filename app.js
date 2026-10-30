@@ -8601,7 +8601,7 @@ button{margin-top:12px;padding:8px 14px}
   var legacy_exports = {};
   function safeHtml(markup) {
     const html = String(markup ?? "");
-    if (typeof DOMPurify === "undefined" || typeof DOMPurify.sanitize !== "function") return html;
+    if (typeof DOMPurify === "undefined" || typeof DOMPurify.sanitize !== "function") return escapeHtml(html);
     return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
   }
   function empty(message) {

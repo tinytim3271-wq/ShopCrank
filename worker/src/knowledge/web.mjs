@@ -13,7 +13,10 @@ export const MIN_REFRESH_HOURS = 6;
 export const MAX_REFRESH_HOURS = 24 * 90;
 
 export function normalizeDomain(value) {
-  const text = String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^\*\./, '');
+  let text = String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '');
+  const slash = text.indexOf('/');
+  if (slash >= 0) text = text.slice(0, slash);
+  if (text.startsWith('*.')) text = text.slice(2);
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(text) || text.includes('..')) return '';
   return text;
 }
@@ -52,31 +55,73 @@ export function checkUrlAllowed(rawUrl, allowlist) {
 }
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+const OMIT_TEXT_TAGS = new Set(['script', 'style', 'noscript', 'svg', 'iframe', 'template', 'head', 'form']);
+const RAW_TEXT_TAGS = new Set(['script', 'style', 'noscript', 'iframe', 'title']);
+const BREAK_TAGS = new Set(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'tr', 'section', 'article']);
 
+// Plain reference text only, not an HTML sanitizer. Callers must still escape
+// the result when rendering it as HTML (including decoded entities).
 export function htmlToText(html) {
   const source = String(html || '');
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(source)?.[1]?.trim() || '';
-  const text = source
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<(script|style|noscript|svg|iframe|template|head|form)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/section|\/article)[^>]*>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+  const body = [], title = [], omitted = [];
+  let inTitle = false, rawTag = '';
+  for (let cursor = 0; cursor < source.length;) {
+    const opening = source.indexOf('<', cursor);
+    const end = opening < 0 ? source.length : opening;
+    if (inTitle) title.push(source.slice(cursor, end));
+    else if (!omitted.length) body.push(source.slice(cursor, end));
+    if (opening < 0) break;
+    if (!rawTag && source.startsWith('<!--', opening)) {
+      const close = source.indexOf('-->', opening + 4);
+      if (close < 0) break;
+      cursor = close + 3;
+      continue;
+    }
+    let position = opening + 1;
+    const closing = source[position] === '/';
+    if (closing) position++;
+    const nameStart = position;
+    while (position < source.length && /[a-z0-9]/i.test(source[position])) position++;
+    const name = source.slice(nameStart, position).toLowerCase();
+    // In raw text, '<' is ordinary text unless it starts the matching end tag.
+    if (rawTag && !(closing && name === rawTag && /[\s/>]/.test(source[position] || ''))) {
+      if (inTitle) title.push('<');
+      cursor = opening + 1;
+      continue;
+    }
+    let quote = '';
+    for (; position < source.length; position++) {
+      const char = source[position];
+      if (quote) { if (char === quote) quote = ''; }
+      else if (char === '"' || char === "'") quote = char;
+      else if (char === '>') break;
+    }
+    if (position === source.length) break;
+    cursor = position + 1;
+    if (closing) {
+      if (name === rawTag) rawTag = '';
+      if (name === 'title') inTitle = false;
+      if (omitted.at(-1) === name) omitted.pop();
+    } else {
+      if (name === 'title') inTitle = true;
+      if (RAW_TEXT_TAGS.has(name)) rawTag = name;
+      if (OMIT_TEXT_TAGS.has(name)) omitted.push(name);
+    }
+    if (!omitted.length && !inTitle) body.push(name === 'br' || (closing && BREAK_TAGS.has(name)) ? '\n' : ' ');
+  }
+  const normalize = value => value
     .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+\d*);/gi, (entity, code) => {
       if (code[0] === '#') {
         const number = code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
-        return Number.isFinite(number) ? String.fromCodePoint(number) : ' ';
+        return number > 0 && number <= 0x10ffff && !(number >= 0xd800 && number <= 0xdfff) ? String.fromCodePoint(number) : ' ';
       }
       return ENTITIES[code.toLowerCase()] ?? ' ';
     })
     .replace(/[ \t\f\v]+/g, ' ')
-    .replace(/\s*\n\s*/g, '\n')
+    .split('\n').map(line => line.trim()).join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  return { title: htmlToTitle(title), text };
-}
-
-function htmlToTitle(title) {
-  return title.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').slice(0, 200);
+  return { title: normalize(title.join('')).replace(/\s+/g, ' ').slice(0, 200), text: normalize(body.join('')) };
 }
 
 const INJECTION_PATTERNS = [

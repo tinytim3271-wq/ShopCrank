@@ -63,23 +63,74 @@ function decodePdfString(raw) {
   });
 }
 
+function pdfLiteralEnd(content, start) {
+  let depth = 1;
+  for (let i = start + 1; i < content.length; i++) {
+    if (content[i] === '\\') { i++; continue; }
+    if (content[i] === '(') depth++;
+    if (content[i] === ')' && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
 function textFromContentStream(content) {
   const out = [];
-  const tokens = /\((?:\\.|[^\\)])*\)|\[(?:[^\]]*)\]\s*TJ|T\*|Td|TD|ET|'|"/g;
-  let match;
-  while ((match = tokens.exec(content))) {
-    const token = match[0];
-    if (token.startsWith('(')) {
-      const after = content.slice(tokens.lastIndex, tokens.lastIndex + 4);
-      if (/^\s*(Tj|'|")/.test(after)) out.push(decodePdfString(token.slice(1, -1)));
-    } else if (token.startsWith('[')) {
-      const parts = token.match(/\((?:\\.|[^\\)])*\)/g) || [];
-      out.push(parts.map(part => decodePdfString(part.slice(1, -1))).join(''));
-    } else if (['T*', 'Td', 'TD', 'ET', "'", '"'].includes(token)) {
-      out.push('\n');
+  let literal = '', array = null, arrayText = '';
+  for (let i = 0; i < content.length;) {
+    const char = content[i];
+    if (char === '%') {
+      const end = content.indexOf('\n', i);
+      i = end < 0 ? content.length : end + 1;
+    } else if (char === '(') {
+      const end = pdfLiteralEnd(content, i);
+      if (end < 0) break;
+      literal = decodePdfString(content.slice(i + 1, end - 1));
+      if (array) array.push(literal);
+      i = end;
+    } else if (char === '[') {
+      array = [];
+      i++;
+    } else if (char === ']') {
+      arrayText = (array || []).join('');
+      array = null;
+      i++;
+    } else if (/\s/.test(char) || '<>{}/'.includes(char)) {
+      i++;
+    } else {
+      const start = i++;
+      while (i < content.length && !/[\s()[\]<>{}/'"]/.test(content[i])) i++;
+      const token = content.slice(start, i);
+      if (token === 'Tj' || token === "'" || token === '"' || token === 'TJ') {
+        out.push(token === 'TJ' ? arrayText : literal);
+        literal = '';
+        arrayText = '';
+      }
+      if (['T*', 'Td', 'TD', 'ET', "'", '"'].includes(token)) out.push('\n');
     }
   }
-  return out.join('').replace(/[ \t]+\n/g, '\n');
+  return out.join('').split('\n').map(line => line.trimEnd()).join('\n');
+}
+
+function pdfDictionaryEnd(source, start) {
+  let depth = 1;
+  for (let i = start + 2; i < source.length; i++) {
+    if (source[i] === '%') {
+      while (i < source.length && source[i] !== '\n' && source[i] !== '\r') i++;
+      continue;
+    }
+    if (source[i] === '(') {
+      const end = pdfLiteralEnd(source, i);
+      if (end < 0) return -1;
+      i = end - 1;
+      continue;
+    }
+    if (source[i] === '<' && source[i + 1] === '<') { depth++; i++; }
+    else if (source[i] === '>' && source[i + 1] === '>') {
+      if (--depth === 0) return i + 2;
+      i++;
+    }
+  }
+  return -1;
 }
 
 export async function extractPdfTextFallback(bytes, { maxBytes = MAX_DOCUMENT_BYTES } = {}) {
@@ -87,13 +138,24 @@ export async function extractPdfTextFallback(bytes, { maxBytes = MAX_DOCUMENT_BY
   consume(bytes.byteLength);
   const source = latin1(bytes);
   const chunks = [];
-  const streamPattern = /<<([\s\S]*?)>>\s*stream\r?\n/g;
-  let match;
-  while ((match = streamPattern.exec(source))) {
-    const start = streamPattern.lastIndex;
+  let cursor = 0;
+  while (cursor < source.length) {
+    const dictionaryStart = source.indexOf('<<', cursor);
+    if (dictionaryStart < 0) break;
+    const dictionaryEnd = pdfDictionaryEnd(source, dictionaryStart);
+    if (dictionaryEnd < 0) break;
+    const dictionary = source.slice(dictionaryStart + 2, dictionaryEnd - 2);
+    cursor = dictionaryEnd;
+    while (cursor < source.length && /\s/.test(source[cursor])) cursor++;
+    if (!source.startsWith('stream', cursor)) continue;
+    cursor += 6;
+    if (source[cursor] === '\r') cursor++;
+    if (source[cursor] !== '\n') continue;
+    const start = ++cursor;
     const end = source.indexOf('endstream', start);
     if (end < 0) break;
-    const declaredLength = /\/Length\s+(\d+)\s*(?:\/|$)/.exec(match[1]);
+    cursor = end + 9;
+    const declaredLength = /\/Length\s+(\d+)\s*(?:\/|$)/.exec(dictionary);
     let bodyEnd = declaredLength ? start + Number(declaredLength[1]) : end;
     if (bodyEnd > end) throw new HttpError(400, 'Invalid PDF stream length');
     if (!declaredLength) {
@@ -101,20 +163,19 @@ export async function extractPdfTextFallback(bytes, { maxBytes = MAX_DOCUMENT_BY
       if (bytes[bodyEnd - 1] === 13) bodyEnd--;
     }
     let body = bytes.subarray(start, bodyEnd);
-    if (/\/FlateDecode/.test(match[1])) {
+    if (/\/FlateDecode/.test(dictionary)) {
       try {
         body = await inflate(body, consume);
       } catch (error) {
         if (error instanceof HttpError) throw error;
         continue;
       }
-    } else if (/\/Filter/.test(match[1])) {
+    } else if (/\/Filter/.test(dictionary)) {
       continue;
     }
     const text = textFromContentStream(latin1(body));
     consume(new TextEncoder().encode(text).byteLength + 2);
     if (text.trim()) chunks.push(text.trim());
-    streamPattern.lastIndex = end;
   }
   return chunks.join('\n\n');
 }

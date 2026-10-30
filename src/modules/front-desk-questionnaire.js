@@ -233,8 +233,12 @@ export function isE164Phone(value) {
   return /^\+[1-9]\d{7,14}$/.test(String(value || ''));
 }
 
-function isEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ''));
+export function isEmail(value) {
+  const text = String(value || '');
+  const at = text.indexOf('@');
+  if (at <= 0 || at !== text.lastIndexOf('@') || /\s/.test(text)) return false;
+  const dot = text.indexOf('.', at + 2);
+  return dot > at + 1 && dot < text.length - 1;
 }
 
 function isUrl(value) {
