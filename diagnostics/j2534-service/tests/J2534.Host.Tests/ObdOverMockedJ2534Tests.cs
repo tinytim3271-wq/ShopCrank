@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using ShopCrank.J2534.Core;
 using ShopCrank.J2534.Native;
+using ShopCrank.J2534.IsoTp;
 using ShopCrank.J2534.Uds;
 using Xunit;
 
@@ -84,6 +85,24 @@ sealed class FakeJ2534Dll
 
 public sealed class ObdOverMockedJ2534Tests
 {
+    [Theory]
+    [InlineData("270112345678", "670112345678", "2701[REDACTED]", "6701[REDACTED]")]
+    [InlineData("270212345678", "670212345678", "2702[REDACTED]", "6702[REDACTED]")]
+    [InlineData("3101F19012345678", "7101F19012345678", "3101F190[REDACTED]", "7101F190[REDACTED]")]
+    [InlineData("22F190", "62F1901234", "22F190", "62F1901234")]
+    public void IsoTpLogsRedactSensitiveRequestsAndResponses(string requestHex, string responseHex, string expectedTx, string expectedRx)
+    {
+        var response = Convert.FromHexString(responseHex);
+        var dll = new FakeJ2534Dll { Responder = (_, _) => [response] };
+        using var device = PassThruDevice.Open(dll.CreateLibrary(), "PassThru464.dll", "Mock RLink");
+        device.Connect();
+        var logs = new List<(string Direction, string Payload)>();
+        var channel = new J2534IsoTpChannel(device, (direction, _, payload, _) => logs.Add((direction, payload)));
+
+        Assert.Equal(response, channel.SendRequest(Convert.FromHexString(requestHex), "7E0", "7E8"));
+        Assert.Equal([("tx", expectedTx), ("rx", expectedRx)], logs);
+    }
+
     const string Vin = "2C3CDXBG5MH000001";
     static readonly JsonSerializerOptions Camel = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 

@@ -1,5 +1,11 @@
 # Operations Runbook
 
+## Local frontend and API
+
+Run `.cursor/start.sh` with Node 24 to start the offline Worker on port 8787 and the frontend on port 3000. The frontend uses `scripts/dev-frontend.mjs` to proxy `/api` requests to the Worker, including request bodies and query strings. The startup health check verifies the proxied API, not just static files. For a manually started frontend, `FRONTEND_PORT` changes its listening port and forwarded host.
+
+Fresh cloud shops start with Texas's 6.25% state-only rate until local jurisdictions are configured. Existing saved rates are preserved. Texas filing generation, exports, and printing require the configured rate to match those jurisdictions; save Tax settings to reconcile them before filing.
+
 ## Deploy checklist by target
 
 ### Cloudflare Pages (`.github/workflows/cloudflare-pages.yml`)

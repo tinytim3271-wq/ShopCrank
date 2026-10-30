@@ -346,6 +346,19 @@
     const day = String(date.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   }
+  function toLocalIsoDate(value2) {
+    if (value2 instanceof Date) return Number.isNaN(value2.valueOf()) ? "" : localIsoDate(value2);
+    const text2 = String(value2 ?? "").trim();
+    if (!text2) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) {
+      const [year, month, day] = text2.split("-").map(Number);
+      const parsed2 = new Date(year, month - 1, day);
+      if (Number.isNaN(parsed2.valueOf()) || localIsoDate(parsed2) !== text2) return "";
+      return localIsoDate(parsed2);
+    }
+    const parsed = new Date(text2);
+    return Number.isNaN(parsed.valueOf()) ? "" : localIsoDate(parsed);
+  }
   var init_dates = __esm({
     "src/shared/dates.js"() {
     }
@@ -6374,6 +6387,10 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function combinedSalesTaxRate(jurisdictions) {
     return roundCents2((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
   }
+  function salesTaxRateMatchesJurisdictions(rate, jurisdictions) {
+    const configuredRate = Number(rate);
+    return Number.isFinite(configuredRate) && roundCents2(configuredRate) === combinedSalesTaxRate(jurisdictions);
+  }
   function buildJurisdictionSupplement(taxableSales, jurisdictions) {
     const taxable = roundCents2(taxableSales);
     const rows = (jurisdictions || []).map((j) => {
@@ -7068,7 +7085,7 @@ button{margin-top:12px;padding:8px 14px}
     const profile = app.shopProfile();
     const brand = app.printableBrand(profile);
     const body = customerInspectionDocument(inspection, profile, app.escapeHtml, app.cloudflareConfig.apiUrl);
-    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
+    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos,.finding-photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}.finding-photos img{width:120px;height:90px;max-width:100%;max-height:90px;object-fit:contain;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
       toast: app.toast,
       blockedMessage: "Allow pop-ups to print the inspection",
       autoPrint: true
@@ -9285,7 +9302,10 @@ button{margin-top:12px;padding:8px 14px}
   }
   function initialState() {
     const base = structuredClone(seed);
-    if (!isDemoShell()) for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = [];
+    if (!isDemoShell()) {
+      for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = [];
+      base.taxSettings.rate = combinedSalesTaxRate(DEFAULT_TX_JURISDICTIONS);
+    }
     return base;
   }
   function load() {
@@ -11778,14 +11798,6 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     document.querySelector("#accounting-export")?.addEventListener("click", exportLedger);
     document.querySelector("#record-expense")?.addEventListener("click", openExpense);
     document.querySelector("#journal-entry")?.addEventListener("click", openJournal);
-    document.querySelector("#tax-settings-form")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const data = readFormValues(event.target);
-      state.taxSettings = { state: data.state, taxId: data.taxId.trim(), rate: Number(data.rate) || 0, filingFrequency: data.filingFrequency };
-      save();
-      toast("Tax settings saved");
-      render();
-    });
     document.querySelector("#tax-report-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = readFormValues(event.target);
@@ -12858,8 +12870,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return invoice.id || invoice.number;
   }
   function invoiceDateValue(value2) {
-    const date = new Date(value2);
-    return Number.isNaN(date.valueOf()) ? "" : localIsoDate(date);
+    return toLocalIsoDate(value2);
   }
   function openInvoiceEditor(key) {
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
@@ -14485,6 +14496,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
 </section>`;
   }
   async function generateTaxReportFromForm(from, to) {
+    if (!filingRateIsConsistent()) return;
     try {
       if (navigator.onLine && !isLocalShell()) {
         const remote = await apiFetch(`/tax-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -14506,8 +14518,20 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
     taxReportResult = taxReport(from, to);
   }
+  function isFilingRateConsistent() {
+    const t = state.taxSettings || {};
+    if (t.state && t.state !== "TX") return true;
+    const jurisdictions = normalizeJurisdictions(t.jurisdictions);
+    const rate = t.rate == null || t.rate === "" ? combinedSalesTaxRate(jurisdictions) : Number(t.rate);
+    return salesTaxRateMatchesJurisdictions(rate, jurisdictions);
+  }
+  function filingRateIsConsistent() {
+    if (isFilingRateConsistent()) return true;
+    toast("Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.");
+    return false;
+  }
   function exportSalesTaxCsv() {
-    if (!taxReportResult) return;
+    if (!taxReportResult || !filingRateIsConsistent()) return;
     const shop = shopFilingProfile();
     const rows = [
       ["Sales tax filing export"],
@@ -14539,7 +14563,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     toast("Sales tax CSV exported");
   }
   function exportTexasWebfilePackage() {
-    if (!taxReportResult) return;
+    if (!taxReportResult || !filingRateIsConsistent()) return;
     const shop = shopFilingProfile();
     const supplement = buildJurisdictionSupplement(taxReportResult.totals.taxable, shop.jurisdictions);
     const csv = texasListSupplementCsv(supplement, {
@@ -14799,6 +14823,66 @@ ${catRows}
         stateWages: shop.state === "TX" ? 0 : ytd.gross,
         stateTax: ytd.state
       });
+    }
+  }
+  function bindTaxSettingsForm(taxSettingsForm) {
+    if (taxSettingsForm && !taxSettingsForm.dataset.filingEnhanced) {
+      taxSettingsForm.dataset.filingEnhanced = "1";
+      const grid = taxSettingsForm.querySelector(".form-grid") || taxSettingsForm;
+      if (!taxSettingsForm.querySelector("[name=ein]")) {
+        grid.insertAdjacentHTML("beforeend", `
+<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || "")}" placeholder="XX-XXXXXXX"/></label>
+<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
+<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
+<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
+      }
+      taxSettingsForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const data = readFormValues(event.target);
+        let jurisdictions = null;
+        try {
+          jurisdictions = JSON.parse(data.jurisdictionsJson || "null");
+        } catch {
+          toast("Jurisdiction JSON is invalid");
+          return;
+        }
+        if (jurisdictions !== null && (!Array.isArray(jurisdictions) || jurisdictions.some((item) => !item || typeof item !== "object" || !Number.isFinite(Number(item.rate)) || Number(item.rate) < 0))) {
+          toast("Jurisdictions must be an array with valid nonnegative rates");
+          return;
+        }
+        if (data.state === "TX") jurisdictions = normalizeJurisdictions(jurisdictions);
+        const rate = data.state === "TX" ? combinedSalesTaxRate(jurisdictions) : Number(data.rate);
+        if (!Number.isFinite(rate) || rate < 0) {
+          toast("Enter a valid nonnegative tax rate");
+          return;
+        }
+        const taxSettings = {
+          ...state.taxSettings,
+          state: data.state,
+          taxId: String(data.taxId || "").trim(),
+          rate,
+          filingFrequency: data.filingFrequency,
+          ein: String(data.ein || "").trim(),
+          texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
+          webfileNumber: String(data.webfileNumber || "").trim(),
+          jurisdictions,
+          laborTaxable: data.laborTaxable === "on",
+          feesTaxable: data.feesTaxable === "on"
+        };
+        try {
+          await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });
+          state.taxSettings = taxSettings;
+          taxReportResult = null;
+          toast("Tax & e-file settings saved");
+          render();
+        } catch (error) {
+          toast(error.message || "Could not save tax settings");
+        }
+      }, { capture: true });
     }
   }
   function orderChoices() {
@@ -15104,7 +15188,7 @@ ${catRows}
     const operationOptions = KEY_OPERATIONS.map((item) => `<option value="${item.id}">${item.label}</option>`).join("");
     const fallbackOrderOption = '<option value="">No repair orders</option>';
     const submitLabel = hostReady || live ? "Start key job" : "Record key job";
-    return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live Nissan Maxima jobs need the immobilizer PIN and a matching VIN. Gateway-equipped years need Nissan AutoAuth. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
+    return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live Nissan Maxima key registration is unsupported until licensed Nissan gateway authorization is available. Connecting AutoAuth alone will not enable this job. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
   }
   async function rememberBayRecord(type, collection, record) {
     const list = state[collection];
@@ -16296,6 +16380,7 @@ ${line}`.trim();
       init_estimate_templates();
       init_bay();
       init_estimate_approval();
+      init_dates();
       init_home();
       chatDerivedCache = null;
       posReaders = null;
@@ -17546,29 +17631,6 @@ ${line}`.trim();
       bindDurableRecordsCore = bind;
       bind = function() {
         bindDurableRecordsCore();
-        document.querySelector("#tax-settings-form")?.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          const data = readFormValues(event.target);
-          const existing = state.shopSettingsRecords.find((item) => item.id === "tax");
-          const record = {
-            ...state.taxSettings,
-            state: data.state,
-            taxId: data.taxId.trim(),
-            rate: Number(data.rate) || 0,
-            filingFrequency: data.filingFrequency,
-            id: "tax",
-            updatedAt: existing?.updatedAt ? now() : void 0
-          };
-          try {
-            const saved = await saveShopEntity("shopsettings", record);
-            state.taxSettings = { ...state.taxSettings, ...saved };
-            toast("Tax settings saved");
-            render();
-          } catch (error) {
-            toast(error.message || "Tax settings could not be saved");
-          }
-        }, { capture: true });
         document.querySelector("#new-customer")?.addEventListener("click", () => openCustomerForm());
         document.querySelectorAll("[data-edit-order]").forEach((button) => {
           button.onclick = (event) => {
@@ -17959,12 +18021,14 @@ ${line}`.trim();
       reports = function() {
         const t = state.taxSettings;
         const stateName = usStates.find((s) => s.code === t.state)?.name || t.state;
-        const result = taxReportResult;
+        const rateMatches = isFilingRateConsistent();
+        const result = rateMatches ? taxReportResult : null;
         const presets = filingPeriodPresets();
         const fromVal = result?.from || presets.month.from;
         const toVal = result?.to || presets.month.to;
         return shell(`${heading("Performance", "Reports", "Sales tax filing report, jurisdiction matrix, and e-file packages for your CPA or state portal.", false)}${stats()}
 <section class="messaging-panel"><div class="messaging-status ready">${icon("landmark", 17)}<div><strong>Tax filing report \u2014 ${escapeHtml(stateName)}</strong><span>Cash-basis sales tax for ${escapeHtml(stateName)} ${escapeHtml(String(t.filingFrequency || "").toLowerCase())} filing. Includes nontaxable and local jurisdiction split.</span></div></div>
+${rateMatches ? "" : '<p class="ledger-note">Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.</p>'}
 <div class="payroll-period-controls no-print" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px">
 <button type="button" class="secondary" data-tax-preset="month">${presets.month.label}</button>
 <button type="button" class="secondary" data-tax-preset="quarter">${presets.quarter.label}</button>
@@ -18217,6 +18281,12 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         }
         document.querySelector("#export-tax-csv")?.addEventListener("click", exportSalesTaxCsv);
         document.querySelector("#export-tx-webfile")?.addEventListener("click", exportTexasWebfilePackage);
+        document.querySelector("#print-tax-report")?.addEventListener("click", (event) => {
+          if (!filingRateIsConsistent()) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, { capture: true });
         document.querySelector("#open-filing-center")?.addEventListener("click", () => {
           filingCenterOpen = true;
           render();
@@ -18266,54 +18336,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         document.querySelectorAll("[data-print-w2]").forEach((button) => {
           button.onclick = () => printEmployeeAnnualForm(button.dataset.printW2);
         });
-        const taxSettingsForm = document.querySelector("#tax-settings-form");
-        if (taxSettingsForm && !taxSettingsForm.dataset.filingEnhanced) {
-          taxSettingsForm.dataset.filingEnhanced = "1";
-          const grid = taxSettingsForm.querySelector(".form-grid") || taxSettingsForm;
-          if (!taxSettingsForm.querySelector("[name=ein]")) {
-            grid.insertAdjacentHTML("beforeend", `
-<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || "")}" placeholder="XX-XXXXXXX"/></label>
-<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
-<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
-<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
-<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
-<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
-          }
-          taxSettingsForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            const data = readFormValues(event.target);
-            let jurisdictions = null;
-            try {
-              jurisdictions = JSON.parse(data.jurisdictionsJson || "null");
-            } catch {
-              toast("Jurisdiction JSON is invalid");
-              return;
-            }
-            const rate = jurisdictions ? combinedSalesTaxRate(jurisdictions) : Number(data.rate) || 0;
-            const taxSettings = {
-              state: data.state,
-              taxId: String(data.taxId || "").trim(),
-              rate,
-              filingFrequency: data.filingFrequency,
-              ein: String(data.ein || "").trim(),
-              texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
-              webfileNumber: String(data.webfileNumber || "").trim(),
-              jurisdictions,
-              laborTaxable: data.laborTaxable === "on",
-              feesTaxable: data.feesTaxable === "on"
-            };
-            try {
-              await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });
-              state.taxSettings = taxSettings;
-              toast("Tax & e-file settings saved");
-              render();
-            } catch (error) {
-              toast(error.message || "Could not save tax settings");
-            }
-          }, { capture: true });
-        }
+        bindTaxSettingsForm(document.querySelector("#tax-settings-form"));
       };
       scanAiBusy = "";
       renderShopOsCore = render;

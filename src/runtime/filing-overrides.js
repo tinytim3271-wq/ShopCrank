@@ -104,12 +104,14 @@ taxReportView = function (result, stateName, settings) {
 reports = function () {
   const t = state.taxSettings;
   const stateName = usStates.find(s => s.code === t.state)?.name || t.state;
-  const result = taxReportResult;
+  const rateMatches = isFilingRateConsistent();
+  const result = rateMatches ? taxReportResult : null;
   const presets = filingPeriodPresets();
   const fromVal = result?.from || presets.month.from;
   const toVal = result?.to || presets.month.to;
   return shell(`${heading('Performance', 'Reports', 'Sales tax filing report, jurisdiction matrix, and e-file packages for your CPA or state portal.', false)}${stats()}
 <section class="messaging-panel"><div class="messaging-status ready">${icon('landmark', 17)}<div><strong>Tax filing report — ${escapeHtml(stateName)}</strong><span>Cash-basis sales tax for ${escapeHtml(stateName)} ${escapeHtml(String(t.filingFrequency || '').toLowerCase())} filing. Includes nontaxable and local jurisdiction split.</span></div></div>
+${rateMatches ? '' : '<p class="ledger-note">Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.</p>'}
 <div class="payroll-period-controls no-print" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px">
 <button type="button" class="secondary" data-tax-preset="month">${presets.month.label}</button>
 <button type="button" class="secondary" data-tax-preset="quarter">${presets.quarter.label}</button>
@@ -142,6 +144,7 @@ function filingCenterMarkup() {
 }
 
 async function generateTaxReportFromForm(from, to) {
+  if (!filingRateIsConsistent()) return;
   try {
     if (navigator.onLine && !isLocalShell()) {
       const remote = await apiFetch(`/tax-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -164,8 +167,22 @@ async function generateTaxReportFromForm(from, to) {
   taxReportResult = taxReport(from, to);
 }
 
+function isFilingRateConsistent() {
+  const t = state.taxSettings || {};
+  if (t.state && t.state !== 'TX') return true;
+  const jurisdictions = Filing.normalizeJurisdictions(t.jurisdictions);
+  const rate = t.rate == null || t.rate === '' ? Filing.combinedSalesTaxRate(jurisdictions) : Number(t.rate);
+  return Filing.salesTaxRateMatchesJurisdictions(rate, jurisdictions);
+}
+
+function filingRateIsConsistent() {
+  if (isFilingRateConsistent()) return true;
+  toast('Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.');
+  return false;
+}
+
 function exportSalesTaxCsv() {
-  if (!taxReportResult) return;
+  if (!taxReportResult || !filingRateIsConsistent()) return;
   const shop = shopFilingProfile();
   const rows = [
     ['Sales tax filing export'],
@@ -189,7 +206,7 @@ function exportSalesTaxCsv() {
 }
 
 function exportTexasWebfilePackage() {
-  if (!taxReportResult) return;
+  if (!taxReportResult || !filingRateIsConsistent()) return;
   const shop = shopFilingProfile();
   const supplement = Filing.buildJurisdictionSupplement(taxReportResult.totals.taxable, shop.jurisdictions);
   const csv = Filing.texasListSupplementCsv(supplement, {
@@ -677,6 +694,12 @@ bindExpandedFeatures = function () {
   }
   document.querySelector('#export-tax-csv')?.addEventListener('click', exportSalesTaxCsv);
   document.querySelector('#export-tx-webfile')?.addEventListener('click', exportTexasWebfilePackage);
+  document.querySelector('#print-tax-report')?.addEventListener('click', event => {
+    if (!filingRateIsConsistent()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, { capture: true });
   document.querySelector('#open-filing-center')?.addEventListener('click', () => { filingCenterOpen = true; render(); });
   document.querySelector('#close-filing-center')?.addEventListener('click', () => { filingCenterOpen = false; render(); });
   document.querySelectorAll('[data-taxpkg-preset]').forEach(button => {
@@ -721,7 +744,10 @@ bindExpandedFeatures = function () {
     button.onclick = () => printEmployeeAnnualForm(button.dataset.printW2);
   });
 
-  const taxSettingsForm = document.querySelector('#tax-settings-form');
+  bindTaxSettingsForm(document.querySelector('#tax-settings-form'));
+};
+
+function bindTaxSettingsForm(taxSettingsForm) {
   if (taxSettingsForm && !taxSettingsForm.dataset.filingEnhanced) {
     taxSettingsForm.dataset.filingEnhanced = '1';
     const grid = taxSettingsForm.querySelector('.form-grid') || taxSettingsForm;
@@ -741,8 +767,15 @@ bindExpandedFeatures = function () {
       const data = readFormValues(event.target);
       let jurisdictions = null;
       try { jurisdictions = JSON.parse(data.jurisdictionsJson || 'null'); } catch { toast('Jurisdiction JSON is invalid'); return; }
-      const rate = jurisdictions ? Filing.combinedSalesTaxRate(jurisdictions) : (Number(data.rate) || 0);
+      if (jurisdictions !== null && (!Array.isArray(jurisdictions) || jurisdictions.some(item => !item || typeof item !== 'object' || !Number.isFinite(Number(item.rate)) || Number(item.rate) < 0))) {
+        toast('Jurisdictions must be an array with valid nonnegative rates');
+        return;
+      }
+      if (data.state === 'TX') jurisdictions = Filing.normalizeJurisdictions(jurisdictions);
+      const rate = data.state === 'TX' ? Filing.combinedSalesTaxRate(jurisdictions) : Number(data.rate);
+      if (!Number.isFinite(rate) || rate < 0) { toast('Enter a valid nonnegative tax rate'); return; }
       const taxSettings = {
+        ...state.taxSettings,
         state: data.state,
         taxId: String(data.taxId || '').trim(),
         rate,
@@ -757,6 +790,7 @@ bindExpandedFeatures = function () {
       try {
         await saveShopEntity('shopsettings', { ...taxSettings, id: 'tax', updatedAt: now() });
         state.taxSettings = taxSettings;
+        taxReportResult = null;
         toast('Tax & e-file settings saved');
         render();
       } catch (error) {
@@ -764,6 +798,6 @@ bindExpandedFeatures = function () {
       }
     }, { capture: true });
   }
-};
+}
 
 /* === MECHPRO_FILING_OVERRIDES_END === */

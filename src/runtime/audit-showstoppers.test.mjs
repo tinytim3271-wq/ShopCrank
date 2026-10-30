@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { ESLint } from 'eslint';
 import { readFormValues } from '../shared/form-fields.js';
+import * as Filing from '../modules/filing/index.js';
 
 // Client-side regression coverage for the five release blockers in
 // .10x/reviews/2026-10-20-qa-report.md. The Worker halves are in
@@ -109,7 +110,7 @@ test('blocker 5: a cloud shop starts with empty collections; only local demo she
   const initialState = block(legacy, 'function initialState(');
   const run = (hostname, protocol = 'https:', offline = false) => vm.runInNewContext(
     `${seedSource}; ${isDemoShell}; ${initialState}; initialState()`,
-    { structuredClone, location: { hostname, protocol }, isOfflineDesktop: () => offline },
+    { structuredClone, Filing, location: { hostname, protocol }, isOfflineDesktop: () => offline },
   );
   const cloud = run('www.shopcrank.com');
   for (const key of ['orders', 'customers', 'invoices', 'expenses', 'appointments']) {

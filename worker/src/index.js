@@ -3222,8 +3222,17 @@ async function handleBilling(request, env, context, segments) {
     const priceId = stripePriceForPlan(env, plan.id, interval);
     if (stripeKey && priceId) {
       const origin = new URL(request.url).origin;
-      const successUrl = String(body.successUrl || `${origin}/?billing=success`);
-      const cancelUrl = String(body.cancelUrl || `${origin}/?billing=cancelled`);
+      const validRedirect = value => {
+        try {
+          const url = new URL(String(value));
+          return url.origin === origin && ['http:', 'https:'].includes(url.protocol) ? url.toString() : null;
+        } catch {
+          return null;
+        }
+      };
+      const successUrl = validRedirect(body.successUrl ?? `${origin}/?billing=success`);
+      const cancelUrl = validRedirect(body.cancelUrl ?? `${origin}/?billing=cancelled`);
+      if (!successUrl || !cancelUrl) throw new HttpError(400, 'Checkout redirects must match the requesting site');
       let customer = await env.DB.prepare(
         'SELECT stripe_customer_id FROM billing_customers WHERE shop_id = ?',
       ).bind(context.shopId).first();
@@ -3282,6 +3291,7 @@ async function handleBilling(request, env, context, segments) {
   }
   if (action === 'portal' && request.method === 'POST') {
     if (!context?.shopId) throw new HttpError(401, 'Sign in to manage billing');
+    if (!['admin', 'super_admin'].includes(context.role)) throw new HttpError(403, 'Only shop admins can manage billing');
     const customer = await env.DB.prepare(
       'SELECT stripe_customer_id FROM billing_customers WHERE shop_id = ?',
     ).bind(context.shopId).first();
