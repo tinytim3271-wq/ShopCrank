@@ -6,6 +6,7 @@ import {
   combinedSalesTaxRate,
   needsLocalJurisdictions,
   normalizeJurisdictions,
+  salesTaxRateMatchesJurisdictions,
 } from './jurisdictions.js';
 
 test('a new shop starts with the state line only, not placeholder local districts', () => {
@@ -23,6 +24,13 @@ test('a new shop starts with the state line only, not placeholder local district
 
 test('the default jurisdiction rate is the state rate, not 8.25', () => {
   assert.equal(combinedSalesTaxRate(DEFAULT_TX_JURISDICTIONS), 6.25);
+});
+
+test('filing rate matches the configured jurisdiction breakdown', () => {
+  assert.equal(salesTaxRateMatchesJurisdictions(6.25, DEFAULT_TX_JURISDICTIONS), true);
+  assert.equal(salesTaxRateMatchesJurisdictions(8.25, DEFAULT_TX_JURISDICTIONS), false);
+  assert.equal(salesTaxRateMatchesJurisdictions(Number.NaN, DEFAULT_TX_JURISDICTIONS), false);
+  assert.equal(salesTaxRateMatchesJurisdictions(8.25, [...DEFAULT_TX_JURISDICTIONS, { rate: 2 }]), true);
 });
 
 test('normalizeJurisdictions falls back to the state line only', () => {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyGrokCallToIntakeDraft,
+  createGrokVoiceSession,
   float32ToPcm16Base64,
   grokPhasePlaceholder,
   grokWaveformButtonIcon,
@@ -77,3 +78,70 @@ test('applyGrokCallToIntakeDraft fills customer, vehicle, concern, and estimate 
   assert.equal(draft.aiFilledFields['concern.description'], true);
   assert.equal(draft.aiFilledFields['estimate.lines'], true);
 });
+
+for (const greetAsReceptionist of [false, true]) {
+  for (const fallback of [false, true]) {
+    test(`voice client uses the same ${greetAsReceptionist ? 'front desk' : 'tech assistant'} persona for secret and tool calls${fallback ? ' after mic fallback' : ''}`, async (t) => {
+      const originals = Object.fromEntries(['window', 'navigator', 'WebSocket'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+      t.after(() => {
+        for (const [key, descriptor] of Object.entries(originals)) {
+          if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+          else delete globalThis[key];
+        }
+      });
+      const node = () => ({ connect() {}, disconnect() {} });
+      class AudioContext {
+        state = 'running';
+        sampleRate = 24000;
+        createMediaStreamSource() { return node(); }
+        createScriptProcessor() { return node(); }
+        async close() {}
+      }
+      const sockets = [];
+      class Socket {
+        static OPEN = 1;
+        readyState = 1;
+        sent = [];
+        listeners = {};
+        constructor() { sockets.push(this); }
+        addEventListener(type, listener) { this.listeners[type] = listener; }
+        send(message) { this.sent.push(JSON.parse(message)); }
+        close() {}
+      }
+      let micAttempts = 0;
+      const track = { stop() {} };
+      Object.defineProperty(globalThis, 'window', { configurable: true, value: { AudioContext } });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { mediaDevices: {
+        async getUserMedia() {
+          if (fallback && micAttempts++ === 0) {
+            const error = new Error('device constraint');
+            error.name = 'OverconstrainedError';
+            throw error;
+          }
+          return { getTracks: () => [track] };
+        },
+      } } });
+      Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: Socket });
+      const requests = [];
+      const session = createGrokVoiceSession({
+        greetAsReceptionist,
+        callerPhone: '+18065550123',
+        apiFetch: async (path, options) => {
+          requests.push({ path, body: JSON.parse(options.body) });
+          return path.endsWith('client-secret') ? { token: 'test-ephemeral-token' } : { result: { available: true } };
+        },
+        onError: error => assert.fail(error.message),
+      });
+      await session.start();
+      assert.equal(session.isActive(), true);
+      sockets[0].listeners.open();
+      await sockets[0].listeners.message({ data: JSON.stringify({ type: 'response.function_call_arguments.done', name: 'get_shop_hours_and_directions', call_id: 'tool-1', arguments: '{}' }) });
+      session.stop();
+      const persona = greetAsReceptionist ? 'front_desk' : 'tech_assistant';
+      assert.equal(requests.filter(request => request.path.endsWith('client-secret')).length, fallback ? 2 : 1);
+      assert.equal(requests.filter(request => request.path.endsWith('/tool')).length, 1);
+      assert.ok(requests.every(request => request.body.persona === persona));
+      assert.equal(sockets[0].sent.some(message => message.type === 'response.create'), true);
+    });
+  }
+}

@@ -130,10 +130,10 @@
       "gatewayArch": "none",
       "region": "NA",
       "procedures": {
-        "add_key": { "supported": true, "authorizationRequired": "autoauth_nissan" },
-        "all_keys_lost": { "supported": true, "authorizationRequired": "autoauth_nissan" },
-        "program_remote": { "supported": true, "authorizationRequired": "autoauth_nissan" },
-        "erase_keys": { "supported": true, "authorizationRequired": "autoauth_nissan" },
+        "add_key": { "supported": false, "authorizationRequired": null },
+        "all_keys_lost": { "supported": false, "authorizationRequired": null },
+        "program_remote": { "supported": false, "authorizationRequired": null },
+        "erase_keys": { "supported": false, "authorizationRequired": null },
         "module_coding": { "supported": false, "authorizationRequired": null },
         "bidirectional_control": { "supported": true, "authorizationRequired": null },
         "module_flash": { "supported": false, "authorizationRequired": null }
@@ -146,10 +146,10 @@
         "VIN confirmed against the signed repair order"
       ],
       "warnings": [
-        "Live Maxima key registration uses the vehicle immobilizer PIN. Shop Crank does not recover or bypass that PIN.",
+        "Maxima key registration is unsupported until licensed Nissan gateway authorization is available.",
         "Do not disconnect the J2534 adapter until the procedure finishes."
       ],
-      "supported": "requires_authorization"
+      "supported": false
     },
     {
       "id": "nissan-maxima-a36-2016-2023",
@@ -163,10 +163,10 @@
       "gatewayArch": "SGW_NISSAN",
       "region": "NA",
       "procedures": {
-        "add_key": { "supported": true, "authorizationRequired": "autoauth_nissan" },
-        "all_keys_lost": { "supported": true, "authorizationRequired": "autoauth_nissan" },
-        "program_remote": { "supported": true, "authorizationRequired": "autoauth_nissan" },
-        "erase_keys": { "supported": true, "authorizationRequired": "autoauth_nissan" },
+        "add_key": { "supported": false, "authorizationRequired": null },
+        "all_keys_lost": { "supported": false, "authorizationRequired": null },
+        "program_remote": { "supported": false, "authorizationRequired": null },
+        "erase_keys": { "supported": false, "authorizationRequired": null },
         "module_coding": { "supported": false, "authorizationRequired": null },
         "bidirectional_control": { "supported": true, "authorizationRequired": null },
         "module_flash": { "supported": false, "authorizationRequired": null }
@@ -179,10 +179,10 @@
         "VIN confirmed against the signed repair order"
       ],
       "warnings": [
-        "A36 Maxima Intelligent Key registration needs the immobilizer PIN. Gateway-equipped years also need the shop Nissan AutoAuth login.",
+        "A36 Maxima key registration is unsupported until an authenticated Nissan gateway-unlock path is available.",
         "Do not disconnect the J2534 adapter until the procedure finishes."
       ],
-      "supported": "requires_authorization"
+      "supported": false
     }
   ]
 }

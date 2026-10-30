@@ -10,6 +10,7 @@ import {
 } from '../../src/modules/estimate-approval.js';
 import { isVideoMedia, mediaKeys, ratingChipHtml, ratingSummary } from '../../src/modules/inspection-ratings.js';
 import { HttpError, json, requestJson } from './http.mjs';
+import { putSignatureEvidence } from './routes/files.mjs';
 
 const LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SIGNATURE_LIMIT = 1024 * 1024;
@@ -288,7 +289,7 @@ async function storeSignature(env, link, dataUrl) {
   const binary = Uint8Array.from(atob(match[1]), char => char.charCodeAt(0));
   if (!binary.byteLength || binary.byteLength > SIGNATURE_LIMIT) throw new HttpError(400, 'Signature is too large');
   const key = `shops/${link.shop_id}/signatures/${crypto.randomUUID()}.png`;
-  await env.FILES.put(key, binary, {
+  await putSignatureEvidence(env.FILES, key, binary, {
     httpMetadata: { contentType: 'image/png' },
     customMetadata: { shopId: link.shop_id, documentType: link.document_type, documentId: link.document_id },
   });

@@ -9,7 +9,7 @@ import { PARTSTECH_SECRET_NAME } from '../../../src/modules/partstech.js';
 import { HttpError, json, requestJson } from '../http.mjs';
 import { partstechFetch } from './partstech.mjs';
 import { searchLaborWeb, webEstimateResponsePayload } from './labor-web-estimate.mjs';
-import { searchLicensedLabor } from './labor.mjs';
+import { getLaborProviderStatus, searchLicensedLabor } from './labor.mjs';
 import { motorPlatformConfig, motorShopConfig, searchMotorLabor } from './motor-direct.mjs';
 
 const ADMIN_ROLES = ['owner', 'admin', 'super_admin'];
@@ -25,8 +25,7 @@ const PROVIDER_NAMES = { motor: 'MOTOR', alldata: 'ALLDATA', shopkey: 'ShopKey' 
 
 /** Book-time sources ShopCrank itself is licensed for (Worker env), offered to every shop. */
 export function platformLaborStatus(env = {}) {
-  const alldata = Boolean(env.ALLDATA_LABOR_BASE_URL && env.ALLDATA_LABOR_SEARCH_PATH
-    && (env.ALLDATA_LABOR_API_KEY || env.ALLDATA_LABOR_TOKEN || (env.ALLDATA_LABOR_USERNAME && env.ALLDATA_LABOR_PASSWORD)));
+  const alldata = Boolean(getLaborProviderStatus(env).alldata?.configured);
   return { motor: motorPlatformConfig(env).configured, alldata };
 }
 

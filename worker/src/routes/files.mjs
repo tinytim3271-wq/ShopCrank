@@ -16,6 +16,18 @@ export function maxUploadBytes(contentType) {
   return VIDEO_CONTENT_TYPES.has(String(contentType || '').toLowerCase().split(';')[0].trim()) ? MAX_VIDEO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
 }
 
+export function isSignatureEvidenceKey(key) {
+  return /^shops\/[^/]+\/signatures?\//.test(key);
+}
+
+export async function putSignatureEvidence(files, key, body, metadata) {
+  const stored = await files.put(key, body, {
+    ...metadata,
+    onlyIf: { etagDoesNotMatch: '*' },
+  });
+  if (stored === null) throw new HttpError(409, 'Signature evidence already exists');
+}
+
 class UploadTooLargeError extends Error {
   constructor() {
     super('File is too large');
@@ -73,7 +85,11 @@ export async function storeUploadedFile(files, key, body, metadata, maxBytes = M
       received = bytes;
     });
     const upload = await new Response(limitedBody).arrayBuffer();
-    await files.put(key, upload, metadata);
+    if (isSignatureEvidenceKey(key)) {
+      await putSignatureEvidence(files, key, upload, metadata);
+    } else {
+      await files.put(key, upload, metadata);
+    }
   } catch (error) {
     if (error instanceof UploadTooLargeError) throw new HttpError(413, `File exceeds ${Math.floor(maxBytes / (1024 * 1024))} MB`);
     if (error instanceof HttpError) throw error;
@@ -112,6 +128,18 @@ export async function handleFiles(request, env, context, segments, { onUploaded 
     const contentLength = Number(request.headers.get('Content-Length') || 0);
     const limit = maxUploadBytes(contentType);
     if (contentLength > limit) throw new HttpError(413, `File exceeds ${Math.floor(limit / (1024 * 1024))} MB`);
+    if (!isSignatureEvidenceKey(key)) {
+      // New approvals copy ordinary uploads into immutable storage. This check
+      // protects historical evidence that predates the reserved namespaces.
+      const evidence = await env.DB.prepare(`
+        SELECT entity_id FROM entities
+        WHERE shop_id = ? AND entity_type IN ('orders', 'invoices') AND (
+          json_extract(data_json, '$.estimateApproval.signatureKey') = ?
+          OR json_extract(data_json, '$.signature.signatureKey') = ?
+        ) LIMIT 1
+      `).bind(context.shopId, key, key).first();
+      if (evidence) throw new HttpError(409, 'Recorded signature evidence cannot be replaced');
+    }
     const received = await storeUploadedFile(env.FILES, key, request.body, {
       httpMetadata: { contentType },
       customMetadata: { shopId: context.shopId, uploadedBy: context.userId },

@@ -20,16 +20,16 @@ public sealed class J2534IsoTpChannel : IIsoTpChannel
         var rxCan = CanAddress.Parse(rxId);
         _log("tx", txId, RedactSensitivePayload(request), "ISO-TP request (J2534)");
         var response = _device.Transact(txCan, rxCan, request);
-        _log("rx", rxId, Convert.ToHexString(response), "ISO-TP response (J2534)");
+        _log("rx", rxId, RedactSensitivePayload(response), "ISO-TP response (J2534)");
         return response;
     }
 
     static string RedactSensitivePayload(byte[] request)
     {
         var hex = Convert.ToHexString(request);
-        if (request.Length > 2 && request[0] == 0x27 && (request[1] & 1) == 0)
+        if (request.Length > 2 && request[0] is 0x27 or 0x67)
             return $"{hex[..4]}[REDACTED]";
-        if (request.Length > 4 && request[0] == 0x31)
+        if (request.Length > 4 && request[0] is 0x31 or 0x71)
             return $"{hex[..8]}[REDACTED]";
         return hex;
     }

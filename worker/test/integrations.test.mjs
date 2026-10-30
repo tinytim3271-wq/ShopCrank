@@ -87,11 +87,17 @@ test('partstech connect stores encrypted-ready JSON secret payload', async () =>
 
 async function connectedPartstech(fetchImpl) {
   const store = secretsStore();
+  const orders = new Map();
   store.map.set('shop-1:partstech-credentials', JSON.stringify({
     partnerId: 'p', partnerKey: 'pk', userId: 'u', userKey: 'uk', storeId: '77',
   }));
   const audits = [];
-  const handle = createPartstechHandlers({ ...store, requireRole, recordAudit: async (_env, _ctx, event) => audits.push(event) });
+  const handle = createPartstechHandlers({
+    ...store,
+    requireRole,
+    getEntity: async (_env, shopId, type, id) => type === 'orders' ? orders.get(`${shopId}:${id}`) || null : null,
+    recordAudit: async (_env, _ctx, event) => audits.push(event),
+  });
   const calls = [];
   const env = {
     fetch: async (url, init) => {
@@ -100,7 +106,15 @@ async function connectedPartstech(fetchImpl) {
       return fetchImpl(String(url), init);
     },
   };
-  return { handle, env, calls, audits };
+  return {
+    handle,
+    env,
+    calls,
+    audits,
+    saveOrder(id, ...lines) {
+      orders.set(`shop-1:${id}`, { id, estimate: { lines } });
+    },
+  };
 }
 
 const tech = { shopId: 'shop-1', role: 'technician', userId: 't1' };
@@ -121,12 +135,18 @@ test('partstech quote returns real prices from nested price objects', async () =
 });
 
 test('partstech order posts a clean cart and returns the checkout session', async () => {
-  const { handle, env, calls, audits } = await connectedPartstech(async () => Response.json({
+  const { handle, env, calls, audits, saveOrder } = await connectedPartstech(async () => Response.json({
     sessionId: 'sess-123', redirectUrl: 'https://app.partstech.com/punchout/sess-123',
   }));
+  const line = {
+    id: 'line-pt-1', type: 'part', source: 'partstech', partNumber: 'D1092', quantity: 1,
+    total: 68.99, unitPrice: 68.99, priceStatus: 'priced', approvalStatus: 'approved',
+    partstech: { brand: 'Wagner', partId: 'p1', storeId: '77' },
+  };
+  saveOrder('RO-1050', line);
   const response = await handle(post('order', {
     repairOrderId: 'RO-1050',
-    lines: [{ type: 'part', partNumber: 'D1092', quantity: 1, total: 68.99, approvalStatus: 'approved', partstech: { brand: 'Wagner', partId: 'p1' } }],
+    lines: [{ ...line, partNumber: 'ATTACKER-CONTROLLED-VALUE' }],
   }), env, tech, ['integrations', 'partstech', 'order']);
   assert.equal(response.status, 201);
   const body = await response.json();
@@ -140,15 +160,55 @@ test('partstech order posts a clean cart and returns the checkout session', asyn
 });
 
 test('partstech order rejects malformed carts and untrusted redirects', async () => {
-  const { handle, env } = await connectedPartstech(async () => Response.json({ sessionId: 's', redirectUrl: 'https://evil.example/phish' }));
+  const { handle, env, saveOrder } = await connectedPartstech(async () => Response.json({ sessionId: 's', redirectUrl: 'https://evil.example/phish' }));
+  saveOrder('RO-1050', {
+    id: 'bad-line', type: 'part', source: 'partstech', description: 'No number',
+    approvalStatus: 'approved', priceStatus: 'priced', unitPrice: 5,
+  });
   await assert.rejects(
-    handle(post('order', { lines: [{ type: 'part', description: 'No number' }] }), env, tech, ['integrations', 'partstech', 'order']),
+    handle(post('order', { repairOrderId: 'RO-1050', lines: [{ id: 'bad-line' }] }), env, tech, ['integrations', 'partstech', 'order']),
     error => error.status === 400,
   );
+  saveOrder('RO-1050', {
+    id: 'line-pt-1', type: 'part', source: 'partstech', partNumber: 'A1', quantity: 1,
+    unitPrice: 5, priceStatus: 'priced', approvalStatus: 'approved',
+  });
   await assert.rejects(
-    handle(post('order', { lines: [{ type: 'part', partNumber: 'A1', quantity: 1 }] }), env, tech, ['integrations', 'partstech', 'order']),
+    handle(post('order', { repairOrderId: 'RO-1050', lines: [{ id: 'line-pt-1' }] }), env, tech, ['integrations', 'partstech', 'order']),
     error => error.status === 502,
   );
+});
+
+test('partstech order rejects pending, unapproved, or non-PartsTech lines before network calls', async () => {
+  const { handle, env, calls, saveOrder } = await connectedPartstech(async () => Response.json({
+    sessionId: 'sess-123', redirectUrl: 'https://app.partstech.com/punchout/sess-123',
+  }));
+  const line = {
+    id: 'line-pt-1', type: 'part', source: 'partstech', partNumber: 'D1092', quantity: 1,
+    unitPrice: 68.99, priceStatus: 'priced', approvalStatus: 'approved',
+  };
+  for (const invalidLine of [
+    { ...line, priceStatus: 'pending' },
+    { ...line, approvalStatus: 'pending' },
+    { ...line, source: 'manual' },
+    { ...line, partstechOrder: { sessionId: 'sess-old' } },
+  ]) {
+    saveOrder('RO-1050', invalidLine);
+    await assert.rejects(
+      handle(post('order', { repairOrderId: 'RO-1050', storeId: '77', lines: [{ id: invalidLine.id }] }), env, tech, ['integrations', 'partstech', 'order']),
+      error => error.status === 400,
+    );
+  }
+  saveOrder('RO-1050', line);
+  await assert.rejects(
+    handle(post('order', { repairOrderId: 'RO-1050', storeId: '   ', lines: [{ id: line.id }] }), env, tech, ['integrations', 'partstech', 'order']),
+    error => error.status === 400 && /storeId/.test(error.message),
+  );
+  await assert.rejects(
+    handle(post('order', { repairOrderId: 'RO-1050', storeId: '77', lines: [{ id: 'foreign-line' }] }), env, tech, ['integrations', 'partstech', 'order']),
+    error => error.status === 400 && /not part of this repair order/.test(error.message),
+  );
+  assert.equal(calls.length, 0);
 });
 
 test('partstech order status reads the punch-out session', async () => {

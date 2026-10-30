@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
 import { handleGrokTwilioBridge } from '../src/grok-voice.mjs';
+import { createD1 } from './helpers/d1-sqlite.mjs';
 
 const ENV = {
   XAI_API_KEY: 'xai-test-key-1234567890abcdef',
@@ -183,6 +184,7 @@ function withWorkersRuntime(run) {
         super(body, init);
         return;
       }
+
       super(null, { status: 200 });
       Object.defineProperty(this, 'status', { value: 101 });
       this.webSocket = init.webSocket;
@@ -196,6 +198,27 @@ function withWorkersRuntime(run) {
     console.error = originals.error;
   });
 }
+
+test('bridge persists media and xAI startup evidence for the same actual call and stream', () => withWorkersRuntime(async (pairs) => {
+  const DB = createD1();
+  const pending = [];
+  const upstream = new FakeSocket();
+  await handleGrokTwilioBridge({
+    env: { DB },
+    state: { waitUntil: promise => pending.push(promise) },
+    shopId: 'shop-1', callSid: 'CA-evidence', apiKey: 'test-key',
+    fetcher: async () => ({ status: 101, webSocket: upstream }),
+  });
+  pairs[0][1].emit('message', { data: JSON.stringify({ event: 'start', start: { streamSid: 'MZ-evidence' } }) });
+  await Promise.all(pending);
+  let evidence = DB.sqlite.prepare('SELECT * FROM onboarding_voice_evidence').get();
+  assert.equal(evidence.call_sid, 'CA-evidence');
+  assert.equal(evidence.stream_sid, 'MZ-evidence');
+  assert.equal(evidence.xai_started_at, null, 'opening a socket does not prove a session started');
+  await onUpstreamTool(upstream, { type: 'session.updated' });
+  evidence = DB.sqlite.prepare('SELECT * FROM onboarding_voice_evidence').get();
+  assert.ok(evidence.xai_started_at);
+}));
 
 test('the bridge completes Twilio\'s handshake even when xAI rejects the upgrade', () => withWorkersRuntime(async (pairs) => {
   const pending = [];

@@ -30,12 +30,17 @@ Timothy must:
 | `MOTOR_LABOR_API_KEY` / `MOTOR_LABOR_TOKEN` | Provider credential |
 | `MOTOR_LABOR_AUTH_HEADER` / `MOTOR_LABOR_AUTH_SCHEME` | Optional non-default auth |
 | `MOTOR_LABOR_SEARCH_METHOD` | `POST` (default) or `GET` |
+| `MOTOR_LABOR_LICENSE_CONFIRMED` | Set to `true` only after the provider contract grants the required use rights |
 | `ALLDATA_LABOR_*` | ALLDATA equivalents |
 | `LABOR_PROVIDER` | Optional preferred provider: `motor` or `alldata` |
 | `LABOR_PROVIDER_TIMEOUT_MS` | Optional timeout, 100–30000 ms |
 
 The adapter deliberately does not guess private vendor paths. Update the
-configuration to the contract supplied during onboarding.
+configuration to the contract supplied during onboarding. A configured
+endpoint and credential alone never activate labor data: set the provider's
+`*_LABOR_LICENSE_CONFIRMED=true` only after verifying the license, display,
+attribution, and (where applicable) multi-tenant resale terms. Until then the
+guide returns an unverified manual estimate.
 
 ## PartsTech and Nexpart
 
@@ -70,11 +75,23 @@ to browser code; the Worker sends API credentials server-side.
      `https://HOST/api/messaging/twilio/webhook/SHOP_ID`
 5. Set that URL as the incoming-message webhook for the number.
 
-Inbound and outbound messages are stored in D1. Exact STOP-family messages mark
-the number opted out and block ShopCrank sends; START/UNSTOP restores consent.
+Set the number's delivery status callback to
+`https://HOST/api/messaging/twilio/status/SHOP_ID`. ShopCrank also sends this
+callback URL with each outbound message. Delivery callbacks are signature
+verified and stored, including callbacks arriving before the outbound message
+record.
+
+Outbound messages are blocked unless the shop records explicit opt-in in the
+Messaging inbox. Record the customer's E.164 number, select **Record explicit
+opt-in**, and confirm consent was obtained and documented. Staff can record an
+opt-out; exact STOP-family messages also opt out and block sends, while
+START/UNSTOP restores consent. Consent changes record the staff account when
+entered manually. Keep the consent record, honor quiet hours, and do not send
+marketing traffic under a transactional campaign. Inbound and outbound
+messages are stored in D1 with provider delivery status.
 Twilio may also enforce its own opt-out list. Do not send marketing traffic
-under the transactional campaign. Keep documented consent and honor quiet
-hours. The feature is hidden/disabled when credentials are absent.
+under the transactional campaign. The feature is hidden/disabled when
+credentials are absent.
 
 Estimate approval links, ready-for-pickup notices, and Stripe-hosted
 text-to-pay links use the same sender. Payment card data never passes through
@@ -97,7 +114,9 @@ SMS or ShopCrank.
    `INTEGRATION_ENCRYPTION_KEY`.
 
 Current synchronization is one-way ShopCrank → QBO for customers, invoices, and
-payments. Sync metadata prevents losing the QBO ID. This does not import edits
+payments. Re-sync updates the mapped QuickBooks object using its current
+`SyncToken`; deterministic request IDs make safe retries idempotent. Sync
+metadata prevents losing the QBO ID. This does not import edits
 from QBO or perform accounting reconciliation; verify the sandbox company
 before production use.
 

@@ -38,6 +38,7 @@ const results = [];
 let smokeWorkerLog = () => '';
 const children = [];
 let server;
+let tempWorkDir = '';
 
 function record(name, pass, detail = '') {
   results.push({ name, pass, detail: String(detail).slice(0, 300) });
@@ -154,6 +155,7 @@ function photoFixture(dir) {
 async function main() {
   mkdirSync(artifactsDir, { recursive: true });
   const work = await startStack();
+  tempWorkDir = work;
   const photo = photoFixture(work);
   const browser = await chromium.launch({
     executablePath: process.env.SMOKE_CHROMIUM_PATH || undefined,
@@ -187,8 +189,11 @@ async function main() {
         throw new Error(`no confirm page at ${page.url()}: ${(await page.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ').slice(0, 120)} | errors: ${[...pageErrors, ...consoleErrors].join(' / ').slice(0, 300)}`);
       });
       await page.click('text=Continue to ShopCrank');
-      await page.waitForSelector('[data-route=home]', { timeout: 20_000 });
-      await page.waitForTimeout(2500);
+      await page.waitForFunction(
+        shop => document.body.innerText.includes(shop) && Boolean(document.querySelector('[data-route=home]')),
+        SHOP,
+        { timeout: 45_000 },
+      );
       return true;
     });
     await check('new shop shows its own name and no demo identity or data', async () => {
@@ -246,8 +251,11 @@ async function main() {
       await modal.locator('[name=line-hours]').first().fill('1.8');
       await page.click('#intake-next');
       await page.click('#intake-convert');
-      await page.waitForTimeout(3500);
-      if (await page.locator('.modal').count()) throw new Error('intake dialog still open');
+      await page.waitForFunction(
+        () => !document.querySelector('#modal-root #intake-form'),
+        null,
+        { timeout: 30_000 },
+      );
     });
     await check('work order estimate carries the shop name, approves, and completes', async () => {
       await route('orders');
@@ -268,20 +276,39 @@ async function main() {
       await page.waitForTimeout(2500);
       await page.evaluate(() => document.querySelector('#modal-root')?.remove());
     });
-    await check('invoice taxes parts and supplies only (Texas default) and payments mark it paid', async () => {
+    await check('invoice taxes parts and supplies only (Texas state-only default) and payments mark it paid', async () => {
       await route('invoices');
       const row = page.locator('tr:has-text("Maria Gonzalez")').first();
       const before = await row.innerText();
-      // 1.8 h labor + 3% supplies ($7.56) at 8.25%: only the supplies are taxed.
-      if (!/Tax \$0\.62/.test(before)) throw new Error(`unexpected tax: ${before.replace(/\s+/g, ' ').slice(0, 160)}`);
+      // 1.8 h labor + 3% supplies ($7.56) at 6.25%: only the supplies are taxed.
+      if (!/Tax \$0\.47/.test(before)) throw new Error(`unexpected tax: ${before.replace(/\s+/g, ' ').slice(0, 160)}`);
       const remaining = () => row.innerText().then(text => Number((text.match(/Remaining \$([\d,.]+)/) || [])[1]?.replace(/,/g, '')));
-      for (const [amount, method] of [['100', 'Cash'], [null, 'Check']]) {
+      for (const [index, [amount, method]] of [['100', 'Cash'], [null, 'Check']].entries()) {
         await row.locator('button:has-text("Record payment")').click();
         await page.fill('.modal [name=amount]', amount || String(await remaining()));
         await page.locator('.modal [name=paymentMethod]').selectOption({ label: method });
+        // Wait for the payment request itself, not a fixed delay: on a loaded CI
+        // runner the POST can land after a fixed wait, and the row read below
+        // would then be stale (the pre-payment balance), which silently
+        // rejected the second payment and failed this check.
+        const recorded = page.waitForResponse(
+          (response) => response.url().includes('/payments/record') && response.request().method() === 'POST',
+          { timeout: 30_000 },
+        );
         await page.locator('.modal button[type=submit]:has-text("Record payment")').click();
         // The modal closes once the Worker has recorded the payment; CI runners can take several seconds.
         await page.waitForSelector('#payment-form', { state: 'detached', timeout: 15_000 }).catch(() => {});
+        const response = await recorded;
+        if (response.status() !== 201) {
+          throw new Error(`payment ${index + 1} rejected: ${response.status()} ${(await response.text()).slice(0, 160)}`);
+        }
+        // The app closes the modal and re-renders the row once the payment is
+        // applied. Wait for the payment history counter instead of a fixed
+        // delay, so the next iteration reads a fresh remaining balance.
+        await page.waitForFunction((expected) => {
+          const head = document.querySelector('.payment-history-head span');
+          return Boolean(head) && head.textContent.trim() === expected;
+        }, `${index + 1} payment${index === 0 ? '' : 's'}`, { timeout: 30_000 });
         if (toasts.some(text => /Unsupported payment method/.test(text))) throw new Error('payment rejected');
       }
       await page.waitForFunction(() => /(?<!PARTIALLY )PAID/.test(document.querySelector('main')?.innerText || '') && /2 payments/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
@@ -335,7 +362,6 @@ async function main() {
       writeFileSync(join(artifactsDir, 'browser.log'), [...pageErrors.map(item => `pageerror: ${item}`), ...consoleErrors.map(item => `console: ${item}`), ...toasts.map(item => `toast: ${item}`)].join('\n'));
     }
     await browser.close();
-    rmSync(work, { recursive: true, force: true });
   }
 }
 
@@ -351,8 +377,14 @@ main()
       } catch { /* already gone */ }
     }
     rmSync(join(root, LOCAL_WRANGLER_CONFIG), { force: true });
+    if (tempWorkDir) {
+      try {
+        rmSync(tempWorkDir, { recursive: true, force: true });
+      } catch {
+        // workerd can keep file handles briefly on Windows; cleanup is best effort.
+      }
+    }
     const failed = results.filter(result => !result.pass);
     console.log(`\n${results.length - failed.length}/${results.length} smoke checks passed`);
     setTimeout(() => process.exit(failed.length ? 1 : 0), 500);
   });
-

@@ -532,7 +532,24 @@ export function createQuickBooksIntegration({
         body: payload === undefined ? undefined : JSON.stringify(payload),
       });
     };
-    let response = await request();
+    const retryable = method === "GET" || Boolean(params.requestid);
+    let response;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        response = await request();
+      } catch (error) {
+        if (!retryable || attempt >= 2) throw error;
+        await new Promise(resolve => setTimeout(resolve, 200 * (attempt + 1)));
+        continue;
+      }
+      if (response.status === 401) break;
+      if (!retryable || ![429, 500, 502, 503, 504].includes(response.status) || attempt >= 2) break;
+      const retryAfter = Number(response.headers.get("Retry-After"));
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(2_000, retryAfter * 1_000)
+        : 200 * (attempt + 1);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
     if (response.status === 401) {
       await refreshTokens(tokens);
       tokens = await loadTokens();
@@ -542,8 +559,6 @@ export function createQuickBooksIntegration({
     if (!response.ok) throw apiError(data, response.status);
     return { data, realmId: tokens.realmId };
   }
-
-  const qboCreate = (entityName, payload) => qboRequest("POST", entityName, payload);
 
   async function getTaxContext(saved = {}) {
     // Sequential: an expired token must be refreshed once, not by parallel calls.
@@ -565,13 +580,14 @@ export function createQuickBooksIntegration({
     };
   }
 
-  async function syncInvoiceWithTax(invoice, { taxSettings = {}, defaultItemId = "" } = {}) {
+  async function syncInvoiceWithTax(invoice, { taxSettings = {}, defaultItemId = "", remoteId = "" } = {}) {
     const tax = await getTaxContext(taxSettings);
     const result = await sync(
       "Invoice",
       invoice?.id,
       normalizeQuickBooksInvoice(invoice, { tax, defaultItemId }),
       "Invoice",
+      { remoteId },
     );
     const expectedTax = Math.round((Number(invoice?.tax) || 0) * 100) / 100;
     const remoteTax = Number(result.entity?.TxnTaxDetail?.TotalTax);
@@ -586,8 +602,29 @@ export function createQuickBooksIntegration({
     };
   }
 
-  async function sync(type, localId, payload, responseKey) {
-    const { data, realmId } = await qboCreate(type.toLowerCase(), payload);
+  async function sync(type, localId, payload, responseKey, { remoteId = "" } = {}) {
+    let requestPayload = payload;
+    if (remoteId) {
+      const { data: current } = await qboRequest("GET", `${type.toLowerCase()}/${encodeURIComponent(remoteId)}`);
+      const existing = current?.[responseKey];
+      if (!existing || String(existing.Id || "") !== String(remoteId) || !existing.SyncToken) {
+        throw new QuickBooksError(`QuickBooks ${type} ${remoteId} could not be loaded for update`, {
+          code: "QUICKBOOKS_SYNC_CONFLICT",
+          status: 409,
+        });
+      }
+      requestPayload = { ...payload, Id: String(existing.Id), SyncToken: String(existing.SyncToken) };
+    }
+    const requestId = (await sha256Base64Url(
+      cryptoImpl,
+      `${responseKey}|${localId}|${remoteId}|${JSON.stringify(requestPayload)}`,
+    )).slice(0, 40);
+    const { data, realmId } = await qboRequest(
+      "POST",
+      type.toLowerCase(),
+      requestPayload,
+      { requestid: requestId },
+    );
     const remote = data?.[responseKey];
     const quickBooksId = requiredString(remote?.Id, `QuickBooks ${type} ID`, 255);
     const metadata = {
@@ -606,14 +643,14 @@ export function createQuickBooksIntegration({
     getAuthorizationUrl,
     exchangeCallback,
     refreshTokens,
-    syncCustomer: (customer) =>
-      sync("Customer", customer?.id, normalizeQuickBooksCustomer(customer), "Customer"),
-    syncInvoice: (invoice) =>
-      sync("Invoice", invoice?.id, normalizeQuickBooksInvoice(invoice), "Invoice"),
+    syncCustomer: (customer, options = {}) =>
+      sync("Customer", customer?.id, normalizeQuickBooksCustomer(customer), "Customer", options),
+    syncInvoice: (invoice, options = {}) =>
+      sync("Invoice", invoice?.id, normalizeQuickBooksInvoice(invoice), "Invoice", options),
     getTaxContext,
     syncInvoiceWithTax,
-    syncPayment: (payment) =>
-      sync("Payment", payment?.id, normalizeQuickBooksPayment(payment), "Payment"),
+    syncPayment: (payment, options = {}) =>
+      sync("Payment", payment?.id, normalizeQuickBooksPayment(payment), "Payment", options),
   });
 }
 

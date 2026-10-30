@@ -3,12 +3,141 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import { buildPartstechOrderRequest } from '../modules/partstech.js';
+import * as Filing from '../modules/filing/index.js';
+import { toLocalIsoDate } from '../shared/dates.js';
+import { escapeHtml } from '../shared/html.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const legacy = readFileSync(join(root, 'runtime', 'legacy.js'), 'utf8');
+
+test('HTML sinks fail closed if DOMPurify is unavailable, including decoded DOM text', () => {
+  const attack = '<img src=x onerror=alert(1)><script>alert(1)</script>';
+  for (const DOMPurify of [undefined, {}]) {
+    const render = vm.runInNewContext(`${functionSource('function safeHtml(')}; safeHtml`, { DOMPurify, escapeHtml });
+    assert.equal(render(attack), escapeHtml(attack));
+    assert.equal(render('<b>Trusted formatting</b>'), '&lt;b&gt;Trusted formatting&lt;/b&gt;');
+  }
+  const render = vm.runInNewContext(`${functionSource('function safeHtml(')}; safeHtml`, {
+    escapeHtml,
+    DOMPurify: { sanitize: (markup, options) => {
+      assert.equal(options.USE_PROFILES.html, true);
+      assert.deepEqual([...options.ADD_ATTR], ['target']);
+      return markup === '<b>Trusted formatting</b>' ? markup : '';
+    } },
+  });
+  assert.equal(render('<b>Trusted formatting</b>'), '<b>Trusted formatting</b>');
+  assert.equal(render(attack), '');
+});
+
+test('fresh cloud shops use state-only Texas tax without changing demo or saved rates', () => {
+  for (const demo of [false, true]) {
+    const state = vm.runInNewContext(`${functionSource('function initialState(')}; initialState()`, {
+      seed: { orders: [1], taxSettings: { rate: 8.25 } },
+      structuredClone,
+      isDemoShell: () => demo,
+      Filing,
+    });
+    assert.equal(state.taxSettings.rate, demo ? 8.25 : 6.25);
+  }
+  assert.match(legacy, /rate: Number\(tax\.rate\) \|\| 0/);
+});
+
+test('invoice editor roundtrips date-only values without UTC drift', () => {
+  const dateValue = vm.runInNewContext(`${functionSource('function invoiceDateValue(')}; invoiceDateValue`, { toLocalIsoDate });
+  assert.equal(dateValue('2026-10-31'), '2026-10-31');
+  assert.equal(dateValue('2026-02-30'), '');
+  assert.equal(dateValue('2024-02-29'), '2024-02-29');
+});
+
+test('Texas filing mismatches block generation, exports, and printing but not other states', async () => {
+  const state = { taxSettings: { state: 'TX', rate: 8.25, jurisdictions: null } };
+  const context = {
+    state, Filing, toast: () => {},
+    taxReportResult: { rows: [] },
+    navigator: { onLine: true },
+    isLocalShell: () => false,
+    apiFetch: () => assert.fail('mismatch must not request reports'),
+    taxReport: () => assert.fail('mismatch must not generate reports'),
+  };
+  vm.createContext(context);
+  for (const prefix of ['function isFilingRateConsistent(', 'function filingRateIsConsistent(', 'async function generateTaxReportFromForm(', 'function exportSalesTaxCsv(', 'function exportTexasWebfilePackage(']) {
+    vm.runInContext(functionSource(prefix), context);
+  }
+  assert.equal(context.isFilingRateConsistent(), false);
+  await context.generateTaxReportFromForm('2026-10-01', '2026-10-31');
+  context.exportSalesTaxCsv();
+  context.exportTexasWebfilePackage();
+  assert.match(legacy, /querySelector\('#print-tax-report'\)\?\.addEventListener\('click', event => \{\s*if \(!filingRateIsConsistent\(\)\)/);
+  state.taxSettings = { state: 'TX', rate: 6.25, jurisdictions: [] };
+  assert.equal(context.isFilingRateConsistent(), true);
+  for (const [region, rate] of [['OR', 0], ['CA', 7.25]]) {
+    state.taxSettings = { state: region, rate, jurisdictions: null };
+    assert.equal(context.isFilingRateConsistent(), true);
+  }
+});
+
+test('one enhanced tax submit persists extended settings and valid custom jurisdictions', async () => {
+  const handlers = [];
+  const form = {
+    dataset: {},
+    querySelector: () => ({}),
+    addEventListener: (type, handler, options) => handlers.push({ type, handler, options }),
+  };
+  let data = {
+    state: 'TX', taxId: ' TX-123 ', rate: '8.25', filingFrequency: 'Monthly',
+    ein: ' EIN ', texasTaxpayerNumber: ' taxpayer ', webfileNumber: ' webfile ',
+    jurisdictionsJson: '[]', feesTaxable: 'on',
+  };
+  const writes = [];
+  const state = { taxSettings: { extraSetting: 'retained' } };
+  const context = {
+    state, Filing, taxReportResult: { rows: [] }, readFormValues: () => data, now: () => 'now',
+    toast: () => {}, render: () => {},
+    saveShopEntity: async (entity, record) => writes.push({ entity, record }),
+  };
+  const bind = vm.runInNewContext(`${functionSource('function bindTaxSettingsForm(')}; bindTaxSettingsForm`, context);
+  bind(form);
+  bind(form);
+  assert.equal(handlers.length, 1);
+  assert.equal(handlers[0].options.capture, true);
+  assert.equal((legacy.match(/tax-settings-form["']\)\?\.addEventListener\(["']submit/g) || []).length, 0);
+  const submit = () => handlers[0].handler({ target: form, preventDefault() {}, stopImmediatePropagation() {} });
+  await submit();
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].entity, 'shopsettings');
+  assert.equal(writes[0].record.rate, 6.25);
+  assert.equal(writes[0].record.taxId, 'TX-123');
+  assert.equal(state.taxSettings.ein, 'EIN');
+  assert.equal(state.taxSettings.extraSetting, 'retained');
+  assert.equal(state.taxSettings.laborTaxable, false);
+  assert.equal(state.taxSettings.feesTaxable, true);
+  assert.equal(context.taxReportResult, null);
+  const custom = [...Filing.DEFAULT_TX_JURISDICTIONS, { code: '2123456', name: 'City', kind: 'city', rate: 2, required: false }];
+  data = { ...data, jurisdictionsJson: JSON.stringify(custom) };
+  await submit();
+  assert.equal(state.taxSettings.rate, 8.25);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.taxSettings.jurisdictions)), custom);
+  data = { ...data, state: 'OR', rate: '0' };
+  await submit();
+  assert.equal(state.taxSettings.rate, 0);
+  const saved = state.taxSettings;
+  for (const invalid of ['not json', '{}', '[null]', '[{"rate":-1}]']) {
+    data = { ...data, jurisdictionsJson: invalid };
+    await submit();
+    assert.equal(writes.length, 3);
+    assert.equal(state.taxSettings, saved);
+  }
+});
+
+test('printed per-finding inspection photos have width and height bounds', () => {
+  const source = readFileSync(join(root, 'runtime', 'catalog-inspection-ui.js'), 'utf8');
+  assert.match(source, /\.finding-photos img\{[^}]*width:120px;[^}]*height:90px;[^}]*max-width:100%;[^}]*max-height:90px;[^}]*object-fit:contain/);
+});
 
 /** Returns the source of the function whose definition starts with `prefix`. */
 function functionSource(prefix) {
@@ -25,6 +154,42 @@ function functionSource(prefix) {
   }
   return legacy.slice(start, i + 1);
 }
+
+test('PartsTech ordering excludes declined parts before validating the remaining cart', async () => {
+  const approved = { id: 'approved', type: 'part', source: 'partstech', approvalStatus: 'approved', priceStatus: 'priced', unitPrice: 40, quantity: 1, partstech: { storeId: 'store-1', partNumber: 'PAD-1' } };
+  const declined = { ...approved, id: 'declined', approvalStatus: 'declined', partstech: { storeId: 'other-store' } };
+  let submitted;
+  const order = vm.runInNewContext(`${functionSource('async function orderTargetPartstechParts(')}; orderTargetPartstechParts`, {
+    state: { orders: [{ id: 'RO-1', estimate: { lines: [approved, declined] } }] },
+    orderingTargetOrderId: 'RO-1',
+    partstechAccount: {},
+    buildPartstechOrderRequest,
+    window: { open: () => null },
+    apiFetch: async (_path, options) => { submitted = JSON.parse(options.body); throw new Error('stop after submission'); },
+    toast: () => {},
+  });
+  await order();
+  assert.deepEqual(submitted.lines.map(line => line.id), ['approved']);
+});
+
+test('offline desktop texting has disabled controls and cannot queue consent or sends', async () => {
+  const panel = vm.runInNewContext(`${functionSource('function smsInboxPanel(')}; smsInboxPanel()`, { isOfflineDesktop: () => true });
+  assert.match(panel, /fieldset disabled/);
+  assert.match(panel, /No messages or consent changes are queued offline/);
+  assert.doesNotMatch(panel, /<form/);
+  for (const id of ['sms-consent-form', 'sms-send-form']) {
+    const handler = legacy.slice(legacy.indexOf(`document.querySelector("#${id}")?.addEventListener("submit"`));
+    assert.ok(handler.indexOf('if (isOfflineDesktop())') < handler.indexOf('await apiFetch('), id);
+  }
+  const send = vm.runInNewContext(`${functionSource('async function sendSmsFromInbox(')}; sendSmsFromInbox`, {
+    isOfflineDesktop: () => true,
+    toast: () => {},
+    apiFetch: () => assert.fail('offline SMS must never reach the mutation queue'),
+  });
+  await send({}, {});
+  assert.match(legacy, /body: data\.messageBody/);
+  assert.match(legacy, /if \(result\.queued === true\) throw/);
+});
 
 test('the vehicle form\'s save button is a typed submit button', () => {
   // The save handler looks up button[type=submit]. With no type attribute the

@@ -346,6 +346,19 @@
     const day = String(date.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   }
+  function toLocalIsoDate(value2) {
+    if (value2 instanceof Date) return Number.isNaN(value2.valueOf()) ? "" : localIsoDate(value2);
+    const text2 = String(value2 ?? "").trim();
+    if (!text2) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) {
+      const [year, month, day] = text2.split("-").map(Number);
+      const parsed2 = new Date(year, month - 1, day);
+      if (Number.isNaN(parsed2.valueOf()) || localIsoDate(parsed2) !== text2) return "";
+      return localIsoDate(parsed2);
+    }
+    const parsed = new Date(text2);
+    return Number.isNaN(parsed.valueOf()) ? "" : localIsoDate(parsed);
+  }
   var init_dates = __esm({
     "src/shared/dates.js"() {
     }
@@ -1791,8 +1804,10 @@
     const issues = [];
     const items = record?.items || [];
     const openFindings = items.filter((item) => item.status === "critical" || item.status === "soon");
-    const photos = record?.photoKeys || [];
-    if (openFindings.length && !photos.length) issues.push("Attach a photo of each key finding before closing.");
+    const missingFindingPhotos = openFindings.filter((item) => !(item.photoKeys || []).length);
+    if (missingFindingPhotos.length) {
+      issues.push(`Attach a photo to each critical or soon finding before closing (${missingFindingPhotos[0].label || missingFindingPhotos[0].name}).`);
+    }
     if (!String(record?.customerName || "").trim()) issues.push("Add the customer name on the acknowledgment.");
     if (record?.catalogId === "pre-purchase" && !record?.verdict) issues.push("Choose BUY, NEGOTIATE, or WALK AWAY.");
     const unmarked = items.filter((item) => !item.status);
@@ -1818,7 +1833,11 @@
       groups.get(title).push(item);
     }
     const sections = [...groups.entries()].map(([title, items]) => {
-      const rows = items.map((item) => `<tr><td>${escapeHtml4(item.label || item.name || "")}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${ratingChipHtml(item.status, escapeHtml4)}${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`).join("");
+      const rows = items.map((item) => {
+        const findingPhotos = (item.photoKeys || []).map((key) => inspectionPhotoSrc(key, apiUrl)).filter(Boolean);
+        const findingPhotoHtml = findingPhotos.map((src) => `<img src="${escapeHtml4(src)}" alt="Photo for ${escapeHtml4(item.label || item.name || "inspection finding")}"/>`).join("");
+        return `<tr><td>${escapeHtml4(item.label || item.name || "")}${findingPhotoHtml ? `<div class="finding-photos">${findingPhotoHtml}</div>` : ""}</td><td class="result ${escapeHtml4(item.status || "skipped")}">${ratingChipHtml(item.status, escapeHtml4)}${escapeHtml4(statusLabel2(item.status))}</td><td>${escapeHtml4(item.measurement || "")}</td><td>${escapeHtml4(item.note || "")}</td></tr>`;
+      }).join("");
       return `<h2>${escapeHtml4(title)}</h2><table><thead><tr><th>Item</th><th>Result</th><th>Measurement</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
     }).join("");
     const verdict = (catalog?.verdicts || []).find((item) => item.id === inspection.verdict);
@@ -1871,6 +1890,8 @@
       ${item.measure || item.measurement ? `<input name="measure-${escapeHtml4(item.id)}" value="${escapeHtml4(item.measurement || "")}" placeholder="${escapeHtml4(item.measure || "Measurement")}" aria-label="${escapeHtml4(item.measure || "Measurement")}"/>` : "<span></span>"}
       <input name="note-${escapeHtml4(item.id)}" value="${escapeHtml4(item.note || "")}" placeholder="Finding" aria-label="Note"/>
       <button type="button" class="secondary dictate" data-dictate="note-${escapeHtml4(item.id)}">Dictate</button>
+      <label class="inspect-row-photos">Finding photos<input name="photos-${escapeHtml4(item.id)}" type="file" accept="image/*" capture="environment" multiple/></label>
+      ${(item.photoKeys || []).map((key) => inspectionPhotoSrc(key, context.apiUrl)).filter(Boolean).map((src) => `<img class="finding-photo-preview" src="${escapeHtml4(src)}" alt="Attached photo for ${escapeHtml4(item.label || item.name || "finding")}"/>`).join("")}
     </div>`).join("");
       return `<section class="inspect-section"><div class="inspect-section-head"><h3>${escapeHtml4(section.title)}</h3><button type="button" class="mini-action" data-mark-section="${escapeHtml4(section.title)}">Mark unmarked OK</button></div>${rows}</section>`;
     }).join("");
@@ -2347,6 +2368,65 @@
     }
     return lines;
   }
+  function cleanString(value2, max = 120) {
+    return String(value2 ?? "").trim().slice(0, max);
+  }
+  function buildPartstechOrderRequest({ storeId, lines = [], vin = "", poNumber = "", callbackUrl = "" } = {}) {
+    if (!["string", "number"].includes(typeof storeId) || typeof storeId === "number" && !Number.isFinite(storeId)) {
+      throw new TypeError("storeId must be a valid PartsTech store identifier");
+    }
+    const rawStore = String(storeId ?? "").trim();
+    const store = cleanString(rawStore, 60);
+    if (!store) throw new TypeError("storeId is required to order from PartsTech");
+    if (rawStore.length > 60 || /[\u0000-\u001f\u007f]/.test(rawStore)) {
+      throw new TypeError("storeId must be a valid PartsTech store identifier");
+    }
+    if (!Array.isArray(lines) || lines.length === 0) {
+      throw new TypeError("Add at least one approved, priced PartsTech part line before ordering");
+    }
+    const parts = lines.map((line) => {
+      const description = cleanString(line?.description, 60) || "Part";
+      if (!line || line.type !== "part" || line.source !== "partstech" || line.partstech?.isCore) {
+        throw new TypeError(`"${description}" is not an orderable PartsTech part line`);
+      }
+      if (line.partstech?.storeId && String(line.partstech.storeId).trim() !== store) {
+        throw new TypeError(`"${description}" was quoted for a different PartsTech store`);
+      }
+      if (line.partstechOrder) throw new TypeError(`"${description}" has already been sent to PartsTech`);
+      if (line.approvalStatus !== "approved") {
+        throw new TypeError(`"${description}" must be approved before ordering`);
+      }
+      if (line.priceStatus !== "priced" || !Number.isFinite(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+        throw new TypeError(`"${description}" must have a valid price before ordering`);
+      }
+      const partNumber = cleanString(line.partstech?.partNumber || line.partNumber, 60);
+      const quantity = Math.trunc(Number(line.quantity ?? 1));
+      if (!partNumber) throw new TypeError(`"${description}" needs a part number to order`);
+      if (!Number.isFinite(quantity) || quantity < 1 || quantity > 999) {
+        throw new TypeError(`Quantity for ${partNumber} must be a whole number from 1 to 999`);
+      }
+      const part = { partNumber, quantity };
+      const brand = cleanString(line.partstech?.brand, 80);
+      if (brand) part.brand = brand;
+      if (line.partstech?.lineCardId !== null && line.partstech?.lineCardId !== void 0) part.lineCardId = line.partstech.lineCardId;
+      if (line.partstech?.partTypeId !== null && line.partstech?.partTypeId !== void 0) part.partTypeId = line.partstech.partTypeId;
+      if (line.partstech?.partId) part.partId = String(line.partstech.partId);
+      return part;
+    });
+    if (!parts.length) throw new TypeError("Add at least one priced part line before ordering");
+    if (parts.length > MAX_ORDER_LINES) throw new TypeError(`PartsTech orders are limited to ${MAX_ORDER_LINES} lines`);
+    const request = { storeId: store, parts };
+    const cleanVin = cleanString(vin, 17).toUpperCase();
+    if (/^[A-HJ-NPR-Z0-9]{17}$/.test(cleanVin)) request.searchParams = { vin: cleanVin };
+    const po = cleanString(poNumber, 40);
+    if (po) request.poNumber = po;
+    if (callbackUrl) {
+      const url = new URL(callbackUrl);
+      if (url.protocol !== "https:") throw new TypeError("callbackUrl must use HTTPS");
+      request.callbackUrl = url.toString();
+    }
+    return request;
+  }
   function partstechQuoteRowHtml(item, { escapeHtml: escapeHtml4 = (v) => String(v ?? ""), escapeAttr: escapeAttr4 = escapeHtml4, money: money5 = (v) => `$${Number(v).toFixed(2)}`, canAdd = true } = {}) {
     const price = item.priceStatus === "pending" ? '<span class="login-error">Price unavailable</span>' : escapeHtml4(money5(item.unitPrice));
     const cost = item.partstech?.cost ? `<small>Cost ${escapeHtml4(money5(item.partstech.cost))}</small>` : "";
@@ -2385,9 +2465,10 @@
     ${search}
   </section>`;
   }
-  var roundMoney2;
+  var MAX_ORDER_LINES, roundMoney2;
   var init_partstech = __esm({
     "src/modules/partstech.js"() {
+      MAX_ORDER_LINES = 50;
       roundMoney2 = (value2) => Math.round((Number(value2) || 0) * 100) / 100;
     }
   });
@@ -4436,7 +4517,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
             navigator.mediaDevices.getUserMedia(micConstraints),
             apiFetch2("/ai/voice/client-secret", {
               method: "POST",
-              body: JSON.stringify({ voice: voice || void 0, callerPhone: callerPhone || void 0 })
+              body: JSON.stringify({ persona: greetAsReceptionist ? "front_desk" : "tech_assistant", voice: voice || void 0, callerPhone: callerPhone || void 0 })
             })
           ]);
         } catch (parallelErr) {
@@ -4454,7 +4535,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             secretPayload = await apiFetch2("/ai/voice/client-secret", {
               method: "POST",
-              body: JSON.stringify({ voice: voice || void 0, callerPhone: callerPhone || void 0 })
+              body: JSON.stringify({ persona: greetAsReceptionist ? "front_desk" : "tech_assistant", voice: voice || void 0, callerPhone: callerPhone || void 0 })
             });
           } else {
             throw parallelErr;
@@ -4598,7 +4679,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
             try {
               const response = await apiFetch2("/ai/voice/tool", {
                 method: "POST",
-                body: JSON.stringify({ name: toolName, arguments: args, callerPhone })
+                body: JSON.stringify({ persona: greetAsReceptionist ? "front_desk" : "tech_assistant", name: toolName, arguments: args, callerPhone })
               });
               const toolResult = response?.result || {};
               if (toolName === "calculate_service_estimate") {
@@ -6306,6 +6387,10 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function combinedSalesTaxRate(jurisdictions) {
     return roundCents2((jurisdictions || []).reduce((sum, j) => sum + Number(j.rate || 0), 0));
   }
+  function salesTaxRateMatchesJurisdictions(rate, jurisdictions) {
+    const configuredRate = Number(rate);
+    return Number.isFinite(configuredRate) && roundCents2(configuredRate) === combinedSalesTaxRate(jurisdictions);
+  }
   function buildJurisdictionSupplement(taxableSales, jurisdictions) {
     const taxable = roundCents2(taxableSales);
     const rows = (jurisdictions || []).map((j) => {
@@ -6818,7 +6903,8 @@ button{margin-top:12px;padding:8px 14px}
       measure: item.measure || "",
       status: String(form.elements[`status-${item.id}`]?.value || ""),
       note: String(form.elements[`note-${item.id}`]?.value || ""),
-      measurement: String(form.elements[`measure-${item.id}`]?.value || "")
+      measurement: String(form.elements[`measure-${item.id}`]?.value || ""),
+      photoKeys: [...item.photoKeys || []]
     }));
   }
   function readRecord2(form, catalog, existing, app) {
@@ -6862,40 +6948,56 @@ button{margin-top:12px;padding:8px 14px}
     };
   }
   function fileToDataUrl(file) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const image = new Image();
       const url = URL.createObjectURL(file);
       image.onload = () => {
-        const scale = Math.min(1, 1280 / Math.max(image.width, image.height, 1));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(image.width * scale));
-        canvas.height = Math.max(1, Math.round(image.height * scale));
-        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL("image/jpeg", 0.72));
+        try {
+          const scale = Math.min(1, 1280 / Math.max(image.width, image.height, 1));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(image.width * scale));
+          canvas.height = Math.max(1, Math.round(image.height * scale));
+          canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.72));
+        } catch (error) {
+          reject(error);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
       };
       image.onerror = () => {
         URL.revokeObjectURL(url);
-        resolve("");
+        reject(new Error("Could not retain inspection photo"));
       };
       image.src = url;
     });
+  }
+  async function retainPhoto(file, app) {
+    try {
+      const key = await app.uploadFileToR2(file, inspectionUploadKind(file), file.type || "image/jpeg");
+      if (!key) throw new Error("Inspection upload did not return a file key");
+      return key;
+    } catch (error) {
+      if (/^video\//.test(file.type)) throw error;
+      const dataUrl = await fileToDataUrl(file);
+      if (!dataUrl) throw new Error("Could not retain inspection photo");
+      return dataUrl;
+    }
   }
   async function attachPhotos(form, record, app) {
     const files = [...form.elements.photos?.files || []];
     const keys = [...record.photoKeys];
     for (const file of files) {
-      try {
-        keys.push(await app.uploadFileToR2(file, inspectionUploadKind(file), file.type || "image/jpeg"));
-      } catch (error) {
-        if (/^video\//.test(file.type)) {
-          app.toast?.(error.message || "Video upload failed; reconnect and attach it again");
-          continue;
-        }
-        const dataUrl = await fileToDataUrl(file);
-        if (dataUrl) keys.push(dataUrl);
-      }
+      keys.push(await retainPhoto(file, app));
     }
+    record.items = await Promise.all(record.items.map(async (item) => {
+      const filesForItem = [...form.elements[`photos-${item.id}`]?.files || []];
+      const itemKeys = [...item.photoKeys];
+      for (const file of filesForItem) {
+        itemKeys.push(await retainPhoto(file, app));
+      }
+      return { ...item, photoKeys: itemKeys };
+    }));
     return keys;
   }
   function bindDictation(form, toast2) {
@@ -6983,7 +7085,7 @@ button{margin-top:12px;padding:8px 14px}
     const profile = app.shopProfile();
     const brand = app.printableBrand(profile);
     const body = customerInspectionDocument(inspection, profile, app.escapeHtml, app.cloudflareConfig.apiUrl);
-    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
+    openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos,.finding-photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}.finding-photos img{width:120px;height:90px;max-width:100%;max-height:90px;object-fit:contain;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
       toast: app.toast,
       blockedMessage: "Allow pop-ups to print the inspection",
       autoPrint: true
@@ -7029,23 +7131,34 @@ button{margin-top:12px;padding:8px 14px}
       const intent = event.submitter?.dataset.intent || "draft";
       const record = readRecord2(form, catalog, existing, app);
       if (intent === "close") {
-        const issues = closeInspectionIssues({ ...record, photoKeys: [...record.photoKeys, ...form.elements.photos?.files?.length ? ["pending"] : []] });
+        const items = record.items.map((item) => ({
+          ...item,
+          photoKeys: [
+            ...item.photoKeys,
+            ...form.elements[`photos-${item.id}`]?.files?.length ? ["pending"] : []
+          ]
+        }));
+        const issues = closeInspectionIssues({
+          ...record,
+          items,
+          photoKeys: [...record.photoKeys, ...form.elements.photos?.files?.length ? ["pending"] : []]
+        });
         if (issues.length) {
           app.toast(issues[0]);
           return;
         }
-      }
-      record.photoKeys = await attachPhotos(form, record, app);
-      if (intent === "close") {
-        const issues = closeInspectionIssues(record);
-        if (issues.length) {
-          app.toast(issues[0]);
-          return;
-        }
-        record.closedAt = app.now();
-        record.recordStatus = "closed";
       }
       try {
+        record.photoKeys = await attachPhotos(form, record, app);
+        if (intent === "close") {
+          const issues = closeInspectionIssues(record);
+          if (issues.length) {
+            app.toast(issues[0]);
+            return;
+          }
+          record.closedAt = app.now();
+          record.recordStatus = "closed";
+        }
         const saved = await app.saveShopEntity("inspections", record);
         existing = saved;
         app.toast(intent === "close" ? "Inspection closed" : "Inspection saved");
@@ -8488,7 +8601,7 @@ button{margin-top:12px;padding:8px 14px}
   var legacy_exports = {};
   function safeHtml(markup) {
     const html = String(markup ?? "");
-    if (typeof DOMPurify === "undefined" || typeof DOMPurify.sanitize !== "function") return html;
+    if (typeof DOMPurify === "undefined" || typeof DOMPurify.sanitize !== "function") return escapeHtml(html);
     return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
   }
   function empty(message) {
@@ -8795,9 +8908,29 @@ button{margin-top:12px;padding:8px 14px}
       }
     });
   }
+  function loadSmsDeliveryInbox() {
+    if (smsInboxLoading || isOfflineDesktop()) return;
+    smsInboxLoading = true;
+    void apiFetch("/messaging/threads").then((result) => {
+      smsInboxMessages = result.messages || [];
+      smsInboxError = "";
+    }).catch((error) => {
+      smsInboxError = error.message;
+    }).finally(() => {
+      smsInboxLoading = false;
+      smsInboxLoaded = true;
+      if (state.route === "messaging") render();
+    });
+  }
+  function smsInboxPanel() {
+    if (isOfflineDesktop()) return `<section class="messaging-panel"><h2>Customer texting inbox</h2><p>SMS sending and consent recording require the online shop service. No messages or consent changes are queued offline.</p><fieldset disabled><button type="button">Save consent</button><button type="button">Send text</button></fieldset></section>`;
+    if (!smsInboxLoaded && !smsInboxLoading) loadSmsDeliveryInbox();
+    const rows = smsInboxMessages.map((message) => `<tr><td>${escapeHtml(message.phone)}</td><td>${message.direction === "inbound" ? "Customer" : "Shop"}</td><td>${escapeHtml(message.body)}</td><td>${escapeHtml(message.status)}${message.direction === "outbound" ? ` \xB7 consent ${escapeHtml(message.consentStatus || "unknown")}` : ""}</td><td>${escapeHtml(message.createdAt || "")}</td></tr>`).join("");
+    return `<section class="messaging-panel"><div class="statement-head"><div><div class="eyebrow">Twilio SMS</div><h2>Customer texting inbox</h2><p>Inbound replies, consent, and provider delivery status are recorded per shop.</p></div><button type="button" class="secondary" id="refresh-sms-inbox">${icon("refresh-cw", 14)} Refresh</button></div>${smsInboxError ? `<p role="alert">${escapeHtml(smsInboxError)}</p>` : ""}<form class="form-grid" id="sms-consent-form"><label>Customer phone<input name="phone" type="tel" required placeholder="+18065550123"/></label><label>Consent action<select name="status"><option value="opted_in">Record explicit opt-in</option><option value="opted_out">Record opt-out</option></select></label><label class="toggle-field full"><input type="checkbox" name="confirmed"/><span>Customer explicitly agreed to receive SMS from this shop; consent was obtained and documented.</span></label><div class="full"><button type="submit" class="secondary">${icon("shield-check", 14)} Save consent</button></div></form><form class="form-grid" id="sms-send-form"><label>Customer phone<input name="to" type="tel" required placeholder="+18065550123"/></label><label>Customer ID<input name="customerId" maxlength="120"/></label><label>Work order ID<input name="workOrderId" maxlength="120"/></label><label class="full">Text message<textarea name="messageBody" required maxlength="1600" rows="3"></textarea></label><div class="full"><button type="submit" class="primary">${icon("send", 14)} Send text</button></div></form><div class="data-panel"><table><thead><tr><th>Phone</th><th>Direction</th><th>Message</th><th>Status / consent</th><th>Time</th></tr></thead><tbody>${rows || `<tr><td colspan="5">${smsInboxLoading ? "Loading messages\u2026" : "No messages yet."}</td></tr>`}</tbody></table></div></section>`;
+  }
   function messaging() {
     const config = state.messagingSettings;
-    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
+    return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}${smsInboxPanel()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
   }
   async function loadIntegrationStatus() {
     try {
@@ -8813,15 +8946,16 @@ button{margin-top:12px;padding:8px 14px}
     if (!integrationStatus) void loadIntegrationStatus().then(render);
     const status = integrationStatus || {};
     const labor = status.labor || {}, parts = status.parts || {}, qbo = status.quickbooks || {};
+    const laborLicenseNotice = ["motor", "alldata"].some((provider) => labor[provider]?.credentialsConfigured && !labor[provider]?.licenseConfirmed) ? `<p class="ai-disclaimer">Provider credentials are present, but licensed usage has not been confirmed. Labor lookup remains disabled until the shop verifies its provider contract and sets the matching license confirmation.</p>` : "";
     const laborRows = laborLookupResults.map((item) => `<tr><td>${escapeHtml(item.description || "Labor operation")}</td><td><b>${item.hours == null ? "Enter manually" : `${Number(item.hours).toFixed(2)} h`}</b></td><td>${escapeHtml(item.source)}</td><td><span class="badge ${item.verified ? "paid" : "estimate"}">${item.verified ? "Verified" : "Unverified"}</span></td></tr>`).join("");
     const partsOutput = partsLookupResult ? `<pre class="service-contract">${escapeHtml(JSON.stringify(partsLookupResult, null, 2))}</pre>` : "";
     return shell(`${heading("Connected services", "Integrations", "Licensed labor, supplier ordering, accounting, and messaging connections.", false)}
-    <section class="messaging-panel"><h2>Licensed labor guide</h2>${integrationState("MOTOR", labor.motor?.configured)}${integrationState("ALLDATA", labor.alldata?.configured)}
+    <section class="messaging-panel"><h2>Licensed labor guide</h2>${integrationState("MOTOR", labor.motor?.configured)}${integrationState("ALLDATA", labor.alldata?.configured)}${laborLicenseNotice}
       <form class="form-grid" id="labor-lookup-form"><label>VIN<input name="vin" maxlength="17"/></label><label>Year<input name="year" type="number" min="1886" max="2200"/></label><label>Make<input name="make"/></label><label>Model<input name="model"/></label><label class="full">Operation<input name="query" required placeholder="Front brake pads and rotors"/></label><div class="full"><button class="primary" type="submit">${icon("search", 14)} Find labor time</button></div></form>
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank. Re-sync updates the mapped QuickBooks record; ShopCrank remains the source of truth.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
   }
   function support() {
     if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -9168,7 +9302,10 @@ button{margin-top:12px;padding:8px 14px}
   }
   function initialState() {
     const base = structuredClone(seed);
-    if (!isDemoShell()) for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = [];
+    if (!isDemoShell()) {
+      for (const key of ["orders", "customers", "invoices", "expenses", "appointments"]) base[key] = [];
+      base.taxSettings.rate = combinedSalesTaxRate(DEFAULT_TX_JURISDICTIONS);
+    }
     return base;
   }
   function load() {
@@ -9971,15 +10108,18 @@ button{margin-top:12px;padding:8px 14px}
       toast("Choose an open repair order first");
       return;
     }
-    const lines = (order.estimate?.lines || []).filter((line) => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
-    if (!lines.length) {
-      toast(`${order.id} has no un-ordered PartsTech part lines`);
+    const lines = (order.estimate?.lines || []).filter((line) => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstech?.isCore && !line.partstechOrder);
+    const storeId = lines[0]?.partstech?.storeId || partstechAccount.storeId || "";
+    try {
+      buildPartstechOrderRequest({ storeId, lines, vin: order.vin, poNumber: order.id });
+    } catch (error) {
+      toast(error.message || "PartsTech order needs approved, priced part lines and a valid store");
       return;
     }
     const checkout = window.open("about:blank", "_blank");
     if (checkout) checkout.opener = null;
     try {
-      const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+      const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId, lines }) });
       const placedAt = now();
       const revised = { ...order, partsOrders: [...order.partsOrders || [], { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map((line) => lines.some((item) => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
       const saved = await updateOrderInApi(revised, { throwOnError: true });
@@ -11294,6 +11434,56 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       }
       toast("Endpoint saved. Use your shop service test endpoint to verify SMTP and SMS credentials.");
     });
+    document.querySelector("#refresh-sms-inbox")?.addEventListener("click", () => {
+      smsInboxLoaded = false;
+      loadSmsDeliveryInbox();
+    });
+    document.querySelector("#sms-consent-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (isOfflineDesktop()) {
+        toast("SMS consent requires the online shop service");
+        return;
+      }
+      const formData = new FormData(event.target);
+      const status = String(formData.get("status") || "");
+      try {
+        await apiFetch("/messaging/consent", {
+          method: "POST",
+          body: JSON.stringify({
+            phone: formData.get("phone"),
+            status,
+            confirmed: formData.get("confirmed") === "on"
+          })
+        });
+        toast(status === "opted_in" ? "SMS consent recorded" : "SMS opt-out recorded");
+        event.target.reset();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    document.querySelector("#sms-send-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (isOfflineDesktop()) {
+        toast("SMS sending requires the online shop service");
+        return;
+      }
+      const data = readFormValues(event.target);
+      const button = event.target.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try {
+        const result = await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ ...data, body: data.messageBody }) });
+        if (result.queued === true) throw new Error("SMS was not sent. Reconnect to the online shop service.");
+        toast(`Text ${result.status || "queued"} for delivery`);
+        event.target.reset();
+        smsInboxLoaded = false;
+        loadSmsDeliveryInbox();
+        void loadSmsInbox();
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
   }
   async function loadStripePaymentStatus() {
     if (!canAccess("payments")) return;
@@ -11608,14 +11798,6 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     document.querySelector("#accounting-export")?.addEventListener("click", exportLedger);
     document.querySelector("#record-expense")?.addEventListener("click", openExpense);
     document.querySelector("#journal-entry")?.addEventListener("click", openJournal);
-    document.querySelector("#tax-settings-form")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const data = readFormValues(event.target);
-      state.taxSettings = { state: data.state, taxId: data.taxId.trim(), rate: Number(data.rate) || 0, filingFrequency: data.filingFrequency };
-      save();
-      toast("Tax settings saved");
-      render();
-    });
     document.querySelector("#tax-report-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = readFormValues(event.target);
@@ -12688,8 +12870,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return invoice.id || invoice.number;
   }
   function invoiceDateValue(value2) {
-    const date = new Date(value2);
-    return Number.isNaN(date.valueOf()) ? "" : localIsoDate(date);
+    return toLocalIsoDate(value2);
   }
   function openInvoiceEditor(key) {
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
@@ -14315,6 +14496,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
 </section>`;
   }
   async function generateTaxReportFromForm(from, to) {
+    if (!filingRateIsConsistent()) return;
     try {
       if (navigator.onLine && !isLocalShell()) {
         const remote = await apiFetch(`/tax-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -14336,8 +14518,20 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
     taxReportResult = taxReport(from, to);
   }
+  function isFilingRateConsistent() {
+    const t = state.taxSettings || {};
+    if (t.state && t.state !== "TX") return true;
+    const jurisdictions = normalizeJurisdictions(t.jurisdictions);
+    const rate = t.rate == null || t.rate === "" ? combinedSalesTaxRate(jurisdictions) : Number(t.rate);
+    return salesTaxRateMatchesJurisdictions(rate, jurisdictions);
+  }
+  function filingRateIsConsistent() {
+    if (isFilingRateConsistent()) return true;
+    toast("Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.");
+    return false;
+  }
   function exportSalesTaxCsv() {
-    if (!taxReportResult) return;
+    if (!taxReportResult || !filingRateIsConsistent()) return;
     const shop = shopFilingProfile();
     const rows = [
       ["Sales tax filing export"],
@@ -14369,7 +14563,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     toast("Sales tax CSV exported");
   }
   function exportTexasWebfilePackage() {
-    if (!taxReportResult) return;
+    if (!taxReportResult || !filingRateIsConsistent()) return;
     const shop = shopFilingProfile();
     const supplement = buildJurisdictionSupplement(taxReportResult.totals.taxable, shop.jurisdictions);
     const csv = texasListSupplementCsv(supplement, {
@@ -14629,6 +14823,66 @@ ${catRows}
         stateWages: shop.state === "TX" ? 0 : ytd.gross,
         stateTax: ytd.state
       });
+    }
+  }
+  function bindTaxSettingsForm(taxSettingsForm) {
+    if (taxSettingsForm && !taxSettingsForm.dataset.filingEnhanced) {
+      taxSettingsForm.dataset.filingEnhanced = "1";
+      const grid = taxSettingsForm.querySelector(".form-grid") || taxSettingsForm;
+      if (!taxSettingsForm.querySelector("[name=ein]")) {
+        grid.insertAdjacentHTML("beforeend", `
+<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || "")}" placeholder="XX-XXXXXXX"/></label>
+<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
+<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
+<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
+<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
+<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
+<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
+      }
+      taxSettingsForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const data = readFormValues(event.target);
+        let jurisdictions = null;
+        try {
+          jurisdictions = JSON.parse(data.jurisdictionsJson || "null");
+        } catch {
+          toast("Jurisdiction JSON is invalid");
+          return;
+        }
+        if (jurisdictions !== null && (!Array.isArray(jurisdictions) || jurisdictions.some((item) => !item || typeof item !== "object" || !Number.isFinite(Number(item.rate)) || Number(item.rate) < 0))) {
+          toast("Jurisdictions must be an array with valid nonnegative rates");
+          return;
+        }
+        if (data.state === "TX") jurisdictions = normalizeJurisdictions(jurisdictions);
+        const rate = data.state === "TX" ? combinedSalesTaxRate(jurisdictions) : Number(data.rate);
+        if (!Number.isFinite(rate) || rate < 0) {
+          toast("Enter a valid nonnegative tax rate");
+          return;
+        }
+        const taxSettings = {
+          ...state.taxSettings,
+          state: data.state,
+          taxId: String(data.taxId || "").trim(),
+          rate,
+          filingFrequency: data.filingFrequency,
+          ein: String(data.ein || "").trim(),
+          texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
+          webfileNumber: String(data.webfileNumber || "").trim(),
+          jurisdictions,
+          laborTaxable: data.laborTaxable === "on",
+          feesTaxable: data.feesTaxable === "on"
+        };
+        try {
+          await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });
+          state.taxSettings = taxSettings;
+          taxReportResult = null;
+          toast("Tax & e-file settings saved");
+          render();
+        } catch (error) {
+          toast(error.message || "Could not save tax settings");
+        }
+      }, { capture: true });
     }
   }
   function orderChoices() {
@@ -14934,7 +15188,7 @@ ${catRows}
     const operationOptions = KEY_OPERATIONS.map((item) => `<option value="${item.id}">${item.label}</option>`).join("");
     const fallbackOrderOption = '<option value="">No repair orders</option>';
     const submitLabel = hostReady || live ? "Start key job" : "Record key job";
-    return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live Nissan Maxima jobs need the immobilizer PIN and a matching VIN. Gateway-equipped years need Nissan AutoAuth. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
+    return shell(`${heading("Authorized keys", "Key programming", "Identify, add, program, or erase keys only when this vehicle has a signed repair order.", false)}<div class="messaging-status idle">${icon("shield", 17)}<div><strong>Signed repair order required</strong><span>Live Nissan Maxima key registration is unsupported until licensed Nissan gateway authorization is available. Connecting AutoAuth alone will not enable this job. Immobilizer bypass, cloning, and rolling-code requests are refused.</span></div></div>${bayHardwarePanel()}<form class="form-grid" id="key-job-form"><label class="full">Repair order<select name="orderId" required>${orderChoices() || fallbackOrderOption}</select></label><label>Operation<select name="operation">${operationOptions}</select></label><label>Mode<select name="mode">${modes}</select></label><label class="full">Notes<textarea name="notes" rows="3" placeholder="Customer authorization notes"></textarea></label><div class="full"><button class="primary" type="submit">${icon("key", 14)} ${submitLabel}</button></div></form><div class="data-panel"><table><thead><tr><th>Operation</th><th>RO</th><th>Vehicle</th><th>Mode</th><th>By</th><th>Result</th></tr></thead><tbody>${rows || emptyKeyRows}</tbody></table></div>`);
   }
   async function rememberBayRecord(type, collection, record) {
     const list = state[collection];
@@ -15696,7 +15950,7 @@ ${line}`.trim();
     return Boolean(document.querySelector("#sms-reply-form textarea, #sms-new-form textarea")?.value || document.activeElement?.closest?.(".sms-composer"));
   }
   async function loadSmsInbox({ quiet = false } = {}) {
-    if (smsInbox.loading) return;
+    if (smsInbox.loading || isOfflineDesktop()) return;
     smsInbox.loading = true;
     const before = smsInbox.messages[0]?.id;
     try {
@@ -15711,6 +15965,10 @@ ${line}`.trim();
     if (!quiet || smsInbox.messages[0]?.id !== before && !smsComposerBusy()) render();
   }
   async function sendSmsFromInbox(form, data) {
+    if (isOfflineDesktop()) {
+      toast("SMS sending requires the online shop service");
+      return;
+    }
     const button = form.querySelector("button[type=submit]");
     const to = toE164(data.to);
     const body = String(data.body || "").trim();
@@ -15718,7 +15976,8 @@ ${line}`.trim();
     button.disabled = true;
     try {
       const customer = state.customers.find((item) => phoneKey(item.phone) === phoneKey(to));
-      await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+      const result = await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+      if (result.queued === true) throw new Error("SMS was not sent. Reconnect to the online shop service.");
       smsInbox.selectedKey = phoneKey(to);
       toast("Text sent");
       await loadSmsInbox();
@@ -16067,7 +16326,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -16121,6 +16380,7 @@ ${line}`.trim();
       init_estimate_templates();
       init_bay();
       init_estimate_approval();
+      init_dates();
       init_home();
       chatDerivedCache = null;
       posReaders = null;
@@ -16131,6 +16391,10 @@ ${line}`.trim();
       posMode = "reader";
       posPhoneEntry = false;
       posStripe = null;
+      smsInboxMessages = [];
+      smsInboxLoaded = false;
+      smsInboxLoading = false;
+      smsInboxError = "";
       integrationStatus = null;
       laborLookupResults = [];
       partsLookupResult = null;
@@ -17367,29 +17631,6 @@ ${line}`.trim();
       bindDurableRecordsCore = bind;
       bind = function() {
         bindDurableRecordsCore();
-        document.querySelector("#tax-settings-form")?.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          const data = readFormValues(event.target);
-          const existing = state.shopSettingsRecords.find((item) => item.id === "tax");
-          const record = {
-            ...state.taxSettings,
-            state: data.state,
-            taxId: data.taxId.trim(),
-            rate: Number(data.rate) || 0,
-            filingFrequency: data.filingFrequency,
-            id: "tax",
-            updatedAt: existing?.updatedAt ? now() : void 0
-          };
-          try {
-            const saved = await saveShopEntity("shopsettings", record);
-            state.taxSettings = { ...state.taxSettings, ...saved };
-            toast("Tax settings saved");
-            render();
-          } catch (error) {
-            toast(error.message || "Tax settings could not be saved");
-          }
-        }, { capture: true });
         document.querySelector("#new-customer")?.addEventListener("click", () => openCustomerForm());
         document.querySelectorAll("[data-edit-order]").forEach((button) => {
           button.onclick = (event) => {
@@ -17780,12 +18021,14 @@ ${line}`.trim();
       reports = function() {
         const t = state.taxSettings;
         const stateName = usStates.find((s) => s.code === t.state)?.name || t.state;
-        const result = taxReportResult;
+        const rateMatches = isFilingRateConsistent();
+        const result = rateMatches ? taxReportResult : null;
         const presets = filingPeriodPresets();
         const fromVal = result?.from || presets.month.from;
         const toVal = result?.to || presets.month.to;
         return shell(`${heading("Performance", "Reports", "Sales tax filing report, jurisdiction matrix, and e-file packages for your CPA or state portal.", false)}${stats()}
 <section class="messaging-panel"><div class="messaging-status ready">${icon("landmark", 17)}<div><strong>Tax filing report \u2014 ${escapeHtml(stateName)}</strong><span>Cash-basis sales tax for ${escapeHtml(stateName)} ${escapeHtml(String(t.filingFrequency || "").toLowerCase())} filing. Includes nontaxable and local jurisdiction split.</span></div></div>
+${rateMatches ? "" : '<p class="ledger-note">Configured tax rate does not match jurisdiction rates. Update Tax settings before filing.</p>'}
 <div class="payroll-period-controls no-print" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px">
 <button type="button" class="secondary" data-tax-preset="month">${presets.month.label}</button>
 <button type="button" class="secondary" data-tax-preset="quarter">${presets.quarter.label}</button>
@@ -18038,6 +18281,12 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         }
         document.querySelector("#export-tax-csv")?.addEventListener("click", exportSalesTaxCsv);
         document.querySelector("#export-tx-webfile")?.addEventListener("click", exportTexasWebfilePackage);
+        document.querySelector("#print-tax-report")?.addEventListener("click", (event) => {
+          if (!filingRateIsConsistent()) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, { capture: true });
         document.querySelector("#open-filing-center")?.addEventListener("click", () => {
           filingCenterOpen = true;
           render();
@@ -18087,54 +18336,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         document.querySelectorAll("[data-print-w2]").forEach((button) => {
           button.onclick = () => printEmployeeAnnualForm(button.dataset.printW2);
         });
-        const taxSettingsForm = document.querySelector("#tax-settings-form");
-        if (taxSettingsForm && !taxSettingsForm.dataset.filingEnhanced) {
-          taxSettingsForm.dataset.filingEnhanced = "1";
-          const grid = taxSettingsForm.querySelector(".form-grid") || taxSettingsForm;
-          if (!taxSettingsForm.querySelector("[name=ein]")) {
-            grid.insertAdjacentHTML("beforeend", `
-<label>Federal EIN<input name="ein" value="${escapeHtml(state.taxSettings.ein || "")}" placeholder="XX-XXXXXXX"/></label>
-<label>TX taxpayer number<input name="texasTaxpayerNumber" value="${escapeHtml(state.taxSettings.texasTaxpayerNumber || "")}" placeholder="1-xxxxxxxxxx-x"/></label>
-<label>WebFile number<input name="webfileNumber" value="${escapeHtml(state.taxSettings.webfileNumber || "")}" placeholder="RTxxxxxx"/></label>
-<label class="full">Local jurisdictions JSON<small>Array of {code,name,kind,rate,required} \u2014 city/transit/county/SPD</small>
-<textarea name="jurisdictionsJson" rows="4">${escapeHtml(JSON.stringify(state.taxSettings.jurisdictions || DEFAULT_TX_JURISDICTIONS, null, 0))}</textarea></label>${needsLocalJurisdictions(state.taxSettings.jurisdictions) ? `<label class="full"><small class="ledger-note">Add your shop's local city, transit, and county districts from the Texas Comptroller lookup before your first filing report. Until then only the 6.25% state line is included.</small></label>` : ""}
-<label class="toggle-field full"><input type="checkbox" name="laborTaxable" ${shopTaxPolicy(state.taxSettings).laborTaxable ? "checked" : ""}/> Charge sales tax on labor<small>Texas: leave off. Repair labor isn't taxable when parts and labor are itemized. Check your state's rules with your tax professional.</small></label>
-<label class="toggle-field full"><input type="checkbox" name="feesTaxable" ${shopTaxPolicy(state.taxSettings).feesTaxable ? "checked" : ""}/> Charge sales tax on shop supplies and fees</label>`);
-          }
-          taxSettingsForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            const data = readFormValues(event.target);
-            let jurisdictions = null;
-            try {
-              jurisdictions = JSON.parse(data.jurisdictionsJson || "null");
-            } catch {
-              toast("Jurisdiction JSON is invalid");
-              return;
-            }
-            const rate = jurisdictions ? combinedSalesTaxRate(jurisdictions) : Number(data.rate) || 0;
-            const taxSettings = {
-              state: data.state,
-              taxId: String(data.taxId || "").trim(),
-              rate,
-              filingFrequency: data.filingFrequency,
-              ein: String(data.ein || "").trim(),
-              texasTaxpayerNumber: String(data.texasTaxpayerNumber || "").trim(),
-              webfileNumber: String(data.webfileNumber || "").trim(),
-              jurisdictions,
-              laborTaxable: data.laborTaxable === "on",
-              feesTaxable: data.feesTaxable === "on"
-            };
-            try {
-              await saveShopEntity("shopsettings", { ...taxSettings, id: "tax", updatedAt: now() });
-              state.taxSettings = taxSettings;
-              toast("Tax & e-file settings saved");
-              render();
-            } catch (error) {
-              toast(error.message || "Could not save tax settings");
-            }
-          }, { capture: true });
-        }
+        bindTaxSettingsForm(document.querySelector("#tax-settings-form"));
       };
       scanAiBusy = "";
       renderShopOsCore = render;
@@ -18302,6 +18504,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
       smsInboxTimer = 0;
       messagingTwilioPanelSmsCore = messagingTwilioPanelHtml;
       messagingTwilioPanelHtml = function() {
+        if (isOfflineDesktop()) return messagingTwilioPanelSmsCore();
         if (!smsInbox.loaded) void loadSmsInbox();
         const threads = smsThreads();
         const selectedKey = smsInbox.selectedKey || threads[0]?.key || "";

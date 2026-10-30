@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { APPROVAL_CUSTOM_LABEL_MAX } from '../../src/modules/estimate-approval.js';
-import { putEntity, validatedOrderApproval, verifyOrderApprovalSignature } from '../src/index.js';
+import worker, { protectOrderApprovalSignature, putEntity, validatedOrderApproval, verifyOrderApprovalSignature } from '../src/index.js';
+import { createD1 } from './helpers/d1-sqlite.mjs';
 
 const context = {
   shopId: 'shop-1',
@@ -131,6 +132,178 @@ test('an explicit estimate revision may clear approval before a fresh authorizat
   assert.equal(order.estimateApproval, null);
   assert.equal(order.linesLockedAt, null);
   assert.equal(order.estimateRevisionPending, true);
+});
+
+test('approval creation and preservation cannot change, add, or remove the consent VIN', () => {
+  const vin = '1C6SRFHT0LN123456';
+  for (const [before, after] of [[vin, '1C6SRFHT0LN999999'], [vin, ''], [vin, undefined], ['', vin], [undefined, vin]]) {
+    const existing = { ...existingOrder(), vin: before };
+    const body = { ...otherApproval('Phone'), vin: after };
+    assert.throws(() => validatedOrderApproval(body, context, existing), error => error.status === 409);
+    existing.estimateApproval = otherApproval('Phone').estimateApproval;
+    existing.linesLockedAt = serverTimestamp;
+    assert.throws(() => validatedOrderApproval(body, context, existing), error => error.status === 409);
+  }
+});
+
+test('VIN normalization and legacy approvals preserve legitimate operational edits', () => {
+  const vin = '1C6SRFHT0LN123456';
+  const existing = {
+    ...existingOrder(), vin, linesLockedAt: serverTimestamp,
+    estimateApproval: { ...otherApproval('Phone').estimateApproval, type: undefined },
+  };
+  const body = { ...existing, vin: ' 1c6srfht0ln-123456 ', status: 'in_progress', notes: 'Ready for bay two' };
+  const saved = validatedOrderApproval(body, { ...context, role: 'technician' }, existing);
+  assert.equal(saved.notes, body.notes);
+  assert.equal(saved.status, 'in_progress');
+  assert.deepEqual(saved.estimateApproval, existing.estimateApproval);
+  const unapproved = { ...existingOrder(), vin };
+  assert.equal(validatedOrderApproval({ ...otherApproval('Phone'), vin: body.vin }, context, unapproved).estimateApproval.status, 'approved');
+  const revision = validatedOrderApproval({
+    ...existing, vin: '1C6SRFHT0LN999999', estimateApproval: null,
+    linesLockedAt: null, estimateRevisionPending: true,
+  }, context, existing);
+  assert.equal(revision.estimateApproval, null);
+  assert.equal(validatedOrderApproval({ ...revision, estimateApproval: otherApproval('Phone').estimateApproval }, context, revision).vin, revision.vin);
+});
+
+test('omitted VINs retain recorded consent during partial edits, approvals and revisions', () => {
+  const vin = '1C6SRFHT0LN123456';
+  const draft = { ...existingOrder(), vin };
+  const approved = validatedOrderApproval(otherApproval('Phone'), context, draft);
+  assert.equal(approved.vin, vin);
+  const edited = validatedOrderApproval({ notes: 'Ready for dispatch' },
+    { ...context, role: 'technician' }, approved);
+  assert.equal(edited.vin, vin);
+  assert.equal(edited.notes, 'Ready for dispatch');
+  assert.deepEqual(edited.estimateApproval, approved.estimateApproval);
+  const revised = validatedOrderApproval({
+    estimateApproval: null, linesLockedAt: null, estimateRevisionPending: true,
+  }, context, approved);
+  assert.equal(revised.vin, vin);
+  assert.equal(revised.estimateApproval, null);
+  for (const value of ['', null, undefined]) {
+    assert.throws(() => validatedOrderApproval({ vin: value }, context, approved),
+      error => error.status === 409);
+  }
+});
+
+test('ordinary upload evidence is promoted from one object version with an atomic create-only write', async () => {
+  const sourceKey = 'shops/shop-1/photos/legacy.png';
+  const approval = { status: 'approved', signatureKey: sourceKey };
+  let stored;
+  const FILES = {
+    async head() { return { httpMetadata: { contentType: 'image/png' } }; },
+    async get(key) {
+      assert.equal(key, sourceKey);
+      return { httpMetadata: { contentType: 'image/png' }, body: new Response('signed-version').body };
+    },
+    async put(key, bytes, options) { stored = { key, bytes, options }; return {}; },
+  };
+  await protectOrderApprovalSignature({ FILES }, context, approval);
+  assert.match(approval.signatureKey, /^shops\/shop-1\/signatures\/.+\.png$/);
+  assert.equal(stored.key, approval.signatureKey);
+  assert.equal(new TextDecoder().decode(stored.bytes), 'signed-version');
+  assert.deepEqual(stored.options.onlyIf, { etagDoesNotMatch: '*' });
+  await assert.rejects(() => protectOrderApprovalSignature({
+    FILES: { ...FILES, async get() { return { httpMetadata: { contentType: 'image/jpeg' }, body: new Response('changed').body }; } },
+  }, context, { status: 'approved', signatureKey: sourceKey }), error => error.status === 400);
+});
+
+test('approval evidence promotion fails closed if immutable destination already exists', async () => {
+  const approval = { status: 'approved', type: 'signature', signatureKey: 'shops/shop-1/photo/source' };
+  await assert.rejects(() => protectOrderApprovalSignature({
+    FILES: {
+      async head() { return { httpMetadata: { contentType: 'image/png' } }; },
+      async get() { return { httpMetadata: { contentType: 'image/png' }, body: new Response('signature').body }; },
+      async put() { return null; },
+    },
+  }, context, approval), error => error.status === 409);
+  assert.equal(approval.signatureKey, 'shops/shop-1/photo/source');
+});
+
+test('validated order snapshots prevent concurrent approvals or VIN edits from being overwritten', async () => {
+  const DB = createD1();
+  const original = JSON.stringify({ ...existingOrder(), vin: '1C6SRFHT0LN123456' });
+  await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(context.shopId, 'orders', 'RO-1200', original, context.userId, serverTimestamp, serverTimestamp).run();
+  const approved = JSON.stringify({ ...JSON.parse(original), linesLockedAt: serverTimestamp, estimateApproval: otherApproval('Phone').estimateApproval });
+  await DB.prepare('UPDATE entities SET data_json = ? WHERE entity_id = ?').bind(approved, 'RO-1200').run();
+  await assert.rejects(() => putEntity({ DB }, context, 'orders', 'RO-1200', { ...existingOrder(), vin: '1C6SRFHT0LN999999' },
+    null, context.userId, { expectedOrderSnapshot: original }), error => error.status === 409);
+  assert.equal((await DB.prepare('SELECT data_json FROM entities WHERE entity_id = ?').bind('RO-1200').first()).data_json, approved);
+  await assert.rejects(() => putEntity({ DB }, context, 'orders', 'RO-1200', existingOrder(),
+    null, context.userId, { expectedOrderSnapshot: null }), error => error.status === 409);
+  const saved = await putEntity({ DB }, context, 'orders', 'RO-1200', { ...JSON.parse(approved), status: 'in_progress' },
+    null, context.userId, { expectedOrderSnapshot: approved });
+  assert.equal(saved.status, 'in_progress');
+  await assert.rejects(() => putEntity({ DB }, context, 'orders', 'RO-1200', JSON.parse(original),
+    null, context.userId, { requireUnlockedEstimate: true, expectedOrderSnapshot: original }), error => error.status === 409);
+});
+
+test('entity routes enforce VIN consent and promote both staff estimate and invoice evidence', async () => {
+  const DB = createD1();
+  await DB.prepare('INSERT INTO users (email, shop_id, role, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(context.email, context.shopId, context.role, context.name, serverTimestamp, serverTimestamp).run();
+  const vin = '1C6SRFHT0LN123456';
+  const original = { ...existingOrder(), vin };
+  await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(context.shopId, 'orders', original.id, JSON.stringify(original), context.userId, serverTimestamp, serverTimestamp).run();
+  const objects = new Map([['shops/shop-1/photo/source.png', 'original signature']]);
+  const env = {
+    DB, DEV_AUTH_BYPASS: '1',
+    FILES: {
+      async head(key) { return objects.has(key) ? { httpMetadata: { contentType: 'image/png' } } : null; },
+      async get(key) {
+        return objects.has(key) ? { httpMetadata: { contentType: 'image/png' }, body: new Response(objects.get(key)).body } : null;
+      },
+      async put(key, bytes, options) {
+        assert.deepEqual(options.onlyIf, { etagDoesNotMatch: '*' });
+        if (objects.has(key)) return null;
+        objects.set(key, new TextDecoder().decode(bytes));
+        return {};
+      },
+    },
+  };
+  const save = (type, id, body, method = 'PUT') => worker.fetch(new Request(`https://app.example.test/api/entities/${type}${id ? `/${id}` : ''}`, {
+    method, headers: { 'Content-Type': 'application/json', 'X-ShopCrank-Dev-Email': context.email },
+    body: JSON.stringify(body),
+  }), env);
+  const signature = {
+    status: 'approved', type: 'signature', authorizationName: 'Pat',
+    signedAt: serverTimestamp, signatureKey: 'shops/shop-1/photo/source.png',
+    decisions: { labor: 'approved', part: 'declined' },
+  };
+  assert.equal((await save('orders', original.id, { ...original, vin: '1C6SRFHT0LN999999', estimateApproval: signature })).status, 409);
+  const response = await save('orders', original.id, { ...original, estimateApproval: signature });
+  assert.equal(response.status, 200);
+  const approved = await response.json();
+  assert.match(approved.estimateApproval.signatureKey, /^shops\/shop-1\/signatures\//);
+  objects.set(signature.signatureKey, 'subsequent ordinary upload');
+  assert.equal(objects.get(approved.estimateApproval.signatureKey), 'original signature');
+  assert.equal((await save('orders', original.id, { ...approved, vin: '' })).status, 409);
+  assert.equal((await save('orders', original.id, { ...approved, notes: 'Ready to dispatch', status: 'in_progress' })).status, 200);
+  const partialResponse = await save('orders', original.id, { status: 'in_progress', notes: 'Partial dispatch update' });
+  assert.equal(partialResponse.status, 200);
+  const partialOrder = await partialResponse.json();
+  assert.equal(partialOrder.vin, vin);
+  assert.equal(partialOrder.notes, 'Partial dispatch update');
+  assert.deepEqual(partialOrder.estimateApproval, approved.estimateApproval);
+  assert.equal((await save('orders', '', { ...original, notes: 'Overwrite attempt' }, 'POST')).status, 409);
+  const invoiceResponse = await save('invoices', '', { id: 'INV-1', number: 'INV-1', signature }, 'POST');
+  assert.equal(invoiceResponse.status, 201);
+  const invoice = await invoiceResponse.json();
+  assert.match(invoice.signature.signatureKey, /^shops\/shop-1\/signatures\//);
+  assert.equal(objects.get(invoice.signature.signatureKey), 'subsequent ordinary upload');
+  const updatedInvoice = await save('invoices', 'INV-1', { ...invoice, notes: 'Printed copy' });
+  assert.equal(updatedInvoice.status, 200);
+  assert.equal((await updatedInvoice.json()).signature.signatureKey, invoice.signature.signatureKey);
+  const legacy = { ...invoice, signature: { ...signature, signatureKey: 'shops/shop-1/old/missing.png' } };
+  await DB.prepare('UPDATE entities SET data_json = ? WHERE shop_id = ? AND entity_type = ? AND entity_id = ?')
+    .bind(JSON.stringify(legacy), context.shopId, 'invoices', 'INV-1').run();
+  const legacyUpdate = await save('invoices', 'INV-1', { ...legacy, notes: 'Unrelated legacy invoice edit' });
+  assert.equal(legacyUpdate.status, 200);
+  assert.equal((await legacyUpdate.json()).signature.signatureKey, legacy.signature.signatureKey);
 });
 
 test('technicians and office staff cannot clear an existing approval as a revision', () => {

@@ -40,9 +40,6 @@ ensure_session() {
   echo "started $name"
 }
 
-ensure_session frontend "http://127.0.0.1:3000/" \
-  python3 -m http.server 3000 --bind 127.0.0.1
-
 # Source nvm inside the session. A tmux server started earlier will not
 # inherit the Node 24 PATH from this script.
 if listening "http://127.0.0.1:8787/api/healthz"; then
@@ -74,5 +71,7 @@ wait_for() {
   return 1
 }
 
-wait_for "http://127.0.0.1:3000/" 30 frontend
 wait_for "http://127.0.0.1:8787/api/healthz" 120 worker-api
+ensure_session frontend "http://127.0.0.1:3000/api/healthz" \
+  "$(command -v node)" scripts/dev-frontend.mjs
+wait_for "http://127.0.0.1:3000/api/healthz" 30 frontend

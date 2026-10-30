@@ -77,6 +77,30 @@ Claude receives read-only tools for jobs, estimates, invoices, customers, and pa
 
 ## Voice WebSocket
 
+### Front Desk and Tech Assistant separation
+
+Grok phone calls and receptionist rehearsals use `front_desk`; ordinary in-app
+voice uses `tech_assistant`. The client sends the same persona when minting a
+voice secret and executing each tool. Server-side persona and role checks apply
+independently of the model's tool list. Front Desk tools never expose accounting
+or technical shop records. Caller vehicle status is scoped to the uniquely
+verified customer's ID, not another customer's matching name.
+
+Signed AgentPhone voice, SMS, MMS, and iMessage conversations are also external
+Front Desk sessions, never authenticated staff sessions. Webhook role/persona
+fields cannot elevate them. Claude tools and Gemini/Workers AI grounding
+(including provider fallbacks) are restricted to customer-safe knowledge and
+exclude internal shop-record context; external callers cannot write staff
+memories.
+
+The Front Desk questionnaire controls public pricing; its answers override
+onboarding intake, which overrides profile defaults. Labor rates are disclosed
+only when explicitly published. Callback messages are saved to the staff-visible
+call history and configured staff are notified (SMS remains subject to go-live).
+Knowledge documents are reference data, with permission-scoped retrieval and a
+cumulative bounded PDF extraction budget; website refresh selection filters due
+sources before applying its batch limit.
+
 Connect an authenticated WebSocket client to:
 
 ```text

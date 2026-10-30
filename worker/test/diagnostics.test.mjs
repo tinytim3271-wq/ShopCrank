@@ -31,7 +31,14 @@ test('Nissan Maxima PIN procedures do not require Stellantis AutoAuth', () => {
   assert.equal(requiresAutoAuthLogin(procedureSpec('module_flash'), maxima), true);
   const maximaCoverage = coverageBundle.records.filter((record) => record.make === 'Nissan' && record.model === 'Maxima');
   assert.ok(maximaCoverage.length >= 2);
-  assert.equal(maximaCoverage.every((record) => record.procedures.add_key.supported), true);
+  for (const platform of ['A35', 'A36']) {
+    const record = maximaCoverage.find(item => item.platform === platform);
+    assert.equal(record.supported, false);
+    for (const operation of ['add_key', 'all_keys_lost', 'program_remote', 'erase_keys']) {
+      assert.equal(record.procedures[operation].supported, false);
+      assert.equal(record.procedures[operation].authorizationRequired, null);
+    }
+  }
 });
 
 test('procedure specs cover programming + flash', () => {

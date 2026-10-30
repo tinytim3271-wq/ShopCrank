@@ -102,7 +102,9 @@ test('ALLDATA uses the platform adapter when configured and fails closed otherwi
     ALLDATA_LABOR_BASE_URL: 'https://alldata.example.test/',
     ALLDATA_LABOR_SEARCH_PATH: 'labor',
     ALLDATA_LABOR_API_KEY: 'ad-key',
+    ALLDATA_LABOR_LICENSE_CONFIRMED: 'true',
   };
+  assert.deepEqual(platformLaborStatus({ ...alldataEnv, ALLDATA_LABOR_LICENSE_CONFIRMED: '' }), { motor: false, alldata: false });
   assert.deepEqual(platformLaborStatus(alldataEnv), { motor: false, alldata: true });
   const secrets = { [LABOR_GUIDE_SECRET_NAME]: JSON.stringify({ provider: 'alldata', subscriptionId: 'sub-1' }) };
   const { search } = harness(secrets);
@@ -128,7 +130,7 @@ test('review fixes: empty or VIN-less MOTOR falls back to the web average; platf
   const empty = await search({ ...platformEnv, fetch: motorFetch(calls, []) }, { vin: VIN, keyword: 'nothing' });
   assert.equal(empty.provider, 'web_estimate');
   assert.equal(calls.length, 1);
-  const alldataEnv = { ALLDATA_LABOR_BASE_URL: 'https://alldata.example.test/', ALLDATA_LABOR_SEARCH_PATH: 'labor', ALLDATA_LABOR_API_KEY: 'ad-key' };
+  const alldataEnv = { ALLDATA_LABOR_BASE_URL: 'https://alldata.example.test/', ALLDATA_LABOR_SEARCH_PATH: 'labor', ALLDATA_LABOR_API_KEY: 'ad-key', ALLDATA_LABOR_LICENSE_CONFIRMED: 'true' };
   const alldata = await harness().search({ ...alldataEnv, fetch: async () => Response.json({ results: [{ laborHours: 2, operation: 'Water pump' }] }) }, { vin: VIN, keyword: 'water pump', laborRate: 100 });
   assert.equal(alldata.provider, 'alldata');
   assert.equal(alldata.licensedBy, 'platform');

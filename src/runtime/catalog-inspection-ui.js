@@ -18,6 +18,7 @@ function readItems(form, catalog, existing) {
     status: String(form.elements[`status-${item.id}`]?.value || ''),
     note: String(form.elements[`note-${item.id}`]?.value || ''),
     measurement: String(form.elements[`measure-${item.id}`]?.value || ''),
+    photoKeys: [...(item.photoKeys || [])],
   }));
 }
 
@@ -59,36 +60,58 @@ function readRecord(form, catalog, existing, app) {
 }
 
 function fileToDataUrl(file) {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const image = new Image();
     const url = URL.createObjectURL(file);
     image.onload = () => {
-      const scale = Math.min(1, 1280 / Math.max(image.width, image.height, 1));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
-      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL('image/jpeg', 0.72));
+      try {
+        const scale = Math.min(1, 1280 / Math.max(image.width, image.height, 1));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      } catch (error) {
+        reject(error);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
     };
-    image.onerror = () => { URL.revokeObjectURL(url); resolve(''); };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not retain inspection photo'));
+    };
     image.src = url;
   });
+}
+
+async function retainPhoto(file, app) {
+  try {
+    const key = await app.uploadFileToR2(file, inspectionUploadKind(file), file.type || 'image/jpeg');
+    if (!key) throw new Error('Inspection upload did not return a file key');
+    return key;
+  } catch (error) {
+    if (/^video\//.test(file.type)) throw error;
+    const dataUrl = await fileToDataUrl(file);
+    if (!dataUrl) throw new Error('Could not retain inspection photo');
+    return dataUrl;
+  }
 }
 
 async function attachPhotos(form, record, app) {
   const files = [...(form.elements.photos?.files || [])];
   const keys = [...record.photoKeys];
   for (const file of files) {
-    try {
-      keys.push(await app.uploadFileToR2(file, inspectionUploadKind(file), file.type || 'image/jpeg'));
-    } catch (error) {
-      // Offline photos fall back to an inline image; video is too large to inline.
-      if (/^video\//.test(file.type)) { app.toast?.(error.message || 'Video upload failed; reconnect and attach it again'); continue; }
-      const dataUrl = await fileToDataUrl(file);
-      if (dataUrl) keys.push(dataUrl);
-    }
+    keys.push(await retainPhoto(file, app));
   }
+  record.items = await Promise.all(record.items.map(async item => {
+    const filesForItem = [...(form.elements[`photos-${item.id}`]?.files || [])];
+    const itemKeys = [...item.photoKeys];
+    for (const file of filesForItem) {
+      itemKeys.push(await retainPhoto(file, app));
+    }
+    return { ...item, photoKeys: itemKeys };
+  }));
   return keys;
 }
 
@@ -179,7 +202,7 @@ export function printCatalogInspection(app, inspection) {
   const profile = app.shopProfile();
   const brand = app.printableBrand(profile);
   const body = customerInspectionDocument(inspection, profile, app.escapeHtml, app.cloudflareConfig.apiUrl);
-  openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
+  openPrintDocument(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${app.escapeHtml(inspection.number)} inspection</title><style>${brand.style}body{font:13px/1.5 system-ui,sans-serif;max-width:860px;margin:auto;padding:22px;color:#172029}h1{margin:8px 0 4px;font-size:26px}h2{margin:18px 0 6px;color:var(--brand);font-size:15px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border:1px solid #d6ddd7;text-align:left;vertical-align:top}th{color:#fff;background:var(--brand)}.fee{font-weight:700}.verdict{display:inline-block;margin:8px 0;padding:6px 10px;color:#fff;background:var(--brand);font-weight:800;letter-spacing:.04em}.result.critical{color:#a93428;font-weight:700}.result.soon{color:#9b4821;font-weight:700}.result.ok{color:#08705f}.photos,.finding-photos{display:flex;flex-wrap:wrap;gap:8px}.photos img,.signature{max-width:180px;border:1px solid #d6ddd7}.finding-photos img{width:120px;height:90px;max-width:100%;max-height:90px;object-fit:contain;border:1px solid #d6ddd7}</style></head><body>${brand.header}${body}<button type="button">Print inspection</button></body></html>`, {
     toast: app.toast,
     blockedMessage: 'Allow pop-ups to print the inspection',
     autoPrint: true,
@@ -226,23 +249,34 @@ export function presentCatalogInspection(app, existing = null, catalogId = exist
     const intent = event.submitter?.dataset.intent || 'draft';
     const record = readRecord(form, catalog, existing, app);
     if (intent === 'close') {
-      const issues = closeInspectionIssues({ ...record, photoKeys: [...record.photoKeys, ...(form.elements.photos?.files?.length ? ['pending'] : [])] });
+      const items = record.items.map(item => ({
+        ...item,
+        photoKeys: [
+          ...item.photoKeys,
+          ...(form.elements[`photos-${item.id}`]?.files?.length ? ['pending'] : []),
+        ],
+      }));
+      const issues = closeInspectionIssues({
+        ...record,
+        items,
+        photoKeys: [...record.photoKeys, ...(form.elements.photos?.files?.length ? ['pending'] : [])],
+      });
       if (issues.length) {
         app.toast(issues[0]);
         return;
       }
-    }
-    record.photoKeys = await attachPhotos(form, record, app);
-    if (intent === 'close') {
-      const issues = closeInspectionIssues(record);
-      if (issues.length) {
-        app.toast(issues[0]);
-        return;
-      }
-      record.closedAt = app.now();
-      record.recordStatus = 'closed';
     }
     try {
+      record.photoKeys = await attachPhotos(form, record, app);
+      if (intent === 'close') {
+        const issues = closeInspectionIssues(record);
+        if (issues.length) {
+          app.toast(issues[0]);
+          return;
+        }
+        record.closedAt = app.now();
+        record.recordStatus = 'closed';
+      }
       const saved = await app.saveShopEntity('inspections', record);
       existing = saved;
       app.toast(intent === 'close' ? 'Inspection closed' : 'Inspection saved');
