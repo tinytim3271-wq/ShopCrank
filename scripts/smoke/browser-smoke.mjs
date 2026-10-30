@@ -314,6 +314,7 @@ async function main() {
       await page.waitForFunction(() => /(?<!PARTIALLY )PAID/.test(document.querySelector('main')?.innerText || '') && /2 payments/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
       const after = await row.innerText();
       if (!/(?<!PARTIALLY )PAID/.test(after) || !/2 payments/.test(after)) throw new Error(`${after.replace(/\s+/g, ' ').slice(0, 200)} | toasts: ${toasts.slice(-4).join(' / ')}`);
+      if (/Remaining \$(?!0\.00)/.test(after)) throw new Error(`invoice not fully paid: ${after.replace(/\s+/g, ' ').slice(0, 200)}`);
     });
     await check('messaging shows the two-way texting inbox and shop ops shows declined work', async () => {
       pageErrors.length = 0;
