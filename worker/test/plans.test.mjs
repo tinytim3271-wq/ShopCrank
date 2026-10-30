@@ -12,6 +12,7 @@ import {
   hasPlanCapability,
   isPlaceholderPrice,
   planCapabilities,
+  resolveSubscriptionEntitlements,
   stripePriceForPlan,
 } from '../src/plans.mjs';
 
@@ -70,6 +71,88 @@ test('plan capabilities gate paid integrations; texting is on every plan', () =>
   assert.deepEqual(planCapabilities('shop').includes('sms'), true);
   assert.deepEqual(planCapabilities('shop_pro').includes('live_diagnostics'), true);
   assert.deepEqual(planCapabilities('unknown'), []);
+});
+
+test('schedule families resolve expected feature tiers', () => {
+  const start = resolveSubscriptionEntitlements({ plan_id: 'growth:start' });
+  const clever = resolveSubscriptionEntitlements({ plan_id: 'mitchell1:clever' });
+  const elite = resolveSubscriptionEntitlements({ plan_id: 'operations:elite' });
+
+  assert.equal(start.canonicalFamily, 'growth_suite');
+  assert.equal(start.features.standardInspections, true);
+  assert.equal(start.features.twoWayTexting, false);
+  assert.equal(start.features.app, true);
+
+  assert.equal(clever.canonicalFamily, 'intelligence_suite');
+  assert.equal(clever.features.twoWayTexting, true);
+  assert.equal(clever.features.qbo, true);
+
+  assert.equal(elite.canonicalFamily, 'ops_suite');
+  assert.equal(elite.features.motorLabor, true);
+  assert.equal(elite.features.nextGenInspections, true);
+});
+
+test('family qualification fails closed and starter aliases respect the plan family', () => {
+  for (const planId of ['vendor-x:shop_pro', 'unknown:enterprise', 'growth:shop_pro']) {
+    assert.deepEqual(planCapabilities(planId), [], planId);
+    assert.equal(resolveSubscriptionEntitlements({ plan_id: planId }).knownPlan, false, planId);
+    assert.equal(hasPlanCapability({ plan_id: planId, status: 'active' }, 'sms'), false, planId);
+  }
+  assert.equal(resolveSubscriptionEntitlements({ plan_id: 'shopcrank:starter' }).basePlanId, 'starter');
+  assert.equal(resolveSubscriptionEntitlements({ plan_id: 'starter' }).knownPlan, true);
+  assert.equal(resolveSubscriptionEntitlements({ plan_id: 'growth:starter' }).basePlanId, 'start');
+  assert.deepEqual(planCapabilities('shop+extra-users'), planCapabilities('shop'));
+  assert.equal(hasPlanCapability({ plan_id: 'shop+extra-users:2', status: 'active' }, 'labor_guides'), true);
+  for (const plan of PUBLIC_PLANS) assert.equal(planCapabilities(plan.id).includes('labor_guides'), true, plan.id);
+});
+
+test('subscription entitlements resolve add-ons and metadata passthrough', () => {
+  const entitlements = resolveSubscriptionEntitlements({
+    plan_id: 'growth:scale+multi-shop:2+ai-receptionist',
+    addons: ['extra users:3'],
+    metadata: {
+      migrationFee: '149',
+      cardReader: 'north',
+      cardReaderMonthly: '39',
+      setupFee: '99',
+      leaseBased: true,
+      quoteBased: true,
+    },
+  });
+
+  assert.equal(entitlements.planId, 'growth:scale+multi-shop:2+ai-receptionist');
+  assert.equal(entitlements.family, 'growth');
+  assert.equal(entitlements.basePlanId, 'scale');
+  assert.equal(entitlements.knownPlan, true);
+  assert.equal(entitlements.features.quickbooks, true);
+  assert.equal(entitlements.features.liveDiagnostics, true);
+  assert.equal(entitlements.features.multiLocation, true);
+  assert.equal(entitlements.features.aiReceptionist, true);
+  assert.equal(entitlements.addOns.multiShop, true);
+  assert.equal(entitlements.addOns.multiShopCount, 2);
+  assert.equal(entitlements.addOns.aiReceptionist, true);
+  assert.equal(entitlements.addOns.extraUsers, 3);
+  assert.equal(entitlements.addOns.migrationFee, '149');
+  assert.equal(entitlements.addOns.cardReader, 'north');
+  assert.equal(entitlements.addOns.cardReaderMonthly, '39');
+  assert.equal(entitlements.addOns.setupFee, '99');
+  assert.equal(entitlements.addOns.leaseBased, true);
+  assert.equal(entitlements.addOns.quoteBased, true);
+});
+
+test('unknown subscription plans fail closed while still parsing add-ons', () => {
+  const entitlements = resolveSubscriptionEntitlements({
+    plan_id: 'vendor-x:nonexistent',
+    metadata: { addons: { 'extra-users': 2, 'ai-receptionist': true } },
+  });
+
+  assert.equal(entitlements.knownPlan, false);
+  assert.deepEqual(entitlements.capabilities, []);
+  assert.equal(entitlements.features.sms, false);
+  assert.equal(entitlements.features.quickbooks, false);
+  assert.equal(entitlements.features.liveDiagnostics, false);
+  assert.equal(entitlements.features.aiReceptionist, true);
+  assert.equal(entitlements.addOns.extraUsers, 2);
 });
 
 test('expired and invalid subscription periods do not grant plan capabilities', () => {

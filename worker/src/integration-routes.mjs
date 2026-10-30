@@ -7,12 +7,15 @@ import {
 } from './integrations/parts.mjs';
 import {
   SmsIntegrationError,
+  isE164,
   parseTwilioInboundWebhook,
+  parseTwilioStatusWebhook,
   resolveTwilioShopConfig,
   sendSms,
   smsIntegrationStatus,
 } from './integrations/sms.mjs';
 import { QuickBooksError, createQuickBooksIntegration } from './integrations/quickbooks.mjs';
+import { resolveSubscriptionEntitlements } from './plans.mjs';
 import { createSupportTicket, listSupportTickets } from './support.mjs';
 
 const MESSAGE_ROLES = ['owner', 'admin', 'office', 'service_writer'];
@@ -53,6 +56,17 @@ export async function handleIntegrationStatus(request, env, context, { getSecret
     })
     : smsIntegrationStatus(env);
   const quickbooks = Boolean(env.INTUIT_CLIENT_ID && env.INTUIT_CLIENT_SECRET && env.INTUIT_REDIRECT_URI);
+
+  let subscription = null;
+  try {
+    subscription = await env.DB.prepare(
+      'SELECT plan_id, status, current_period_end, stripe_subscription_id FROM subscriptions WHERE shop_id = ? LIMIT 1',
+    ).bind(context.shopId).first();
+  } catch {
+    subscription = null;
+  }
+  const entitlements = resolveSubscriptionEntitlements(subscription);
+
   return json({
     labor: getLaborProviderStatus(env),
     parts: getPartsProviderStatus(env),
@@ -63,6 +77,7 @@ export async function handleIntegrationStatus(request, env, context, { getSecret
       emailNotifications: Boolean(env.SUPPORT_EMAIL_TO && env.EMAIL),
       statusPageUrl: String(env.STATUS_PAGE_URL || ''),
     },
+    entitlements,
     shopId: context.shopId,
   });
 }
@@ -150,7 +165,9 @@ export async function handleMessagingIntegration(request, env, context, segments
     if (!smsStatus) return json({ enabled: false, messages: [] });
     const result = await env.DB.prepare(`
       SELECT id, customer_id, work_order_id, phone, direction, body, provider_message_id,
-        message_type, status, created_at
+        message_type, status, created_at,
+        (SELECT status FROM sms_consent WHERE shop_id = customer_messages.shop_id
+          AND phone = customer_messages.phone) AS consent_status
       FROM customer_messages WHERE shop_id = ? ORDER BY created_at DESC LIMIT 250
     `).bind(context.shopId).all();
     return json({
@@ -159,20 +176,65 @@ export async function handleMessagingIntegration(request, env, context, segments
         id: row.id, customerId: row.customer_id, workOrderId: row.work_order_id,
         phone: row.phone, direction: row.direction, body: row.body,
         providerMessageId: row.provider_message_id, messageType: row.message_type,
-        status: row.status, createdAt: row.created_at,
+        status: row.status, consentStatus: row.consent_status || 'unknown', createdAt: row.created_at,
       })),
     });
+  }
+  if (action === 'consent' && request.method === 'POST') {
+    const body = await requestJson(request);
+    const phone = String(body.phone || '').trim();
+    const status = String(body.status || '').trim();
+    if (!isE164(phone)) throw new HttpError(400, 'Phone must be an E.164 number');
+    if (!['opted_in', 'opted_out'].includes(status)) {
+      throw new HttpError(400, 'Consent status must be opted_in or opted_out');
+    }
+    if (status === 'opted_in' && body.confirmed !== true) {
+      throw new HttpError(400, 'Confirm the customer explicitly agreed to receive SMS before recording consent');
+    }
+    const source = status === 'opted_in' ? 'staff_recorded' : 'staff_recorded_opt_out';
+    const updatedAt = new Date().toISOString();
+    await env.DB.prepare(`
+      INSERT INTO sms_consent (shop_id, phone, status, source, updated_at, recorded_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(shop_id, phone) DO UPDATE SET
+        status = excluded.status, source = excluded.source, updated_at = excluded.updated_at,
+        recorded_by = excluded.recorded_by
+    `).bind(context.shopId, phone, status, source, updatedAt, context.userId || null).run();
+    return json({ phone, status, source, updatedAt });
   }
   if (action === 'send' && request.method === 'POST') {
     if (!smsStatus) throw new HttpError(503, 'Built-in SMS is not configured');
     const body = await requestJson(request);
     const phone = String(body.to || '').trim();
     const consent = await consentStatus(env, context.shopId, phone);
-    if (consent?.status === 'opted_out') throw new HttpError(409, 'This customer opted out of SMS');
+    if (consent?.status !== 'opted_in') {
+      throw new HttpError(409, consent?.status === 'opted_out'
+        ? 'This customer opted out of SMS'
+        : 'Record the customer’s explicit SMS consent before sending');
+    }
     const message = String(body.body || '').trim();
     if (!message) throw new HttpError(400, 'Message body is required');
     try {
-      const result = await sendSms(env, { to: phone, body: message }, { config: twilioOverrides || undefined });
+      const callbackUrl = new URL(request.url);
+      if (env.TWILIO_WEBHOOK_URL) {
+        const configured = new URL(env.TWILIO_WEBHOOK_URL);
+        callbackUrl.protocol = configured.protocol;
+        callbackUrl.hostname = configured.hostname;
+        callbackUrl.port = configured.port;
+      }
+      if (!callbackUrl.pathname.endsWith('/messaging/send')) {
+        throw new HttpError(500, 'Could not construct SMS delivery callback URL');
+      }
+      callbackUrl.pathname = callbackUrl.pathname.replace(
+        /\/messaging\/send$/u,
+        `/messaging/twilio/status/${encodeURIComponent(context.shopId)}`,
+      );
+      callbackUrl.search = '';
+      const result = await sendSms(env, {
+        to: phone,
+        body: message,
+        statusCallback: callbackUrl.toString(),
+      }, { config: twilioOverrides || undefined });
       const createdAt = new Date().toISOString();
       await storeCustomerMessage(env, {
         id: `sms-${crypto.randomUUID()}`, shopId: context.shopId,
@@ -183,12 +245,59 @@ export async function handleMessagingIntegration(request, env, context, segments
         messageType: String(body.messageType || 'message').slice(0, 40),
         status: result.status, createdAt,
       });
-      return json({ ...result, createdAt }, 201);
+      const reconciled = result.messageSid
+        ? await env.DB.prepare(`
+          UPDATE customer_messages SET status = CASE
+            WHEN status IN ('delivered', 'read', 'undelivered', 'failed', 'canceled') THEN status
+            ELSE COALESCE((
+              SELECT status FROM sms_delivery_callbacks
+              WHERE shop_id = customer_messages.shop_id
+                AND provider_message_id = customer_messages.provider_message_id
+            ), status)
+          END
+          WHERE shop_id = ? AND provider = 'twilio' AND provider_message_id = ?
+          RETURNING status
+        `).bind(context.shopId, result.messageSid).first()
+        : null;
+      return json({ ...result, status: reconciled?.status || result.status, createdAt }, 201);
     } catch (error) {
       throw integrationError(error);
     }
   }
   throw new HttpError(404, 'Not found');
+}
+
+export async function handleTwilioStatusWebhook(request, env, shopId, { getSecret = null } = {}) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  if (!shopId) throw new HttpError(400, 'Shop ID is required');
+  try {
+    const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
+    const { messageSid, status } = await parseTwilioStatusWebhook(request, env, {
+      authToken: twilio.authToken || undefined,
+    });
+    const updatedAt = new Date().toISOString();
+    await env.DB.prepare(`
+      INSERT INTO sms_delivery_callbacks (shop_id, provider_message_id, status, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(shop_id, provider_message_id) DO UPDATE SET
+        status = CASE
+          WHEN sms_delivery_callbacks.status IN ('delivered', 'read', 'undelivered', 'failed', 'canceled')
+            THEN sms_delivery_callbacks.status
+          ELSE excluded.status
+        END,
+        updated_at = excluded.updated_at
+    `).bind(shopId, messageSid, status, updatedAt).run();
+    await env.DB.prepare(`
+      UPDATE customer_messages SET status = CASE
+        WHEN status IN ('delivered', 'read', 'undelivered', 'failed', 'canceled') THEN status
+        ELSE ?
+      END
+      WHERE shop_id = ? AND provider = 'twilio' AND provider_message_id = ?
+    `).bind(status, shopId, messageSid).run();
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    throw integrationError(error);
+  }
 }
 
 export async function handleTwilioWebhook(request, env, shopId, { getSecret = null } = {}) {
@@ -202,10 +311,11 @@ export async function handleTwilioWebhook(request, env, shopId, { getSecret = nu
     const now = new Date().toISOString();
     if (message.classification) {
       await env.DB.prepare(`
-        INSERT INTO sms_consent (shop_id, phone, status, source, updated_at)
-        VALUES (?, ?, ?, 'twilio_inbound', ?)
+        INSERT INTO sms_consent (shop_id, phone, status, source, updated_at, recorded_by)
+        VALUES (?, ?, ?, 'twilio_inbound', ?, NULL)
         ON CONFLICT(shop_id, phone) DO UPDATE SET
-          status = excluded.status, source = excluded.source, updated_at = excluded.updated_at
+          status = excluded.status, source = excluded.source, updated_at = excluded.updated_at,
+          recorded_by = NULL
       `).bind(shopId, message.from, message.classification === 'opt_out' ? 'opted_out' : 'opted_in', now).run();
     }
     const customer = await env.DB.prepare(`
@@ -377,13 +487,11 @@ export async function handleQuickBooks(request, env, context, segments, dependen
       const rawTokens = await dependencies.getSecret(env, context.shopId, qboTokenName());
       let realmId = '';
       try { realmId = JSON.parse(rawTokens)?.realmId || ''; } catch {}
-      if (await qboRemoteId(env, context.shopId, entityType, entityId, realmId)) {
-        throw new HttpError(409, 'This record is already synced to QuickBooks');
-      }
+      const remoteId = await qboRemoteId(env, context.shopId, entityType, entityId, realmId);
       const payload = { ...record, ...(body.overrides || {}) };
       let result;
       if (entityType === 'customer') {
-        result = await qbo.syncCustomer(payload);
+        result = await qbo.syncCustomer(payload, { remoteId });
       } else {
         let customerId = String(payload.customerId || '').trim();
         let customer = customerId
@@ -429,6 +537,7 @@ export async function handleQuickBooks(request, env, context, segments, dependen
           }, {
             taxSettings: await readQboTaxSettings(env, context.shopId, dependencies),
             defaultItemId,
+            remoteId,
           });
         } else {
           const invoiceId = String(payload.invoiceId || payload.invoiceNumber || '').trim();
@@ -442,7 +551,7 @@ export async function handleQuickBooks(request, env, context, segments, dependen
             quickBooksInvoiceId: quickBooksInvoiceId || undefined,
             amount: payload.amount,
             date: dateOnly(payload.receivedAt || payload.date),
-          });
+          }, { remoteId });
         }
       }
       return json(result, 201);

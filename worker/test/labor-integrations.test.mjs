@@ -11,6 +11,7 @@ const motorEnv = {
   MOTOR_LABOR_BASE_URL: 'https://licensed.example.test/api/',
   MOTOR_LABOR_SEARCH_PATH: 'labor/search',
   MOTOR_LABOR_API_KEY: 'motor-secret',
+  MOTOR_LABOR_LICENSE_CONFIRMED: 'true',
 };
 
 test('reports configured providers without exposing credentials', () => {
@@ -18,6 +19,8 @@ test('reports configured providers without exposing credentials', () => {
   assert.deepEqual(status.motor, {
     provider: 'MOTOR',
     configured: true,
+    credentialsConfigured: true,
+    licenseConfirmed: true,
     hasPunchout: false,
     configurationError: null,
   });
@@ -90,6 +93,7 @@ test('supports ALLDATA selection and safely URL-encodes GET search fields', asyn
     ALLDATA_LABOR_SEARCH_PATH: 'lookup',
     ALLDATA_LABOR_TOKEN: 'token',
     ALLDATA_LABOR_SEARCH_METHOD: 'GET',
+    ALLDATA_LABOR_LICENSE_CONFIRMED: 'true',
   };
   let requestedUrl;
   const results = await searchLicensedLabor(env, {
@@ -119,6 +123,17 @@ test('returns an explicitly unverified fallback when unconfigured or empty', asy
     verified: false,
   }];
   assert.deepEqual(await searchLicensedLabor({}, { query: 'water pump' }), expected);
+  let fetched = false;
+  assert.deepEqual(await searchLicensedLabor({
+    ...motorEnv,
+    MOTOR_LABOR_LICENSE_CONFIRMED: 'false',
+  }, { query: 'water pump' }, {
+    fetch: async () => {
+      fetched = true;
+      return new Response(JSON.stringify({ results: [{ hours: 2 }] }));
+    },
+  }), expected);
+  assert.equal(fetched, false);
   assert.deepEqual(await searchLicensedLabor(motorEnv, { query: 'water pump' }, {
     fetch: async () => new Response(JSON.stringify({ results: [] })),
   }), expected);

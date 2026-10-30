@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { escapeHtml } from '../shared/html.js';
 import {
   SHOP_INSPECTIONS,
@@ -8,8 +10,44 @@ import {
   customerInspectionDocument,
   inspectionItems,
   inspectionMenuHtml,
+  inspectionPhotoSrc,
   shopInspection,
 } from './shop-inspections.js';
+
+test('inspection uploads render actual shop object keys without accepting traversal', () => {
+  const key = 'shops/shop-123/inspection/12740bf5-7dfc-4c25-86e4-7e6a3ada445e';
+  assert.equal(inspectionPhotoSrc(key, '/api'), `/api/files/object?key=${encodeURIComponent(key)}`);
+  assert.equal(inspectionPhotoSrc('shops/shop-123/inspection/../secret', '/api'), '');
+  const html = customerInspectionDocument({ catalogId: 'brakes', items: [{ label: 'Pads', status: 'critical', photoKeys: [key] }] }, {}, escapeHtml, '/api');
+  assert.ok(html.includes(escapeHtml(`/api/files/object?key=${encodeURIComponent(key)}`)));
+  assert.match(html, /rating-chip/);
+});
+
+test('inspection and finding images survive failed or empty uploads; failed video blocks saving', async () => {
+  const source = readFileSync(new URL('../runtime/catalog-inspection-ui.js', import.meta.url), 'utf8');
+  const functions = source.slice(source.indexOf('function fileToDataUrl('), source.indexOf('function bindDictation('));
+  const attachPhotos = vm.runInNewContext(`${functions}; attachPhotos`, {
+    inspectionUploadKind: file => file.type.startsWith('video/') ? 'inspection-video' : 'inspection',
+    Image: class {
+      constructor() { this.width = 2000; this.height = 1000; }
+      set src(_value) { this.onload(); }
+    },
+    URL: { createObjectURL: () => 'blob:photo', revokeObjectURL: () => {} },
+    document: { createElement: () => ({
+      getContext: () => ({ drawImage: () => {} }),
+      toDataURL: () => 'data:image/jpeg;base64,retained',
+    }) },
+  });
+  const image = { type: 'image/jpeg' };
+  for (const uploadFileToR2 of [async () => { throw new Error('offline'); }, async () => '']) {
+    const record = { photoKeys: ['existing'], items: [{ id: 'pads', photoKeys: ['existing-finding'] }] };
+    const keys = await attachPhotos({ elements: { photos: { files: [image] }, 'photos-pads': { files: [image] } } }, record, { uploadFileToR2 });
+    assert.deepEqual([...keys], ['existing', 'data:image/jpeg;base64,retained']);
+    assert.deepEqual([...record.items[0].photoKeys], ['existing-finding', 'data:image/jpeg;base64,retained']);
+  }
+  await assert.rejects(attachPhotos({ elements: { photos: { files: [{ type: 'video/mp4' }] } } },
+    { photoKeys: [], items: [] }, { uploadFileToR2: async () => { throw new Error('Video upload failed'); } }), /Video upload failed/);
+});
 
 const prices = {
   'Flagship Pre-Purchase Inspection': 229,
@@ -48,22 +86,23 @@ test('scan inspections tell the tech not to clear codes', () => {
   }
 });
 
-test('closing requires a result, acknowledgment, verdict, and photos of urgent findings', () => {
+test('closing requires a result, acknowledgment, verdict, and photos on each urgent finding', () => {
   const items = inspectionItems(shopInspection('brakes')).map(item => ({ ...item, status: 'ok' }));
   items[1].status = 'critical';
   assert.deepEqual(closeInspectionIssues({ catalogId: 'brakes', items, customerName: '', photoKeys: [] }), [
-    'Attach a photo of each key finding before closing.',
+    `Attach a photo to each critical or soon finding before closing (${items[1].label}).`,
     'Add the customer name on the acknowledgment.',
   ]);
   const ppi = inspectionItems(shopInspection('pre-purchase')).map(item => ({ ...item, status: '' }));
   const issues = closeInspectionIssues({ catalogId: 'pre-purchase', items: ppi, customerName: 'Ada', photoKeys: [], verdict: '' });
   assert.equal(issues.some(item => item.includes('WALK AWAY')), true);
   assert.equal(issues.some(item => item.includes('need a result')), true);
+  items[1].photoKeys = ['photo-1'];
   assert.deepEqual(closeInspectionIssues({
     catalogId: 'brakes',
     items,
     customerName: 'Ada',
-    photoKeys: ['photo-1'],
+    photoKeys: [],
   }), []);
 });
 
@@ -83,11 +122,12 @@ test('the customer copy is a branded inspection sheet, not a repair quote', () =
     photoKeys: ['data:image/jpeg;base64,abc', 'r2-key'],
     customerName: 'Ada',
     customerSignature: 'data:image/png;base64,sig',
-    items: inspectionItems(catalog).map(item => ({ ...item, status: item.id === 'scan' ? 'soon' : 'ok', measurement: item.id === 'tread' ? '4/32' : '' })),
+    items: inspectionItems(catalog).map(item => ({ ...item, status: item.id === 'scan' ? 'soon' : 'ok', photoKeys: item.id === 'scan' ? ['r2-finding-photo'] : [], measurement: item.id === 'tread' ? '4/32' : '' })),
   }, { shopName: 'Reliable Automotive Services' }, escapeHtml, 'https://api.example.test');
   assert.match(html, /Inspection fee 229.00 USD/);
   assert.match(html, /Repairs, parts, and disassembly are quoted separately/);
   assert.match(html, /NEGOTIATE/);
+  assert.match(html, /Photo for All accessible modules scanned/i);
   assert.match(html, /Seller summary/);
   assert.match(html, /&lt;script&gt;/);
   assert.equal(html.includes('<script>'), false);

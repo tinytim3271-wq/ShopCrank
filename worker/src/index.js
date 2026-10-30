@@ -104,6 +104,7 @@ import {
   handleQuickBooksCallback,
   handleSupport,
   handleTwilioWebhook,
+  handleTwilioStatusWebhook,
 } from './integration-routes.mjs';
 import { handleCustomerLookup } from './customer-search.mjs';
 import { buildDiagnosticAiMessage, normalizeDtcs } from '../../src/modules/diagnostic-ai.js';
@@ -3561,6 +3562,11 @@ async function route(request, env, analytics) {
       getSecret: getIntegrationSecret,
     });
   }
+  if (segments[0] === 'messaging' && segments[1] === 'twilio' && segments[2] === 'status') {
+    return handleTwilioStatusWebhook(request, env, decodeURIComponent(segments[3] || ''), {
+      getSecret: getIntegrationSecret,
+    });
+  }
   if (segments[0] === 'voice' && segments[1] === 'twilio' && segments[2] === 'incoming') {
     return handleTwilioVoiceIncoming(request, env, decodeURIComponent(segments[3] || ''), {
       getSecret: getIntegrationSecret,
@@ -3649,6 +3655,7 @@ async function route(request, env, analytics) {
       deleteSecret: deleteIntegrationSecret,
       requireRole,
       recordAudit: recordDiagnosticAudit,
+      getEntity,
     })(request, env, context, segments);
   }
   if (segments[0] === 'integrations' && segments[1] === 'labor-guide') {

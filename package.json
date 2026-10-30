@@ -24,6 +24,8 @@
     "dev:worker": "node scripts/dev-worker-local.mjs",
     "dev:worker:remote": "wrangler dev",
     "test:smoke": "node scripts/smoke/browser-smoke.mjs",
+    "smoke:partstech": "node scripts/smoke/partstech-live-smoke.mjs",
+    "test:partstech-live-smoke": "node --test scripts/smoke/partstech-live-smoke.test.mjs",
     "test:worker": "node --test worker/test/*.test.mjs",
     "test:home": "node --test src/runtime/home.test.mjs",
     "typegen:worker": "wrangler types worker-configuration.d.ts",

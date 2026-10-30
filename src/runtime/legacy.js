@@ -10,7 +10,7 @@ import { CANNED_MENU, cannedServiceGroups, estimateLineFromService, missingCanne
 import { buildRepairGuide, repairDiagram, safeVideoUrl, stepText } from '../modules/repair-guide.js';
 import { inspectionMenuHtml } from '../modules/shop-inspections.js';
 import { autozoneProLoginUrl, orderingPanelHtml } from '../modules/autozone-pro.js';
-import { partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
+import { buildPartstechOrderRequest, partstechLineToEstimateLines, partstechPanelHtml, partstechQuoteRowHtml } from '../modules/partstech.js';
 import { diagnosticDraftToOrderLines, estimateDraftAction } from '../modules/diagnostic-ai.js';
 import { laborBookTimeBanner, laborGuidePanelHtml, createManualLaborEntry } from '../modules/labor-guide.js';
 import { shopAiPanelHtml } from '../modules/shop-ai-settings.js';
@@ -345,7 +345,31 @@ function openTwilioPhoneCredentialsDialog() {
   });
 }
 
-function messaging() { const config = state.messagingSettings; return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`) }
+let smsInboxMessages = [], smsInboxLoaded = false, smsInboxLoading = false, smsInboxError = "";
+function loadSmsDeliveryInbox() {
+  if (smsInboxLoading || isOfflineDesktop()) return;
+  smsInboxLoading = true;
+  void apiFetch("/messaging/threads").then(result => {
+    smsInboxMessages = result.messages || [];
+    smsInboxError = "";
+  }).catch(error => {
+    smsInboxError = error.message;
+  }).finally(() => {
+    smsInboxLoading = false;
+    smsInboxLoaded = true;
+    if (state.route === "messaging") render();
+  });
+}
+function smsInboxPanel() {
+  if (isOfflineDesktop()) return `<section class="messaging-panel"><h2>Customer texting inbox</h2><p>SMS sending and consent recording require the online shop service. No messages or consent changes are queued offline.</p><fieldset disabled><button type="button">Save consent</button><button type="button">Send text</button></fieldset></section>`;
+  if (!smsInboxLoaded && !smsInboxLoading) loadSmsDeliveryInbox();
+  const rows = smsInboxMessages.map(message => `<tr><td>${escapeHtml(message.phone)}</td><td>${message.direction === "inbound" ? "Customer" : "Shop"}</td><td>${escapeHtml(message.body)}</td><td>${escapeHtml(message.status)}${message.direction === "outbound" ? ` · consent ${escapeHtml(message.consentStatus || "unknown")}` : ""}</td><td>${escapeHtml(message.createdAt || "")}</td></tr>`).join("");
+  return `<section class="messaging-panel"><div class="statement-head"><div><div class="eyebrow">Twilio SMS</div><h2>Customer texting inbox</h2><p>Inbound replies, consent, and provider delivery status are recorded per shop.</p></div><button type="button" class="secondary" id="refresh-sms-inbox">${icon("refresh-cw", 14)} Refresh</button></div>${smsInboxError ? `<p role="alert">${escapeHtml(smsInboxError)}</p>` : ""}<form class="form-grid" id="sms-consent-form"><label>Customer phone<input name="phone" type="tel" required placeholder="+18065550123"/></label><label>Consent action<select name="status"><option value="opted_in">Record explicit opt-in</option><option value="opted_out">Record opt-out</option></select></label><label class="toggle-field full"><input type="checkbox" name="confirmed"/><span>Customer explicitly agreed to receive SMS from this shop; consent was obtained and documented.</span></label><div class="full"><button type="submit" class="secondary">${icon("shield-check", 14)} Save consent</button></div></form><form class="form-grid" id="sms-send-form"><label>Customer phone<input name="to" type="tel" required placeholder="+18065550123"/></label><label>Customer ID<input name="customerId" maxlength="120"/></label><label>Work order ID<input name="workOrderId" maxlength="120"/></label><label class="full">Text message<textarea name="messageBody" required maxlength="1600" rows="3"></textarea></label><div class="full"><button type="submit" class="primary">${icon("send", 14)} Send text</button></div></form><div class="data-panel"><table><thead><tr><th>Phone</th><th>Direction</th><th>Message</th><th>Status / consent</th><th>Time</th></tr></thead><tbody>${rows || `<tr><td colspan="5">${smsInboxLoading ? "Loading messages…" : "No messages yet."}</td></tr>`}</tbody></table></div></section>`;
+}
+function messaging() {
+  const config = state.messagingSettings;
+  return shell(`${heading("Delivery infrastructure", "Messaging service", "Connect this shop's own secure delivery service for automatic email and SMS.", false)}${messagingTwilioPanelHtml()}${smsInboxPanel()}<section class="messaging-panel"><div class="messaging-status ${config.enabled ? "ready" : "idle"}">${icon(config.enabled ? "circle-check" : "circle-alert", 17)}<div><strong>${config.enabled ? "Shop messaging service active" : "Native device messaging is active"}</strong><span>${config.enabled ? "Estimate and customer messages will post to the configured shop endpoint." : "Messages currently open the device email or SMS app."}</span></div></div><div class="service-contract"><h2>Shop-managed delivery endpoint</h2><p>Configure a secure endpoint owned by the subscribing shop. It stores SMTP and SMS provider credentials server-side; ShopCrank never stores or exposes those credentials in the browser.</p><code>POST /messages<br>{ channel: "email" | "sms", to, subject, body, metadata }</code></div><form class="form-grid" id="messaging-form"><label class="full">Secure service endpoint *<input name="endpoint" type="url" value="${config.endpoint}" placeholder="https://messaging.yourshop.com/messages"/></label><label>Sender email<input name="senderEmail" type="email" value="${config.senderEmail}" placeholder="service@yourshop.com"/></label><label>Sender phone<input name="senderPhone" type="tel" value="${config.senderPhone}" placeholder="+18065550100"/></label><label class="full">Shop name<input name="shopName" value="${escapeAttr(config.shopName || shopDisplayName())}"/></label><label class="toggle-field full"><input type="checkbox" name="enabled" ${config.enabled ? "checked" : ""}/><span>Use this endpoint for customer email and SMS delivery</span></label><div class="full messaging-actions"><button class="secondary" type="button" id="test-messaging">${icon("send", 14)} Test configuration</button><button class="primary" type="submit">${icon("save", 14)} Save messaging service</button></div></form></section>`);
+}
 let integrationStatus = null, laborLookupResults = [], partsLookupResult = null;
 async function loadIntegrationStatus() { try { integrationStatus = await apiFetch("/integrations/status") } catch (error) { integrationStatus = { error: error.message } } }
 function integrationState(name, configured) { return `<div class="messaging-status ${configured ? "ready" : "idle"}">${icon(configured ? "circle-check" : "circle-alert", 17)}<div><strong>${escapeHtml(name)}</strong><span>${configured ? "Configured and available" : "Not configured — this feature stays disabled until credentials are added"}</span></div></div>` }
@@ -353,15 +377,18 @@ function integrations() {
   if (!integrationStatus) void loadIntegrationStatus().then(render);
   const status = integrationStatus || {};
   const labor = status.labor || {}, parts = status.parts || {}, qbo = status.quickbooks || {};
+  const laborLicenseNotice = ["motor", "alldata"].some(provider => labor[provider]?.credentialsConfigured && !labor[provider]?.licenseConfirmed)
+    ? `<p class="ai-disclaimer">Provider credentials are present, but licensed usage has not been confirmed. Labor lookup remains disabled until the shop verifies its provider contract and sets the matching license confirmation.</p>`
+    : "";
   const laborRows = laborLookupResults.map(item => `<tr><td>${escapeHtml(item.description || "Labor operation")}</td><td><b>${item.hours == null ? "Enter manually" : `${Number(item.hours).toFixed(2)} h`}</b></td><td>${escapeHtml(item.source)}</td><td><span class="badge ${item.verified ? "paid" : "estimate"}">${item.verified ? "Verified" : "Unverified"}</span></td></tr>`).join("");
   const partsOutput = partsLookupResult ? `<pre class="service-contract">${escapeHtml(JSON.stringify(partsLookupResult, null, 2))}</pre>` : "";
   return shell(`${heading("Connected services", "Integrations", "Licensed labor, supplier ordering, accounting, and messaging connections.", false)}
-    <section class="messaging-panel"><h2>Licensed labor guide</h2>${integrationState("MOTOR", labor.motor?.configured)}${integrationState("ALLDATA", labor.alldata?.configured)}
+    <section class="messaging-panel"><h2>Licensed labor guide</h2>${integrationState("MOTOR", labor.motor?.configured)}${integrationState("ALLDATA", labor.alldata?.configured)}${laborLicenseNotice}
       <form class="form-grid" id="labor-lookup-form"><label>VIN<input name="vin" maxlength="17"/></label><label>Year<input name="year" type="number" min="1886" max="2200"/></label><label>Make<input name="make"/></label><label>Model<input name="model"/></label><label class="full">Operation<input name="query" required placeholder="Front brake pads and rotors"/></label><div class="full"><button class="primary" type="submit">${icon("search", 14)} Find labor time</button></div></form>
       ${laborRows ? `<div class="data-panel"><table><thead><tr><th>Operation</th><th>Hours</th><th>Source</th><th>Status</th></tr></thead><tbody>${laborRows}</tbody></table></div>` : ""}</section>
     <section class="messaging-panel"><h2>Parts ordering</h2>${integrationState("PartsTech", parts.partstech?.configured || parts.partstech?.hasPunchout)}${integrationState("Nexpart", parts.nexpart?.configured || parts.nexpart?.hasPunchout)}
       <form class="form-grid" id="parts-search-form"><label>Provider<select name="provider"><option value="partstech">PartsTech</option><option value="nexpart">Nexpart</option></select></label><label>Action<select name="operation"><option value="search">Search</option><option value="quote">Quote</option><option value="order">Place order</option></select></label><label>Part / keyword or quote ID<input name="query" required/></label><label>VIN<input name="vin" maxlength="17"/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("send", 14)} Send to provider</button><button class="secondary" type="button" id="parts-punchout">${icon("external-link", 14)} Open punch-out</button></div></form>${partsOutput}</section>
-    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
+    <section class="messaging-panel"><h2>QuickBooks Online</h2>${integrationState("Intuit app", qbo.configured)}<p>Connect an administrator-approved Intuit app, then sync customers, invoices, and payments one way from ShopCrank. Re-sync updates the mapped QuickBooks record; ShopCrank remains the source of truth.</p><button class="primary" id="quickbooks-connect" ${qbo.configured ? "" : "disabled"}>${icon("plug-zap", 14)} Connect QuickBooks</button><form class="form-grid" id="quickbooks-sync-form"><label>Record type<select name="entityType"><option value="customer">Customer</option><option value="invoice">Invoice</option><option value="payment">Payment</option></select></label><label>ShopCrank record ID<input name="entityId" required placeholder="customer-123 or INV-2041"/></label><div class="full"><button class="secondary" type="submit">${icon("refresh-cw", 14)} Sync to QuickBooks</button> <button class="secondary" type="button" id="quickbooks-tax-load" ${qbo.configured ? "" : "disabled"}>${icon("percent", 14)} Tax settings</button></div></form><div id="quickbooks-tax-settings"></div></section>`);
 }
 function support() {
   if (!integrationStatus) void loadIntegrationStatus().then(render);
@@ -690,12 +717,18 @@ async function addLinesToTargetOrder(lines, label, orderId = orderingTargetOrder
 async function orderTargetPartstechParts() {
   const order = state.orders.find(item => item.id === orderingTargetOrderId);
   if (!order) { toast("Choose an open repair order first"); return }
-  const lines = (order.estimate?.lines || []).filter(line => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstechOrder);
-  if (!lines.length) { toast(`${order.id} has no un-ordered PartsTech part lines`); return }
+  const lines = (order.estimate?.lines || []).filter(line => line.source === "partstech" && line.type === "part" && line.approvalStatus !== "declined" && !line.partstech?.isCore && !line.partstechOrder);
+  const storeId = lines[0]?.partstech?.storeId || partstechAccount.storeId || "";
+  try {
+    buildPartstechOrderRequest({ storeId, lines, vin: order.vin, poNumber: order.id });
+  } catch (error) {
+    toast(error.message || "PartsTech order needs approved, priced part lines and a valid store");
+    return;
+  }
   const checkout = window.open("about:blank", "_blank");
   if (checkout) checkout.opener = null;
   try {
-    const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId: lines[0].partstech?.storeId || partstechAccount.storeId || "", lines }) });
+    const result = await apiFetch("/integrations/partstech/order", { method: "POST", body: JSON.stringify({ repairOrderId: order.id, vin: order.vin, storeId, lines }) });
     const placedAt = now();
     const revised = { ...order, partsOrders: [...(order.partsOrders || []), { provider: "partstech", sessionId: result.sessionId, status: result.status, createdAt: placedAt }], estimate: { ...order.estimate, lines: order.estimate.lines.map(line => lines.some(item => item.id === line.id) ? { ...line, partstechOrder: { sessionId: result.sessionId, status: result.status, at: placedAt } } : line) } };
     const saved = await updateOrderInApi(revised, { throwOnError: true });
@@ -1224,7 +1257,73 @@ function render() {
   });
   scheduleChatRefresh();
 }
-function bindMessagingService() { document.querySelector("#open-twilio-phone-credentials")?.addEventListener("click", () => openTwilioPhoneCredentialsDialog()); document.querySelector("#messaging-form")?.addEventListener("submit", event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your shop" }; if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) { toast("A secure service endpoint is required before enabling delivery"); return } save(); toast("Shop messaging service saved"); render() }); document.querySelector("#test-messaging")?.addEventListener("click", () => { const config = state.messagingSettings; if (!config.endpoint) { toast("Save a secure endpoint before testing"); return } toast("Endpoint saved. Use your shop service test endpoint to verify SMTP and SMS credentials.") }) }
+function bindMessagingService() {
+  document.querySelector("#open-twilio-phone-credentials")?.addEventListener("click", () => openTwilioPhoneCredentialsDialog());
+  document.querySelector("#messaging-form")?.addEventListener("submit", event => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    state.messagingSettings = { enabled: data.enabled === "on", endpoint: data.endpoint.trim(), senderEmail: data.senderEmail.trim(), senderPhone: data.senderPhone.trim(), shopName: data.shopName.trim() || "Your shop" };
+    if (state.messagingSettings.enabled && !state.messagingSettings.endpoint) {
+      toast("A secure service endpoint is required before enabling delivery");
+      return;
+    }
+    save();
+    toast("Shop messaging service saved");
+    render();
+  });
+  document.querySelector("#test-messaging")?.addEventListener("click", () => {
+    const config = state.messagingSettings;
+    if (!config.endpoint) {
+      toast("Save a secure endpoint before testing");
+      return;
+    }
+    toast("Endpoint saved. Use your shop service test endpoint to verify SMTP and SMS credentials.");
+  });
+  document.querySelector("#refresh-sms-inbox")?.addEventListener("click", () => {
+    smsInboxLoaded = false;
+    loadSmsDeliveryInbox();
+  });
+  document.querySelector("#sms-consent-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (isOfflineDesktop()) { toast("SMS consent requires the online shop service"); return }
+    const formData = new FormData(event.target);
+    const status = String(formData.get("status") || "");
+    try {
+      await apiFetch("/messaging/consent", {
+        method: "POST",
+        body: JSON.stringify({
+          phone: formData.get("phone"),
+          status,
+          confirmed: formData.get("confirmed") === "on",
+        }),
+      });
+      toast(status === "opted_in" ? "SMS consent recorded" : "SMS opt-out recorded");
+      event.target.reset();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  document.querySelector("#sms-send-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (isOfflineDesktop()) { toast("SMS sending requires the online shop service"); return }
+    const data = readFormValues(event.target);
+    const button = event.target.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      const result = await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ ...data, body: data.messageBody }) });
+      if (result.queued === true) throw new Error("SMS was not sent. Reconnect to the online shop service.");
+      toast(`Text ${result.status || "queued"} for delivery`);
+      event.target.reset();
+      smsInboxLoaded = false;
+      loadSmsDeliveryInbox();
+      void loadSmsInbox();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
 async function loadStripePaymentStatus() {
   if (!canAccess("payments")) return;
   try {
@@ -5921,7 +6020,7 @@ function markSmsThreadRead(key) { if (!key) return; const marks = smsReadMarks()
 function smsThreads() { return SmsInbox.groupThreads(smsInbox.messages, state.customers, smsReadMarks()) }
 function smsComposerBusy() { return Boolean(document.querySelector("#sms-reply-form textarea, #sms-new-form textarea")?.value || document.activeElement?.closest?.(".sms-composer")) }
 async function loadSmsInbox({ quiet = false } = {}) {
-  if (smsInbox.loading) return;
+  if (smsInbox.loading || isOfflineDesktop()) return;
   smsInbox.loading = true;
   const before = smsInbox.messages[0]?.id;
   try {
@@ -5937,6 +6036,7 @@ async function loadSmsInbox({ quiet = false } = {}) {
 }
 const messagingTwilioPanelSmsCore = messagingTwilioPanelHtml;
 messagingTwilioPanelHtml = function () {
+  if (isOfflineDesktop()) return messagingTwilioPanelSmsCore();
   if (!smsInbox.loaded) void loadSmsInbox();
   const threads = smsThreads();
   const selectedKey = smsInbox.selectedKey || threads[0]?.key || "";
@@ -5944,6 +6044,7 @@ messagingTwilioPanelHtml = function () {
   return `${SmsInbox.smsInboxHtml({ ...smsInbox, threads, selectedKey }, { escapeHtml, escapeAttr, icon, time: value => new Date(value).toLocaleString() })}${messagingTwilioPanelSmsCore()}`;
 };
 async function sendSmsFromInbox(form, data) {
+  if (isOfflineDesktop()) { toast("SMS sending requires the online shop service"); return }
   const button = form.querySelector("button[type=submit]");
   const to = SmsInbox.toE164(data.to);
   const body = String(data.body || "").trim();
@@ -5951,7 +6052,8 @@ async function sendSmsFromInbox(form, data) {
   button.disabled = true;
   try {
     const customer = state.customers.find(item => SmsInbox.phoneKey(item.phone) === SmsInbox.phoneKey(to));
-    await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+    const result = await apiFetch("/messaging/send", { method: "POST", body: JSON.stringify({ to, body, customerId: data.customerId || customer?.id || "", messageType: "message" }) });
+    if (result.queued === true) throw new Error("SMS was not sent. Reconnect to the online shop service.");
     smsInbox.selectedKey = SmsInbox.phoneKey(to);
     toast("Text sent");
     await loadSmsInbox();

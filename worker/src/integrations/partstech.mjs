@@ -83,6 +83,7 @@ export function createPartstechHandlers({
   deleteSecret,
   requireRole,
   recordAudit,
+  getEntity,
 }) {
   return async function handlePartstech(request, env, context, segments) {
     const action = segments[2] || '';
@@ -155,13 +156,30 @@ export function createPartstechHandlers({
     if (action === 'order' && !segments[3] && request.method === 'POST') {
       const body = await requestJson(request);
       if (body.sessionId) throw new HttpError(400, 'Use POST /integrations/partstech/order/status to check a PartsTech session');
+      const repairOrderId = String(body.repairOrderId || '').trim();
+      if (!repairOrderId) throw new HttpError(400, 'repairOrderId is required to order PartsTech lines');
+      if (typeof getEntity !== 'function') throw new HttpError(500, 'PartsTech ordering requires repair-order verification');
+      const repairOrder = await getEntity(env, context.shopId, 'orders', repairOrderId);
+      if (!repairOrder) throw new HttpError(404, `Repair order ${repairOrderId} was not found`);
+      if (!Array.isArray(body.lines) || !body.lines.length) {
+        throw new HttpError(400, 'Select at least one approved, priced PartsTech line');
+      }
+      const storedLines = repairOrder.estimate?.lines || [];
+      const requestedIds = body.lines.map(line => String(line?.id || '').trim());
+      if (requestedIds.some(id => !id) || new Set(requestedIds).size !== requestedIds.length) {
+        throw new HttpError(400, 'Every requested PartsTech line must have a unique repair-order line ID');
+      }
+      const requestedLines = requestedIds.map(id => storedLines.find(line => String(line?.id || '') === id));
+      if (requestedLines.some(line => !line)) {
+        throw new HttpError(400, 'A requested line is not part of this repair order');
+      }
       let orderRequest;
       try {
         orderRequest = buildPartstechOrderRequest({
           storeId: body.storeId || credentials.storeId,
-          lines: body.lines,
+          lines: requestedLines,
           vin: body.vin,
-          poNumber: body.poNumber || body.repairOrderId,
+          poNumber: body.poNumber || repairOrderId,
           callbackUrl: body.callbackUrl,
         });
       } catch (error) {
@@ -179,7 +197,7 @@ export function createPartstechHandlers({
       await recordAudit?.(env, context, {
         kind: 'integrations.partstech.order_session',
         storeId: orderRequest.storeId,
-        repairOrderId: String(body.repairOrderId || '').slice(0, 60) || undefined,
+        repairOrderId: repairOrderId.slice(0, 60),
         lineCount: orderRequest.parts.length,
         sessionId,
       });

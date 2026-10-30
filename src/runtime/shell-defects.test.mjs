@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import { buildPartstechOrderRequest } from '../modules/partstech.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
@@ -25,6 +27,42 @@ function functionSource(prefix) {
   }
   return legacy.slice(start, i + 1);
 }
+
+test('PartsTech ordering excludes declined parts before validating the remaining cart', async () => {
+  const approved = { id: 'approved', type: 'part', source: 'partstech', approvalStatus: 'approved', priceStatus: 'priced', unitPrice: 40, quantity: 1, partstech: { storeId: 'store-1', partNumber: 'PAD-1' } };
+  const declined = { ...approved, id: 'declined', approvalStatus: 'declined', partstech: { storeId: 'other-store' } };
+  let submitted;
+  const order = vm.runInNewContext(`${functionSource('async function orderTargetPartstechParts(')}; orderTargetPartstechParts`, {
+    state: { orders: [{ id: 'RO-1', estimate: { lines: [approved, declined] } }] },
+    orderingTargetOrderId: 'RO-1',
+    partstechAccount: {},
+    buildPartstechOrderRequest,
+    window: { open: () => null },
+    apiFetch: async (_path, options) => { submitted = JSON.parse(options.body); throw new Error('stop after submission'); },
+    toast: () => {},
+  });
+  await order();
+  assert.deepEqual(submitted.lines.map(line => line.id), ['approved']);
+});
+
+test('offline desktop texting has disabled controls and cannot queue consent or sends', async () => {
+  const panel = vm.runInNewContext(`${functionSource('function smsInboxPanel(')}; smsInboxPanel()`, { isOfflineDesktop: () => true });
+  assert.match(panel, /fieldset disabled/);
+  assert.match(panel, /No messages or consent changes are queued offline/);
+  assert.doesNotMatch(panel, /<form/);
+  for (const id of ['sms-consent-form', 'sms-send-form']) {
+    const handler = legacy.slice(legacy.indexOf(`document.querySelector("#${id}")?.addEventListener("submit"`));
+    assert.ok(handler.indexOf('if (isOfflineDesktop())') < handler.indexOf('await apiFetch('), id);
+  }
+  const send = vm.runInNewContext(`${functionSource('async function sendSmsFromInbox(')}; sendSmsFromInbox`, {
+    isOfflineDesktop: () => true,
+    toast: () => {},
+    apiFetch: () => assert.fail('offline SMS must never reach the mutation queue'),
+  });
+  await send({}, {});
+  assert.match(legacy, /body: data\.messageBody/);
+  assert.match(legacy, /if \(result\.queued === true\) throw/);
+});
 
 test('the vehicle form\'s save button is a typed submit button', () => {
   // The save handler looks up button[type=submit]. With no type attribute the

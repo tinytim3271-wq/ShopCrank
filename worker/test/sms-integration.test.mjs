@@ -7,6 +7,7 @@ import {
   createSmsProvider,
   isE164,
   parseTwilioInboundWebhook,
+  parseTwilioStatusWebhook,
   resolveTwilioShopConfig,
   sendSms,
   smsIntegrationStatus,
@@ -51,8 +52,45 @@ test('Twilio provider sends caller-composed outbound text as a form request', as
   assert.equal(form.get('Body'), body);
   assert.equal(form.get('MessagingServiceSid'), 'MG1234567890');
   assert.equal(form.has('From'), false);
+  assert.equal(form.get('StatusCallback'), null);
   assert.deepEqual(result, { provider: 'twilio', messageSid: 'SM987', status: 'queued' });
   assert.equal(JSON.stringify(result).includes(ENV.TWILIO_AUTH_TOKEN), false);
+});
+
+test('Twilio send requests delivery callbacks and verifies signed status updates', async () => {
+  let sentForm;
+  await sendSms(ENV, { to: '+18065550123', body: 'Repair complete', statusCallback: 'https://app.example.com/api/messaging/twilio/status/shop-1' }, {
+    fetcher: async (_url, init) => {
+      sentForm = new URLSearchParams(init.body);
+      return Response.json({ sid: 'SM987', status: 'queued' }, { status: 201 });
+    },
+  });
+  assert.equal(sentForm.get('StatusCallback'), 'https://app.example.com/api/messaging/twilio/status/shop-1');
+
+  const callbackUrl = 'https://app.example.com/api/messaging/twilio/status/shop-1';
+  const parameters = new URLSearchParams({ MessageSid: 'SM987', MessageStatus: 'delivered' });
+  const signature = await twilioSignature(ENV.TWILIO_AUTH_TOKEN, callbackUrl, parameters);
+  const request = new Request('https://worker.internal.example/api/messaging/twilio/status/shop-1', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-Twilio-Signature': signature,
+    },
+    body: parameters,
+  });
+  assert.deepEqual(await parseTwilioStatusWebhook(request, {
+    ...ENV,
+    TWILIO_WEBHOOK_URL: 'https://app.example.com',
+  }), { messageSid: 'SM987', status: 'delivered' });
+
+  await assert.rejects(
+    parseTwilioStatusWebhook(new Request(request.url, {
+      method: 'POST',
+      headers: { 'X-Twilio-Signature': 'invalid' },
+      body: parameters,
+    }), ENV),
+    error => error instanceof SmsIntegrationError && error.status === 401,
+  );
 });
 
 test('Twilio provider supports a from number and validates E.164 and bounded text', async () => {

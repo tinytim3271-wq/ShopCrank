@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleQuickBooks } from '../src/integration-routes.mjs';
+import { handleIntegrationStatus, handleQuickBooks } from '../src/integration-routes.mjs';
 
 const env = {
   INTUIT_CLIENT_ID: 'client-id',
@@ -104,12 +104,20 @@ test('invoice sync supplies the default item to every unmapped line and scopes c
     }],
   });
   const requests = [];
+  let customerPostAttempts = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
-    requests.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
+    requests.push({
+      url: String(url),
+      method: init.method,
+      body: init.body ? JSON.parse(init.body) : null,
+    });
     if (String(url).includes('/preferences')) return Response.json({ Preferences: { TaxPrefs: { UsingSalesTax: false } } });
     if (String(url).includes('/companyinfo/')) return Response.json({ CompanyInfo: { Country: 'US' } });
     if (String(url).includes('/query')) return Response.json({ QueryResponse: {} });
+    if (init.method === 'POST' && String(url).includes('/customer') && customerPostAttempts++ === 0) {
+      return Response.json({ Fault: { Error: [{ Message: 'temporary outage' }] } }, { status: 503 });
+    }
     const data = String(url).includes('/customer')
       ? { Customer: { Id: 'customer-in-new-realm' } }
       : { Invoice: { Id: 'invoice-in-new-realm' } };
@@ -122,12 +130,15 @@ test('invoice sync supplies the default item to every unmapped line and scopes c
     assert.equal(invoice.body.CustomerRef.value, 'customer-in-new-realm');
     assert.equal(invoice.body.Line[0].SalesItemLineDetail.ItemRef.value, 'default-item');
     assert.equal(dependencies.syncRecords.find(record => record.entityType === 'invoice').realmId, 'realm-new');
+    const customerRetries = requests.filter(request => request.method === 'POST' && request.url.includes('/customer'));
+    assert.equal(customerRetries.length, 2);
+    assert.equal(new URL(customerRetries[0].url).searchParams.get('requestid'), new URL(customerRetries[1].url).searchParams.get('requestid'));
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('invoice sync rejects records already mapped in the connected QuickBooks realm', async () => {
+test('invoice sync updates records already mapped in the connected QuickBooks realm', async () => {
   const dependencies = createDependencies({
     mappings: [{
       shopId: 'shop-1',
@@ -135,12 +146,34 @@ test('invoice sync rejects records already mapped in the connected QuickBooks re
       localId: 'invoice-1',
       remote_id: 'invoice-existing',
       realmId: 'realm-current',
+    }, {
+      shopId: 'shop-1',
+      entityType: 'customer',
+      localId: 'customer-1',
+      remote_id: 'customer-existing',
+      realmId: 'realm-current',
     }],
   });
-  await assert.rejects(
-    syncInvoice(dependencies),
-    error => error.status === 409 && /already synced/u.test(error.message),
-  );
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : null });
+    if (String(url).includes('/preferences')) return Response.json({ Preferences: { TaxPrefs: { UsingSalesTax: false } } });
+    if (String(url).includes('/companyinfo/')) return Response.json({ CompanyInfo: { Country: 'US' } });
+    if (String(url).includes('/query')) return Response.json({ QueryResponse: {} });
+    if (init.method === 'GET') return Response.json({ Invoice: { Id: 'invoice-existing', SyncToken: '7' } });
+    return Response.json({ Invoice: { Id: 'invoice-existing', SyncToken: '8' } });
+  };
+  try {
+    const response = await syncInvoice(dependencies);
+    assert.equal(response.status, 201);
+    const update = requests.find(request => request.method === 'POST' && request.url.includes('/invoice'));
+    assert.equal(update.body.Id, 'invoice-existing');
+    assert.equal(update.body.SyncToken, '7');
+    assert.match(update.url, /requestid=/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('QuickBooks tax settings only accept active company tax codes', async () => {
@@ -170,4 +203,69 @@ test('QuickBooks tax settings only accept active company tax codes', async () =>
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+function createStatusDb(subscription = null, { throws = false } = {}) {
+  return {
+    prepare(sql) {
+      return {
+        bind() {
+          return {
+            async first() {
+              if (throws) throw new Error('db offline');
+              if (!/FROM subscriptions/.test(sql)) return null;
+              return subscription;
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test('integration status returns resolved entitlement switches', async () => {
+  const response = await handleIntegrationStatus(
+    new Request('https://app.example.test/api/integrations/status', { method: 'GET' }),
+    {
+      DB: createStatusDb({
+        plan_id: 'growth:grow+multi-shop',
+        addons: ['ai-receptionist', 'extra-users:4'],
+      }),
+      LABOR_RATE_API_KEY: 'labor-key',
+      PARTSTECH_API_KEY: 'parts-key',
+      INTUIT_CLIENT_ID: 'client-id',
+      INTUIT_CLIENT_SECRET: 'client-secret',
+      INTUIT_REDIRECT_URI: 'https://app.example.test/oauth/quickbooks/callback',
+    },
+    { shopId: 'shop-1', role: 'owner' },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.entitlements.knownPlan, true);
+  assert.equal(body.entitlements.family, 'growth');
+  assert.equal(body.entitlements.basePlanId, 'grow');
+  assert.equal(body.entitlements.features.sms, true);
+  assert.equal(body.entitlements.features.quickbooks, true);
+  assert.equal(body.entitlements.features.multiLocation, true);
+  assert.equal(body.entitlements.features.aiReceptionist, true);
+  assert.equal(body.entitlements.addOns.extraUsers, 4);
+});
+
+test('integration status fails closed for unknown plans when subscription lookup fails', async () => {
+  const response = await handleIntegrationStatus(
+    new Request('https://app.example.test/api/integrations/status', { method: 'GET' }),
+    {
+      DB: createStatusDb(null, { throws: true }),
+    },
+    { shopId: 'shop-1', role: 'owner' },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.entitlements.knownPlan, false);
+  assert.equal(body.entitlements.basePlanId, '');
+  assert.equal(body.entitlements.features.sms, false);
+  assert.equal(body.entitlements.features.quickbooks, false);
+  assert.equal(body.entitlements.features.liveDiagnostics, false);
 });

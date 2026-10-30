@@ -105,6 +105,23 @@ Unconfigured integrations return **not connected** and fail closed — they neve
 | Labor guide (MOTOR / ALLDATA / ShopKey) | `GET/POST/DELETE /api/integrations/labor-guide`, `POST .../search`, `POST .../manual` | Book providers when connected. If none connected, search auto-falls back to a labeled **web estimate — not book time** via `LABOR_WEB_SEARCH_API_KEY` (Brave). Manual entry always works. ALLDATA/ShopKey adapters are recognized but not live yet |
 | QuickBooks Online | `GET/DELETE /api/integrations/quickbooks`, `POST .../connect`, `POST .../callback`, `POST .../sync` | Create an Intuit Developer app; set `QUICKBOOKS_CLIENT_ID` / `QUICKBOOKS_CLIENT_SECRET` Worker secrets; shops complete OAuth |
 
+PartsTech checkout requires each selected line to be a PartsTech quote line saved on the repair order, approved, priced, not already sent, and associated with the selected store. The Worker re-reads those lines from the saved repair order before creating a checkout session; client-supplied prices and part identifiers are not trusted. Checkout creation opens a PartsTech punch-out cart but does not submit a purchase.
+
+To run the opt-in live sandbox smoke check, set these environment variables using credentials for a PartsTech sandbox/test account, then run `npm run smoke:partstech`:
+
+```text
+PARTSTECH_SANDBOX=1
+PARTSTECH_SANDBOX_BASE_URL=https://<PartsTech sandbox host>
+PARTSTECH_SANDBOX_STORE_ID=<sandbox store ID>
+PARTSTECH_SANDBOX_PART_NUMBER=<known sandbox part number>
+PARTSTECH_SANDBOX_PARTNER_ID=<sandbox partner ID>
+PARTSTECH_SANDBOX_PARTNER_KEY=<sandbox partner key>
+PARTSTECH_SANDBOX_USER_ID=<sandbox user ID>
+PARTSTECH_SANDBOX_USER_KEY=<sandbox user key>
+```
+
+The script refuses production hosts and requires the explicit `PARTSTECH_SANDBOX=1` opt-in. It authenticates, quotes one configured part, creates a checkout session, and checks session status; it never submits the purchase. The API sandbox hostname must include `sandbox` or `test` under `partstech.com`; the returned checkout URL must also be on `partstech.com`. Unit coverage for the live-smoke sequence runs with `npm run test:partstech-live-smoke`.
+
 Repair-order flow helpers live in `src/modules/repair-order-flow.js` (inspection → estimate → customer approval link via existing `/api/document-links` + SMS/email messaging → RO → invoice → Stripe payment).
 
 ### Apply D1 migrations (when you are ready to deploy)
@@ -490,5 +507,3 @@ npm run validate
 `wrangler deploy --dry-run` validates Worker bundling without changing remote
 resources. Remote Access policy behavior, D1 migrations, R2 writes, AI
 inference, and webhooks still require a configured Cloudflare account.
-
-
