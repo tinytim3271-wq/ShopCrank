@@ -56,6 +56,7 @@ import { applyQueuedEntityMutations } from './entity-persistence.js';
 import { createMutationQueueStore } from './mutation-queue-store.js';
 import { applySettledShopEntityResults, readableShopEntityTypes } from './shop-entity-load.js';
 import { paymentSummary } from '../modules/payments.js';
+import { PAYMENT_IMPORT_ROLES, PAYMENT_IMPORT_TEMPLATE, paymentImportConfirmText, paymentImportPanelHtml } from '../modules/payment-import.js';
 import { cardTerminalModel, recoveryWriteup } from '../modules/card-terminal.js';
 import { syncHelp } from '../modules/help-menu.js';
 import { openPrintDocument } from '../modules/print-document.js';
@@ -6423,6 +6424,58 @@ const bindImportMapperCore = bind;
 bind = function () {
   bindImportMapperCore();
   document.querySelector("#import-source")?.addEventListener("change", event => { importSource = event.target.value });
+};
+
+// --- Bulk payment import (admin) ---
+let paymentImport = null;
+const canImportPayments = () => PAYMENT_IMPORT_ROLES.includes(currentUser()?.role || "") && !isOfflineDesktop();
+const importsPaymentCore = imports;
+imports = function () {
+  const page = importsPaymentCore();
+  if (!canImportPayments()) return page;
+  return page.replace("</main>", `${paymentImportPanelHtml(paymentImport, { escapeHtml, icon, money })}</main>`);
+};
+async function runPaymentImport(mode, extra = {}) {
+  const current = paymentImport;
+  if (!current?.csv) return;
+  paymentImport = { ...current, busy: true, error: "" };
+  render();
+  try {
+    const result = await apiFetch("/payments/import", { method: "POST", body: JSON.stringify({ csv: current.csv, fileName: current.fileName, mode, ...extra }) });
+    if (result.mode === "preview") paymentImport = { ...current, busy: false, error: "", preview: result, result: null };
+    else paymentImport = { ...current, busy: false, error: "", result };
+    if (result.mode === "commit") {
+      toast(`${result.posted} payment${result.posted === 1 ? "" : "s"} posted`);
+      await Promise.all([loadInvoicesFromApi(), loadPaymentsFromApi(), loadOrdersFromApi()]);
+    }
+  } catch (error) {
+    // A stale preview is refused by the Worker; drop it so the admin re-checks the file.
+    paymentImport = { ...current, busy: false, error: error.message || "The payment import failed", ...(error.status === 409 ? { preview: null, result: null } : {}) };
+  }
+  render();
+}
+const bindPaymentImportCore = bind;
+bind = function () {
+  bindPaymentImportCore();
+  if (state.route !== "imports" || !canImportPayments()) return;
+  const input = document.querySelector("#payment-import-input");
+  document.querySelector("#payment-import-choose")?.addEventListener("click", () => input?.click());
+  input?.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 512 * 1024) { paymentImport = { error: "The CSV file is larger than 512 KB; split it into smaller files" }; render(); return }
+    paymentImport = { fileName: file.name, csv: await file.text() };
+    await runPaymentImport("preview");
+  });
+  document.querySelector("#payment-import-template")?.addEventListener("click", () => { const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([PAYMENT_IMPORT_TEMPLATE], { type: "text/csv" })); link.download = "shopcrank-payments-template.csv"; link.click(); URL.revokeObjectURL(link.href) });
+  document.querySelector("#payment-import-cancel")?.addEventListener("click", () => { paymentImport = null; render() });
+  document.querySelector("#payment-import-done")?.addEventListener("click", () => { paymentImport = null; render() });
+  document.querySelector("#payment-import-dry-run")?.addEventListener("click", () => void runPaymentImport("commit", { dryRun: true, fingerprint: paymentImport?.preview?.fingerprint }));
+  document.querySelector("#payment-import-commit")?.addEventListener("click", () => {
+    const preview = paymentImport?.preview;
+    if (!preview?.fingerprint || !confirm(paymentImportConfirmText(preview))) return;
+    void runPaymentImport("commit", { fingerprint: preview.fingerprint });
+  });
 };
 
 // --- Grok Realtime Voice & Phone Call Forwarding ---

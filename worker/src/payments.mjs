@@ -53,7 +53,7 @@ async function completedPayments(env, shopId, invoiceNumber, workOrderId) {
   return (result.results || []).map(row => parseEntityRow(row)?.record).filter(Boolean);
 }
 
-function entityWriteStatement(env, context, type, id, record, existingRow, now) {
+export function entityWriteStatement(env, context, type, id, record, existingRow, now) {
   const createdBy = existingRow?.created_by || context.userId;
   const createdAt = record.createdAt || existingRow?.created_at || now;
   const value = {

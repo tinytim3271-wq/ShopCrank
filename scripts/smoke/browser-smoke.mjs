@@ -316,6 +316,46 @@ async function main() {
       if (!/(?<!PARTIALLY )PAID/.test(after) || !/2 payments/.test(after)) throw new Error(`${after.replace(/\s+/g, ' ').slice(0, 200)} | toasts: ${toasts.slice(-4).join(' / ')}`);
       if (/Remaining \$(?!0\.00)/.test(after)) throw new Error(`invoice not fully paid: ${after.replace(/\s+/g, ' ').slice(0, 200)}`);
     });
+    await check('admin bulk-imports payments for migrated invoices: preview, dry run, then one all-or-nothing post', async () => {
+      const seeded = await page.evaluate(async () => {
+        const post = body => fetch('/api/entities/invoices', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(response => response.status);
+        return Promise.all([
+          post({ id: 'smoke-mig-1', number: 'MIG-5001', customer: 'Migrated Customer', date: '2026-09-01', amount: 250, status: 'sent' }),
+          post({ id: 'smoke-mig-2', number: 'MIG-5002', customer: 'Migrated Customer', date: '2026-09-02', amount: 90, status: 'paid' }),
+        ]);
+      });
+      if (seeded.some(status => status >= 300)) throw new Error(`seeding migrated invoices failed: ${seeded.join(', ')}`);
+      await route('imports');
+      const importCall = () => page.waitForResponse(response => response.url().includes('/payments/import') && response.request().method() === 'POST', { timeout: 30_000 });
+      const csv = [
+        'invoice_number,amount,date_received,payment_method,reference',
+        'MIG-5001,100,2026-09-05,check,CHK-1',
+        'MIG-5001,150,09/09/2026,card,AUTH-2',
+        'MIG-5002,90,2026-09-03,cash,',
+        'MIG-9999,10,2026-09-03,cash,',
+      ].join('\n');
+      const previewed = importCall();
+      await page.setInputFiles('#payment-import-input', { name: 'migrated-payments.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+      await previewed;
+      await page.waitForSelector('#payment-import-dry-run', { timeout: 15_000 });
+      const previewText = await main();
+      if (!/3 of 4 payments ready/.test(previewText) || !/No invoice with this number/.test(previewText)) throw new Error(`preview: ${previewText.replace(/\s+/g, ' ').slice(-400)}`);
+      const dry = importCall();
+      await page.click('#payment-import-dry-run');
+      const dryResult = await (await dry).json();
+      if (dryResult.mode !== 'dry_run' || dryResult.wouldPost !== 3) throw new Error(`dry run: ${JSON.stringify(dryResult).slice(0, 200)}`);
+      await page.waitForSelector('text=Nothing was saved', { timeout: 15_000 });
+      page.once('dialog', dialog => dialog.accept());
+      const posted = importCall();
+      await page.click('#payment-import-commit');
+      const response = await posted;
+      const result = await response.json();
+      if (response.status() !== 201 || result.posted !== 3 || result.skipped !== 1) throw new Error(`commit ${response.status()}: ${JSON.stringify(result).slice(0, 200)}`);
+      await page.waitForSelector('#payment-import-done', { timeout: 15_000 });
+      await route('invoices');
+      const row = await page.locator('tr:has-text("MIG-5001")').first().innerText();
+      if (!/(?<!PARTIALLY )PAID/.test(row) || !/2 payments/.test(row)) throw new Error(`imported invoice row: ${row.replace(/\s+/g, ' ').slice(0, 200)}`);
+    });
     await check('messaging shows the two-way texting inbox and shop ops shows declined work', async () => {
       pageErrors.length = 0;
       await route('messaging');

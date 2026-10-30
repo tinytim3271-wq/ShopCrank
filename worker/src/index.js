@@ -114,6 +114,7 @@ import {
 import { handleCustomerLookup } from './customer-search.mjs';
 import { buildDiagnosticAiMessage, normalizeDtcs } from '../../src/modules/diagnostic-ai.js';
 import { chargeTargetSnapshot, recordPayment as recordPaymentToTarget } from './payments.mjs';
+import { importPayments } from './payment-import.mjs';
 import { handleTerminalRoutes, stripeKeyMode, terminalPaymentRecord } from './terminal.mjs';
 import {
   approvalRecorder,
@@ -1975,6 +1976,21 @@ async function handlePaymentRecord(request, env, context, analytics) {
   return json(result, 201);
 }
 
+async function handlePaymentImport(request, env, context, analytics) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  requireRole(context, ['owner', 'admin']);
+  const result = await importPayments(env, context, await requestJson(request));
+  if (result.mode !== 'preview') {
+    captureForContext(analytics, context, 'payments_imported', {
+      mode: result.mode,
+      posted: result.posted,
+      skipped: result.skipped,
+      amount: result.totals.amount,
+    });
+  }
+  return json(result, result.mode === 'commit' ? 201 : 200);
+}
+
 async function runRevenueRecognitionExport(env, shopId, {
   upload = true,
   currency,
@@ -3822,6 +3838,7 @@ async function route(request, env, analytics) {
     });
   }
   if (path === '/payments/record') return handlePaymentRecord(request, env, context, analytics);
+  if (path === '/payments/import') return handlePaymentImport(request, env, context, analytics);
   if (path === '/payments/checkout-session') return handleCheckout(request, env, context, analytics);
   if (path === '/payments/stripe/status') return handleStripeStatus(request, env, context);
   if (path === '/payments/stripe/configure') return handleStripeConfigure(request, env, context, analytics);
