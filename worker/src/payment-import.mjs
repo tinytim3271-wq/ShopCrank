@@ -355,7 +355,7 @@ async function buildImportWrites(env, context, result, orders, fileName, now) {
       `).bind(context.shopId, id, JSON.stringify(payment), context.userId, now, now));
     }
     const summary = paymentStatus(entry.total, entry.paid);
-    const lastReceived = entry.batch.map(item => item.receivedAt).sort().at(-1);
+    const lastReceived = [...entry.prior, ...entry.batch].map(item => item.receivedAt).filter(Boolean).sort().at(-1);
     // Keep the closeout dates an already-paid migrated invoice came in with, so
     // filed tax periods do not move.
     const paidAt = summary.status === 'paid'
