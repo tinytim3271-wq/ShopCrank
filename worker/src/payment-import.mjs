@@ -299,7 +299,7 @@ function auditEvent(mode, fileName, { valid, skipped }, extra = {}) {
     skipped: skipped.length,
     amount: roundMoney(valid.reduce((sum, item) => sum + item.amount, 0)),
     invoices: [...new Set(valid.map(item => item.invoiceNumber))],
-    skippedRows: skipped.slice(0, 200),
+    skippedRows: skipped,
     ...extra,
   };
 }
