@@ -15,6 +15,14 @@ export const MAX_IMPORT_BYTES = 512 * 1024;
 
 const roundMoney = value => Math.round((Number(value) || 0) * 100) / 100;
 
+function latestReceivedAt(payments) {
+  return payments
+    .map(payment => ({ value: payment.receivedAt, time: Date.parse(payment.receivedAt) }))
+    .filter(payment => payment.value && Number.isFinite(payment.time))
+    .sort((left, right) => left.time - right.time)
+    .at(-1)?.value;
+}
+
 const COLUMN_ALIASES = {
   invoice: ['invoice_number', 'invoice', 'invoice_no', 'invoice_num', 'invoice_id', 'inv', 'inv_number', 'inv_no', 'number'],
   amount: ['amount', 'payment_amount', 'amount_paid', 'paid_amount', 'payment', 'total_paid'],
@@ -355,7 +363,7 @@ async function buildImportWrites(env, context, result, orders, fileName, now) {
       `).bind(context.shopId, id, JSON.stringify(payment), context.userId, now, now));
     }
     const summary = paymentStatus(entry.total, entry.paid);
-    const lastReceived = [...entry.prior, ...entry.batch].map(item => item.receivedAt).filter(Boolean).sort().at(-1);
+    const lastReceived = latestReceivedAt([...entry.prior, ...entry.batch]);
     const legacyCloseout = invoice.record.paymentImportLegacyCloseout
       || (entry.legacyPaid ? {
         paidAt: invoice.record.paidAt,
@@ -364,20 +372,18 @@ async function buildImportWrites(env, context, result, orders, fileName, now) {
       } : null);
     const legacyRecognition = invoice.record.paymentImportLegacyRecognition
       || (legacyCloseout ? {
-        amount: invoice.record.amount,
+        amount: roundMoney(invoice.record.amount),
         receivedAt: legacyCloseout.paidAt || legacyCloseout.closedAt || invoice.record.date,
       } : null);
-    // Keep the closeout dates an already-paid migrated invoice came in with, so
-    // filed tax periods do not move.
     const paidAt = summary.status === 'paid'
-      ? (legacyCloseout?.paidAt || lastReceived)
+      ? (legacyCloseout ? legacyCloseout.paidAt : lastReceived)
       : invoice.record.paidAt;
     const closedAt = summary.status === 'paid'
-      ? (legacyCloseout?.closedAt || lastReceived)
+      ? (legacyCloseout ? legacyCloseout.closedAt : lastReceived)
       : invoice.record.closedAt;
-    const closeoutSource = summary.status === 'paid'
-      ? legacyCloseout?.closeoutSource || (legacyCloseout?.closedAt ? invoice.record.closeoutSource : 'payment_date')
-      : invoice.record.closeoutSource;
+    const closeoutSource = legacyCloseout
+      ? legacyCloseout.closeoutSource
+      : summary.status === 'paid' ? 'payment_date' : invoice.record.closeoutSource;
     writes.push(entityWriteStatement(env, context, 'invoices', invoice.record.id, {
       ...invoice.record,
       ...(legacyCloseout ? { paymentImportLegacyCloseout: legacyCloseout } : {}),

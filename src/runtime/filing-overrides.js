@@ -62,7 +62,7 @@ taxReport = function (fromDate, toDate) {
   const invoices = getFinanceDerived().invoiceByNumber;
   to.setHours(23, 59, 59, 999);
   const rate = Number(state.taxSettings.rate) || 0;
-  const rows = paymentRecords().filter(payment => {
+  const rows = paymentRecords({ forReporting: true }).filter(payment => {
     const d = new Date(payment.receivedAt);
     return d >= from && d <= to;
   }).map(payment => {
@@ -221,7 +221,7 @@ function exportTexasWebfilePackage() {
 }
 
 function buildTaxPackage(from, to) {
-  const payments = paymentRecords().filter(p => filingInRange(p.receivedAt, from, to));
+  const payments = paymentRecords({ forReporting: true }).filter(p => filingInRange(p.receivedAt, from, to));
   const expenses = state.expenses.filter(x => filingInRange(x.date, from, to));
   const journals = state.journalEntries.filter(x => filingInRange(x.date, from, to));
   let revenue = 0;

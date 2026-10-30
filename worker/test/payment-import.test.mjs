@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createD1 } from './helpers/d1-sqlite.mjs';
 import { importPayments, parsePaymentDate, readPaymentCsv } from '../src/payment-import.mjs';
 import { HttpError } from '../src/http.mjs';
+import { buildTaxReport } from '../src/domain.mjs';
 
 const SHOP = 'shop-import';
 const context = { shopId: SHOP, userId: 'user-admin', email: 'admin@example.com', role: 'admin' };
@@ -183,6 +184,80 @@ test('partial imports preserve migrated closeout dates and provenance when a lat
   assert.equal(invoice.paidAt, paidAt);
   assert.equal(invoice.closedAt, closedAt);
   assert.equal(invoice.closeoutSource, 'source_closeout_date');
+});
+
+test('legacy recognition and closeout provenance survive partial and completed imports', async () => {
+  const { db, env } = setup();
+  seed(db, 'invoices', {
+    id: 'legacy-invoice', number: 'INV-LEGACY', customer: 'Morgan Ray', amount: 100,
+    subtotal: 92.59, taxableSubtotal: 92.59, tax: 7.41, taxRate: 8,
+    status: 'paid', paidAt: '2026-09-15T12:00:00.000Z', closedAt: '2026-09-16T12:00:00.000Z',
+    closeoutSource: 'source_closeout_date', importSource: 'legacy_csv',
+  });
+  const commit = async (csv, fileName) => {
+    const { fingerprint } = await importPayments(env, context, { csv, fileName, mode: 'preview' });
+    return importPayments(env, context, { csv, fileName, mode: 'commit', fingerprint });
+  };
+  await commit('invoice,amount,date,method\nINV-LEGACY,40,2026-10-05,cash', 'part.csv');
+
+  const invoice = () => rows(db).find(row => row.id === 'legacy-invoice');
+  const firstImport = invoice();
+  assert.equal(firstImport.paymentStatus, 'partial');
+  assert.deepEqual(firstImport.paymentImportLegacyCloseout, {
+    paidAt: '2026-09-15T12:00:00.000Z',
+    closedAt: '2026-09-16T12:00:00.000Z',
+    closeoutSource: 'source_closeout_date',
+  });
+  assert.deepEqual(firstImport.paymentImportLegacyRecognition, {
+    amount: 100,
+    receivedAt: '2026-09-15T12:00:00.000Z',
+  });
+  const paymentRows = rows(db).filter(row => row.type === 'payments' && row.invoiceNumber === 'INV-LEGACY');
+  const september = buildTaxReport(paymentRows, [firstImport], 8, '2026-09-01', '2026-09-30');
+  const october = buildTaxReport(paymentRows, [firstImport], 8, '2026-10-01', '2026-10-31');
+  assert.equal(september.totals.gross, 100);
+  assert.equal(september.totals.tax, 7.41);
+  assert.equal(september.rows[0].date, '2026-09-15T12:00:00.000Z');
+  assert.equal(october.totals.gross, 0);
+  assert.equal(paymentRows[0].receivedAt, '2026-10-05T12:00:00.000Z');
+
+  await commit('invoice,amount,date,method\nINV-LEGACY,60,2026-09-10,cash', 'remaining.csv');
+  const completed = invoice();
+  assert.equal(completed.paymentStatus, 'paid');
+  assert.equal(completed.paidAt, '2026-09-15T12:00:00.000Z');
+  assert.equal(completed.closedAt, '2026-09-16T12:00:00.000Z');
+  assert.equal(completed.closeoutSource, 'source_closeout_date');
+  assert.equal(completed.importSource, 'legacy_csv');
+});
+
+test('settlement date includes prior payments when a backfill completes an invoice', async () => {
+  const { db, env } = setup();
+  seed(db, 'invoices', { id: 'settlement-invoice', number: 'INV-SETTLEMENT', amount: 100, status: 'sent' });
+  seed(db, 'payments', {
+    id: 'settlement-prior', invoiceNumber: 'INV-SETTLEMENT', amount: 40,
+    receivedAt: '2026-09-20T15:00:00.000Z', status: 'completed',
+  });
+  const csv = 'invoice,amount,date,method\nINV-SETTLEMENT,60,2026-09-05,cash';
+  const { fingerprint } = await importPayments(env, context, { csv, mode: 'preview' });
+  await importPayments(env, context, { csv, mode: 'commit', fingerprint });
+  const invoice = rows(db).find(row => row.id === 'settlement-invoice');
+  assert.equal(invoice.paidAt, '2026-09-20T15:00:00.000Z');
+  assert.equal(invoice.closedAt, '2026-09-20T15:00:00.000Z');
+});
+
+test('commit audit retains all skipped rows within the 500-row import limit', async () => {
+  const { db, env } = setup();
+  const csv = [
+    'invoice,amount,date,method',
+    'INV-1001,10,2026-09-10,cash',
+    ...Array.from({ length: 250 }, (_, index) => `INV-MISSING-${index},10,2026-09-10,cash`),
+  ].join('\n');
+  const { fingerprint } = await importPayments(env, context, { csv, mode: 'preview' });
+  const result = await importPayments(env, context, { csv, mode: 'commit', fingerprint });
+  const [audit] = audits(db);
+  assert.equal(result.skipped, 250);
+  assert.equal(audit.event.skippedRows.length, 250);
+  assert.equal(audit.event.skippedRows.at(-1).line, 252);
 });
 
 test('dry run validates and logs but writes no payments', async () => {

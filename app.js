@@ -12619,9 +12619,12 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       }
     };
   }
-  function paymentRecords() {
-    const legacy = state.invoices.filter((invoice) => invoice.status === "paid" && !state.payments.some((payment) => payment.invoiceNumber === invoice.number)).map((invoice) => ({ id: `legacy-${invoice.number}`, invoiceNumber: invoice.number, customer: invoice.customer, amount: invoice.amount, method: "legacy", receivedAt: invoice.paidAt || invoice.closedAt || invoice.date, reference: "Imported paid invoice", note: "", status: "completed" }));
-    return [...legacy, ...state.payments.filter((payment) => payment.status === "completed")];
+  function paymentRecords(options) {
+    const forReporting = options?.forReporting === true, completed = state.payments.filter((payment) => payment.status === "completed"), preserved = forReporting ? state.invoices.filter((invoice) => invoice.paymentImportLegacyRecognition || invoice.paymentImportLegacyCloseout) : [], preservedNumbers = new Set(preserved.map((invoice) => invoice.number)), legacy = state.invoices.filter((invoice) => invoice.status === "paid" && !state.payments.some((payment) => payment.invoiceNumber === invoice.number) && !(forReporting && (invoice.paymentImportLegacyRecognition || invoice.paymentImportLegacyCloseout))).map((invoice) => ({ id: `legacy-${invoice.number}`, invoiceNumber: invoice.number, customer: invoice.customer, amount: invoice.amount, method: "legacy", receivedAt: invoice.paidAt || invoice.closedAt || invoice.date, reference: "Imported paid invoice", note: "", status: "completed" })), imported = forReporting ? completed.filter((payment) => !preservedNumbers.has(payment.invoiceNumber)) : completed;
+    return [...legacy, ...imported, ...preserved.map((invoice) => {
+      const recognition = invoice.paymentImportLegacyRecognition || { amount: invoice.amount, receivedAt: invoice.paymentImportLegacyCloseout.paidAt || invoice.paymentImportLegacyCloseout.closedAt || invoice.date };
+      return { id: `legacy-${invoice.number}`, invoiceNumber: invoice.number, customer: invoice.customer, amount: recognition.amount, method: "legacy", receivedAt: recognition.receivedAt, reference: "Imported paid invoice", note: "", status: "completed" };
+    })];
   }
   function finance() {
     const paid = paymentRecords(), open = state.invoices.filter((invoice) => invoiceBalance(invoice) > 0), income = paid.reduce((s, payment) => s + payment.amount, 0), expenses = state.expenses.reduce((s, x) => s + Number(x.amount || 0), 0), tax = paid.reduce((s, payment) => {
