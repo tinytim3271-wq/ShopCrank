@@ -11,6 +11,7 @@ import { sendSms, createTwilioSmsProvider, TWILIO_SECRET_NAMES } from '../src/in
 import { encryptSecret, decryptSecret } from '../src/security.mjs';
 import { QUESTIONNAIRE_FIELDS, DAY_KEYS, validateQuestionnaire } from '../../src/modules/front-desk-questionnaire.js';
 import { putShopSetting } from '../src/shop-settings-store.mjs';
+import { pollPendingA2p } from '../src/onboarding/routes.mjs';
 
 const intake = {
   shopId: 'shop-1', legalName: 'Example Auto LLC', dbaName: 'Example Auto', ein: '12-3456789',
@@ -253,6 +254,28 @@ test('successful durable checkpoints without SIDs are not repeated on resume', a
     fetcher: async () => assert.fail('completed assignment must not be repeated'),
   });
   assert.deepEqual(result.results.assignment, {});
+});
+
+test('A2P cron polls pending submissions beyond the 200 newest onboarding records', async () => {
+  const env = { DB: createD1(), ONBOARDING_LIVE_MODE: '1' };
+  const insert = env.DB.prepare('INSERT INTO shop_onboarding (shop_id, status, intake_json, state_json, started_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+  for (let i = 0; i < 201; i++) {
+    const shopId = `shop-${i}`;
+    const state = { a2p: { brandSid: `BN-${i}`, ...(i === 0 ? {} : { campaignStatus: 'VERIFIED' }) } };
+    const startedAt = new Date(Date.UTC(2026, 0, i)).toISOString();
+    await insert.bind(shopId, 'submitted', JSON.stringify(intake), JSON.stringify(state), startedAt, startedAt).run();
+  }
+  const requests = [];
+  const result = await pollPendingA2p(env, {
+    getSecret: async () => 'test-credential',
+    fetcher: async url => {
+      requests.push(url);
+      return Response.json({ status: 'IN_PROGRESS' });
+    },
+  });
+  assert.deepEqual(result.map(item => item.shopId), ['shop-0']);
+  assert.equal(requests.length, 1);
+  assert.match(requests[0], /BrandRegistrations\/BN-0$/);
 });
 
 test('passing test calls require matching media stream and xAI startup evidence on the same inbound call', async () => {
