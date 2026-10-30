@@ -1346,6 +1346,9 @@ async function aiAnswer(env, shopId, message, history = [], options = {}) {
     requestedModel: options.requestedModel,
     autoEscalate: options.autoEscalate,
     allowEstimatePreparation: options.source !== 'agentphone',
+    persona: options.source === 'agentphone' ? 'front_desk' : options.persona,
+    role: options.source === 'agentphone' ? '' : options.role,
+    userId: options.userId || '',
   });
   const costs = usageCostsForResult(env, result);
   await recordAiUsage(env, {
@@ -1833,6 +1836,8 @@ async function handleAgentPhoneWebhook(request, env, shopId) {
     userId: 'agentphone',
     channel: body.channel === 'voice' ? 'voice' : 'text',
     source: 'agentphone',
+    persona: 'front_desk',
+    role: '',
   }));
 }
 

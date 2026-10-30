@@ -86,6 +86,13 @@ independently of the model's tool list. Front Desk tools never expose accounting
 or technical shop records. Caller vehicle status is scoped to the uniquely
 verified customer's ID, not another customer's matching name.
 
+Signed AgentPhone voice, SMS, MMS, and iMessage conversations are also external
+Front Desk sessions, never authenticated staff sessions. Webhook role/persona
+fields cannot elevate them. Claude tools and Gemini/Workers AI grounding
+(including provider fallbacks) are restricted to customer-safe knowledge and
+exclude internal shop-record context; external callers cannot write staff
+memories.
+
 The Front Desk questionnaire controls public pricing; its answers override
 onboarding intake, which overrides profile defaults. Labor rates are disclosed
 only when explicitly published. Callback messages are saved to the staff-visible
