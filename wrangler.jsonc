@@ -84,9 +84,12 @@
     }
   ],
   // 15:00 UTC: customer follow-ups (FOLLOWUP_CRON). 08:00 UTC: scheduled Revenue
-  // Recognition exports for shops that turned them on.
+  // Recognition exports for shops that turned them on. 00:30, 06:30, 12:30 and 18:30 UTC:
+  // dependency health check (HEALTH_CHECK_CRON); JSONL log goes to R2
+  // health-checks/ and failures are emailed to HEALTHCHECK_EMAIL_TO
+  // (default SUPPORT_EMAIL_TO; HEALTHCHECK_EMAIL_MODE = failures | always | off).
   "triggers": {
-    "crons": ["0 15 * * *", "0 8 * * *"]
+    "crons": ["0 15 * * *", "0 8 * * *", "30 0,6,12,18 * * *"]
   },
   "observability": {
     "enabled": true,

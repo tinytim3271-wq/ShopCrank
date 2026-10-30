@@ -125,6 +125,8 @@ import {
   normalizeEstimateLine,
   normalizeTechnicianIds,
 } from '../../src/modules/estimate-workflow.js';
+import { redactSensitive } from './redact.mjs';
+import { HEALTH_CHECK_CRON, handleHealthCheckAdmin, runScheduledHealthCheck } from './health/health-check.mjs';
 
 export { AiChatSession, AiVoiceSession };
 
@@ -208,23 +210,6 @@ function capturePostHogEvent(env, context, event, properties = {}) {
     properties,
     groups: context.shopId ? { shop: context.shopId } : undefined,
   });
-}
-
-// Recursively redact sensitive fields before persisting diagnostic audit events.
-const SENSITIVE_AUDIT_KEYS = new Set([
-  'pin', 'token', 'securitytoken', 'password', 'credential', 'secret',
-  'seed', 'authorizationtoken', 'capabilitytoken', 'privatekey',
-]);
-
-function redactSensitive(value) {
-  if (Array.isArray(value)) return value.map(redactSensitive);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      key,
-      SENSITIVE_AUDIT_KEYS.has(key.toLowerCase()) ? '[REDACTED]' : redactSensitive(item),
-    ]));
-  }
-  return value;
 }
 
 // Accept both snake_case and camelCase procedure names from clients.
@@ -3847,6 +3832,9 @@ async function route(request, env, analytics) {
   if (path === '/subscription/entitlement') return handleEntitlement(request, env, context);
   if (segments[0] === 'admin' && segments[1] === 'accounts') return handleAdmin(request, env, context, segments, analytics);
   if (segments[0] === 'admin' && segments[1] === 'licenses') return handleLicenseAdmin(request, env, context, segments);
+  if (segments[0] === 'admin' && segments[1] === 'health-check') {
+    return handleHealthCheckAdmin(request, env, context, segments, { getSecret: getIntegrationSecret, saveSecret: saveIntegrationSecret });
+  }
   if (segments[0] === 'licenses') return handleLicenses(request, env, context, segments);
   throw new HttpError(404, 'Not found');
 }
@@ -3906,6 +3894,13 @@ async function proxyPagesRequest(request, env) {
 
 export default {
   async scheduled(controller, env, executionCtx) {
+    if (controller?.cron === HEALTH_CHECK_CRON) {
+      const health = runScheduledHealthCheck(env, { getSecret: getIntegrationSecret, saveSecret: saveIntegrationSecret })
+        .catch(error => console.error('dependency health check cron failed', error));
+      if (executionCtx?.waitUntil) executionCtx.waitUntil(health);
+      else await health;
+      return;
+    }
     if (controller?.cron === FOLLOWUP_CRON) {
       if (!automatedSmsEnabled(env)) {
         console.log(JSON.stringify({ message: 'customer follow-up cron skipped', reason: 'AUTOMATED_SMS_ENABLED is not "1"' }));

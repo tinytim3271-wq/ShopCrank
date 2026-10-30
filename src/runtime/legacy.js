@@ -37,6 +37,7 @@ import {
   shouldSearchCustomers,
 } from '../modules/customer-intake.js';
 import * as KeyLicense from '../modules/vehicle-key-license.js';
+import * as HealthCheck from '../modules/health-check.js';
 import * as SmsInbox from '../modules/sms-inbox.js';
 import * as InspectionRatings from '../modules/inspection-ratings.js';
 import * as CallLog from '../modules/call-log.js';
@@ -6022,6 +6023,94 @@ render = function () {
     return;
   }
   renderKeyLicenseCore();
+};
+// --- Platform console: dependency health check (/api/admin/health-check) ---
+if (!roleRoutes.super_admin.includes("health")) roleRoutes.super_admin.push("health");
+let healthCheckData = null, healthCheckLoading = false;
+const platformShellHealthCore = platformShell;
+platformShell = function (content) {
+  const licensesNav = nav("licenses", "key-round", "Key licenses");
+  return platformShellHealthCore(content).replace(licensesNav, `${licensesNav}${nav("health", "activity", "System health")}`);
+};
+async function loadHealthCheck({ keepRun = true } = {}) {
+  if (healthCheckLoading) return;
+  healthCheckLoading = true;
+  try {
+    const overview = await platformApi("/admin/health-check");
+    healthCheckData = { ...(keepRun ? healthCheckData : {}), overview, running: false };
+  } catch (error) {
+    healthCheckData = { overview: { runs: [], changelog: [], schedule: "", contractVersion: "", emailMode: "" }, running: false };
+    toast(error.message || "Could not load health checks");
+  } finally {
+    healthCheckLoading = false;
+  }
+  if (state.route === "health") render();
+}
+function healthCheckView() {
+  if (healthCheckData === null) void loadHealthCheck();
+  return platformShell(`${heading("Platform control", "System health", "Ping D1, inventory, QuickBooks and Stripe webhooks, and check every assistant tool against its output contract.", false)}${HealthCheck.healthCheckHtml(healthCheckData, { escapeHtml, icon })}`);
+}
+async function runHealthCheckNow(dryRun) {
+  healthCheckData = { ...healthCheckData, running: true };
+  render();
+  try {
+    const run = await platformApi("/admin/health-check", { method: "POST", body: JSON.stringify({ dryRun }) });
+    healthCheckData = { ...healthCheckData, run, running: false };
+    toast(run.ok ? "All dependencies healthy" : "Some dependencies are failing");
+    await loadHealthCheck();
+  } catch (error) {
+    healthCheckData = { ...healthCheckData, running: false };
+    toast(error.message || "Health check failed to run");
+    render();
+  }
+}
+function downloadHealthJsonl(text, name) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/x-ndjson" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `shopcrank-health-${name}.jsonl`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function bindHealthCheck() {
+  document.querySelector("#refresh-platform")?.addEventListener("click", () => { healthCheckData = null; render() });
+  document.querySelector("#health-dry-run")?.addEventListener("click", () => runHealthCheckNow(true));
+  document.querySelector("#health-run-now")?.addEventListener("click", () => runHealthCheckNow(false));
+  document.querySelector("#health-download-current")?.addEventListener("click", () => {
+    const run = healthCheckData?.run;
+    if (run) downloadHealthJsonl(HealthCheck.runJsonl(run), run.runId || "run");
+  });
+  document.querySelectorAll("[data-health-run]").forEach(button => button.addEventListener("click", async () => {
+    try {
+      const detail = await platformApi(`/admin/health-check/runs/${encodeURIComponent(button.dataset.healthRun)}`);
+      healthCheckData = { ...healthCheckData, run: HealthCheck.runFromEntries(detail.entries) };
+      render();
+    } catch (error) { toast(error.message) }
+  }));
+  document.querySelectorAll("[data-health-download]").forEach(button => button.addEventListener("click", async () => {
+    try {
+      const response = await authorizedApiRequest(`/admin/health-check/runs/${encodeURIComponent(button.dataset.healthDownload)}?format=jsonl`);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Could not download the log");
+      downloadHealthJsonl(await response.text(), button.dataset.healthDownload);
+    } catch (error) { toast(error.message) }
+  }));
+}
+const bindHealthCheckCore = bind;
+bind = function () {
+  bindHealthCheckCore();
+  if (state.route === "health" && currentUser()?.role === "super_admin") bindHealthCheck();
+};
+const renderHealthCheckCore = render;
+render = function () {
+  if (currentUser()?.role === "super_admin" && state.route === "health") {
+    const root = document.querySelector("#root");
+    root.innerHTML = safeHtml(healthCheckView());
+    lucide.createIcons();
+    bind();
+    bindPlatformAdmin();
+    return;
+  }
+  renderHealthCheckCore();
 };
 // --- Two-way customer texting: inbox on the Messaging page ---
 const SMS_READ_MARKS = "shopcrank-sms-read-v1";

@@ -39,6 +39,8 @@ import { getOnboarding } from '../onboarding/store.mjs';
 import { mergeIntakeIntoAnswers } from '../front-desk/persona-render.mjs';
 import { notifyHandoffStaff } from '../front-desk/handoff-routes.mjs';
 import { aiPhoneBookingEnabled } from '../growth-flags.mjs';
+import { redactToolInput, serializeError } from '../redact.mjs';
+import { checkToolOutput } from '../health/schema.mjs';
 
 const fromGrok = name => {
   const tool = GROK_SHOP_TOOLS.find(item => item.name === name);
@@ -309,7 +311,10 @@ async function runTechTool(env, { shopId, role, userId, name, args, callerPhone,
       return redactAccountingFields(await executeGroundingTool(env, shopId, name, args), role);
     case 'lookup_labor_time': {
       const vehicle = args.vehicle || {};
-      const response = await searchLicensedLabor(env, { ...vehicle, query: String(args.operation || '') }).catch(() => []);
+      const response = await searchLicensedLabor(env, { ...vehicle, query: String(args.operation || '') }).catch((error) => {
+        console.warn(JSON.stringify({ message: 'licensed labor search failed', tool: name, shopId, input: redactToolInput(args), error: serializeError(error) }));
+        return [];
+      });
       const licensed = Array.isArray(response) ? response.filter(item => item.verified === true && typeof item.hours === 'number' && Number.isFinite(item.hours) && item.hours > 0) : [];
       if (licensed.length) {
         return { source: 'licensed_labor_guide', operations: licensed.slice(0, 5).map(item => ({ operation: item.operation || item.description, hours: item.hours, source: item.source })) };
@@ -494,7 +499,12 @@ async function runFrontDeskTool(env, { shopId, name, args, callerPhone, callSid 
   }
 }
 
-/** Run one assistant tool after authorization; denials return a polite refusal. */
+/**
+ * Run one assistant tool after authorization; denials return a polite refusal.
+ * Every call is wrapped so failures are never silent: a throw is logged with the
+ * tool name, the redacted input and the full error, then rethrown; an { error }
+ * result and output that drifts from tool-contracts.mjs are logged as warnings.
+ */
 export async function executeAssistantTool(env, { shopId, persona, role = '', userId = '', name, args = {}, callerPhone = '', callSid = '' }) {
   const decision = authorizeAssistantTool({ persona, role, name });
   if (!decision.allowed) {
@@ -502,6 +512,38 @@ export async function executeAssistantTool(env, { shopId, persona, role = '', us
     return { error: 'access_denied', denied: true, code: decision.code, message: decision.message };
   }
   const safeArgs = args && typeof args === 'object' ? args : {};
-  if (persona === PERSONAS.FRONT_DESK) return runFrontDeskTool(env, { shopId, name, args: safeArgs, callerPhone, callSid });
-  return runTechTool(env, { shopId, role, userId, name, args: safeArgs, callerPhone, callSid });
+  const started = Date.now();
+  let result;
+  try {
+    result = persona === PERSONAS.FRONT_DESK
+      ? await runFrontDeskTool(env, { shopId, name, args: safeArgs, callerPhone, callSid })
+      : await runTechTool(env, { shopId, role, userId, name, args: safeArgs, callerPhone, callSid });
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: 'assistant tool failed',
+      tool: name,
+      shopId,
+      persona,
+      role,
+      latencyMs: Date.now() - started,
+      input: redactToolInput(safeArgs),
+      error: serializeError(error),
+    }));
+    throw error;
+  }
+  const check = checkToolOutput(name, result);
+  if (check.kind !== 'ok') {
+    console.warn(JSON.stringify({
+      message: check.kind === 'error' ? 'assistant tool returned error' : 'assistant tool schema drift',
+      tool: name,
+      shopId,
+      persona,
+      role,
+      latencyMs: Date.now() - started,
+      input: redactToolInput(safeArgs),
+      contractVersion: check.version,
+      ...(check.kind === 'error' ? { error: redactToolInput({ detail: result.error }).detail } : { issues: check.issues }),
+    }));
+  }
+  return result;
 }

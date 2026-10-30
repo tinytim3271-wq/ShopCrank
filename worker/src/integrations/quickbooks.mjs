@@ -759,6 +759,32 @@ async function qboRequest(env, record, path, { method = 'GET', body, fetcher = f
   return payload;
 }
 
+/**
+ * Health-check ping: a shop's QuickBooks connection answers a CompanyInfo read.
+ * Refreshes (and re-saves) an expired access token exactly like a sync would.
+ * `getSecret(shopId, name)` / `saveSecret(env, shopId, name, value)` as in the handlers.
+ */
+export async function pingQuickbooks(env, { shopId, getSecret, saveSecret, fetcher = fetch }) {
+  const record = await readRecord(getSecret, shopId);
+  const ready = await ensureAccessToken(env, record, { getSecret, saveSecret, shopId, fetcher });
+  const info = await qboRequest(env, ready, `/companyinfo/${encodeURIComponent(ready.realmId)}?minorversion=75`, { fetcher });
+  return { realmId: ready.realmId, companyName: info?.CompanyInfo?.CompanyName || '' };
+}
+
+/** Dry-run check of a stored QuickBooks record: connected and has a realm and refresh token. */
+export async function quickbooksConfigStatus(env, { shopId, getSecret }) {
+  const record = await readRecord(getSecret, shopId);
+  const status = quickbooksConnectionStatus(record);
+  if (!status.connected) return { configured: false, reason: status.label || 'QuickBooks Online not connected' };
+  if (!String(env.QUICKBOOKS_CLIENT_ID || '').trim() || !String(env.QUICKBOOKS_CLIENT_SECRET || '').trim()) {
+    return { configured: true, valid: false, reason: 'QuickBooks Online app credentials are not configured on the Worker' };
+  }
+  if (!record.refreshToken && !(Date.parse(record.tokenExpiresAt || 0) > Date.now())) {
+    return { configured: true, valid: false, reason: 'QuickBooks Online needs to be reconnected' };
+  }
+  return { configured: true, valid: true };
+}
+
 async function detectTaxContext(env, record, fetcher, saved = {}) {
   const preferences = await qboRequest(env, record, '/preferences?minorversion=75', { fetcher });
   const companyInfo = await qboRequest(env, record, `/companyinfo/${encodeURIComponent(record.realmId)}?minorversion=75`, { fetcher });
