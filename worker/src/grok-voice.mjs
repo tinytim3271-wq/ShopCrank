@@ -653,6 +653,27 @@ async function upsertShopEntityDirect(env, shopId, entityType, entityId, record,
   return payload;
 }
 
+async function insertShopIntakeEntities(env, shopId, records) {
+  const now = new Date().toISOString();
+  const statements = records.map(([entityType, record]) => {
+    const payload = {
+      ...record, shopId, createdBy: 'grok-voice', createdAt: now, updatedAt: now,
+    };
+    return env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(shopId, entityType, record.id, JSON.stringify(payload), payload.createdBy, now, now);
+  });
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    if (/UNIQUE constraint failed/i.test(String(error?.message))) {
+      throw new HttpError(409, 'An intake record ID already exists. No existing records were changed; retry to create a new intake.');
+    }
+    throw error;
+  }
+}
+
 export function buildIntakeDraftFromGrokCall(input = {}, estimateCalc = null, callerPhone = '') {
   const rawCust = input.customer || {};
   const rawName = cleanText(rawCust.name || '', 160);
@@ -719,7 +740,7 @@ export function buildIntakeDraftFromGrokCall(input = {}, estimateCalc = null, ca
     vehicleDescription,
     complaint,
     intakeDraft: {
-      id: `intake-grok-${Date.now()}`,
+      id: `intake-grok-${crypto.randomUUID()}`,
       step: 0,
       savedAt: new Date().toISOString(),
       status: 'draft',
@@ -828,12 +849,12 @@ export async function executeGrokShopTool(env, shopId, name, args = {}, { caller
     }, pricing);
     const { fullName, vehicleDescription, complaint, intakeDraft } = buildIntakeDraftFromGrokCall(args, estimateCalc, callerPhone);
 
-    const timestamp = Date.now();
-    const customerId = `cust-grok-${timestamp}`;
-    const vehicleId = `veh-grok-${timestamp}`;
-    const estimateNumber = `EST-${new Date().getFullYear()}-${String(timestamp).slice(-4)}`;
-    const estimateId = `estimate-${timestamp}`;
-    const orderId = `RO-${String(timestamp).slice(-4)}`;
+    const intakeId = crypto.randomUUID();
+    const customerId = `cust-grok-${intakeId}`;
+    const vehicleId = `veh-grok-${intakeId}`;
+    const estimateNumber = `EST-${new Date().getFullYear()}-${intakeId}`;
+    const estimateId = `estimate-${intakeId}`;
+    const orderId = `RO-${intakeId}`;
 
     const customerRecord = {
       id: customerId,
@@ -956,11 +977,11 @@ export async function executeGrokShopTool(env, shopId, name, args = {}, { caller
     };
 
     if (env?.DB && shopId) {
-      await Promise.all([
-        upsertShopEntityDirect(env, shopId, 'customers', customerId, customerRecord),
-        upsertShopEntityDirect(env, shopId, 'vehicles', vehicleId, vehicleRecord),
-        upsertShopEntityDirect(env, shopId, 'estimates', estimateId, estimateRecord),
-        upsertShopEntityDirect(env, shopId, 'orders', orderId, orderRecord),
+      await insertShopIntakeEntities(env, shopId, [
+        ['customers', customerRecord],
+        ['vehicles', vehicleRecord],
+        ['estimates', estimateRecord],
+        ['orders', orderRecord],
       ]);
     }
 

@@ -72,6 +72,9 @@ test('executeGrokShopTool save_call_intake_and_estimate saves Customer, Vehicle,
   const savedEntities = [];
   const env = {
     DB: {
+      async batch(statements) {
+        return Promise.all(statements.map(statement => statement.run()));
+      },
       prepare(sql) {
         return {
           bind(...args) {
