@@ -1118,46 +1118,109 @@ function uint8ArrayToBase64(bytes) {
   return btoa(binary);
 }
 
-/**
- * Converts Twilio 8kHz mu-law base64 payload into 24kHz PCM16 little-endian base64 for Grok.
- */
-export function transcodeTwilioMulaw8kToGrokPcm24k(mulawBase64) {
-  const mulawBytes = base64ToUint8Array(mulawBase64);
-  const inSamples = mulawBytes.length;
-  if (!inSamples) return '';
-  const outSamples = inSamples * 3;
-  const outBuffer = new ArrayBuffer(outSamples * 2);
-  const view = new DataView(outBuffer);
-  for (let i = 0; i < inSamples; i += 1) {
-    const s0 = mulawByteToPcm16(mulawBytes[i]);
-    const s1 = i + 1 < inSamples ? mulawByteToPcm16(mulawBytes[i + 1]) : s0;
-    const baseIdx = i * 3;
-    view.setInt16((baseIdx) * 2, s0, true);
-    view.setInt16((baseIdx + 1) * 2, Math.round((s0 * 2 + s1) / 3), true);
-    view.setInt16((baseIdx + 2) * 2, Math.round((s0 + s1 * 2) / 3), true);
+const RESAMPLE_FACTOR = GROK_SAMPLE_RATE / TWILIO_SAMPLE_RATE;
+
+// Windowed-sinc low-pass at 3.4 kHz (the telephone band) for 24 kHz -> 8 kHz.
+// Without it, everything Grok says between 4 and 12 kHz (s, f, t, ch) folds back
+// into the 0-4 kHz band Twilio carries and smears the speech.
+const DOWNSAMPLE_TAPS = (() => {
+  const length = 63;
+  const cutoff = 3400 / GROK_SAMPLE_RATE;
+  const middle = (length - 1) / 2;
+  const taps = new Float64Array(length);
+  let sum = 0;
+  for (let i = 0; i < length; i += 1) {
+    const x = i - middle;
+    const sinc = x === 0 ? 2 * cutoff : Math.sin(2 * Math.PI * cutoff * x) / (Math.PI * x);
+    const window = 0.54 - 0.46 * Math.cos((2 * Math.PI * i) / (length - 1));
+    taps[i] = sinc * window;
+    sum += taps[i];
   }
-  return uint8ArrayToBase64(new Uint8Array(outBuffer));
+  for (let i = 0; i < length; i += 1) taps[i] /= sum;
+  return taps;
+})();
+
+/**
+ * Streams Twilio 8kHz mu-law into 24kHz PCM16 for Grok. Keeps the last sample
+ * between Twilio frames so interpolation stays continuous across 20 ms frames.
+ */
+export function createTwilioToGrokTranscoder() {
+  let previous = null;
+  return {
+    push(mulawBase64) {
+      const mulawBytes = base64ToUint8Array(mulawBase64);
+      const inSamples = mulawBytes.length;
+      if (!inSamples) return '';
+      const view = new DataView(new ArrayBuffer(inSamples * RESAMPLE_FACTOR * 2));
+      for (let i = 0; i < inSamples; i += 1) {
+        const sample = mulawByteToPcm16(mulawBytes[i]);
+        const from = previous ?? sample;
+        for (let step = 1; step <= RESAMPLE_FACTOR; step += 1) {
+          const value = Math.round(from + ((sample - from) * step) / RESAMPLE_FACTOR);
+          view.setInt16((i * RESAMPLE_FACTOR + step - 1) * 2, value, true);
+        }
+        previous = sample;
+      }
+      return uint8ArrayToBase64(new Uint8Array(view.buffer));
+    },
+  };
 }
 
 /**
- * Converts Grok 24kHz PCM16 little-endian base64 into Twilio 8kHz mu-law base64.
+ * Streams Grok 24kHz PCM16 into Twilio 8kHz mu-law. xAI audio deltas are not
+ * aligned to 3-sample (or even 2-byte) boundaries, so the filter history, the
+ * decimation phase and any split sample carry over from one delta to the next.
+ */
+export function createGrokToTwilioTranscoder() {
+  const history = DOWNSAMPLE_TAPS.length - 1;
+  let samples = new Float64Array(history);
+  let nextOutput = history;
+  let carryByte = null;
+  return {
+    push(pcm24kBase64) {
+      let bytes = base64ToUint8Array(pcm24kBase64);
+      if (carryByte !== null) {
+        const joined = new Uint8Array(bytes.length + 1);
+        joined[0] = carryByte;
+        joined.set(bytes, 1);
+        bytes = joined;
+        carryByte = null;
+      }
+      if (bytes.length % 2) carryByte = bytes[bytes.length - 1];
+      const inSamples = Math.floor(bytes.length / 2);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, inSamples * 2);
+      const buffer = new Float64Array(samples.length + inSamples);
+      buffer.set(samples);
+      for (let i = 0; i < inSamples; i += 1) buffer[samples.length + i] = view.getInt16(i * 2, true);
+
+      const mulaw = [];
+      for (; nextOutput < buffer.length; nextOutput += RESAMPLE_FACTOR) {
+        let acc = 0;
+        for (let tap = 0; tap < DOWNSAMPLE_TAPS.length; tap += 1) acc += DOWNSAMPLE_TAPS[tap] * buffer[nextOutput - tap];
+        mulaw.push(pcm16ToMulawByte(Math.round(acc)));
+      }
+      const keepFrom = nextOutput - history;
+      samples = buffer.slice(keepFrom);
+      nextOutput -= keepFrom;
+      return mulaw.length ? uint8ArrayToBase64(Uint8Array.from(mulaw)) : '';
+    },
+  };
+}
+
+/**
+ * Converts one Twilio 8kHz mu-law base64 payload into 24kHz PCM16 little-endian base64 for Grok.
+ * Live calls use createTwilioToGrokTranscoder() so state carries between frames.
+ */
+export function transcodeTwilioMulaw8kToGrokPcm24k(mulawBase64) {
+  return createTwilioToGrokTranscoder().push(mulawBase64);
+}
+
+/**
+ * Converts one Grok 24kHz PCM16 little-endian base64 chunk into Twilio 8kHz mu-law base64.
+ * Live calls use createGrokToTwilioTranscoder() so state carries between deltas.
  */
 export function transcodeGrokPcm24kToTwilioMulaw8k(pcm24kBase64) {
-  const pcmBytes = base64ToUint8Array(pcm24kBase64);
-  const totalSamples = Math.floor(pcmBytes.byteLength / 2);
-  const outSamples = Math.floor(totalSamples / 3);
-  if (!outSamples) return '';
-  const view = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
-  const mulawBytes = new Uint8Array(outSamples);
-  for (let i = 0; i < outSamples; i += 1) {
-    const idx = i * 3;
-    const s0 = view.getInt16(idx * 2, true);
-    const s1 = view.getInt16((idx + 1) * 2, true);
-    const s2 = view.getInt16((idx + 2) * 2, true);
-    const avg = Math.round((s0 + s1 + s2) / 3);
-    mulawBytes[i] = pcm16ToMulawByte(avg);
-  }
-  return uint8ArrayToBase64(mulawBytes);
+  return createGrokToTwilioTranscoder().push(pcm24kBase64);
 }
 
 // --- Twilio Stream Token Signing & Verification ---
@@ -1609,6 +1672,8 @@ export async function handleGrokTwilioBridge({
   let currentCaller = callerPhone;
   let currentCallSid = callSid;
   let twilioInboundBytes = 0;
+  const callerAudio = createTwilioToGrokTranscoder();
+  let grokAudio = createGrokToTwilioTranscoder();
   let startupAudioBufferBytes = 0;
   const startupAudioBuffer = [];
   let greetingSent = false;
@@ -1722,7 +1787,7 @@ export async function handleGrokTwilioBridge({
       startupAudioBufferBytes += payload.length;
       return;
     }
-    const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
+    const pcm24kBase64 = callerAudio.push(payload);
     if (pcm24kBase64) {
       upstream.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcm24kBase64 }));
       twilioInboundBytes += Math.floor((payload.length * 3) / 4);
@@ -1795,7 +1860,11 @@ export async function handleGrokTwilioBridge({
       error: msg.error?.message || msg.message || 'unknown',
     })),
     // Barge-in: caller started speaking, immediately clear Twilio's playback buffer
-    'input_audio_buffer.speech_started': () => sendToTwilio({ event: 'clear' }),
+    // and drop the cut-off reply's tail so it does not bleed into the next one.
+    'input_audio_buffer.speech_started': () => {
+      grokAudio = createGrokToTwilioTranscoder();
+      sendToTwilio({ event: 'clear' });
+    },
     'conversation.item.input_audio_transcription.completed': async (msg) => {
       if (!msg.transcript) return;
       const text = String(msg.transcript).trim();
@@ -1816,7 +1885,7 @@ export async function handleGrokTwilioBridge({
     if (!msg) return;
     if ((msg.type === 'response.output_audio.delta' || msg.type === 'response.audio.delta') && msg.delta) {
       // 24kHz PCM16 from Grok -> 8kHz mu-law for Twilio
-      const mulawBase64 = transcodeGrokPcm24kToTwilioMulaw8k(String(msg.delta));
+      const mulawBase64 = grokAudio.push(String(msg.delta));
       if (mulawBase64) sendToTwilio({ event: 'media', media: { payload: mulawBase64 } });
       return;
     }
@@ -1893,7 +1962,7 @@ export async function handleGrokTwilioBridge({
         tools: session.tools,
       })));
       for (const payload of startupAudioBuffer) {
-        const pcm24kBase64 = transcodeTwilioMulaw8kToGrokPcm24k(payload);
+        const pcm24kBase64 = callerAudio.push(payload);
         if (pcm24kBase64) {
           upstream.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcm24kBase64 }));
           twilioInboundBytes += Math.floor((payload.length * 3) / 4);
