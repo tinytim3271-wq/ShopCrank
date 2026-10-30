@@ -127,7 +127,8 @@ test('a live run pings D1, inventory, QuickBooks and Stripe webhooks and logs on
   assert.ok(run.entries.some(entry => entry.tool === 'payments.stripe_webhook' && entry.dependency === 'stripe-webhooks'));
   const canaries = run.entries.filter(entry => entry.dependency === 'tool-contract');
   assert.equal(canaries.length, Object.values(TOOL_CONTRACTS).filter(contract => contract.canary).length);
-  assert.ok(canaries.every(entry => entry.status === 'ok'), JSON.stringify(canaries.filter(entry => entry.status !== 'ok')));
+  const gated = name => Boolean(TOOL_CONTRACTS[name].canary.requires);
+  assert.ok(canaries.every(entry => entry.status === (gated(entry.tool) ? 'not_configured' : 'ok')), JSON.stringify(canaries.filter(entry => entry.status !== 'ok')));
 });
 
 test('failures carry status, latency and the error payload', async () => {
@@ -185,7 +186,7 @@ test('dry run validates config without third-party calls, token refresh, storage
   assert.equal(byProbe['stripe.shop_webhook'].status, 'down');
   assert.equal(byProbe['stripe.shop_webhook'].error.code, 'webhook_secret_missing');
   assert.ok(run.entries.every(entry => entry.dryRun === true));
-  const network = run.canaries.filter(item => TOOL_CONTRACTS[item.tool].canary.network);
+  const network = run.canaries.filter(item => TOOL_CONTRACTS[item.tool].canary.network && !TOOL_CONTRACTS[item.tool].canary.requires);
   assert.ok(network.length > 0 && network.every(item => item.status === 'skipped'));
 
   assert.deepEqual(await persistHealthRun(env, run), { stored: false, reason: 'dry_run' });

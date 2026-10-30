@@ -58,6 +58,7 @@ export class AiChatSession {
       previousInteractionId,
       role,
       userId,
+      channel: 'text',
     });
     const costs = usageCostsForResult(this.env, result);
     await recordAiUsage(this.env, {
@@ -100,6 +101,7 @@ export class AiChatSession {
       provider: result.provider,
       keySource: result.keySource || null,
       ...(result.citations?.length ? { citations: result.citations } : {}),
+      ...(result.media?.length ? { media: result.media } : {}),
       ...(result.accessDenied?.length ? { accessDenied: result.accessDenied } : {}),
       ...(result.notice ? { notice: result.notice } : {}),
     });

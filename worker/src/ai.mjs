@@ -757,6 +757,8 @@ export async function runAnthropicTurn(env, {
   persona = 'tech_assistant',
   role = 'technician',
   userId = '',
+  // "text" when the reply is shown on screen; anything else is treated as voice.
+  channel = 'voice',
 } = {}) {
   if (!isAiEnabled(env)) throw new HttpError(503, 'ShopCrank AI is not enabled');
   const injectedShopProvider = shopAnthropic
@@ -799,6 +801,7 @@ export async function runAnthropicTurn(env, {
         role,
         userId,
         persona,
+        channel,
       });
     if (keySource === 'shop' && shopConfig?.status === 'error') {
       await markShopKeyStatus(env, shopId, { status: 'active' });
@@ -939,6 +942,8 @@ Advanced search context (read-only JSON): ${advancedContext}${grounding.knowledg
 
 // Front Desk uses its persona-scoped intake tool, not this legacy intake writer.
 const TEXT_ASSISTANT_EXCLUDED_TOOLS = new Set(['save_call_intake_and_estimate']);
+// Tool results the chat UI renders as media (thumbnails, a video player).
+const MEDIA_RESULT_KINDS = new Set(['youtube_search_results', 'youtube_player']);
 
 async function textAssistantPrompt(env, { shopId, persona, pricing, allowEstimatePreparation, role }) {
   if (persona === 'front_desk') {
@@ -961,12 +966,13 @@ async function runClaudeConversation(env, {
   role,
   userId,
   persona,
+  channel,
 }) {
   const { executeAssistantTool, toolsFor } = await import('./assistant/tools.mjs');
   const pricing = shopId ? await loadShopPricing(env, shopId) : DEFAULT_SHOP_PRICING;
   const route = selectAnthropicModel(env, { requestedModel, autoEscalate, message, sonnetModel });
   const messages = [...normalizeHistory(history), { role: 'user', content: String(message) }];
-  const tools = toolsFor(persona, role, 'anthropic')
+  const tools = toolsFor(persona, role, 'anthropic', { channel, env })
     .filter(tool => !TEXT_ASSISTANT_EXCLUDED_TOOLS.has(tool.name))
     .filter(tool => allowEstimatePreparation || tool.name !== 'prepare_estimate_work_order');
   let inputTokens = 0;
@@ -975,6 +981,7 @@ async function runClaudeConversation(env, {
   const actions = [];
   const citations = [];
   const accessDenied = [];
+  const media = [];
   const system = await textAssistantPrompt(env, { shopId, persona, pricing, allowEstimatePreparation, role });
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -995,8 +1002,9 @@ async function runClaudeConversation(env, {
     for (const call of toolCalls) {
       const result = TEXT_ASSISTANT_EXCLUDED_TOOLS.has(call.name)
         ? { error: 'This tool is not available in the text assistant.' }
-        : await executeAssistantTool(env, { shopId, persona, role, userId, name: call.name, args: call.input });
+        : await executeAssistantTool(env, { shopId, persona, role, userId, name: call.name, args: call.input, channel });
       if (result.kind === 'estimate_work_order_draft' || result.requiresUserReview) actions.push(result);
+      if (MEDIA_RESULT_KINDS.has(result.kind)) media.push(result);
       if (Array.isArray(result.citations)) citations.push(...result.citations);
       if (result.denied) accessDenied.push({ tool: call.name, message: result.message });
       toolResults.push({
@@ -1023,6 +1031,7 @@ async function runClaudeConversation(env, {
     outputTokens,
     ...(citations.length ? { citations: dedupeCitations(citations) } : {}),
     ...(accessDenied.length ? { accessDenied } : {}),
+    ...(media.length ? { media } : {}),
   };
 }
 

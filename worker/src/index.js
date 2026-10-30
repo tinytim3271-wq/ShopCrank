@@ -1402,6 +1402,7 @@ async function aiAnswer(env, shopId, message, history = [], options = {}) {
     persona: options.source === 'agentphone' ? 'front_desk' : options.persona,
     role: options.source === 'agentphone' ? '' : options.role,
     userId: options.userId || '',
+    channel: options.channel === 'text' ? 'text' : 'voice',
   });
   const costs = usageCostsForResult(env, result);
   await recordAiUsage(env, {

@@ -1,7 +1,7 @@
 // Dependency health check for the assistant tools and the integrations behind them.
 //
 // Pings D1, the inventory service (D1 inventory records + each shop's PartsTech
-// connection), QuickBooks Online and Stripe webhooks, runs read-only canary calls
+// connection), QuickBooks Online, Stripe webhooks and the YouTube Data API, runs read-only canary calls
 // of the assistant tools against tool-contracts.mjs, and writes one JSON line per
 // (tool, dependency) result. Runs on HEALTH_CHECK_CRON and on demand from the
 // platform console (POST /api/admin/health-check).
@@ -14,6 +14,7 @@ import { CANONICAL_ORIGIN, DEFAULT_AUTH_EMAIL_FROM } from '../production-host.mj
 import { serializeError } from '../redact.mjs';
 import { accessToken as partstechAccessToken } from '../integrations/partstech.mjs';
 import { pingQuickbooks, quickbooksConfigStatus } from '../integrations/quickbooks.mjs';
+import { pingYouTube, youtubeConfigured } from '../integrations/youtube.mjs';
 import { PARTSTECH_API_BASE, PARTSTECH_SECRET_NAME, partstechConnectionStatus } from '../../../src/modules/partstech.js';
 import { QUICKBOOKS_SECRET_NAME } from '../../../src/modules/quickbooks.js';
 import { checkToolOutput } from './schema.mjs';
@@ -41,6 +42,7 @@ export const DEPENDENCIES = Object.freeze({
   inventory: { label: 'Inventory service (D1 inventory records, PartsTech catalog)' },
   quickbooks: { label: 'QuickBooks Online API' },
   'stripe-webhooks': { label: 'Stripe webhooks' },
+  youtube: { label: 'YouTube Data API (text assistant video tools)' },
 });
 
 function positiveInt(value, fallback, max) {
@@ -170,6 +172,12 @@ function buildProbes(env, { dryRun, shops, fetcher, getSecret, saveSecret }) {
       await env.DB.prepare("SELECT entity_id FROM entities WHERE entity_type = 'inventory' LIMIT 1").all();
       return { status: 'ok' };
     }),
+    probe('youtube', 'youtube.api', toolsUsingDependency('youtube'), async () => {
+      if (!youtubeConfigured(env)) return { status: 'not_configured', error: { message: 'YOUTUBE_API_KEY is not set' } };
+      if (dryRun) return { status: 'ok', detail: 'config valid; YouTube not called (dry run)' };
+      await pingYouTube(env, { fetcher });
+      return { status: 'ok' };
+    }),
     probe('stripe-webhooks', 'stripe.billing', ['billing.stripe_webhook'], async () => {
       const key = String(env.STRIPE_SECRET_KEY || '');
       if (!key) return { status: 'not_configured', error: { message: 'STRIPE_SECRET_KEY is not set (platform billing)' } };
@@ -226,12 +234,15 @@ async function runCanaries(env, { dryRun, timeoutMs, executeTool }) {
   const tasks = Object.entries(TOOL_CONTRACTS)
     .filter(([, contract]) => contract.canary)
     .map(([name, contract]) => async () => {
-      const { persona, role = '', args, network } = contract.canary;
+      const { persona, role = '', args, network, requires, channel } = contract.canary;
+      if (requires && !String(env[requires] || '').trim()) {
+        return { tool: name, shopId, status: 'not_configured', latencyMs: 0, error: { message: `${requires} is not set` } };
+      }
       if (network && dryRun) {
         return { tool: name, shopId, status: 'skipped', latencyMs: 0, error: { message: 'calls a third party; skipped in dry run' } };
       }
       const outcome = await timed(async () => {
-        const result = await executeTool(env, { shopId, persona, role, userId: 'healthcheck', name, args });
+        const result = await executeTool(env, { shopId, persona, role, userId: 'healthcheck', name, args, channel });
         const check = checkToolOutput(name, result);
         if (check.kind === 'ok') return { status: 'ok' };
         if (check.kind === 'error') return { status: 'degraded', error: { message: String(result.error).slice(0, 300), code: 'tool_error' } };
