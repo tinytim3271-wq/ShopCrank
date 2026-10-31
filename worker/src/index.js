@@ -49,6 +49,7 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
+import { preservedArchiveFields, removeEntity } from './routes/entities.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
@@ -499,12 +500,13 @@ export async function putEntity(
 ) {
   const now = new Date().toISOString();
   const existing = await env.DB.prepare(
-    'SELECT created_at, created_by, updated_at FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
   const record = {
+    ...preservedArchiveFields(existing, body, context),
     ...body,
     id,
     shopId: context.shopId,
@@ -820,12 +822,6 @@ async function listChatMessagesForConversations(env, shopId, email, { limit = 0,
   };
 }
 
-async function hasLinkedCustomerEntity(env, shopId, type, customerName) {
-  return Boolean(await env.DB.prepare(
-    "SELECT 1 AS found FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, '$.customer') = ? LIMIT 1",
-  ).bind(shopId, type, customerName).first());
-}
-
 async function listPaymentsByInvoice(env, shopId, invoiceNumber) {
   const result = await env.DB.prepare(
     "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'payments' AND json_extract(data_json, '$.invoiceNumber') = ?",
@@ -964,42 +960,14 @@ async function handleEntities(request, env, context, segments, analytics) {
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {
-    const existing = await getEntity(env, context.shopId, type, id);
-    if (!existing) throw new HttpError(404, 'Not found');
-    if (['conversations', 'chatmessages'].includes(type)
-      && (!members(existing).includes(context.email) || (context.role !== 'admin' && existing.createdBy !== context.userId))) {
-      throw new HttpError(403, 'Not permitted');
-    }
-    if (type === 'customers') {
-      const linkedTypes = ['vehicles', 'orders', 'invoices'];
-      const links = await Promise.all(linkedTypes.map(linkedType => hasLinkedCustomerEntity(env, context.shopId, linkedType, existing.name)));
-      if (links.some(Boolean)) {
-        throw new HttpError(409, "Delete this customer's vehicles, work orders, and invoices first");
-      }
-    }
-    const statements = [env.DB.prepare(
-      'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-    ).bind(context.shopId, type, id)];
-    if (type === 'invoices') {
-      const payments = await listPaymentsByInvoice(env, context.shopId, existing.number || existing.id);
-      for (const payment of payments.filter(record => record.invoiceNumber === (existing.number || existing.id))) {
-        statements.push(env.DB.prepare(
-          'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-        ).bind(context.shopId, 'payments', payment.id));
-      }
-    }
-    if (type === 'employees' && existing.email) {
-      statements.push(env.DB.prepare(
-        'DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?',
-      ).bind(existing.email, context.shopId));
-    }
-    await env.DB.batch(statements);
-    captureForContext(analytics, context, 'entity_deleted', { entity_type: type });
-    capturePostHogEvent(env, context, 'entity_deleted', {
+    const result = await removeEntity(env, context, type, id, { putEntity });
+    const event = result.action === 'archive' ? 'entity_archived' : 'entity_deleted';
+    captureForContext(analytics, context, event, { entity_type: type });
+    capturePostHogEvent(env, context, event, {
       entity_type: type,
       actor_role: context.role,
     });
-    return new Response(null, { status: 204 });
+    return result.status === 204 ? new Response(null, { status: 204 }) : json(result.body);
   }
   throw new HttpError(405, 'Method not allowed');
 }

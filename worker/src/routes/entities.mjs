@@ -8,6 +8,16 @@ import {
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
 import { syncAccessUser } from '../access-users.mjs';
+import {
+  SELF_MANAGED_DELETE_TYPES,
+  archivedRecord,
+  canDeleteRecords,
+  deletionPlan,
+  isArchived,
+  linkLookups,
+} from '../../../src/modules/record-retention.js';
+
+const ARCHIVE_FIELDS = ['archivedAt', 'archivedBy', 'archiveReasons'];
 
 function entityRecord(row, type = '') {
   if (!row) return null;
@@ -55,12 +65,13 @@ export async function listEntities(env, shopId, type, { limit = 0, cursor = '' }
 export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId) {
   const now = new Date().toISOString();
   const existing = await env.DB.prepare(
-    'SELECT created_at, created_by, updated_at FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
   const record = {
+    ...preservedArchiveFields(existing, body, context),
     ...body,
     id,
     shopId: context.shopId,
@@ -76,6 +87,69 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
       updated_at = excluded.updated_at
   `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
   return record;
+}
+
+/**
+ * Saves from stale clients must not silently un-archive a record. Only an
+ * owner/admin sending `archivedAt: null` restores it.
+ */
+export function preservedArchiveFields(existingRow, body, context) {
+  const previous = existingRow ? entityRecord(existingRow) : null;
+  if (!isArchived(previous)) return {};
+  if (body.archivedAt === null) {
+    if (!canDeleteRecords(context.role)) throw new HttpError(403, 'Only the shop owner or an admin can restore archived records');
+    return {};
+  }
+  if (body.archivedAt !== undefined) return {};
+  return Object.fromEntries(ARCHIVE_FIELDS.filter(field => previous[field] !== undefined).map(field => [field, previous[field]]));
+}
+
+async function countLinkedEntities(env, shopId, spec) {
+  const row = await env.DB.prepare(
+    'SELECT COUNT(*) AS found FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, ?) = ?',
+  ).bind(shopId, spec.type, `$.${spec.field}`, spec.value).first();
+  return Number(row?.found || 0);
+}
+
+export async function linkCountsForRecord(env, shopId, type, record) {
+  const { financial, blocking } = linkLookups(type, record);
+  const counts = {};
+  for (const spec of [...financial, ...blocking]) {
+    const key = `${spec.type}.${spec.field}`;
+    counts[key] = (counts[key] || 0) + await countLinkedEntities(env, shopId, spec);
+  }
+  return counts;
+}
+
+function membershipDeleteAllowed(existing, context) {
+  return members(existing).includes(context.email) && (context.role === 'admin' || existing.createdBy === context.userId);
+}
+
+/**
+ * Remove an entity under the shop deletion policy: owner/admin only; records
+ * with financial ties are archived; returns `{ status, body }`.
+ */
+export async function removeEntity(env, context, type, id, { putEntity: put = putEntity } = {}) {
+  const existing = await getEntity(env, context.shopId, type, id);
+  if (!existing) throw new HttpError(404, 'Not found');
+  if (SELF_MANAGED_DELETE_TYPES.has(type)) {
+    if (!membershipDeleteAllowed(existing, context)) throw new HttpError(403, 'Not permitted');
+    await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing));
+    return { status: 204, action: 'delete' };
+  }
+  if (!canDeleteRecords(context.role)) throw new HttpError(403, 'Only the shop owner or an admin can delete records');
+  if (isArchived(existing)) return { status: 200, action: 'archive', body: { archived: true, record: existing, reasons: existing.archiveReasons || [] } };
+  const plan = deletionPlan(type, existing, await linkCountsForRecord(env, context.shopId, type, existing));
+  if (plan.action === 'blocked') throw new HttpError(409, plan.message);
+  if (plan.action === 'archive') {
+    const record = await put(env, context, type, id, archivedRecord(existing, { actor: context.email, reasons: plan.reasons }));
+    if (type === 'employees' && existing.email) {
+      await env.DB.prepare('DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?').bind(existing.email, context.shopId).run();
+    }
+    return { status: 200, action: 'archive', body: { archived: true, record, reasons: plan.reasons } };
+  }
+  await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing));
+  return { status: 204, action: 'delete' };
 }
 
 function members(record) {
@@ -156,19 +230,6 @@ export async function listChatMessagesForConversations(env, shopId, email, { lim
     records: rows.map(entityRecord).filter(Boolean),
     nextCursor: boundedLimit && rows.length === boundedLimit ? String(rows.at(-1)?.updated_at || '') : null,
   };
-}
-
-async function hasLinkedCustomerEntity(env, shopId, type, customerName) {
-  return Boolean(await env.DB.prepare(
-    "SELECT 1 AS found FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, '$.customer') = ? LIMIT 1",
-  ).bind(shopId, type, customerName).first());
-}
-
-async function listPaymentsByInvoice(env, shopId, invoiceNumber) {
-  const result = await env.DB.prepare(
-    "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'payments' AND json_extract(data_json, '$.invoiceNumber') = ?",
-  ).bind(shopId, invoiceNumber).all();
-  return (result.results || []).map(entityRecord).filter(Boolean);
 }
 
 /**
@@ -287,24 +348,8 @@ export async function handleEntities(request, env, context, segments) {
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {
-    const existing = await getEntity(env, context.shopId, type, id);
-    if (!existing) throw new HttpError(404, 'Not found');
-    if (['conversations', 'chatmessages'].includes(type)
-      && (!members(existing).includes(context.email) || (context.role !== 'admin' && existing.createdBy !== context.userId))) {
-      throw new HttpError(403, 'Not permitted');
-    }
-    if (type === 'customers') {
-      const linkedTypes = ['vehicles', 'orders', 'invoices'];
-      const links = await Promise.all(linkedTypes.map(linkedType => hasLinkedCustomerEntity(env, context.shopId, linkedType, existing.name)));
-      if (links.some(Boolean)) {
-        throw new HttpError(409, "Delete this customer's vehicles, work orders, and invoices first");
-      }
-    }
-    const relatedPayments = type === 'invoices'
-      ? await listPaymentsByInvoice(env, context.shopId, existing.number || existing.id)
-      : [];
-    await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing, relatedPayments));
-    return new Response(null, { status: 204 });
+    const result = await removeEntity(env, context, type, id);
+    return result.status === 204 ? new Response(null, { status: 204 }) : json(result.body);
   }
   throw new HttpError(405, 'Method not allowed');
 }
