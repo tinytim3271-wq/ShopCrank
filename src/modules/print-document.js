@@ -5,6 +5,7 @@
  */
 
 import { escapeHtml } from '../shared/html.js';
+import { withPrintBaseStyles } from './record-print.js';
 
 function resolveBaseHref(target) {
   const candidate = String(target?.document?.baseURI || target?.location?.href || '').trim();
@@ -145,7 +146,7 @@ export function openPrintDocument(html, options = {}) {
   const blockedMessage = options.blockedMessage || 'Allow pop-ups to print';
   const autoPrint = options.autoPrint !== false;
   const schedule = options.schedule || (fn => setTimeout(fn, 0));
-  const markup = withBaseHref(html, target);
+  const markup = withBaseHref(withPrintBaseStyles(html), target);
   const blobAvailable = typeof target.Blob === 'function' && typeof target.URL?.createObjectURL === 'function';
   if (blobAvailable) {
     if (openBlobDocument(target, markup, schedule, autoPrint)) return true;
