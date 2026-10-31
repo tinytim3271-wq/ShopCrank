@@ -118,3 +118,27 @@ test('review fixes: core deposits are not sales, and invoice discounts reduce co
   assert.equal(kpis.partsMargin, 55.6);
   assert.equal(kpis.sales, 90, '$135 discounted subtotal less the $45 discounted refundable core');
 });
+
+test('evening clock-ins and timestamps count toward the shop’s local day, not UTC', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const { default: process } = await import('node:process');
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import { computeShopKpis } from './src/modules/shop-kpis.js';
+    // 9:30 pm CDT on Oct 31 is already Nov 1 in UTC.
+    const k = computeShopKpis({
+      invoices: [{ number: 'INV-1', ro: 'RO-1', status: 'paid', createdAt: '2026-11-01T02:30:00Z', amount: 100, subtotal: 100, lines: [] }],
+      orders: [{ id: 'RO-1', vehicle: 'Truck' }],
+      jobClockEntries: [{ userId: 't', workOrderId: 'RO-1', clockIn: '2026-11-01T01:00:00Z', hours: 1 }],
+      shiftEntries: [{ userId: 't', clockIn: '2026-11-01T01:00:00Z', hours: 2 }],
+      users: [{ id: 't', payRate: 20 }],
+      from: '2026-10-01', to: '2026-10-31',
+    });
+    console.log(JSON.stringify(k));
+  `], { env: { ...process.env, TZ: 'America/Chicago' }, cwd: fileURLToPath(new URL('../..', import.meta.url)) }).toString();
+  const kpis = JSON.parse(out);
+  assert.equal(kpis.carCount, 1);
+  assert.equal(kpis.sales, 100);
+  assert.equal(kpis.techs[0].clockedHours, 1);
+  assert.equal(kpis.techs[0].shiftHours, 2);
+});

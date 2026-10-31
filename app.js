@@ -5686,10 +5686,10 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
 
   // src/modules/shop-kpis.js
   function isoDay(value2) {
-    const text2 = String(value2 || "");
-    if (/^\d{4}-\d{2}-\d{2}/.test(text2)) return text2.slice(0, 10);
+    const text2 = String(value2 || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) return text2;
     const date = new Date(text2);
-    return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+    return Number.isNaN(date.getTime()) ? "" : localIsoDate(date);
   }
   function periodRange(period, today = /* @__PURE__ */ new Date()) {
     const y = today.getFullYear();
@@ -5867,6 +5867,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   var round, ratio, VOID, VIN, pct;
   var init_shop_kpis = __esm({
     "src/modules/shop-kpis.js"() {
+      init_dates();
       round = (value2, places = 2) => Math.round((Number(value2) || 0) * 10 ** places) / 10 ** places;
       ratio = (numerator, denominator) => denominator > 0 ? numerator / denominator : null;
       VOID = /* @__PURE__ */ new Set(["void", "voided", "cancelled", "canceled", "draft"]);
@@ -16018,8 +16019,8 @@ ${line}`.trim();
     };
   }
   function licenseExpiryField(value2 = "") {
-    const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-    const latest = new Date(Date.now() + 3650 * 864e5).toISOString().slice(0, 10);
+    const tomorrow = localIsoDate(new Date(Date.now() + 864e5));
+    const latest = localIsoDate(new Date(Date.now() + 3650 * 864e5));
     return `<label>Expiration date *<input name="expiresAt" type="date" required min="${tomorrow}" max="${latest}" value="${escapeHtml(value2)}"/></label>`;
   }
   function openLicenseApprove(requestId, business, devices) {

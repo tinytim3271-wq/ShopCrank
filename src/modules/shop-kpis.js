@@ -12,15 +12,20 @@
  *  - Productivity: hours clocked on jobs ÷ hours on shift.
  */
 
+import { localIsoDate } from '../shared/dates.js';
+
 const round = (value, places = 2) => Math.round((Number(value) || 0) * 10 ** places) / 10 ** places;
 const ratio = (numerator, denominator) => (denominator > 0 ? numerator / denominator : null);
 const VOID = new Set(['void', 'voided', 'cancelled', 'canceled', 'draft']);
 
+// The shop's calendar day for a stored value. A plain YYYY-MM-DD is already a
+// day; a timestamp (clock-ins, createdAt) is converted in local time, so a
+// 9:30 pm clock-in on the 31st counts toward that month, not the next (UTC).
 function isoDay(value) {
-  const text = String(value || '');
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const text = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
   const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+  return Number.isNaN(date.getTime()) ? '' : localIsoDate(date);
 }
 
 export function periodRange(period, today = new Date()) {
