@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import process from 'node:process';
+import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -8,6 +10,7 @@ import { buildPartstechOrderRequest } from '../modules/partstech.js';
 import * as Filing from '../modules/filing/index.js';
 import { toLocalIsoDate } from '../shared/dates.js';
 import { escapeHtml } from '../shared/html.js';
+import { combinedSalesTaxRate, normalizeJurisdictions } from '../modules/filing/jurisdictions.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
@@ -194,18 +197,87 @@ test('printed per-finding inspection photos have width and height bounds', () =>
 
 /** Returns the source of the function whose definition starts with `prefix`. */
 function functionSource(prefix) {
-  const start = legacy.indexOf(prefix);
+  return sourceFunction(prefix, legacy);
+}
+
+function sourceFunction(prefix, source) {
+  const start = source.indexOf(prefix);
   if (start < 0) throw new Error(`not found: ${prefix}`);
   let depth = 0;
-  let i = legacy.indexOf('{', start);
-  for (; i < legacy.length; i += 1) {
-    if (legacy[i] === '{') depth += 1;
-    else if (legacy[i] === '}') {
+  let parentheses = 0;
+  let quote = '';
+  let escaped = false;
+  let bodyStart = -1;
+  for (let i = source.indexOf('(', start); i < source.length; i += 1) {
+    const char = source[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'" || char === '`') quote = char;
+    else if (char === '(') parentheses += 1;
+    else if (char === ')' && --parentheses === 0) {
+      bodyStart = source.indexOf('{', i + 1);
+      break;
+    }
+  }
+  let i = bodyStart;
+  for (; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
       depth -= 1;
       if (depth === 0) break;
     }
   }
-  return legacy.slice(start, i + 1);
+  return source.slice(start, i + 1);
+}
+
+function functionSources(source) {
+  const functions = [];
+  const declaration = /(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/g;
+  let match;
+  while ((match = declaration.exec(source)) !== null) {
+    const body = sourceFunction(match[0], source.slice(match.index));
+    functions.push(body);
+  }
+  return functions;
+}
+
+function blockAt(source, openingBrace) {
+  let depth = 0;
+  for (let i = openingBrace; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}' && --depth === 0) return source.slice(openingBrace, i + 1);
+  }
+  return '';
+}
+
+function handlerUsesSubmitButton(body, id) {
+  const selector = new RegExp(`querySelector\\(["']#${id}["']\\)`);
+  const selectedForm = selector.exec(body);
+  if (!selectedForm) return false;
+  const tail = body.slice(selectedForm.index, selectedForm.index + 1200);
+  const eventIndex = tail.search(/\.addEventListener\(\s*["']submit["']|\.onsubmit\s*=/);
+  if (eventIndex < 0) return false;
+  const arrow = tail.indexOf('=>', eventIndex);
+  const openingBrace = arrow < 0 ? -1 : tail.indexOf('{', arrow);
+  if (openingBrace < 0) return false;
+  return /querySelector\(["']button\[type=submit\]["']\)/.test(blockAt(tail, openingBrace));
+}
+
+function submitButtonOffenders(source) {
+  const offenders = new Set();
+  for (const body of functionSources(source)) {
+    const formRe = /<form[^>]*id="([a-z0-9-]+)"[\s\S]*?<\/form>/g;
+    let match;
+    while ((match = formRe.exec(body)) !== null) {
+      const id = match[1];
+      const buttons = [...match[0].matchAll(/<button[^>]*>/g)].map((button) => button[0]);
+      if (buttons.some((button) => button.includes('type="submit"'))) continue;
+      if (handlerUsesSubmitButton(body, id)) offenders.add(id);
+    }
+  }
+  return [...offenders].sort();
 }
 
 test('PartsTech ordering excludes declined parts before validating the remaining cart', async () => {
@@ -257,26 +329,147 @@ test('the vehicle form\'s save button is a typed submit button', () => {
   assert.match(form, /querySelector\("button\[type=submit\]"\)/);
 });
 
+test('fresh-shop billing uses the default jurisdiction rate', () => {
+  const initial = functionSource('function initialState(');
+  assert.match(initial, /base\.taxSettings\.rate = Filing\.combinedSalesTaxRate\(Filing\.DEFAULT_TX_JURISDICTIONS\)/);
+  assert.match(legacy, /loadShopEntities = async function \(\) \{[\s\S]*?rate: Number\(tax\.rate\) \|\| 0/);
+});
+
+test('filing reports and exports require the configured rate to match jurisdictions', () => {
+  assert.match(functionSource('function isFilingRateConsistent('), /Filing\.salesTaxRateMatchesJurisdictions/);
+  assert.match(functionSource('async function generateTaxReportFromForm('), /if \(!filingRateIsConsistent\(\)\) return;/);
+  assert.match(functionSource('function exportSalesTaxCsv()'), /!filingRateIsConsistent\(\)/);
+  assert.match(functionSource('function exportTexasWebfilePackage()'), /!filingRateIsConsistent\(\)/);
+  assert.match(legacy, /document\.querySelector\('#print-tax-report'\)\?\.addEventListener\('click', event => \{\s*if \(!filingRateIsConsistent\(\)\)/);
+  assert.match(functionSource('reports = function () {'), /const result = rateMatches \? taxReportResult : null/);
+});
+
+test('Texas filing consistency checks do not block other states', () => {
+  const checkRate = (taxSettings) => runInNewContext(
+    `(${functionSource('function isFilingRateConsistent(')})`,
+    {
+      state: { taxSettings },
+      Filing: {
+        normalizeJurisdictions: () => [],
+        combinedSalesTaxRate: () => 6.25,
+        salesTaxRateMatchesJurisdictions: (rate) => rate === 6.25,
+      },
+    },
+  )();
+
+  assert.equal(checkRate({ state: 'OR', rate: 0, jurisdictions: null }), true);
+  assert.equal(checkRate({ state: 'CA', rate: 7.25, jurisdictions: null }), true);
+  assert.equal(checkRate({ state: 'TX', rate: 8.25, jurisdictions: null }), false);
+});
+
+test('enhanced tax settings submit saves jurisdictions and their matching rate', async () => {
+  assert.doesNotMatch(
+    legacy,
+    /document\.querySelector\(["']#tax-settings-form["']\)\?\.addEventListener\(["']submit["']/,
+  );
+
+  const registrations = [];
+  const form = {
+    dataset: {},
+    data: {
+      state: 'TX',
+      taxId: '  TX-123  ',
+      rate: '8.25',
+      filingFrequency: 'Monthly',
+      ein: '  12-3456789 ',
+      texasTaxpayerNumber: '1-123456789-0',
+      webfileNumber: 'RT123456',
+      jurisdictionsJson: '[{"code":"4800001","name":"Texas","kind":"state","rate":6.25}]',
+      laborTaxable: 'off',
+      feesTaxable: 'on',
+    },
+    querySelector(selector) {
+      return selector === '[name=ein]' ? {} : null;
+    },
+    addEventListener(type, listener, options) {
+      registrations.push({ type, listener, options });
+    },
+  };
+  const saved = [];
+  const context = {
+    state: { taxSettings: {} },
+    Filing: {
+      combinedSalesTaxRate,
+      normalizeJurisdictions,
+    },
+    readFormValues: target => target.data,
+    saveShopEntity: async (entity, record) => saved.push({ entity, record }),
+    now: () => '2026-10-22T10:00:00.000Z',
+    toast() {},
+    render() {},
+  };
+  const bindTaxSettingsForm = runInNewContext(`(${functionSource('function bindTaxSettingsForm(')})`, context);
+  bindTaxSettingsForm(form);
+
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].type, 'submit');
+  assert.equal(registrations[0].options.capture, true);
+  let prevented = false;
+  await registrations[0].listener({
+    target: form,
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].entity, 'shopsettings');
+  assert.equal(saved[0].record.rate, 6.25);
+  assert.equal(saved[0].record.taxId, 'TX-123');
+  assert.deepEqual(JSON.parse(JSON.stringify(saved[0].record.jurisdictions)), [
+    { code: '4800001', name: 'Texas', kind: 'state', rate: 6.25, required: false },
+  ]);
+  assert.equal(context.state.taxSettings.rate, saved[0].record.rate);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.state.taxSettings.jurisdictions)),
+    JSON.parse(JSON.stringify(saved[0].record.jurisdictions)),
+  );
+
+  form.data.jurisdictionsJson = '[]';
+  await registrations[0].listener({ target: form, preventDefault() {}, stopImmediatePropagation() {} });
+
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].record.rate, 6.25);
+  assert.deepEqual(JSON.parse(JSON.stringify(saved[1].record.jurisdictions)), [
+    { code: '2001000', name: 'State of Texas', kind: 'state', rate: 6.25, required: true },
+  ]);
+});
+
 test('every form whose handler looks up button[type=submit] has a typed submit button', () => {
-  const offenders = [];
-  const formRe = /<form[^>]*id="([a-z0-9-]+)"[\s\S]*?<\/form>/g;
-  let match;
-  while ((match = formRe.exec(legacy)) !== null) {
-    const buttons = [...match[0].matchAll(/<button[^>]*>/g)].map((button) => button[0]);
-    if (buttons.some((button) => button.includes('type="submit"'))) continue;
-    // Find the handler statement that belongs to THIS form. A handler is one
-    // statement: "#form-id" up to the end of the expression it starts.
-    const id = match[1];
-    const handlerRe = new RegExp(`#${id}[^;]{0,1200}?button\\[type=submit\\]`);
-    if (handlerRe.test(legacy)) offenders.push(id);
-  }
-  assert.deepEqual(offenders, [], `these forms break their save handler: ${offenders.join(', ')}`);
+  assert.deepEqual(submitButtonOffenders(legacy), []);
+});
+
+test('cross-form submit detection catches broken forms after intervening statements', () => {
+  const broken = `function openVehicleForm() {
+    const html = '<form id="vehicle-form"><button>Save vehicle</button></form>';
+    document.querySelector("#vehicle-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const form = document.querySelector("#vehicle-form");
+      const button = form.querySelector("button[type=submit]");
+    });
+  }`;
+  assert.deepEqual(submitButtonOffenders(broken), ['vehicle-form']);
 });
 
 test('the work order estimate picker offers only the shop\'s own estimates', () => {
   const sources = functionSource('function availableEstimateSources(');
   assert.doesNotMatch(sources, /REFERENCE_ESTIMATE/);
   assert.match(sources, /state\.estimates/);
+});
+
+test('work order picker is conditional while estimate adjustments remain available', () => {
+  const controls = functionSource('function addEstimateSourceControls(');
+  const adjustments = controls.indexOf('estimate-adjustments');
+  const emptySources = controls.indexOf('if (!sources.length) return;');
+  const options = controls.indexOf('const options = sources.map');
+  const panel = controls.indexOf('body.insertAdjacentHTML');
+  assert.ok(adjustments >= 0 && adjustments < emptySources);
+  assert.ok(emptySources < options && options < panel);
 });
 
 test('the estimate register does not advertise the reference sample', () => {
@@ -309,6 +502,12 @@ test('the sign-in handler is split into named functions', () => {
   assert.match(handler, /resetFailedSignIn\(/);
 });
 
+test('desktop email sign-in explains browser handoff and link expiry', () => {
+  const signIn = functionSource('async function signInWithEmailLink(');
+  assert.match(signIn, /isDesktopApp \? "Check your email and open the sign-in link\..*Open ShopCrank.*15 minutes\."/);
+  assert.match(signIn, /result\.message \|\| "Check your email for a sign-in link\. It expires in 15 minutes\."/);
+});
+
 test('no invoice date is built with toISOString', () => {
   // A date built from toISOString is a UTC day, not the shop's day.
   const offenders = [];
@@ -318,4 +517,22 @@ test('no invoice date is built with toISOString', () => {
     }
   }
   assert.deepEqual(offenders, [], `invoice dates still use UTC: ${offenders.join(', ')}`);
+});
+
+test('invoice editor round-trips date-only values in America/Chicago', () => {
+  const previous = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+  try {
+    const invoiceDateValue = runInNewContext(`(${functionSource('function invoiceDateValue(')})`, { toLocalIsoDate });
+    const invoice = { date: '2026-10-31', due: '2026-11-14' };
+    const formValues = {
+      date: invoiceDateValue(invoice.date),
+      due: invoiceDateValue(invoice.due),
+    };
+    assert.deepEqual({ ...invoice, ...formValues }, invoice);
+    assert.match(functionSource('function openInvoiceEditor('), /date: data\.date, due: data\.due/);
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
 });
