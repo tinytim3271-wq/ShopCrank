@@ -182,3 +182,33 @@ test('tax report counts only the taxable subtotal as taxable sales (labor untaxe
   assert.equal(report.rows[0].tax, 8.05);
   assert.equal(report.rows[0].nontaxable, 252);
 });
+
+test('tax report preserves legacy invoice recognition after a partial payment import', () => {
+  const invoice = {
+    number: 'INV-MIGRATED',
+    customer: 'Maria',
+    amount: 120,
+    subtotal: 110,
+    tax: 10,
+    status: 'partial',
+    paymentImportLegacyCloseout: { paidAt: '2025-03-15T12:00:00.000Z' },
+    paymentImportLegacyRecognition: { amount: 120, receivedAt: '2025-03-15T12:00:00.000Z' },
+  };
+  const payments = [{
+    invoiceNumber: invoice.number,
+    customer: invoice.customer,
+    amount: 40,
+    receivedAt: '2026-09-05T12:00:00.000Z',
+    status: 'completed',
+  }];
+  const originalPeriod = buildTaxReport(payments, [invoice], 8.25, '2025-03-01', '2025-03-31');
+  const importPeriod = buildTaxReport(payments, [invoice], 8.25, '2026-09-01', '2026-09-30');
+
+  assert.equal(originalPeriod.totals.gross, 120);
+  assert.equal(originalPeriod.rows[0].date, '2025-03-15T12:00:00.000Z');
+  assert.deepEqual(importPeriod.rows, []);
+
+  const priorImport = { ...invoice };
+  delete priorImport.paymentImportLegacyRecognition;
+  assert.equal(buildTaxReport(payments, [priorImport], 8.25, '2025-03-01', '2025-03-31').totals.gross, 120);
+});

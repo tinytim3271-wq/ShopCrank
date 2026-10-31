@@ -14,6 +14,7 @@ import { escapeHtml } from '../shared/html.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const legacy = readFileSync(join(root, 'runtime', 'legacy.js'), 'utf8');
+const filingOverrides = readFileSync(join(root, 'runtime', 'filing-overrides.js'), 'utf8');
 
 test('HTML sinks fail closed if DOMPurify is unavailable, including decoded DOM text', () => {
   const attack = '<img src=x onerror=alert(1)><script>alert(1)</script>';
@@ -52,6 +53,58 @@ test('invoice editor roundtrips date-only values without UTC drift', () => {
   assert.equal(dateValue('2026-10-31'), '2026-10-31');
   assert.equal(dateValue('2026-02-30'), '');
   assert.equal(dateValue('2024-02-29'), '2024-02-29');
+});
+
+test('tax reports keep migrated recognition dates while payment history keeps CSV receipt dates', () => {
+  const invoice = {
+    number: 'INV-MIGRATED',
+    customer: 'Maria',
+    amount: 120,
+    status: 'partial',
+    paymentImportLegacyCloseout: { paidAt: '2025-03-15T12:00:00.000Z' },
+  };
+  const payment = {
+    invoiceNumber: invoice.number,
+    customer: invoice.customer,
+    amount: 40,
+    receivedAt: '2026-09-05T12:00:00.000Z',
+    status: 'completed',
+  };
+  const context = {
+    state: { invoices: [invoice], payments: [payment] },
+    getFinanceDerived: () => ({ invoiceByNumber: new Map([[invoice.number, invoice]]) }),
+    invoiceTaxBreakdown: () => ({ subtotal: 110, tax: 10 }),
+  };
+  const report = vm.runInNewContext(`${functionSource('function paymentRecords(')}; ${functionSource('function taxReport(')}; taxReport('2025-03-01', '2025-03-31')`, context);
+  const history = vm.runInNewContext(`${functionSource('function paymentRecords(')}; paymentRecords()`, context);
+
+  assert.equal(report.totals.gross, 120);
+  assert.equal(report.rows[0].date, '2025-03-15T12:00:00.000Z');
+  assert.equal(history[0].receivedAt, '2026-09-05T12:00:00.000Z');
+});
+
+test('tax reporting preserves migrated recognition while payment history keeps CSV receipt dates', () => {
+  const invoice = {
+    number: 'INV-LEGACY', customer: 'Morgan Ray', status: 'partial',
+    paymentImportLegacyRecognition: { amount: 100, receivedAt: '2026-09-15T12:00:00.000Z' },
+  };
+  const records = vm.runInNewContext(`${functionSource('function paymentRecords(')}; paymentRecords`, {
+    state: {
+      invoices: [invoice],
+      payments: [{
+        invoiceNumber: invoice.number, amount: 40, receivedAt: '2026-10-05T12:00:00.000Z', status: 'completed',
+      }],
+    },
+  });
+  const history = records();
+  const reporting = records({ forReporting: true });
+  assert.equal(history.length, 1);
+  assert.equal(history[0].amount, 40);
+  assert.equal(history[0].receivedAt, '2026-10-05T12:00:00.000Z');
+  assert.equal(reporting.length, 1);
+  assert.equal(reporting[0].amount, 100);
+  assert.equal(reporting[0].receivedAt, '2026-09-15T12:00:00.000Z');
+  assert.equal([...filingOverrides.matchAll(/paymentRecords\(\{ forReporting: true \}\)/g)].length, 2);
 });
 
 test('Texas filing mismatches block generation, exports, and printing but not other states', async () => {

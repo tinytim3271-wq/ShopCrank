@@ -217,17 +217,39 @@ export function buildTaxReport(payments, invoices, fallbackRate, from, to) {
   const start = new Date(from);
   const end = new Date(to);
   end.setUTCHours(23, 59, 59, 999);
-  const completedPayments = payments.filter(payment => payment.status === 'completed');
-  const legacyPaidInvoices = invoices
-    .filter(invoice => invoice.status === 'paid'
-      && !payments.some(payment => payment.invoiceNumber === invoice.number))
-    .map(invoice => ({
+  const legacyRecognitions = invoices.map(invoice => {
+    const recognition = invoice.paymentImportLegacyRecognition
+      || (invoice.paymentImportLegacyCloseout ? {
+        amount: invoice.amount,
+        receivedAt: invoice.paymentImportLegacyCloseout.paidAt
+          || invoice.paymentImportLegacyCloseout.closedAt
+          || invoice.date,
+      } : null);
+    return recognition ? {
       invoiceNumber: invoice.number,
       customer: invoice.customer,
-      amount: invoice.amount,
-      receivedAt: invoice.paidAt || invoice.closedAt || invoice.date,
+      amount: recognition.amount,
+      receivedAt: recognition.receivedAt,
       status: 'completed',
-    }));
+    } : null;
+  }).filter(Boolean);
+  const legacyInvoiceNumbers = new Set(legacyRecognitions.map(invoice => invoice.invoiceNumber));
+  const completedPayments = payments.filter(payment => payment.status === 'completed'
+    && !legacyInvoiceNumbers.has(payment.invoiceNumber));
+  const legacyPaidInvoices = [
+    ...legacyRecognitions,
+    ...invoices
+      .filter(invoice => invoice.status === 'paid'
+        && !legacyInvoiceNumbers.has(invoice.number)
+        && !payments.some(payment => payment.invoiceNumber === invoice.number))
+      .map(invoice => ({
+        invoiceNumber: invoice.number,
+        customer: invoice.customer,
+        amount: invoice.amount,
+        receivedAt: invoice.paidAt || invoice.closedAt || invoice.date,
+        status: 'completed',
+      })),
+  ];
   const rows = [...completedPayments, ...legacyPaidInvoices]
     .filter(payment => new Date(payment.receivedAt) >= start && new Date(payment.receivedAt) <= end)
     .map(payment => {
