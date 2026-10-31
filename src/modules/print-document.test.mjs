@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { openPrintDocument } from './print-document.js';
+import { withPrintBaseStyles } from './record-print.js';
 
 function fakePrintWindow(readyState = 'complete') {
   const calls = [];
@@ -42,7 +43,7 @@ describe('openPrintDocument', () => {
     assert.equal(ok, true);
     assert.deepEqual(opened, [{ url: '', target: '_blank', features: undefined }]);
     assert.equal(win.opener, null);
-    assert.deepEqual(calls.filter(call => Array.isArray(call) && call[0] === 'write'), [['write', html]]);
+    assert.deepEqual(calls.filter(call => Array.isArray(call) && call[0] === 'write'), [['write', withPrintBaseStyles(html)]]);
     assert.ok(calls.includes('print'));
   });
 
@@ -162,8 +163,19 @@ describe('openPrintDocument', () => {
       schedule: fn => fn(),
     });
     assert.equal(ok, true);
-    assert.match(blobHtml, /<head><base href="https:\/\/www\.shopcrank\.com\/app\?ro=&quot;1048&quot;&amp;bay=&lt;2&gt;"><meta charset="utf-8"><\/head>/);
+    assert.match(blobHtml, /<head><base href="https:\/\/www\.shopcrank\.com\/app\?ro=&quot;1048&quot;&amp;bay=&lt;2&gt;"><meta charset="utf-8"><style data-print-base>[^<]*<\/style><\/head>/);
     assert.match(blobHtml, /<img src="\/api\/files\/inspection-photo-1\.jpg" alt="Inspection photo">/);
     assert.ok(calls.includes('print'));
+  });
+
+  it('adds 12pt print base styles inside the document head without breaking the doctype', () => {
+    const { win, calls } = fakePrintWindow();
+    openPrintDocument('<!DOCTYPE html><html><body><p>Job card</p></body></html>', {
+      windowObject: { open: () => win },
+      schedule: fn => fn(),
+    });
+    const written = calls.find(call => Array.isArray(call) && call[0] === 'write')[1];
+    assert.match(written, /^<!DOCTYPE html><html><head><style data-print-base>@media print\{html,body\{font-size:12pt!important/);
+    assert.equal(withPrintBaseStyles(written), written, 'injection is idempotent');
   });
 });

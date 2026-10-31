@@ -366,7 +366,7 @@ test('putEntity rejects stale If-Match so remote approvals are not overwritten',
           bind(...args) {
             return {
               async first() {
-                if (/SELECT created_at, created_by, updated_at FROM entities/i.test(sql)) {
+                if (/SELECT created_at, created_by, updated_at(?:, data_json)? FROM entities/i.test(sql)) {
                   return {
                     created_at: '2026-10-06T10:00:00.000Z',
                     created_by: 'writer-1',
