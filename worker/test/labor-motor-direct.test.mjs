@@ -104,8 +104,8 @@ test('ALLDATA uses the platform adapter when configured and fails closed otherwi
     ALLDATA_LABOR_API_KEY: 'ad-key',
     ALLDATA_LABOR_LICENSE_CONFIRMED: 'true',
   };
-  assert.deepEqual(platformLaborStatus({ ...alldataEnv, ALLDATA_LABOR_LICENSE_CONFIRMED: '' }), { motor: false, alldata: false });
-  assert.deepEqual(platformLaborStatus(alldataEnv), { motor: false, alldata: true });
+  assert.deepEqual(platformLaborStatus({ ...alldataEnv, ALLDATA_LABOR_LICENSE_CONFIRMED: '' }), { motor: false, alldata: false, openLabor: false });
+  assert.deepEqual(platformLaborStatus(alldataEnv), { motor: false, alldata: true, openLabor: false });
   const secrets = { [LABOR_GUIDE_SECRET_NAME]: JSON.stringify({ provider: 'alldata', subscriptionId: 'sub-1' }) };
   const { search } = harness(secrets);
   const result = await search({ ...alldataEnv, fetch: async () => Response.json({ results: [{ laborHours: 2, operation: 'Water pump' }] }) }, { vin: VIN, keyword: 'water pump', laborRate: 100 });

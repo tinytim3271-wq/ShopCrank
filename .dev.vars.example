@@ -170,6 +170,11 @@ AI_ENABLED=1
 # these optional overrides are only for local stubbing of the API base URL).
 # PARTSTECH_API_BASE=https://api.partstech.com
 
+# Open Labor Project reference labor times (openlaborproject.com). Used when no
+# licensed book guide (MOTOR/ALLDATA) has the job; labeled "not book time" with
+# its confidence. Free keys: 7 requests/day, one job per call (answers are cached 30 days).
+# OPEN_LABOR_API_KEY=replace-with-open-labor-key
+
 # Labor web fallback (used only when no MOTOR/ALLDATA/ShopKey provider is connected).
 # Brave Search: https://brave.com/search/api/ — results are labeled "web estimate — not book time".
 # LABOR_WEB_SEARCH_PROVIDER=brave
