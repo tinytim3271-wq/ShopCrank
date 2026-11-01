@@ -175,6 +175,23 @@ function emptyResult(type, errors = [], skipped = 0) {
   return { type, records: [], errors, skipped };
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Empty is fine; otherwise a plausible address (name@domain.tld). */
+export function importEmailError(email) {
+  if (!email) return '';
+  return EMAIL_PATTERN.test(email) ? '' : `Email "${email}" is not a valid email address`;
+}
+
+/** Empty is fine; otherwise phone punctuation only, with 7 to 15 digits (an "ext" suffix is allowed). */
+export function importPhoneError(phone) {
+  if (!phone) return '';
+  const main = phone.replace(/\s*(?:ext\.?|x|#)\s*\d{1,6}$/i, '');
+  const digits = main.replace(/\D/g, '');
+  if (!/^[\d\s().+-]+$/.test(main) || digits.length < 7 || digits.length > 15) return `Phone "${phone}" is not a valid phone number`;
+  return '';
+}
+
 export function prepareImportRecords(type, text, existing = {}) {
   if (!IMPORT_TYPES[type]) return emptyResult(type, ['Choose a supported import type.']);
   const rows = rowData(text);
@@ -210,11 +227,14 @@ export function prepareImportRecords(type, text, existing = {}) {
 
     if (type === 'customers') {
       const name = cleanText(value(row, 'name', 'customer', 'customer_name'));
+      const phone = cleanText(value(row, 'phone', 'mobile'), 40);
+      const email = cleanText(value(row, 'email'), 120);
       if (!name) error = 'Customer name is required';
       else if (seenCustomers.has(name.toLowerCase())) skipped += 1;
+      else if ((error = importEmailError(email) || importPhoneError(phone))) { /* row rejected below */ }
       else {
         seenCustomers.add(name.toLowerCase());
-        record = { name, phone: cleanText(value(row, 'phone', 'mobile'), 40), email: cleanText(value(row, 'email'), 120), vehicles: 0, visits: 0, spend: 0 };
+        record = { name, phone, email, vehicles: 0, visits: 0, spend: 0 };
       }
     } else if (type === 'vehicles') {
       const year = cleanText(value(row, 'year'), 8);

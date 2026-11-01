@@ -764,6 +764,17 @@
   function emptyResult(type, errors = [], skipped = 0) {
     return { type, records: [], errors, skipped };
   }
+  function importEmailError(email) {
+    if (!email) return "";
+    return EMAIL_PATTERN.test(email) ? "" : `Email "${email}" is not a valid email address`;
+  }
+  function importPhoneError(phone) {
+    if (!phone) return "";
+    const main = phone.replace(/\s*(?:ext\.?|x|#)\s*\d{1,6}$/i, "");
+    const digits = main.replace(/\D/g, "");
+    if (!/^[\d\s().+-]+$/.test(main) || digits.length < 7 || digits.length > 15) return `Phone "${phone}" is not a valid phone number`;
+    return "";
+  }
   function prepareImportRecords(type, text2, existing = {}) {
     if (!IMPORT_TYPES[type]) return emptyResult(type, ["Choose a supported import type."]);
     const rows = rowData(text2);
@@ -794,11 +805,14 @@
       let error = "";
       if (type === "customers") {
         const name = cleanText(value(row, "name", "customer", "customer_name"));
+        const phone = cleanText(value(row, "phone", "mobile"), 40);
+        const email = cleanText(value(row, "email"), 120);
         if (!name) error = "Customer name is required";
         else if (seenCustomers.has(name.toLowerCase())) skipped += 1;
-        else {
+        else if (error = importEmailError(email) || importPhoneError(phone)) {
+        } else {
           seenCustomers.add(name.toLowerCase());
-          record = { name, phone: cleanText(value(row, "phone", "mobile"), 40), email: cleanText(value(row, "email"), 120), vehicles: 0, visits: 0, spend: 0 };
+          record = { name, phone, email, vehicles: 0, visits: 0, spend: 0 };
         }
       } else if (type === "vehicles") {
         const year = cleanText(value(row, "year"), 8);
@@ -961,7 +975,7 @@
     });
     return { type, records, errors, skipped };
   }
-  var IMPORT_TYPES, ORDER_STATUSES, INVOICE_STATUSES, ESTIMATE_STATUSES;
+  var IMPORT_TYPES, ORDER_STATUSES, INVOICE_STATUSES, ESTIMATE_STATUSES, EMAIL_PATTERN;
   var init_imports = __esm({
     "src/modules/imports.js"() {
       init_dates();
@@ -1012,6 +1026,7 @@
       ORDER_STATUSES = ["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"];
       INVOICE_STATUSES = ["sent", "overdue", "paid"];
       ESTIMATE_STATUSES = ["pending", "approved", "declined"];
+      EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
     }
   });
 
@@ -3928,7 +3943,7 @@ ${analysis ? `<section class="ai-notice"><span>${escapeHtml3(analysis.notice || 
     return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml3(customerDisplayName(draft) || "Missing")}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml3(vehicleLabel(draft) || draft.vehicle.vin || "Missing")}</dd></div><div><dt>Concern</dt><dd>${escapeHtml3(draft.concern.description || "Missing")}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options("primary")}</select></label><label>Secondary technician<select name="assign-secondary">${options("secondary")}</select></label><label>Apprentice<select name="assign-apprentice">${options("apprentice")}</select></label></div>
 ${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? "checked" : ""}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ""}
-${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
+${check2.ok ? "" : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1"><strong>Before you can convert:</strong>${check2.problems.map((problem) => `<span>${escapeHtml3(problem)}</span>`).join("")}</div>`}
 ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not create the work order: ${escapeHtml3(draft.convertError)}</span></div>` : ""}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
   }
@@ -4017,6 +4032,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     onSave,
     onCancel,
     onConvert,
+    onBlocked,
     decodeVin,
     lookupPlate,
     analyze,
@@ -4094,8 +4110,10 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
           persist("blocked");
           paint();
           const problems = host.querySelector("#intake-problems");
+          problems?.classList.add("is-flagged");
           problems?.scrollIntoView({ block: "center", behavior: "smooth" });
           problems?.focus();
+          onBlocked?.(check2.problems);
           return;
         }
         const button = host.querySelector("#intake-convert");
@@ -4812,6 +4830,51 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   }
   var init_quickbooks = __esm({
     "src/modules/quickbooks.js"() {
+    }
+  });
+
+  // src/modules/phone-usage.js
+  function phoneUsageStatus(usage = {}) {
+    const included = Number(usage.includedMinutes) || 0;
+    const used = Number(usage.usedMinutes) || 0;
+    const rate = Number(usage.overageRateCents) || 0;
+    if (usage.active === false) return { tone: "idle", text: "No active plan: the AI phone agent forwards calls to the shop." };
+    if (usage.capReached) return { tone: "error", text: `Spending cap of ${dollars2(usage.overageCapCents)} reached: calls ring the shop until ${shortDate(usage.periodEnd)}.` };
+    if (used > included) return { tone: "warn", text: `${used - included} minutes over the plan, billed at ${rate}\xA2/min: ${dollars2(usage.overageChargeCents)} so far.` };
+    if (included && used >= included * 0.8) return { tone: "warn", text: `${Math.max(0, included - used)} included minutes left. Extra minutes bill at ${rate}\xA2/min.` };
+    return { tone: "ready", text: `${Math.max(0, included - used)} included minutes left this period.` };
+  }
+  function phoneUsagePanelHtml(usage, { canEdit = false, escapeHtml: escapeHtml4 = (v) => String(v ?? ""), icon: icon2 = () => "" } = {}) {
+    if (!usage) return '<section class="settings-panel phone-usage-panel" id="phone-usage-panel"><div class="eyebrow">AI phone minutes</div><p class="ops-note">Loading usage\u2026</p></section>';
+    if (usage.error) return `<section class="settings-panel phone-usage-panel" id="phone-usage-panel"><div class="eyebrow">AI phone minutes</div><p class="ops-note">${escapeHtml4(usage.error)}</p></section>`;
+    const included = Number(usage.includedMinutes) || 0;
+    const used = Number(usage.usedMinutes) || 0;
+    const percent = included ? Math.min(100, Math.round(used / included * 100)) : 0;
+    const status = phoneUsageStatus(usage);
+    const capValue = usage.overageCapCents === null || usage.overageCapCents === void 0 ? "" : (Number(usage.overageCapCents) / 100).toFixed(2);
+    const capForm = canEdit ? `<form class="form-grid" id="phone-usage-cap-form"><label>Overage spending cap (USD per month)<input name="cap" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No cap" value="${escapeHtml4(capValue)}"></label><p class="ops-note">Leave blank for no cap. Set 0 to stop at the included minutes. When the cap is hit, calls ring the shop instead of the AI.</p><div class="messaging-actions"><button class="secondary" type="submit">${icon2("save", 14)} Save cap</button></div></form>` : "";
+    return `<section class="settings-panel phone-usage-panel" id="phone-usage-panel">
+    <div class="statement-head"><div><div class="eyebrow">AI phone minutes \xB7 ${escapeHtml4(usage.planName || "")}</div><h2>${used.toLocaleString("en-US")} of ${included.toLocaleString("en-US")} minutes used</h2><p>${escapeHtml4(shortDate(usage.periodStart))} \u2013 ${escapeHtml4(shortDate(usage.periodEnd))} \xB7 ${Number(usage.calls) || 0} ${Number(usage.calls) === 1 ? "call" : "calls"} \xB7 each call rounds up to the next minute</p></div>${icon2("phone-call", 20)}</div>
+    <div class="usage-meter" role="meter" aria-label="AI phone minutes used" aria-valuemin="0" aria-valuemax="${included}" aria-valuenow="${Math.min(used, included)}"><span style="width:${percent}%"></span></div>
+    <div class="messaging-status ${status.tone}">${icon2(status.tone === "ready" ? "circle-check" : "triangle-alert", 17)}<div><strong>${escapeHtml4(status.text)}</strong><span>Overage rate on your plan: ${Number(usage.overageRateCents) || 0}\xA2 per minute.</span></div></div>
+    ${capForm}
+  </section>`;
+  }
+  function capCentsFromInput(value2) {
+    const text2 = String(value2 ?? "").trim();
+    if (!text2) return null;
+    const amount = Number(text2);
+    if (!Number.isFinite(amount) || amount < 0) throw new Error("Enter a cap of $0 or more, or leave it blank for no cap");
+    return Math.round(amount * 100);
+  }
+  var dollars2, shortDate;
+  var init_phone_usage = __esm({
+    "src/modules/phone-usage.js"() {
+      dollars2 = (cents) => `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`;
+      shortDate = (iso) => {
+        const time = Date.parse(iso || "");
+        return Number.isFinite(time) ? new Date(time).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : "";
+      };
     }
   });
 
@@ -9267,11 +9330,16 @@ button{margin-top:12px;padding:8px 14px}
       }
     });
   }
-  function openGlobalAssistant() {
-    showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>ShopCrank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`);
-    bindLiveAssistant();
+  function toggleGlobalLiveAssistant() {
+    if (assistantPaused && !activeGrokSession?.isActive()) toggleAssistantPause();
+    startOrStopGrokVoice({ target: "global" });
   }
   function toggleAssistantPause() {
+    if (activeGrokSession?.isActive()) {
+      startOrStopGrokVoice();
+      toast("Live AI ended");
+      return;
+    }
     assistantPaused = !assistantPaused;
     if (assistantPaused) {
       window.speechSynthesis?.cancel();
@@ -9578,7 +9646,7 @@ button{margin-top:12px;padding:8px 14px}
   async function requestMagicLinkSignIn(email, turnstileToken = "") {
     let response;
     try {
-      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken }) });
+      response = await fetch(`${cloudflareConfig2.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken, ...isDesktopApp ? { desktop: true } : {} }) });
     } catch (error) {
       if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again.");
       throw error;
@@ -10407,7 +10475,7 @@ button{margin-top:12px;padding:8px 14px}
     if (quickbooksAccount.loaded && !force) return;
     quickbooksAccount = { ...quickbooksAccount, loaded: true };
     try {
-      const account = await apiFetch("/integrations/quickbooks");
+      const account = await apiFetch("/quickbooks/status");
       quickbooksAccount = { ...account, loaded: true };
     } catch {
       quickbooksAccount = { connected: false, loaded: true, unavailable: true };
@@ -11064,12 +11132,8 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#qbo-connect")?.addEventListener("click", async () => {
       try {
-        const redirectUri = `${location.origin}/qbo/callback`;
-        const result = await apiFetch("/integrations/quickbooks/connect", {
-          method: "POST",
-          body: JSON.stringify({ redirectUri })
-        });
-        if (result.authorizeUrl) location.href = result.authorizeUrl;
+        const result = await apiFetch("/quickbooks/connect", { method: "POST", body: "{}" });
+        if (result.authorizationUrl) location.assign(result.authorizationUrl);
         else toast("QuickBooks authorize URL missing");
       } catch (error) {
         toast(error.message || "Could not start QuickBooks connect");
@@ -11077,7 +11141,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#qbo-disconnect")?.addEventListener("click", async () => {
       try {
-        await apiFetch("/integrations/quickbooks", { method: "DELETE" });
+        await apiFetch("/quickbooks/disconnect", { method: "DELETE" });
         quickbooksAccount = { connected: false, loaded: true };
         toast("QuickBooks disconnected");
         render();
@@ -11087,8 +11151,10 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     });
     document.querySelector("#qbo-sync-now")?.addEventListener("click", async () => {
       const status = document.querySelector("#qbo-sync-status");
-      if (status) status.textContent = "Sync uses per-record POST /integrations/quickbooks/sync from invoices and customers.";
-      toast("Open a customer or invoice and sync from there, or call the sync API with entityType/localId");
+      if (status) status.textContent = "Sync a customer, invoice or payment from Integrations > QuickBooks.";
+      state.route = "integrations";
+      save();
+      render();
     });
     document.querySelector("#revrec-config-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -11395,7 +11461,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function loginScreen() {
     if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon });
     const googleUrl = `${cloudflareConfig2.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`;
-    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
+    return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><p class="login-sent" id="login-sent" role="status" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>`;
   }
   async function upgradeShopPlan() {
     const plans = [["shop", "Shop \xB7 $139/mo"], ["solo", "Solo \xB7 $69/mo"], ["shop_pro", "Shop Pro \xB7 $279/mo"], ["enterprise", "Enterprise \xB7 $559/mo"]];
@@ -11567,7 +11633,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function render() {
     const root = document.querySelector("#root");
     if (!currentUser()) {
-      root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } });
+      root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
       lucide.createIcons();
       bind();
       return;
@@ -12856,7 +12922,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
   }
   function previewMarkup() {
     const p = importPreview, rows = p.records.slice(0, 5).map((record, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(Object.values(record).slice(0, 4).join(" \xB7 "))}</td></tr>`).join("");
-    return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} records</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>`;
+    return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} ${p.records.length === 1 ? "record" : "records"}</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>`;
   }
   function prepareImport(type, text2) {
     return prepareImportRecords(type, text2, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
@@ -13431,6 +13497,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         saveIntakeDraft(current);
         closeModal();
       },
+      onBlocked: (problems) => toast(`Can't convert yet: ${problems[0]}`),
       decodeVin: async (vin) => {
         const normalized = String(vin || "").trim().toUpperCase();
         if (normalized.length !== 17) throw new Error("Enter a 17-character VIN first.");
@@ -16446,6 +16513,35 @@ ${line}`.trim();
     }
     render();
   }
+  async function loadPhoneUsage(force = false) {
+    if (phoneUsageLoading || phoneUsage && !force) return;
+    phoneUsageLoading = true;
+    try {
+      phoneUsage = await apiFetch("/phone-usage");
+    } catch (error) {
+      phoneUsage = { error: error.message || "AI phone usage is unavailable" };
+    }
+    phoneUsageLoading = false;
+    if (state.route === "settings" || state.route === "ai" && aiTab === "phone") render();
+  }
+  function phoneUsagePanel() {
+    if (isOfflineDesktop()) return "";
+    if (!phoneUsage && !phoneUsageLoading) void loadPhoneUsage();
+    return phoneUsagePanelHtml(phoneUsage, { canEdit: ["admin", "owner", "super_admin"].includes(currentUser().role), escapeHtml, icon });
+  }
+  function bindPhoneUsagePanel() {
+    document.querySelector("#phone-usage-cap-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const overageCapCents = capCentsFromInput(event.target.querySelector("[name=cap]").value);
+        phoneUsage = await apiFetch("/phone-usage", { method: "PUT", body: JSON.stringify({ overageCapCents }) });
+        toast(overageCapCents === null ? "AI phone overage cap removed" : `AI phone overage cap set to $${(overageCapCents / 100).toFixed(2)}`);
+        render();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+  }
   async function loadGrokVoiceSettings(force = false) {
     if (grokVoiceSettings.loading || grokVoiceSettings.loaded && !force) return;
     grokVoiceSettings = { ...grokVoiceSettings, loading: true };
@@ -16505,6 +16601,15 @@ ${line}`.trim();
     const srStatus = document.querySelector("#assistant-voice-sr-status");
     if (srStatus) {
       srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
+    }
+    const floatBtn = document.querySelector("#global-assistant");
+    if (floatBtn) {
+      floatBtn.classList.toggle("is-live", isLive);
+      floatBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
+      floatBtn.setAttribute("aria-label", isLive ? `End live AI (${placeholder || "Live"})` : "Start live AI");
+      floatBtn.title = isLive ? "Click to end the live AI session" : "Talk to ShopCrank AI (live voice)";
+      floatBtn.innerHTML = isLive ? `${grokWaveformButtonIcon(true, phase)}<span class="assistant-float-label">${escapeHtml(placeholder || "Live")}</span>` : `${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span>`;
+      if (!isLive) globalThis.lucide?.createIcons?.();
     }
     const phoneBtn = document.querySelector("#grok-phone-live-btn");
     if (phoneBtn) {
@@ -16628,7 +16733,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -16648,6 +16753,7 @@ ${line}`.trim();
       init_shop_ai_settings();
       init_grok_voice_client();
       init_quickbooks();
+      init_phone_usage();
       init_revenue_recognition();
       init_repair_order_flow();
       init_file_upload();
@@ -17274,15 +17380,16 @@ ${line}`.trim();
       bindExpandedFeatures = function() {
         bindDataResetCore();
         document.querySelector("#open-full-reset")?.addEventListener("click", openFullReset);
+        bindPhoneUsagePanel();
       };
       settingsAgentPhoneCore = settings;
       settings = function() {
         const page = settingsAgentPhoneCore();
         const twilioPanel = twilioInlineSettingsPanelHtml();
         const isAdmin = currentUser()?.role === "admin";
-        if (!twilioPanel && !isAdmin) return page;
+        if (!twilioPanel && !isAdmin) return page.replace("</main>", `${phoneUsagePanel()}</main>`);
         const agentPhonePanel = isAdmin ? `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above \u2014 not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>` : "";
-        return page.replace("</main>", `${twilioPanel}${agentPhonePanel}</main>`);
+        return page.replace("</main>", `${phoneUsagePanel()}${twilioPanel}${agentPhonePanel}</main>`);
       };
       settingsAppsBillingCore = settings;
       settings = function() {
@@ -17317,10 +17424,11 @@ ${line}`.trim();
           return;
         }
         if (existing) return;
-        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
-        document.querySelector("#global-assistant").onclick = openGlobalAssistant;
+        document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Talk to ShopCrank AI (live voice)" aria-label="Start live AI" aria-pressed="false">${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`);
+        document.querySelector("#global-assistant").onclick = toggleGlobalLiveAssistant;
         document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause;
         lucide.createIcons();
+        updateGrokVoiceUiControls();
       };
       apiFetchAssistantCore = apiFetch;
       apiFetch = async function(path, options = {}) {
@@ -19058,6 +19166,8 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         });
       };
       grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
+      phoneUsage = null;
+      phoneUsageLoading = false;
       activeGrokSession = null;
       activeGrokPhase = "idle";
       activeGrokTarget = null;
@@ -19116,7 +19226,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         const grokOrders = state.orders.filter((o) => o.source === "grok_voice_call" || o.intake?.source === "grok_voice_call").slice(0, 10);
         const callRows = grokOrders.map((order) => `<tr><td class="mono"><b>${escapeHtml(order.id)}</b></td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "No phone")}</small></td><td>${escapeHtml(order.vehicle)}<small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${escapeHtml(order.complaint || "")}</td><td><b>${money4(order.total || 0)}</b></td><td><div class="estimate-actions"><button type="button" class="mini-action" data-grok-open-intake="${escapeAttr(order.id)}">${icon("clipboard-Signature", 13)} Open Intake Form</button><button type="button" class="mini-action" data-order="${escapeAttr(order.id)}">${icon("file-text", 13)} Open RO</button></div></td></tr>`).join("");
         const grokReceptionistCard = `<section class="ai-panel grok-phone-panel"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice (grok-voice-latest)</div><h2>Grok Phone Call Answering & Auto-Intake</h2><p>Forward your shop phone line to Twilio so Grok answers customer calls 24/7, gives ballpark estimates using your $${Number(shopProfile().laborRate || 140).toFixed(2)}/hr labor rate, and automatically fills in Customer Intake forms, Estimates, and Work Orders.</p></div><div class="head-actions"><button type="button" class="primary grok-voice-btn ${isLive ? "is-live" : ""}" id="grok-phone-live-btn">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span></button><button type="button" class="secondary" id="grok-open-intake-modal">${icon("clipboard-list", 14)} Open Intake Form</button></div></div><div class="agentphone-webhook-preview"><span>Twilio Voice Webhook URL (HTTP POST when a call comes in)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">Forward your shop phone number (e.g. dial <b>*72</b> + your Twilio number, or enable No-Answer Call Forwarding with your carrier) to your Twilio Voice number pointing to this webhook. Configure your xAI API key and voice in <b>Settings \u2192 Grok Voice & Phone Call Forwarding</b>.</small></div><div class="data-panel" style="margin-top:12px"><table><thead><tr><th>RO</th><th>Caller</th><th>Vehicle</th><th>Concern / Symptoms</th><th>Quoted Estimate</th><th>Actions</th></tr></thead><tbody>${callRows || `<tr><td colspan="6">No Grok phone intakes recorded yet. Click <b>Answer / Test Call with Grok</b> above or call your forwarded shop number to see forms fill automatically.</td></tr>`}</tbody></table></div></section>`;
-        return `${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
+        return `${phoneUsagePanel()}${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
       };
       settingsBeforeGrok = settings;
       settings = function() {

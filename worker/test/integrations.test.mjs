@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPartstechHandlers } from '../src/integrations/partstech.mjs';
 import { createLaborGuideHandlers } from '../src/integrations/labor-guide.mjs';
-import { createQuickbooksHandlers } from '../src/integrations/quickbooks.mjs';
 import { HttpError } from '../src/http.mjs';
 
 function secretsStore() {
@@ -52,20 +51,6 @@ test('labor guide search without provider returns labeled web miss when search u
   assert.equal(body.found, false);
   assert.equal(body.message, 'no estimate found');
   assert.match(body.label, /not book time/i);
-});
-
-test('quickbooks sync fails closed when not connected', async () => {
-  const store = secretsStore();
-  const handle = createQuickbooksHandlers({ ...store, requireRole });
-  const context = { shopId: 'shop-1', role: 'admin', userId: 'u1' };
-  await assert.rejects(
-    () => handle(new Request('https://example/api/integrations/quickbooks/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entityType: 'customer', localId: 'c1', customer: { name: 'Pat' } }),
-    }), {}, context, ['integrations', 'quickbooks', 'sync']),
-    /not connected/i,
-  );
 });
 
 test('partstech connect stores encrypted-ready JSON secret payload', async () => {

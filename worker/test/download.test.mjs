@@ -81,3 +81,64 @@ test('Pages redirects legacy /downloads installer URLs to the Worker route', () 
   assert.match(redirects, /^\/downloads\/ShopCrank-Setup-\*\s+\/api\/downloads\/ShopCrank-Setup-:splat\s+302$/m);
   assert.match(redirects, /^\/downloads\/ShopCrank-Offline-Setup-\*\s+\/api\/downloads\/ShopCrank-Offline-Setup-:splat\s+302$/m);
 });
+
+function sizedFiles(key, bytes) {
+  const data = new TextEncoder().encode(bytes);
+  const object = (body) => ({ body, size: data.length, httpEtag: '"v1"', writeHttpMetadata() {} });
+  const calls = [];
+  return {
+    calls,
+    files: {
+      head: async (k) => (k === key ? object(null) : null),
+      get: async (k, options = {}) => {
+        calls.push(options);
+        if (k !== key) return null;
+        const { offset = 0, length = data.length - offset } = options.range || {};
+        return object(data.slice(offset, offset + length));
+      },
+    },
+  };
+}
+
+test('installer downloads resume: a Range request gets 206 with just those bytes', async () => {
+  const { files, calls } = sizedFiles(`downloads/${SETUP_NAME}`, 'MZ0123456789');
+  const env = { FILES: files };
+  const full = await worker.fetch(new Request(SETUP_URL), env);
+  assert.equal(full.status, 200);
+  assert.equal(full.headers.get('Accept-Ranges'), 'bytes');
+  assert.equal(full.headers.get('Content-Length'), '12');
+
+  const middle = await worker.fetch(new Request(SETUP_URL, { headers: { Range: 'bytes=2-5' } }), env);
+  assert.equal(middle.status, 206);
+  assert.equal(middle.headers.get('Content-Range'), 'bytes 2-5/12');
+  assert.equal(middle.headers.get('Content-Length'), '4');
+  assert.equal(await middle.text(), '0123');
+  assert.deepEqual(calls.at(-1), { range: { offset: 2, length: 4 } });
+
+  const rest = await worker.fetch(new Request(SETUP_URL, { headers: { Range: 'bytes=10-' } }), env);
+  assert.equal(rest.status, 206);
+  assert.equal(rest.headers.get('Content-Range'), 'bytes 10-11/12');
+  assert.equal(await rest.text(), '89');
+
+  const tail = await worker.fetch(new Request(SETUP_URL, { headers: { Range: 'bytes=-3' } }), env);
+  assert.equal(await tail.text(), '789');
+
+  const past = await worker.fetch(new Request(SETUP_URL, { headers: { Range: 'bytes=50-' } }), env);
+  assert.equal(past.status, 416);
+  assert.equal(past.headers.get('Content-Range'), 'bytes */12');
+
+  // The file changed since the partial download started: send the whole new file.
+  const stale = await worker.fetch(new Request(SETUP_URL, { headers: { Range: 'bytes=2-5', 'If-Range': '"old"' } }), env);
+  assert.equal(stale.status, 200);
+  assert.equal(await stale.text(), 'MZ0123456789');
+
+  // Several ranges at once are not supported: whole file.
+  const multi = await worker.fetch(new Request(SETUP_URL, { headers: { Range: 'bytes=0-1,4-5' } }), env);
+  assert.equal(multi.status, 200);
+});
+
+test('a Range request for an unpublished installer is still a clean 404', async () => {
+  const { files } = sizedFiles('downloads/other.exe', 'MZ');
+  const response = await worker.fetch(new Request(SETUP_URL, { headers: { Range: 'bytes=0-1' } }), { FILES: files });
+  assert.equal(response.status, 404);
+});

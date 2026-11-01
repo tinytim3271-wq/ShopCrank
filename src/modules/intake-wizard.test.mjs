@@ -224,3 +224,12 @@ test('intake customer matching ignores phone formatting and never matches on bla
   draft.customer.email = '';
   assert.equal(findIntakeCustomer(customers, draft), null);
 });
+
+test('a blocked Convert lists what is missing under a clear heading', () => {
+  const draft = buickIntake();
+  draft.step = 6;
+  const html = intakeWizardHtml(draft);
+  assert.match(html, /id="intake-problems"[^>]*><strong>Before you can convert:<\/strong><span>Required photos: Front, Rear, Driver side, Passenger side/);
+  draft.photosWaived = true;
+  assert.doesNotMatch(intakeWizardHtml(draft), /id="intake-problems"/);
+});

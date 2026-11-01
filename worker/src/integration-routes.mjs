@@ -14,7 +14,7 @@ import {
   sendSms,
   smsIntegrationStatus,
 } from './integrations/sms.mjs';
-import { QuickBooksError, createQuickBooksIntegration } from './integrations/quickbooks.mjs';
+import { QUICKBOOKS_TOKEN_SECRET, QuickBooksError, createQuickBooksIntegration } from './integrations/quickbooks.mjs';
 import { resolveSubscriptionEntitlements } from './plans.mjs';
 import { createSupportTicket, listSupportTickets } from './support.mjs';
 
@@ -340,7 +340,7 @@ export async function handleTwilioWebhook(request, env, shopId, { getSecret = nu
 }
 
 function qboTokenName() {
-  return 'quickbooks-oauth-tokens';
+  return QUICKBOOKS_TOKEN_SECRET;
 }
 
 const QBO_TAX_SETTINGS_NAME = 'quickbooks-tax-settings';

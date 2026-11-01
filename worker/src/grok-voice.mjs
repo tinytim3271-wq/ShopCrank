@@ -19,6 +19,7 @@ import { PERSONAS, frontDeskOpeningCue, normalizePersona } from './assistant/per
 import { HANDOFF_LINE, classifyCallerTurn, createDtmfTracker } from './front-desk/handoff-detect.mjs';
 import { afterStreamUrl, createHandoff, shopHasHandoffTargets } from './front-desk/handoff-store.mjs';
 import { phoneGoLiveGate } from './onboarding/store.mjs';
+import { meterPhoneCall, phoneCallDecision, shopFallbackPhone } from './phone-metering.mjs';
 import { recordVoiceEvidence } from './onboarding/executions.mjs';
 
 // tools.mjs imports this module, so it is loaded lazily to keep the graph acyclic.
@@ -1333,6 +1334,23 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
     });
   }
 
+  const metering = await phoneCallDecision(env, shopId).catch(error => {
+    // Metering must never take the phones down: a failed lookup lets the AI answer.
+    console.error(JSON.stringify({ message: 'AI phone metering check failed', shopId, error: String(error?.message || error) }));
+    return { allowed: true, reason: 'metering_unavailable' };
+  });
+  if (!metering.allowed) {
+    const fallback = await shopFallbackPhone(env, shopId).catch(() => '');
+    const body = fallback
+      ? `<Dial timeout="25">${xmlEscape(fallback)}</Dial>`
+      : '<Say>Thank you for calling. No one can take your call right now. Please call back during business hours.</Say>';
+    console.log(JSON.stringify({ message: 'AI phone agent skipped call', shopId, reason: metering.reason, forwardedTo: fallback ? 'shop' : 'none' }));
+    return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`, {
+      status: 200,
+      headers: { 'Content-Type': 'application/xml; charset=utf-8' },
+    });
+  }
+
   const { apiKey } = await resolveGrokApiKey(env, shopId, getSecret);
   if (!apiKey) {
     const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Thank you for calling. Our automated service advisor is currently offline. Please leave a message or call back during shop hours.</Say></Response>`;
@@ -1727,6 +1745,8 @@ export async function handleGrokTwilioBridge({
     const voiceSeconds = twilioInboundBytes / TWILIO_SAMPLE_RATE;
     const costs = calculateVoiceCost(env, voiceSeconds);
     try {
+      // Plan minutes: read this period's total before writing this call's row.
+      const metered = await meterPhoneCall(env, shopId, { seconds: voiceSeconds, callId: currentCallSid });
       await recordAiUsage(env, {
         shopId,
         userId: 'grok-phone-receptionist',
@@ -1735,11 +1755,13 @@ export async function handleGrokTwilioBridge({
         model: GROK_MODEL,
         voiceSeconds,
         ...costs,
+        billedUsd: metered.billedUsd,
         metadata: {
           reason,
           caller: currentCaller,
           callSid: currentCallSid,
           transcriptTurns: transcriptLines.length,
+          metering: metered.metering,
         },
       });
     } catch {

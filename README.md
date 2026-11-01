@@ -103,7 +103,7 @@ Unconfigured integrations return **not connected** and fail closed — they neve
 | --- | --- | --- |
 | PartsTech parts | `GET/POST/DELETE /api/integrations/partstech`, `POST .../quote`, `POST .../order` | Shop stores partner+user API keys in D1 after creating a PartsTech partner account |
 | Labor guide (MOTOR / ALLDATA / ShopKey) | `GET/POST/DELETE /api/integrations/labor-guide`, `POST .../search`, `POST .../manual` | Book providers when connected. If none connected, search auto-falls back to a labeled **web estimate — not book time** via `LABOR_WEB_SEARCH_API_KEY` (Brave). Manual entry always works. ALLDATA/ShopKey adapters are recognized but not live yet |
-| QuickBooks Online | `GET/DELETE /api/integrations/quickbooks`, `POST .../connect`, `POST .../callback`, `POST .../sync` | Create an Intuit Developer app; set `QUICKBOOKS_CLIENT_ID` / `QUICKBOOKS_CLIENT_SECRET` Worker secrets; shops complete OAuth |
+| QuickBooks Online | `GET /api/quickbooks/status`, `POST .../connect`, `GET .../callback`, `POST .../sync`, `GET/PUT .../tax-settings`, `DELETE .../disconnect` | Create an Intuit Developer app with redirect `https://www.shopcrank.com/api/quickbooks/callback`; set `INTUIT_CLIENT_ID` / `INTUIT_CLIENT_SECRET` Worker secrets; shops connect from Integrations or the Ordering tab |
 
 PartsTech checkout requires each selected line to be a PartsTech quote line saved on the repair order, approved, priced, not already sent, and associated with the selected store. The Worker re-reads those lines from the saved repair order before creating a checkout session; client-supplied prices and part identifiers are not trusted. Checkout creation opens a PartsTech punch-out cart but does not submit a purchase.
 
