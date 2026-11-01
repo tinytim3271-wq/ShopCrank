@@ -88,8 +88,10 @@
   // dependency health check (HEALTH_CHECK_CRON); JSONL log goes to R2
   // health-checks/ and failures are emailed to HEALTHCHECK_EMAIL_TO
   // (default SUPPORT_EMAIL_TO; HEALTHCHECK_EMAIL_MODE = failures | always | off).
+  // 09:00 UTC on the 1st: freeze last month's Ambassador Payout Report and email it
+  // to AMBASSADOR_REPORT_EMAIL_TO (default SUPPORT_EMAIL_TO).
   "triggers": {
-    "crons": ["0 15 * * *", "0 8 * * *", "30 0,6,12,18 * * *"]
+    "crons": ["0 15 * * *", "0 8 * * *", "30 0,6,12,18 * * *", "0 9 1 * *"]
   },
   "observability": {
     "enabled": true,
