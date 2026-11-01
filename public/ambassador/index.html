@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShopCrank Ambassadors</title>
+    <link rel="canonical" href="https://www.shopcrank.com/ambassador/" />
+    <link rel="icon" href="/assets/brand/logo-icon-192.png" type="image/png" />
+    <link rel="stylesheet" href="/assets/fonts/fonts.css" />
+    <link rel="stylesheet" href="/market.css" />
+    <style>
+      .ambassador-statement table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+      .ambassador-statement th, .ambassador-statement td { text-align: left; padding: 6px 4px; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+      .ambassador-statement td.num, .ambassador-statement th.num { text-align: right; }
+      .auth-card textarea { width: 100%; min-height: 72px; font: inherit; }
+      .auth-card hr { margin: 28px 0; border: 0; border-top: 1px solid rgba(127, 127, 127, 0.3); }
+    </style>
+  </head>
+  <body class="auth-screen">
+    <main class="auth-card">
+      <a class="brand" href="/features"><span class="brand-mark" role="img" aria-label="ShopCrank"></span><span><strong>ShopCrank</strong><small>Run the shop. Read the car. Get paid.</small></span></a>
+      <h1>Become a ShopCrank Ambassador</h1>
+      <p>Introduce shops to ShopCrank and earn a recurring monthly commission for as long as each shop you bring stays active and paid: $10 Solo, $20 Shop, $40 Shop Pro, $100 Enterprise.</p>
+      <form id="apply-form">
+        <label for="name">Full name<input id="name" name="name" autocomplete="name" required /></label>
+        <label for="email">Email<input id="email" name="email" type="email" autocomplete="email" required /></label>
+        <label for="phone">Phone<input id="phone" name="phone" type="tel" autocomplete="tel" /></label>
+        <label for="territory">Territory (city, region, or market)<input id="territory" name="territory" required /></label>
+        <label for="experience">Experience with repair shops or software sales<textarea id="experience" name="experience"></textarea></label>
+        <label for="why">Why do you want to be an ambassador?<textarea id="why" name="why" required></textarea></label>
+        <label for="socialReach">Social reach (groups, followers, associations)<textarea id="socialReach" name="socialReach"></textarea></label>
+        <div class="turnstile-slot" id="apply-turnstile"></div>
+        <p id="apply-error" class="error" hidden></p>
+        <p id="apply-sent" class="success" hidden></p>
+        <button class="btn primary" type="submit">Apply</button>
+      </form>
+      <hr />
+      <section class="ambassador-statement">
+        <h2>Ambassador statement</h2>
+        <p>Already an ambassador? Enter your referral code and the email on file to see your commissions.</p>
+        <form id="statement-form">
+          <label for="code">Referral code<input id="code" name="code" autocomplete="off" required /></label>
+          <label for="statement-email">Email<input id="statement-email" name="email" type="email" autocomplete="email" required /></label>
+          <p id="statement-error" class="error" hidden></p>
+          <button class="btn" type="submit">Show statement</button>
+        </form>
+        <div id="statement-result"></div>
+      </section>
+      <script src="/assets/turnstile-client.js"></script>
+      <script src="/assets/ambassador-ref.js"></script>
+      <script>
+        let turnstile = null;
+        window.ShopCrankTurnstile?.mount(document.querySelector("#apply-turnstile")).then((widget) => { turnstile = widget; });
+        const money = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
+        const text = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+        async function post(path, body) {
+          const response = await fetch(path, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.message || "Something went wrong. Try again.");
+          return payload;
+        }
+        document.querySelector("#apply-form").addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const error = document.querySelector("#apply-error");
+          const sent = document.querySelector("#apply-sent");
+          const button = form.querySelector("button");
+          error.hidden = true;
+          sent.hidden = true;
+          button.disabled = true;
+          try {
+            const result = await post("/api/ambassadors/apply", { ...Object.fromEntries(new FormData(form)), turnstileToken: turnstile?.token() || "" });
+            sent.hidden = false;
+            sent.textContent = `${result.message} Your application number is ${result.ambassadorNumber}.`;
+            form.reset();
+          } catch (requestError) {
+            error.hidden = false;
+            error.textContent = requestError.message;
+          } finally {
+            button.disabled = false;
+            turnstile?.reset();
+          }
+        });
+        document.querySelector("#statement-form").addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const error = document.querySelector("#statement-error");
+          const result = document.querySelector("#statement-result");
+          error.hidden = true;
+          result.innerHTML = "";
+          try {
+            const statement = await post("/api/ambassadors/statement", Object.fromEntries(new FormData(event.currentTarget)));
+            const rows = statement.lines.map((line) => `<tr><td>${text(line.period)}</td><td>${text(line.shopName)}</td><td>${text(line.tier)}</td><td>${text(line.status)}</td><td class="num">${money(line.amountCents)}</td></tr>`).join("");
+            result.innerHTML = `<p><b>${text(statement.ambassador.name)}</b> · ${text(statement.ambassador.ambassadorNumber)} · ${text(statement.ambassador.referralCode)}</p>`
+              + `<p>Earned ${money(statement.totals.earnedCents)} · Paid ${money(statement.totals.paidCents)} · Pending ${money(statement.totals.pendingCents)}</p>`
+              + `<table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Status</th><th class="num">Commission</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No commissions yet.</td></tr>'}</tbody></table>`;
+          } catch (requestError) {
+            error.hidden = false;
+            error.textContent = requestError.message;
+          }
+        });
+      </script>
+      <div class="auth-links">
+        <a href="/signup">Start a shop trial</a>
+        <a href="/pricing">Compare plans</a>
+      </div>
+    </main>
+  </body>
+</html>

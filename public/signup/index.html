@@ -26,6 +26,8 @@
         <label for="shopName">Shop name<input id="shopName" type="text" name="shopName" placeholder="Main Street Auto" required /></label>
         <label for="ownerName">Owner name<input id="ownerName" type="text" name="ownerName" autocomplete="name" required /></label>
         <label for="email">Owner email<input id="email" type="email" name="email" autocomplete="email" placeholder="owner@yourshop.com" required /></label>
+        <label for="referralCode">Ambassador or referral code <small>(optional)</small><input id="referralCode" type="text" name="referralCode" autocomplete="off" maxlength="16" placeholder="e.g. TX4K9P" /></label>
+        <p id="referral-note" class="success" hidden></p>
         <input type="hidden" name="returnTo" value="/app" />
         <div class="turnstile-slot" id="signup-turnstile"></div>
         <p id="signup-error" class="error" hidden></p>
@@ -33,6 +35,7 @@
         <button class="btn primary" type="submit">Start trial</button>
       </form>
       <script src="/assets/turnstile-client.js"></script>
+      <script src="/assets/ambassador-ref.js"></script>
       <script>
         let turnstile = null;
         window.ShopCrankTurnstile?.mount(document.querySelector("#signup-turnstile")).then((widget) => { turnstile = widget; });
@@ -64,6 +67,23 @@
           showPublicCopy();
           select.addEventListener("change", showPublicCopy);
         }
+        const referralInput = document.querySelector("#referralCode");
+        const referralNote = document.querySelector("#referral-note");
+        const captured = window.ShopCrankReferral?.get();
+        if (captured) referralInput.value = captured.code;
+        async function showReferral() {
+          const code = window.ShopCrankReferral?.normalize(referralInput.value) || "";
+          referralNote.hidden = true;
+          if (!code) return;
+          const result = await fetch(`/api/ambassadors/validate?code=${encodeURIComponent(code)}`, { headers: { Accept: "application/json" } })
+            .then((response) => response.json()).catch(() => ({}));
+          if (result.valid) {
+            referralNote.hidden = false;
+            referralNote.textContent = `Referred by ${result.name} (${result.code}).`;
+          }
+        }
+        referralInput.addEventListener("change", showReferral);
+        void showReferral();
         if (["starter", "shop", "pro"].includes(plan)) {
           document.querySelector('input[name="returnTo"]').value = `/app?plan=${encodeURIComponent(plan)}`;
           document.addEventListener("DOMContentLoaded", () => {
@@ -85,6 +105,10 @@
           const shopName = document.querySelector("#shopName").value.trim();
           const ownerName = document.querySelector("#ownerName").value.trim();
           const returnTo = document.querySelector('input[name="returnTo"]').value || "/app";
+          const referralCode = window.ShopCrankReferral?.normalize(referralInput.value) || "";
+          // A code typed by hand is an indirect referral; one from the ambassador's link keeps its source.
+          const referralSource = referralCode && captured?.code === referralCode ? captured.source : "ambassador_referral";
+          if (referralCode) window.ShopCrankReferral?.set(referralCode, referralSource);
           try {
             if (invite && foundingNames[planId]) {
               const claim = await fetch("/api/founding/claim", {
@@ -104,6 +128,8 @@
                 shopName,
                 ownerName,
                 returnTo,
+                referralCode: referralCode || undefined,
+                referralSource: referralCode ? referralSource : undefined,
                 turnstileToken: turnstile?.token() || "",
               }),
             });

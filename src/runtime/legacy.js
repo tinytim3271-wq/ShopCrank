@@ -39,6 +39,7 @@ import {
 import * as KeyLicense from '../modules/vehicle-key-license.js';
 import * as AssistantMedia from '../modules/assistant-media.js';
 import * as HealthCheck from '../modules/health-check.js';
+import * as Ambassadors from '../modules/ambassadors.js';
 import * as SmsInbox from '../modules/sms-inbox.js';
 import * as InspectionRatings from '../modules/inspection-ratings.js';
 import * as CallLog from '../modules/call-log.js';
@@ -1159,7 +1160,7 @@ function settings() { const t = state.taxSettings, stateOptions = usStates.map(s
 function loginScreen() { if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon }); const googleUrl = `${cloudflareConfig.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`; return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>` }
 
 
-async function upgradeShopPlan() { const plans = [["shop", "Shop · $139/mo"], ["solo", "Solo · $69/mo"], ["shop_pro", "Shop Pro · $279/mo"], ["enterprise", "Enterprise · $559/mo"]]; showModal(`<form class="modal" id="upgrade-plan-form"><div class="modal-head"><h2>Choose a plan</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Plan<select name="planId">${plans.map(([id, name]) => `<option value="${id}">${name}</option>`).join("")}</select></label><label>Billing<select name="interval"><option value="monthly">Monthly</option><option value="annual">Annual · 2 months free</option></select></label><p>Unlimited users on every plan. Live OEM programming is Shop Pro and Enterprise.</p><p class="login-error" id="upgrade-plan-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Continue</button></div></form>`); document.querySelector("#upgrade-plan-form").onsubmit = async event => { event.preventDefault(); const data = readFormValues(event.target), error = document.querySelector("#upgrade-plan-error"); try { const result = await platformApi("/billing/checkout", { method: "POST", body: JSON.stringify({ planId: data.planId, interval: data.interval, successUrl: `${location.origin}/?billing=success`, cancelUrl: `${location.origin}/?billing=cancelled` }) }); toast("Opening secure subscription checkout"); if (result.url && (String(result.url).startsWith("http") || String(result.url).startsWith("/"))) location.assign(result.url) } catch (requestError) { error.textContent = requestError.message || "Could not start upgrade"; error.hidden = false } } }
+async function upgradeShopPlan() { const plans = [["shop", "Shop · $139/mo"], ["solo", "Solo · $69/mo"], ["shop_pro", "Shop Pro · $279/mo"], ["enterprise", "Enterprise · $559/mo"]]; showModal(`<form class="modal" id="upgrade-plan-form"><div class="modal-head"><h2>Choose a plan</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Plan<select name="planId">${plans.map(([id, name]) => `<option value="${id}">${name}</option>`).join("")}</select></label><label>Billing<select name="interval"><option value="monthly">Monthly</option><option value="annual">Annual · 2 months free</option></select></label><p>Unlimited users on every plan. Live OEM programming is Shop Pro and Enterprise.</p><p class="login-error" id="upgrade-plan-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Continue</button></div></form>`); document.querySelector("#upgrade-plan-form").onsubmit = async event => { event.preventDefault(); const data = readFormValues(event.target), error = document.querySelector("#upgrade-plan-error"); try { const result = await platformApi("/billing/checkout", { method: "POST", body: JSON.stringify({ planId: data.planId, interval: data.interval, successUrl: `${location.origin}/?billing=success`, cancelUrl: `${location.origin}/?billing=cancelled`, referralCode: window.ShopCrankReferral?.get()?.code || undefined, referralSource: window.ShopCrankReferral?.get()?.source || undefined }) }); toast("Opening secure subscription checkout"); if (result.url && (String(result.url).startsWith("http") || String(result.url).startsWith("/"))) location.assign(result.url) } catch (requestError) { error.textContent = requestError.message || "Could not start upgrade"; error.hidden = false } } }
 async function platformApi(path, options = {}) {
   const response = await authorizedApiRequest(path, options);
   const payload = await response.json().catch(() => ({}));
@@ -1196,7 +1197,7 @@ function subscriptionBadge(account) {
 }
 
 function superAdmin() { if (platformAccounts === null && !platformAccountsLoading) void loadPlatformAccounts(); const accounts = platformAccounts || [], users = accounts.reduce((sum, account) => sum + (account.users || []).length, 0), trials = accounts.filter(account => !account.suspended && String(account.subscriptionStatus || "") === "trialing").length, paid = accounts.filter(account => !account.suspended && String(account.subscriptionStatus || "") === "active").length, rows = accounts.map(account => `<tr><td><b>${escapeHtml(account.shopName)}</b><small class="mono">${escapeHtml(account.shopId)}</small></td><td><b>${escapeHtml(account.ownerName)}</b><small>${escapeHtml(account.ownerEmail)}</small></td><td>${subscriptionBadge(account)}</td><td><span class="badge paid">${(account.users || []).length} login${(account.users || []).length === 1 ? "" : "s"}</span><small>${(account.users || []).map(user => `${escapeHtml(user.email)} · ${escapeHtml(user.status || "Unknown")}`).join("<br>") || "No login found"}</small></td><td><b>${money(account.creditBalance || 0)}</b><small>Account credit</small></td><td><div class="platform-row-actions"><button class="mini-action" data-credit-shop="${escapeHtml(account.shopId)}" data-shop-name="${escapeHtml(account.shopName)}">${icon("badge-dollar-sign", 13)} Credit</button><button class="mini-action" data-convert-shop="${escapeHtml(account.shopId)}" data-shop-name="${escapeHtml(account.shopName)}">${icon("sparkles", 13)} Convert to paid</button><button class="mini-action" data-trial-shop="${escapeHtml(account.shopId)}" data-shop-name="${escapeHtml(account.shopName)}">${icon("timer", 13)} Set free term</button><button class="mini-action" data-account-status="${escapeHtml(account.shopId)}" data-shop-name="${escapeHtml(account.shopName)}" data-suspended="${account.suspended ? "false" : "true"}">${icon(account.suspended ? "play" : "pause", 13)} ${account.suspended ? "Reactivate" : "Suspend"}</button></div></td></tr>`).join(""); return platformShell(`${heading("Platform control", "Customer shops", "Create customer shops, grant free tester accounts for any duration, convert them to paid, and share desktop/mobile downloads.", false)}<div class="platform-actions"><div class="platform-kpis"><article><span>Customer shops</span><strong>${accounts.length}</strong></article><article><span>Free / trial</span><strong>${trials}</strong></article><article><span>Paid shops</span><strong>${paid}</strong></article><article><span>Managed logins</span><strong>${users}</strong></article></div><div class="platform-action-buttons"><button class="primary" id="new-customer-account">${icon("building-2", 15)} Create shop</button><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 15)} App downloads</a></div></div><div class="access-note platform-security">${icon("shield-check", 15)} Platform admins create shops and free tester terms here. Shop owners sign in with their work email. Desktop and phone installs are on the downloads page.</div><div class="data-panel platform-table"><table><thead><tr><th>Shop</th><th>Owner</th><th>Plan</th><th>Logins</th><th>Credit</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="6">${platformAccountsLoading ? "Loading customer accounts..." : "No customer shops yet. Create one to invite an owner."}</td></tr>`}</tbody></table></div>`) }
-function openCustomerAccount() { showModal(`<form class="modal wide" id="customer-account-form"><div class="modal-head"><h2>Create customer shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Shop name *<input name="shopName" required placeholder="High Plains Auto"/></label><label>Shop ID *<input name="shopId" required pattern="[a-z0-9][a-z0-9-]{2,63}" placeholder="high-plains-auto"/></label><label>Owner name *<input name="ownerName" required/></label><label>Owner email *<input name="email" type="email" required/></label><label>Account type *<select name="accountMode"><option value="trialing">Free / tester</option><option value="comped">Comped (no expiry)</option><option value="active">Paid</option></select></label><label>Free term (days)<input name="trialDays" type="number" min="0" max="3650" value="30" placeholder="30"/><small>Use 0 or leave blank with Comped for no end date. Paid ignores this.</small></label><label>Plan<select name="planId"><option value="solo">Solo · $69/mo</option><option value="shop">Shop · $139/mo</option><option value="shop_pro">Shop Pro · $279/mo</option><option value="enterprise">Enterprise · $559/mo</option><option value="founding_solo">Founding Solo · $49/mo</option><option value="founding_shop">Founding Shop · $99/mo</option><option value="founding_pro">Founding Pro · $199/mo</option></select></label></div><div class="ledger-note">${icon("mail", 15)} The owner signs in with this work email. You can convert free shops to paid later from this console.</div><p class="login-error" id="customer-account-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("user-plus", 14)} Create shop</button></div></form>`); const form = document.querySelector("#customer-account-form"), mode = form.elements.accountMode, days = form.elements.trialDays; const syncMode = () => { days.disabled = mode.value === "active"; if (mode.value === "comped") days.value = "0"; if (mode.value === "trialing" && !days.value) days.value = "30" }; mode.onchange = syncMode; syncMode(); form.onsubmit = async event => { event.preventDefault(); const button = form.querySelector("button[type=submit]"), error = document.querySelector("#customer-account-error"), data = readFormValues(form); button.disabled = true; error.hidden = true; try { await platformApi("/admin/accounts", { method: "POST", body: JSON.stringify({ shopName: data.shopName, shopId: data.shopId, ownerName: data.ownerName, email: data.email, accountMode: data.accountMode, trialDays: data.trialDays, planId: data.planId }) }); closeModal(); platformAccounts = null; toast("Customer shop created"); render() } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false } } }
+function openCustomerAccount() { showModal(`<form class="modal wide" id="customer-account-form"><div class="modal-head"><h2>Create customer shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Shop name *<input name="shopName" required placeholder="High Plains Auto"/></label><label>Shop ID *<input name="shopId" required pattern="[a-z0-9][a-z0-9-]{2,63}" placeholder="high-plains-auto"/></label><label>Owner name *<input name="ownerName" required/></label><label>Owner email *<input name="email" type="email" required/></label><label>Account type *<select name="accountMode"><option value="trialing">Free / tester</option><option value="comped">Comped (no expiry)</option><option value="active">Paid</option></select></label><label>Free term (days)<input name="trialDays" type="number" min="0" max="3650" value="30" placeholder="30"/><small>Use 0 or leave blank with Comped for no end date. Paid ignores this.</small></label><label>Plan<select name="planId"><option value="solo">Solo · $69/mo</option><option value="shop">Shop · $139/mo</option><option value="shop_pro">Shop Pro · $279/mo</option><option value="enterprise">Enterprise · $559/mo</option><option value="founding_solo">Founding Solo · $49/mo</option><option value="founding_shop">Founding Shop · $99/mo</option><option value="founding_pro">Founding Pro · $199/mo</option></select></label><label>Sold by ambassador<select name="soldByAmbassadorId" id="customer-account-ambassador"><option value="">No ambassador</option></select></label><label>Sale source<select name="saleSource">${Ambassadors.sourceOptions("admin_manual", { escapeHtml })}</select></label></div><div class="ledger-note">${icon("mail", 15)} The owner signs in with this work email. You can convert free shops to paid later from this console.</div><p class="login-error" id="customer-account-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("user-plus", 14)} Create shop</button></div></form>`); const form = document.querySelector("#customer-account-form"), mode = form.elements.accountMode, days = form.elements.trialDays; void platformApi("/admin/ambassadors").then(result => { const select = form.querySelector("#customer-account-ambassador"); if (select) select.innerHTML = safeHtml(Ambassadors.ambassadorOptions(result.ambassadors, "", { escapeHtml })) }).catch(() => {}); const syncMode = () => { days.disabled = mode.value === "active"; if (mode.value === "comped") days.value = "0"; if (mode.value === "trialing" && !days.value) days.value = "30" }; mode.onchange = syncMode; syncMode(); form.onsubmit = async event => { event.preventDefault(); const button = form.querySelector("button[type=submit]"), error = document.querySelector("#customer-account-error"), data = readFormValues(form); button.disabled = true; error.hidden = true; try { await platformApi("/admin/accounts", { method: "POST", body: JSON.stringify({ shopName: data.shopName, shopId: data.shopId, ownerName: data.ownerName, email: data.email, accountMode: data.accountMode, trialDays: data.trialDays, planId: data.planId, soldByAmbassadorId: data.soldByAmbassadorId || undefined, saleSource: data.saleSource || undefined }) }); closeModal(); platformAccounts = null; toast("Customer shop created"); render() } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false } } }
 function openAccountCredit(shopId, shopName) { showModal(`<form class="modal" id="account-credit-form"><div class="modal-head"><h2>Give account credit</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(shopName)}</span><strong>${escapeHtml(shopId)}</strong></div><div class="form-grid"><label>Credit amount *<input name="amount" type="number" min="0.01" step="0.01" required/></label><label>Reason *<input name="reason" required placeholder="Service adjustment"/></label></div><p class="login-error" id="account-credit-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("badge-dollar-sign", 14)} Apply credit</button></div></form>`); document.querySelector("#account-credit-form").onsubmit = async event => { event.preventDefault(); const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#account-credit-error"), data = readFormValues(event.target); button.disabled = true; error.hidden = true; try { await platformApi(`/admin/accounts/${encodeURIComponent(shopId)}/credits`, { method: "POST", body: JSON.stringify({ amount: Number(data.amount), reason: data.reason }) }); closeModal(); platformAccounts = null; toast(`${money(Number(data.amount))} credit applied`); render() } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false } } }
 function openConvertPaid(shopId, shopName) { showModal(`<form class="modal" id="convert-paid-form"><div class="modal-head"><h2>Convert to paid</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(shopName)}</span><strong>${escapeHtml(shopId)}</strong></div><div class="form-grid"><label>Plan<select name="planId"><option value="solo">Solo · $69/mo</option><option value="shop">Shop · $139/mo</option><option value="shop_pro">Shop Pro · $279/mo</option><option value="enterprise">Enterprise · $559/mo</option><option value="founding_solo">Founding Solo · $49/mo</option><option value="founding_shop">Founding Shop · $99/mo</option><option value="founding_pro">Founding Pro · $199/mo</option></select></label></div><div class="ledger-note">${icon("sparkles", 15)} Marks this shop as a paid account with no free-term expiry. Stripe card checkout can be connected later with live SaaS price IDs.</div><p class="login-error" id="convert-paid-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("badge-check", 14)} Make paid</button></div></form>`); document.querySelector("#convert-paid-form").onsubmit = async event => { event.preventDefault(); const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#convert-paid-error"), data = readFormValues(event.target); button.disabled = true; error.hidden = true; try { await platformApi(`/admin/accounts/${encodeURIComponent(shopId)}/subscription`, { method: "POST", body: JSON.stringify({ mode: "active", planId: data.planId }) }); closeModal(); platformAccounts = null; toast(`${shopName} is now a paid account`); render() } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false } } }
 function openFreeTerm(shopId, shopName) { showModal(`<form class="modal" id="free-term-form"><div class="modal-head"><h2>Set free / tester term</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(shopName)}</span><strong>${escapeHtml(shopId)}</strong></div><div class="form-grid"><label>Mode<select name="mode"><option value="trialing">Replace term from today</option><option value="extend">Extend from current end</option><option value="comped">Comped (no expiry)</option></select></label><label>Days<input name="trialDays" type="number" min="0" max="3650" value="30"/></label></div><div class="ledger-note">${icon("timer", 15)} Use this for tester shops. Zero days with Comped means unlimited free access until you convert them to paid.</div><p class="login-error" id="free-term-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("save", 14)} Save term</button></div></form>`); document.querySelector("#free-term-form").onsubmit = async event => { event.preventDefault(); const button = event.target.querySelector("button[type=submit]"), error = document.querySelector("#free-term-error"), data = readFormValues(event.target); button.disabled = true; error.hidden = true; try { await platformApi(`/admin/accounts/${encodeURIComponent(shopId)}/subscription`, { method: "POST", body: JSON.stringify({ mode: data.mode, trialDays: data.trialDays }) }); closeModal(); platformAccounts = null; toast("Free term updated"); render() } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false } } }
@@ -6115,6 +6116,169 @@ render = function () {
     return;
   }
   renderHealthCheckCore();
+};
+// --- Platform console: ambassador program (/api/admin/ambassador*) ---
+if (!roleRoutes.super_admin.includes("ambassadors")) roleRoutes.super_admin.push("ambassadors");
+let ambassadorData = null, ambassadorLoading = false;
+const platformShellAmbassadorCore = platformShell;
+platformShell = function (content) {
+  const healthNav = nav("health", "activity", "System health");
+  return platformShellAmbassadorCore(content).replace(healthNav, `${healthNav}${nav("ambassadors", "handshake", "Ambassadors")}`);
+};
+async function loadAmbassadorData(patch = {}) {
+  if (ambassadorLoading) return;
+  ambassadorLoading = true;
+  const next = { tab: "ambassadors", salesFilters: {}, ledgerPeriod: Ambassadors.lastMonth(), ...(ambassadorData || {}), ...patch, loading: false };
+  try {
+    const { ambassadors } = await platformApi("/admin/ambassadors");
+    next.ambassadors = ambassadors;
+    if (next.tab === "sales") next.sales = (await platformApi(`/admin/ambassador-sales${Ambassadors.salesQuery(next.salesFilters)}`)).sales;
+    if (next.tab === "commissions") {
+      next.rates = (await platformApi("/admin/ambassador-commission-rates")).rates;
+      next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}`);
+    }
+    if (next.tab === "reports") Object.assign(next, await platformApi("/admin/ambassador-payout-reports"));
+  } catch (error) {
+    next.ambassadors ||= [];
+    toast(error.message || "Could not load ambassadors");
+  } finally {
+    ambassadorLoading = false;
+  }
+  ambassadorData = next;
+  if (state.route === "ambassadors") render();
+}
+function ambassadorsView() {
+  if (ambassadorData === null) void loadAmbassadorData();
+  return platformShell(`${heading("Platform control", "Ambassadors", "Ambassador numbers and referral codes, who sold each membership, recurring monthly commissions, and the monthly payout report.", false)}${Ambassadors.ambassadorsHtml(ambassadorData, { escapeHtml, icon })}`);
+}
+function openAmbassadorForm(ambassador = null) {
+  showModal(Ambassadors.ambassadorFormHtml(ambassador, { escapeHtml, icon }));
+  const form = document.querySelector("#amb-form");
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const error = document.querySelector("#amb-form-error"), button = form.querySelector("button[type=submit]"), data = readFormValues(form);
+    button.disabled = true;
+    error.hidden = true;
+    try {
+      await platformApi(ambassador ? `/admin/ambassadors/${encodeURIComponent(ambassador.id)}` : "/admin/ambassadors", { method: ambassador ? "PUT" : "POST", body: JSON.stringify(data) });
+      closeModal();
+      toast(ambassador ? "Ambassador updated" : "Ambassador added");
+      void loadAmbassadorData();
+    } catch (requestError) {
+      error.textContent = requestError.message;
+      error.hidden = false;
+      button.disabled = false;
+    }
+  };
+  document.querySelector("#amb-delete")?.addEventListener("click", async () => {
+    if (!confirm(`Delete ${ambassador.ambassadorNumber}? Ambassadors with sales must be suspended instead.`)) return;
+    try { await platformApi(`/admin/ambassadors/${encodeURIComponent(ambassador.id)}`, { method: "DELETE" }); closeModal(); toast("Ambassador deleted"); void loadAmbassadorData() } catch (requestError) { toast(requestError.message) }
+  });
+}
+async function openSaleCredit(shopId) {
+  const sale = (ambassadorData?.sales || []).find(item => item.shopId === shopId);
+  if (!sale) return;
+  const { log } = await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/log`).catch(() => ({ log: [] }));
+  showModal(Ambassadors.creditFormHtml(sale, ambassadorData.ambassadors, log, { escapeHtml, icon }));
+  const form = document.querySelector("#amb-credit-form");
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const error = document.querySelector("#amb-credit-error"), data = readFormValues(form);
+    error.hidden = true;
+    try {
+      await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/attribution`, { method: "POST", body: JSON.stringify({ ambassadorId: data.ambassadorId || null, saleSource: data.saleSource, soldBy: data.soldBy, reason: data.reason }) });
+      closeModal();
+      toast("Sale credit updated");
+      void loadAmbassadorData();
+    } catch (requestError) {
+      error.textContent = requestError.message;
+      error.hidden = false;
+    }
+  };
+}
+async function downloadAmbassadorFile(path, name, type) {
+  const response = await authorizedApiRequest(path);
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Download failed");
+  const url = URL.createObjectURL(new Blob([await response.arrayBuffer()], { type }));
+  return { url, name };
+}
+async function openPayoutReport(period, { generate = false } = {}) {
+  try {
+    const report = generate
+      ? (await platformApi("/admin/ambassador-payout-reports", { method: "POST", body: JSON.stringify({ period }) })).report
+      : await platformApi(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}`);
+    showModal(Ambassadors.payoutReportDialogHtml(report, { escapeHtml, icon }));
+    document.querySelector("#amb-report-print")?.addEventListener("click", async () => {
+      const win = window.open("", "_blank");
+      try {
+        const { url } = await downloadAmbassadorFile(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}/print?print=1`, "", "text/html");
+        if (win) win.location.href = url;
+        else window.open(url, "_blank");
+      } catch (error) { win?.close(); toast(error.message) }
+    });
+    document.querySelector("#amb-report-pdf")?.addEventListener("click", async () => {
+      try {
+        const { url } = await downloadAmbassadorFile(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}/pdf`, "", "application/pdf");
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `shopcrank-ambassador-payouts-${period}.pdf`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      } catch (error) { toast(error.message) }
+    });
+    document.querySelectorAll(".amb-pay-form").forEach(form => form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = readFormValues(form);
+      try {
+        await platformApi(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}/payouts/${encodeURIComponent(form.dataset.ambassador)}`, { method: "POST", body: JSON.stringify(data) });
+        toast(`Check ${data.checkNumber} recorded`);
+        await openPayoutReport(period);
+        if (ambassadorData?.tab === "reports") void loadAmbassadorData();
+      } catch (error) { toast(error.message) }
+    }));
+  } catch (error) {
+    if (!generate && /No payout report/.test(error.message) && confirm(`No report exists for ${period}. Generate it now? It will be frozen once created.`)) return openPayoutReport(period, { generate: true });
+    toast(error.message);
+  }
+}
+function bindAmbassadors() {
+  document.querySelector("#refresh-platform")?.addEventListener("click", () => { void loadAmbassadorData() });
+  document.querySelectorAll("[data-amb-tab]").forEach(button => button.addEventListener("click", () => { ambassadorData = { ...ambassadorData, tab: button.dataset.ambTab, loading: true }; render(); void loadAmbassadorData({ tab: button.dataset.ambTab }) }));
+  document.querySelector("#amb-new")?.addEventListener("click", () => openAmbassadorForm());
+  document.querySelectorAll("[data-amb-edit]").forEach(button => button.addEventListener("click", () => openAmbassadorForm(ambassadorData.ambassadors.find(item => item.id === button.dataset.ambEdit))));
+  document.querySelectorAll("[data-amb-statement]").forEach(button => button.addEventListener("click", async () => {
+    try { showModal(Ambassadors.statementHtml(await platformApi(`/admin/ambassadors/${encodeURIComponent(button.dataset.ambStatement)}/statement`), { escapeHtml, icon })) } catch (error) { toast(error.message) }
+  }));
+  document.querySelector("#amb-sales-filters")?.addEventListener("submit", event => { event.preventDefault(); void loadAmbassadorData({ salesFilters: readFormValues(event.target) }) });
+  document.querySelectorAll("[data-sale-credit]").forEach(button => button.addEventListener("click", () => { void openSaleCredit(button.dataset.saleCredit) }));
+  document.querySelector("#amb-rates-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const rates = [...event.target.querySelectorAll("input[name^='rate:']")].map(input => ({ planId: input.name.slice(5), tier: input.dataset.tier, monthlyCents: Math.round(Number(input.value) * 100) }));
+    try { await platformApi("/admin/ambassador-commission-rates", { method: "PUT", body: JSON.stringify({ rates }) }); toast("Commission rates saved"); void loadAmbassadorData() } catch (error) { toast(error.message) }
+  });
+  document.querySelector("#amb-ledger-form")?.addEventListener("submit", event => { event.preventDefault(); void loadAmbassadorData({ ledgerPeriod: readFormValues(event.target).period }) });
+  document.querySelector("#amb-ledger-generate")?.addEventListener("click", async () => {
+    const period = document.querySelector("#amb-ledger-form")?.elements.period.value;
+    try { const result = await platformApi("/admin/ambassador-commissions/generate", { method: "POST", body: JSON.stringify({ period }) }); toast(result.frozen ? "That month is frozen in a payout report" : `${result.created} commission line${result.created === 1 ? "" : "s"} added`); void loadAmbassadorData({ ledgerPeriod: period }) } catch (error) { toast(error.message) }
+  });
+  document.querySelector("#amb-report-form")?.addEventListener("submit", event => { event.preventDefault(); void openPayoutReport(readFormValues(event.target).period) });
+  document.querySelectorAll("[data-report-view]").forEach(button => button.addEventListener("click", () => { void openPayoutReport(button.dataset.reportView) }));
+}
+const bindAmbassadorsCore = bind;
+bind = function () {
+  bindAmbassadorsCore();
+  if (state.route === "ambassadors" && currentUser()?.role === "super_admin") bindAmbassadors();
+};
+const renderAmbassadorsCore = render;
+render = function () {
+  if (currentUser()?.role === "super_admin" && state.route === "ambassadors") {
+    const root = document.querySelector("#root");
+    root.innerHTML = safeHtml(ambassadorsView());
+    lucide.createIcons();
+    bind();
+    return;
+  }
+  renderAmbassadorsCore();
 };
 // --- Two-way customer texting: inbox on the Messaging page ---
 const SMS_READ_MARKS = "shopcrank-sms-read-v1";
