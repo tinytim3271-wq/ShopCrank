@@ -117,7 +117,7 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 .pos-status[data-phase="paid"]{color:#0f6b45}
 .pos-status[data-phase="declined"]{color:#9b2c2c}
 #pos-card-element{min-height:48px}
-#help-root{position:fixed;left:18px;bottom:18px;z-index:41}
+#help-root{position:fixed;left:18px;bottom:18px;z-index:41}@media(min-width:761px){#help-root{left:254px}}main.main{padding-bottom:88px}
 .login-security{display:flex;gap:8px;align-items:flex-start;margin-top:14px;font-size:12px;line-height:1.45;color:var(--muted)}
 .login-security svg{flex:none;margin-top:1px}
 .help-float{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 13px;border:1px solid var(--deep);border-radius:5px;color:#fff;background:var(--deep);font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(24,37,43,.2)}

@@ -35,7 +35,6 @@ import {
 } from './security.mjs';
 import { createPartstechHandlers } from './integrations/partstech.mjs';
 import { createLaborGuideHandlers } from './integrations/labor-guide.mjs';
-import { createQuickbooksHandlers } from './integrations/quickbooks.mjs';
 import {
   buildGeneralImportCsv,
   enrichStripePaymentIds,
@@ -96,6 +95,7 @@ import { refreshDueKnowledgeSources } from './knowledge/web.mjs';
 import { handleOnboardingRoutes, pollPendingA2p } from './onboarding/routes.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
 import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
+import { handlePhoneUsage, meterPhoneCall, phoneCallDecision, shopFallbackPhone } from './phone-metering.mjs';
 import { FOLLOWUP_CRON, runScheduledFollowups, runShopFollowups } from './customer-followups.mjs';
 import { handlePublicBooking } from './online-booking.mjs';
 import { automatedSmsEnabled } from './growth-flags.mjs';
@@ -1887,8 +1887,30 @@ async function handleAgentPhoneWebhook(request, env, shopId) {
   if (account && Number(account.suspended) === 1) throw new HttpError(403, 'Shop account is suspended');
   const body = parseJson(payload);
   if (body.event === 'agent.call_ended') {
-    await saveCallSummary(env, await agentPhoneCallSummary(env, shopId, body));
+    const summary = await agentPhoneCallSummary(env, shopId, body);
+    await saveCallSummary(env, summary);
+    if (String(body.channel || 'voice') === 'voice' && Number(summary?.durationSeconds) > 0) {
+      const callId = String(summary.callSid || '');
+      // AgentPhone retries webhooks: count each call once.
+      const seen = callId ? await env.DB.prepare(
+        "SELECT 1 FROM ai_usage_events WHERE shop_id = ? AND user_id = 'agentphone-call' AND json_extract(metadata_json, '$.callId') = ? LIMIT 1",
+      ).bind(shopId, callId).first() : null;
+      if (seen) return json({ received: true });
+      const metered = await meterPhoneCall(env, shopId, { seconds: summary.durationSeconds, callId });
+      await recordAiUsage(env, {
+        shopId, userId: 'agentphone-call', channel: 'voice', provider: 'agentphone', model: 'agentphone',
+        voiceSeconds: summary.durationSeconds, billedUsd: metered.billedUsd,
+        metadata: { callId, reason: 'call_ended', metering: metered.metering },
+      }).catch(error => console.error(JSON.stringify({ message: 'AgentPhone usage could not be recorded', shopId, error: String(error?.message || error) })));
+    }
     return json({ received: true });
+  }
+  if (body.event === 'agent.message' && String(body.channel) === 'voice') {
+    const metering = await phoneCallDecision(env, shopId).catch(() => ({ allowed: true }));
+    if (!metering.allowed) {
+      const fallback = await shopFallbackPhone(env, shopId).catch(() => '');
+      return json({ text: fallback ? `Our automated assistant can't take this call right now. Please call the shop directly at ${fallback}.` : "Our automated assistant can't take this call right now. Please call back during business hours." });
+    }
   }
   if (body.event !== 'agent.message' || !['voice', 'sms', 'mms', 'imessage'].includes(String(body.channel))) return json({ received: true });
   const transcript = String(body.data?.transcript || body.data?.message || '').trim().slice(0, 4000);
@@ -3883,13 +3905,19 @@ async function route(request, env, analytics) {
     })(request, env, context, segments);
   }
   if (segments[0] === 'integrations' && segments[1] === 'quickbooks') {
-    return createQuickbooksHandlers({
+    // Older path kept for cached clients: one QuickBooks connection, served by the Integrations handler.
+    await requirePlanCapability(context, env, 'quickbooks');
+    const rest = segments.slice(1);
+    if (rest.length === 1) rest.push(request.method === 'DELETE' ? 'disconnect' : 'status');
+    return handleQuickBooks(request, env, context, rest, {
+      getSecret: getIntegrationSecret,
       saveSecret: saveIntegrationSecret,
-      getSecret: (shopId, name) => getIntegrationSecret(env, shopId, name),
       deleteSecret: deleteIntegrationSecret,
-      requireRole,
-      recordAudit: recordDiagnosticAudit,
-    })(request, env, context, segments);
+      encryptSecret,
+      decryptSecret,
+      getEntity,
+      listEntities,
+    });
   }
   if (path === '/onboarding/start') return handleOnboarding(request, env, context, analytics);
   if (segments[0] === 'onboarding') {
@@ -3928,6 +3956,7 @@ async function route(request, env, analytics) {
     });
   }
   if (path === '/agentphone/configure') return handleAgentPhoneConfigure(request, env, context, analytics);
+  if (path === '/phone-usage') return handlePhoneUsage(request, env, context, { requireRole });
   if (segments[0] === 'files') return handleFiles(request, env, context, segments, analytics);
   if (path === '/document-links') return createCustomerDocumentLink(request, env, context);
   if (path.startsWith('/payments/terminal')) {
@@ -3962,6 +3991,29 @@ async function route(request, env, analytics) {
   throw new HttpError(404, 'Not found');
 }
 
+/**
+ * One byte range from a Range header, as R2 wants it ({ offset, length }).
+ * null = serve the whole file (no header, multiple ranges, or a range we ignore);
+ * 'unsatisfiable' = the range starts past the end of the file.
+ */
+function parseByteRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!match || !Number.isFinite(size) || size <= 0) return null;
+  const [, startText, endText] = match;
+  if (!startText && !endText) return null;
+  if (!startText) {
+    const suffix = Number(endText);
+    if (suffix <= 0) return 'unsatisfiable';
+    const length = Math.min(suffix, size);
+    return { offset: size - length, length };
+  }
+  const start = Number(startText);
+  if (start >= size) return 'unsatisfiable';
+  const end = endText ? Math.min(Number(endText), size - 1) : size - 1;
+  if (end < start) return null;
+  return { offset: start, length: end - start + 1 };
+}
+
 async function servePublicDownload(request, env) {
   if (!['GET', 'HEAD'].includes(request.method)) return null;
   const key = publicDownloadObjectKey(new URL(request.url).pathname);
@@ -3972,9 +4024,23 @@ async function servePublicDownload(request, env) {
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
+  // Resumable downloads: a large installer that drops mid-way restarts from the last byte.
+  const rangeHeader = request.method === 'GET' ? request.headers.get('Range') : null;
+  const meta = rangeHeader ? await env.FILES.head(key) : null;
+  let range = meta ? parseByteRange(rangeHeader, Number(meta.size)) : null;
+  const ifRange = request.headers.get('If-Range');
+  if (range && ifRange && meta?.httpEtag && ifRange !== meta.httpEtag) range = null;
+  if (range === 'unsatisfiable') {
+    return new Response(null, {
+      status: 416,
+      headers: { 'Content-Range': `bytes */${Number(meta.size)}`, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' },
+    });
+  }
   const object = request.method === 'HEAD'
     ? await env.FILES.head(key)
-    : await env.FILES.get(key);
+    : range
+      ? await env.FILES.get(key, { range })
+      : (rangeHeader && !meta ? null : await env.FILES.get(key));
   // Never fall through to the HTML marketing site for missing installers —
   // that looks like a "download" that opens a web page instead of a file.
   if (!object) {
@@ -3984,12 +4050,20 @@ async function servePublicDownload(request, env) {
   object.writeHttpMetadata(headers);
   headers.set('ETag', object.httpEtag);
   headers.set('Cache-Control', 'public, max-age=300');
+  headers.set('Accept-Ranges', 'bytes');
   headers.set('Content-Disposition', `attachment; filename="${key.split('/').pop()}"`);
   if (!headers.has('Content-Type')) {
     if (key.endsWith('.apk')) headers.set('Content-Type', 'application/vnd.android.package-archive');
     else if (key.endsWith('.zip')) headers.set('Content-Type', 'application/zip');
     else headers.set('Content-Type', 'application/octet-stream');
   }
+  const size = Number(object.size);
+  if (range) {
+    headers.set('Content-Range', `bytes ${range.offset}-${range.offset + range.length - 1}/${size}`);
+    headers.set('Content-Length', String(range.length));
+    return new Response(object.body, { status: 206, headers });
+  }
+  if (Number.isFinite(size) && size >= 0) headers.set('Content-Length', String(size));
   if (request.method === 'HEAD') {
     return new Response(null, { status: 200, headers });
   }

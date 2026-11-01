@@ -43,7 +43,7 @@ function setup({ secrets = {} } = {}) {
   const values = {
     'stripe-secret-key': 'sk_test_shop',
     'stripe-webhook-secret': 'whsec_shop',
-    'quickbooks-oauth': JSON.stringify({ realmId: '9130', refreshToken: 'rt-1', accessToken: 'at-1', tokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString() }),
+    'quickbooks-oauth-tokens': JSON.stringify({ realmId: '9130', refreshToken: 'rt-1', accessToken: 'at-1', expiresAt: Date.now() + 3_600_000 }),
     'partstech-credentials': JSON.stringify({ partnerId: 'p', partnerKey: 'pk', userId: 'u', userKey: 'uk' }),
     ...secrets,
   };
@@ -67,8 +67,9 @@ function baseEnv(DB, extra = {}) {
   return {
     DB,
     FILES: fakeR2(),
-    QUICKBOOKS_CLIENT_ID: 'client',
-    QUICKBOOKS_CLIENT_SECRET: 'secret',
+    INTUIT_CLIENT_ID: 'client',
+    INTUIT_CLIENT_SECRET: 'secret',
+    INTUIT_REDIRECT_URI: 'https://example.test/api/quickbooks/callback',
     SUPPORT_EMAIL_TO: 'support@shopcrank.com',
     AUTH_EMAIL_FROM: 'noreply@shopcrank.com',
     HEALTHCHECK_CANARY_SHOP_ID: 'healthcheck-canary',
@@ -87,6 +88,7 @@ function fakeFetcher({ stripeEndpoints, partstechOk = true, qboOk = true } = {})
       return reply({ data: stripeEndpoints ?? [{ url: `${ORIGIN}/api/payments/webhook/${SHOP}`, status: 'enabled', enabled_events: ['checkout.session.completed'] }] });
     }
     if (String(url).endsWith('/oauth/access')) return partstechOk ? reply({ accessToken: 'tok' }) : reply({ message: 'invalid partner key' }, 401);
+    if (String(url) === 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer') return reply({ error: 'invalid_grant', error_description: 'token revoked' }, 400);
     if (String(url).includes('/companyinfo/')) return qboOk ? reply({ CompanyInfo: { CompanyName: 'Demo Auto' } }) : reply({ Fault: { Error: [{ Message: 'AuthenticationFailed', Detail: 'token revoked' }] } }, 401);
     throw new Error(`unexpected fetch ${url}`);
   };
@@ -141,7 +143,7 @@ test('failures carry status, latency and the error payload', async () => {
   assert.equal(byProbe['inventory.partstech'].status, 'down');
   assert.match(byProbe['inventory.partstech'].error.message, /invalid partner key/);
   assert.equal(byProbe['quickbooks.companyinfo'].status, 'down');
-  assert.match(byProbe['quickbooks.companyinfo'].error.message, /AuthenticationFailed|token revoked/);
+  assert.match(byProbe['quickbooks.companyinfo'].error.message, /AuthenticationFailed|token revoked|token request failed/);
   assert.equal(byProbe['stripe.shop_webhook'].status, 'down');
   assert.equal(byProbe['stripe.shop_webhook'].error.code, 'webhook_missing');
   assert.equal(byProbe['d1.select'].status, 'ok');
@@ -171,7 +173,7 @@ test('a D1 outage and a slow dependency are reported as down, not thrown', async
 
 test('dry run validates config without third-party calls, token refresh, storage or email', async () => {
   const { DB, getSecret, saveSecret, saved } = setup({ secrets: {
-    'quickbooks-oauth': JSON.stringify({ realmId: '9130', refreshToken: 'rt-1', accessToken: 'at-1', tokenExpiresAt: '2020-01-01T00:00:00Z' }),
+    'quickbooks-oauth-tokens': JSON.stringify({ realmId: '9130', refreshToken: 'rt-1', accessToken: 'at-1', expiresAt: Date.parse('2020-01-01T00:00:00Z') }),
     'stripe-webhook-secret': 'not-a-signing-secret',
   } });
   const sent = [];
@@ -198,7 +200,7 @@ test('dry run validates config without third-party calls, token refresh, storage
 
 test('dry run flags missing QuickBooks app credentials and malformed stored PartsTech credentials', async () => {
   const { DB, getSecret, saveSecret } = setup({ secrets: { 'partstech-credentials': '{not json' } });
-  const run = await runHealthCheck(baseEnv(DB, { QUICKBOOKS_CLIENT_ID: '' }), { dryRun: true, fetcher: noNetwork(), getSecret, saveSecret });
+  const run = await runHealthCheck(baseEnv(DB, { INTUIT_CLIENT_ID: '' }), { dryRun: true, fetcher: noNetwork(), getSecret, saveSecret });
   const byProbe = Object.fromEntries(run.probes.map(item => [item.probe, item]));
   assert.equal(byProbe['quickbooks.companyinfo'].status, 'down');
   assert.match(byProbe['quickbooks.companyinfo'].error.message, /app credentials/);
@@ -269,7 +271,7 @@ test('the report is emailed on failures (or always when configured), never when 
 
 test('the Worker cron trigger runs the health check, stores the log and emails the report', async () => {
   assert.ok(readWranglerConfig().triggers.crons.includes(HEALTH_CHECK_CRON), 'wrangler.jsonc must schedule HEALTH_CHECK_CRON');
-  const { DB } = setup({ secrets: { 'quickbooks-oauth': null, 'partstech-credentials': null, 'stripe-secret-key': null, 'stripe-webhook-secret': null } });
+  const { DB } = setup({ secrets: { 'quickbooks-oauth-tokens': null, 'partstech-credentials': null, 'stripe-secret-key': null, 'stripe-webhook-secret': null } });
   const sent = [];
   const env = baseEnv(DB, { EMAIL: { send: async message => sent.push(message) }, HEALTHCHECK_EMAIL_MODE: 'always' });
   const waits = [];
@@ -342,7 +344,7 @@ test('admin endpoints are platform-owner only; POST defaults to a dry run', asyn
 });
 
 test('the admin route is wired through the Worker with platform-owner auth', async () => {
-  const { DB } = setup({ secrets: { 'quickbooks-oauth': null, 'partstech-credentials': null, 'stripe-secret-key': null, 'stripe-webhook-secret': null } });
+  const { DB } = setup({ secrets: { 'quickbooks-oauth-tokens': null, 'partstech-credentials': null, 'stripe-secret-key': null, 'stripe-webhook-secret': null } });
   const env = baseEnv(DB, { DEV_AUTH_BYPASS: '1', ACCESS_ADMIN_EMAILS: 'owner@shopcrank.com' });
   const request = email => new Request(`${ORIGIN}/api/admin/health-check`, {
     method: 'POST',

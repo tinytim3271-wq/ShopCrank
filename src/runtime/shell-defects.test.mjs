@@ -536,3 +536,25 @@ test('invoice editor round-trips date-only values in America/Chicago', () => {
     else process.env.TZ = previous;
   }
 });
+
+// Oct 31 audit: commit 6b27eaf silently reverted these three Oct 21 fixes. Keep them pinned.
+test('login screen keeps target="_blank" so desktop Google sign-in opens the system browser', () => {
+  assert.match(legacy, /DOMPurify\.sanitize\(pendingAuthProfile \? pendingProfileScreen\(\) : loginScreen\(\), \{ USE_PROFILES: \{ html: true \}, ADD_ATTR: \["target"\] \}\)/);
+  assert.match(legacy, /class="google-login-button"[^>]*\$\{isDesktopApp \? 'target="_blank" rel="noopener"' : ""\}/);
+});
+
+test('the floating Assistant button starts the live AI instead of opening a dialog', () => {
+  assert.match(legacy, /document\.querySelector\("#global-assistant"\)\.onclick = toggleGlobalLiveAssistant/);
+  assert.doesNotMatch(legacy, /document\.querySelector\("#global-assistant"\)\.onclick = openGlobalAssistant/);
+  assert.match(legacy, /function toggleGlobalLiveAssistant\(\)[^\n]*startOrStopGrokVoice\(\{ target: "global" \}\)/);
+  assert.match(legacy, /const floatBtn = document\.querySelector\("#global-assistant"\);/);
+});
+
+test('the sign-in form has the element that shows "check your email"', () => {
+  assert.match(legacy, /<p class="login-sent" id="login-sent" role="status" hidden><\/p>/);
+  assert.match(legacy, /form\.querySelector\("#login-sent"\)/);
+});
+
+test('an email sign-in started in the desktop app asks the server for the Open ShopCrank handoff', () => {
+  assert.match(legacy, /JSON\.stringify\(\{ email, returnTo: "\/", return_to: "\/", turnstileToken, \.\.\.\(isDesktopApp \? \{ desktop: true \} : \{\}\) \}\)/);
+});

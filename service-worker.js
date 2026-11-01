@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shopcrank-shell-v36';
+const CACHE_NAME = 'shopcrank-shell-v37';
 const SHELL_FILES = [
   './',
   './index.html',

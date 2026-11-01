@@ -1,6 +1,7 @@
 /** QuickBooks Online connect/sync helpers with idempotent mapping. */
 
-export const QUICKBOOKS_SECRET_NAME = 'quickbooks-oauth';
+// Same secret the Integrations page OAuth flow (worker/src/integration-routes.mjs) stores tokens under.
+export const QUICKBOOKS_SECRET_NAME = 'quickbooks-oauth-tokens';
 export const QUICKBOOKS_SCOPES = 'com.intuit.quickbooks.accounting';
 
 export function quickbooksConnectionStatus(record) {

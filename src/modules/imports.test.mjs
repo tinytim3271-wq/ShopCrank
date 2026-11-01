@@ -30,7 +30,7 @@ test('parseCsv keeps quoted commas and escaped quotes', () => {
 });
 
 test('customer import skips duplicates and rejects blank names', () => {
-  const csv = 'name,phone,email\nExisting Customer,555,a@example.com\n,555-0199,blank@example.com\nNew Customer,555-0100,new@example.com\nNew Customer,555-0100,new@example.com\n=cmd|calc,555,x@example.com';
+  const csv = 'name,phone,email\nExisting Customer,555,a@example.com\n,555-0199,blank@example.com\nNew Customer,555-0100,new@example.com\nNew Customer,555-0100,new@example.com\n=cmd|calc,806-555-0100,x@example.com';
   const result = prepareImportRecords('customers', csv, shop);
   assert.equal(result.records.length, 2);
   assert.equal(result.records[0].name, 'New Customer');
@@ -126,4 +126,15 @@ test('a header-only file explains what is missing', () => {
 test('unknown import types fail closed', () => {
   const result = prepareImportRecords('payroll', 'name\nAda', shop);
   assert.match(result.errors[0], /supported import type/);
+});
+
+test('customer import rejects an invalid email or phone and says which row and value', () => {
+  const csv = 'name,phone,email\nGrace Holloway,806-555-0111,grace@example.com\nBad Email,806-555-0112,notanemail\nBad Phone,call me,bp@example.com\nShort Phone,555,sp@example.com\nNo Contact,,\nWith Ext,(806) 555-0113 ext 4,ext@example.com\nIntl,+44 20 7946 0958,uk@example.co.uk';
+  const result = prepareImportRecords('customers', csv, { customers: [] });
+  assert.deepEqual(result.records.map(record => record.name), ['Grace Holloway', 'No Contact', 'With Ext', 'Intl']);
+  assert.equal(result.errors.length, 3);
+  assert.match(result.errors[0], /^Row 3: Email "notanemail" is not a valid email address$/);
+  assert.match(result.errors[1], /^Row 4: Phone "call me" is not a valid phone number$/);
+  assert.match(result.errors[2], /^Row 5: Phone "555" is not a valid phone number$/);
+  assert.equal(result.skipped, 3);
 });

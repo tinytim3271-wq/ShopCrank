@@ -510,7 +510,7 @@ function reviewStep(draft, users) {
   return `<dl class="intake-review"><div><dt>Customer</dt><dd>${escapeHtml(customerDisplayName(draft) || 'Missing')}</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml(vehicleLabel(draft) || draft.vehicle.vin || 'Missing')}</dd></div><div><dt>Concern</dt><dd>${escapeHtml(draft.concern.description || 'Missing')}</dd></div><div><dt>Photos</dt><dd>${(draft.photos || []).length}</dd></div></dl>
 <div class="form-grid"><label>Primary technician<select name="assign-primary">${options('primary')}</select></label><label>Secondary technician<select name="assign-secondary">${options('secondary')}</select></label><label>Apprentice<select name="assign-apprentice">${options('apprentice')}</select></label></div>
 ${missingRequiredPhotos(draft).length ? `<label class="toggle-field full"><input type="checkbox" name="photosWaived" ${draft.photosWaived ? 'checked' : ''}/> Convert without walk-around photos<small>For quick services. The work order records that photos were skipped.</small></label>` : ''}
-${check.ok ? '' : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1">${check.problems.map(problem => `<span>${escapeHtml(problem)}</span>`).join('')}</div>`}
+${check.ok ? '' : `<div class="import-errors" id="intake-problems" role="alert" tabindex="-1"><strong>Before you can convert:</strong>${check.problems.map(problem => `<span>${escapeHtml(problem)}</span>`).join('')}</div>`}
 ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not create the work order: ${escapeHtml(draft.convertError)}</span></div>` : ''}
 <p class="form-help">Convert copies this intake onto one work order. Customer, vehicle, photos, estimate, and diagnostic notes are not typed again.</p>`;
 }
@@ -603,6 +603,7 @@ export function mountIntakeWizard(host, {
   onSave,
   onCancel,
   onConvert,
+  onBlocked,
   decodeVin,
   lookupPlate,
   analyze,
@@ -684,8 +685,11 @@ export function mountIntakeWizard(host, {
         persist('blocked');
         paint();
         const problems = host.querySelector('#intake-problems');
+        problems?.classList.add('is-flagged');
         problems?.scrollIntoView({ block: 'center', behavior: 'smooth' });
         problems?.focus();
+        // The list may already have been on screen, so say out loud why nothing happened.
+        onBlocked?.(check.problems);
         return;
       }
       const button = host.querySelector('#intake-convert');

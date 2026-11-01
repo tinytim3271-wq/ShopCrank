@@ -22,6 +22,7 @@ import {
   grokWaveformButtonIcon,
 } from '../modules/grok-voice-client.js';
 import { quickbooksPanelHtml } from '../modules/quickbooks.js';
+import { capCentsFromInput, phoneUsagePanelHtml } from '../modules/phone-usage.js';
 import { revenueRecognitionPanelHtml } from '../modules/revenue-recognition.js';
 import { applyEstimateFromInspection } from '../modules/repair-order-flow.js';
 import { uploadFailureMessage, uploadFileToStorage } from '../modules/file-upload.js';
@@ -419,7 +420,10 @@ function bindIntegrations() {
 }
 let assistantConversation = [], assistantPaused = false, assistantSessionId = "", assistantActiveProvider = "gemini";
 function openGlobalAssistant() { showModal(`<div class="modal wide global-assistant-modal"><div class="modal-head"><h2>ShopCrank Assistant</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body">${liveAssistant()}</div></div>`); bindLiveAssistant(); }
-function toggleAssistantPause() { assistantPaused = !assistantPaused; if (assistantPaused) { window.speechSynthesis?.cancel(); toast("Assistant paused") } else toast("Assistant resumed"); document.querySelectorAll("[data-assistant-pause]").forEach(button => { button.title = assistantPaused ? "Resume assistant" : "Pause assistant"; button.innerHTML = icon(assistantPaused ? "play" : "pause", 15) }); document.querySelectorAll("#assistant-form textarea,#assistant-form button").forEach(control => { control.disabled = assistantPaused }) }
+// The floating Assistant button goes straight to the live voice AI: one click
+// starts listening, the next click (or the pause button) ends the session.
+function toggleGlobalLiveAssistant() { if (assistantPaused && !activeGrokSession?.isActive()) toggleAssistantPause(); startOrStopGrokVoice({ target: "global" }) }
+function toggleAssistantPause() { if (activeGrokSession?.isActive()) { startOrStopGrokVoice(); toast("Live AI ended"); return } assistantPaused = !assistantPaused; if (assistantPaused) { window.speechSynthesis?.cancel(); toast("Assistant paused") } else toast("Assistant resumed"); document.querySelectorAll("[data-assistant-pause]").forEach(button => { button.title = assistantPaused ? "Resume assistant" : "Pause assistant"; button.innerHTML = icon(assistantPaused ? "play" : "pause", 15) }); document.querySelectorAll("#assistant-form textarea,#assistant-form button").forEach(control => { control.disabled = assistantPaused }) }
 function liveAssistant() { const rows = assistantConversation.map(item => `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p></article>`).join(""); return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow">Live voice assistant</div><h2>Ask ShopCrank anything</h2><p>Talk or type questions about shop operations, vehicles, work orders, invoices, and repair decisions.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Your live assistant is ready. Ask a question to begin.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Ask about a customer, repair, invoice, or shop task..."></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Speak to ShopCrank">${icon("mic", 15)} Speak</button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div></form></section>` }
 function aiWorkbench() { const tabs = [["workflow", "RO workflow"], ["diagnostics", "Diagnostics"], ["estimate", "Estimator"], ["saved-estimates", "Estimates"], ["guide", "Repair guide"], ["phone", "Phone intake"]], body = { workflow: aiWorkflowForm(), diagnostics: aiDiagnosticsForm(), estimate: aiEstimateForm(), "saved-estimates": savedEstimates(), guide: aiGuideForm(), phone: aiPhoneForm() }[aiTab]; return shell(`${heading("Service intelligence", "AI Workbench", "Diagnostics, estimates, repair planning, and live conversation in one workspace.", false)}${liveAssistant()}<div class="ai-notice">${icon("sparkles", 16)}<span>AI outputs are recommendations. Verify safety-critical work and customer-impacting changes before acting.</span></div><div class="accounting-tabs">${tabs.map(tab => `<button class="tab ${aiTab === tab[0] ? "active" : ""}" data-ai-tab="${tab[0]}">${tab[1]}</button>`).join("")}</div>${body}`) }
 function aiFormShell(title, description, fields, action) { return `<section class="ai-panel"><div class="statement-head"><div><div class="eyebrow">AI assistant</div><h2>${title}</h2><p>${description}</p></div>${icon("sparkles", 19)}</div><form class="form-grid" id="ai-form">${fields}<div class="full"><button class="primary" type="submit">${icon("sparkles", 15)} ${action}</button></div></form></section>` }
@@ -560,7 +564,7 @@ function isLocalShell() {
   return location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(location.hostname)
 }
 async function cloudflareAccessSignIn() { if (isOfflineDesktop()) throw new Error("Sign in with the password saved on this computer."); if (isLocalShell()) return localAccessSession(); const response = await fetch(`${cloudflareConfig.apiUrl}/auth/session`, { credentials: "include", cache: "no-store", headers: { Accept: "application/json" } }); const session = await response.json().catch(() => ({})); if (!response.ok || !session.claims) throw new Error(session.message || "Cloudflare Access authentication failed"); sessionStorage.setItem(storageKeys.session, JSON.stringify(session)); return session }
-async function requestMagicLinkSignIn(email, turnstileToken = "") { let response; try { response = await fetch(`${cloudflareConfig.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken }) }) } catch (error) { if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again."); throw error } const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || "Could not start sign-in"); const loginUrl = payload.loginUrl || payload.login_url || payload.url; if (loginUrl) { location.assign(loginUrl); return { redirecting: true, email } }; return { sent: true, email, message: payload.message || "Check your email for a sign-in link. It expires in 15 minutes. Look in spam if it is not in your inbox." } }
+async function requestMagicLinkSignIn(email, turnstileToken = "") { let response; try { response = await fetch(`${cloudflareConfig.apiUrl}/auth/magic-link`, { method: "POST", credentials: "include", cache: "no-store", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ email, returnTo: "/", return_to: "/", turnstileToken, ...(isDesktopApp ? { desktop: true } : {}) }) }) } catch (error) { if (error instanceof TypeError) throw new Error("Could not reach ShopCrank sign-in. Check your internet connection and try again."); throw error } const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || "Could not start sign-in"); const loginUrl = payload.loginUrl || payload.login_url || payload.url; if (loginUrl) { location.assign(loginUrl); return { redirecting: true, email } }; return { sent: true, email, message: payload.message || "Check your email for a sign-in link. It expires in 15 minutes. Look in spam if it is not in your inbox." } }
 const cloudflareSignIn = cloudflareAccessSignIn;
 function authSession() { try { const raw = sessionStorage.getItem(storageKeys.session) || localStorage.getItem(storageKeys.session); const session = JSON.parse(raw || "null"); if (!session?.claims) return null; const expiresAt = Number(session.expiresAt || session.claims.exp * 1000 || 0); if (!expiresAt || expiresAt <= Date.now()) { clearAuthSession(); return null } if (localStorage.getItem(storageKeys.session)) { sessionStorage.setItem(storageKeys.session, JSON.stringify(session)); localStorage.removeItem(storageKeys.session) } return session } catch { clearAuthSession(); return null } }
 function clearAuthSession() { sessionStorage.removeItem(storageKeys.session); localStorage.removeItem(storageKeys.session) }
@@ -796,7 +800,7 @@ async function loadQuickbooksAccount(force = false) {
   if (quickbooksAccount.loaded && !force) return;
   quickbooksAccount = { ...quickbooksAccount, loaded: true };
   try {
-    const account = await apiFetch("/integrations/quickbooks");
+    const account = await apiFetch("/quickbooks/status");
     quickbooksAccount = { ...account, loaded: true };
   } catch {
     quickbooksAccount = { connected: false, loaded: true, unavailable: true };
@@ -1009,18 +1013,14 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
   });
   document.querySelector("#qbo-connect")?.addEventListener("click", async () => {
     try {
-      const redirectUri = `${location.origin}/qbo/callback`;
-      const result = await apiFetch("/integrations/quickbooks/connect", {
-        method: "POST",
-        body: JSON.stringify({ redirectUri }),
-      });
-      if (result.authorizeUrl) location.href = result.authorizeUrl;
+      const result = await apiFetch("/quickbooks/connect", { method: "POST", body: "{}" });
+      if (result.authorizationUrl) location.assign(result.authorizationUrl);
       else toast("QuickBooks authorize URL missing");
     } catch (error) { toast(error.message || "Could not start QuickBooks connect"); }
   });
   document.querySelector("#qbo-disconnect")?.addEventListener("click", async () => {
     try {
-      await apiFetch("/integrations/quickbooks", { method: "DELETE" });
+      await apiFetch("/quickbooks/disconnect", { method: "DELETE" });
       quickbooksAccount = { connected: false, loaded: true };
       toast("QuickBooks disconnected");
       render();
@@ -1028,8 +1028,8 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
   });
   document.querySelector("#qbo-sync-now")?.addEventListener("click", async () => {
     const status = document.querySelector("#qbo-sync-status");
-    if (status) status.textContent = "Sync uses per-record POST /integrations/quickbooks/sync from invoices and customers.";
-    toast("Open a customer or invoice and sync from there, or call the sync API with entityType/localId");
+    if (status) status.textContent = "Sync a customer, invoice or payment from Integrations > QuickBooks.";
+    state.route = "integrations"; save(); render();
   });
   document.querySelector("#revrec-config-form")?.addEventListener("submit", async event => {
     event.preventDefault();
@@ -1157,7 +1157,7 @@ async function startInvoiceCheckout(number, textToPay = false) {
 function reports() { const t = state.taxSettings, stateName = usStates.find(s => s.code === t.state)?.name || t.state, result = taxReportResult; return shell(`${heading("Performance", "Reports", "A concise operational snapshot and state tax filing report based on current shop records.", false)}${stats()}<section class="messaging-panel"><div class="messaging-status ready">${icon("landmark", 17)}<div><strong>Tax filing report — ${stateName}</strong><span>Sales tax collected, formatted for ${stateName}'s ${t.filingFrequency.toLowerCase()} filing. Change the subscribing state in Shop settings.</span></div></div><form class="form-grid" id="tax-report-form"><label>From date *<input type="date" name="from" value="${result?.from || "2026-08-01"}" required/></label><label>To date *<input type="date" name="to" value="${result?.to || "2026-08-14"}" required/></label><div class="full messaging-actions"><button class="primary" type="submit">${icon("file-text", 14)} Generate report</button>${result ? `<button class="secondary" type="button" id="print-tax-report">${icon("printer", 14)} Print report</button>` : ""}</div></form>${result ? taxReportView(result, stateName, t) : ""}</section>`) }
 function taxReportView(result, stateName, settings) { const rows = result.rows.map(row => `<tr><td>${row.date}</td><td class="mono">${row.invoiceNumber}</td><td>${escapeHtml(row.customer)}</td><td>${money(row.gross)}</td><td>${money(row.taxable)}</td><td><b>${money(row.tax)}</b></td></tr>`).join(""); return `<div class="tax-report-print" id="tax-report-printable"><div class="statement-head"><div><div class="eyebrow">${stateName} sales tax filing</div><h2>Period ${result.from} to ${result.to}</h2><small>Tax ID: ${settings.taxId || "Not set"} · Filing frequency: ${settings.filingFrequency}</small></div></div><div class="finance-kpis"><article><span>Gross receipts</span><strong>${money(result.totals.gross)}</strong></article><article><span>Taxable sales</span><strong>${money(result.totals.taxable)}</strong></article><article><span>Tax collected</span><strong>${money(result.totals.tax)}</strong></article></div><div class="data-panel"><table><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th>Gross receipt</th><th>Taxable sales</th><th>Tax collected</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No payments were recorded in this period.</td></tr>`}</tbody></table></div></div>` }
 function settings() { const t = state.taxSettings, stateOptions = usStates.map(s => `<option value="${s.code}" ${t.state === s.code ? "selected" : ""}>${s.name}</option>`).join(""); return shell(`${heading("Administration", "Shop settings", "Core business defaults used throughout ShopCrank.", false)}<div class="settings-panel"><div class="form-grid"><label>Shop name<input value="${escapeAttr(shopDisplayName())}"/></label><label>Phone<input value="${escapeAttr(shopProfile().phone)}"/></label><label class="full">Address<input value="100 Demo Street, Example City, TX 00000"/></label><label>Default labor rate<input value="$165.00 / hr"/></label><label>Sales tax<input value="8.25%"/></label><label>Service bays<input value="4"/></label><label>SMS notifications<select><option>Enabled</option><option>Disabled</option></select></label></div><button class="primary settings-save">${icon("save", 15)} Save settings</button></div><div class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Tax filing</div><h2>Subscribing state & filing details</h2></div>${icon("landmark", 18)}</div><form class="form-grid" id="tax-settings-form"><label>Filing state *<select name="state" required>${stateOptions}</select></label><label>State tax ID<input name="taxId" value="${t.taxId}" placeholder="e.g. 1-234-5678-9"/></label><label>Default sales tax rate % *<input name="rate" type="number" step=".01" min="0" value="${t.rate}" required/></label><label>Filing frequency<select name="filingFrequency"><option ${t.filingFrequency === "Monthly" ? "selected" : ""}>Monthly</option><option ${t.filingFrequency === "Quarterly" ? "selected" : ""}>Quarterly</option><option ${t.filingFrequency === "Annually" ? "selected" : ""}>Annually</option></select></label><div class="full"><button class="primary" type="submit">${icon("save", 14)} Save tax settings</button></div></form></div>`) }
-function loginScreen() { if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon }); const googleUrl = `${cloudflareConfig.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`; return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>` }
+function loginScreen() { if (isOfflineDesktop()) return offlineLoginMarkup({ hasAccount: offlineAccountReady, email: offlineAccountEmail, icon }); const googleUrl = `${cloudflareConfig.authEndpoints.google}?returnTo=%2F${isDesktopApp ? "&desktop=1" : ""}`, google = isLocalShell() ? "" : `<a class="google-login-button" href="${googleUrl}" ${isDesktopApp ? 'target="_blank" rel="noopener"' : ""}><span class="google-mark" aria-hidden="true">G</span><span>Continue with Google</span></a><div class="login-divider"><span>or use your email</span></div>`; return `<main class="login-screen"><section class="login-panel"><div class="brand login-brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div><div class="eyebrow">Protected workspace</div><h1>Sign in to ShopCrank</h1><p>${isDesktopApp ? "Google opens in your browser. After you choose an account, click Open ShopCrank to return to this app." : "Use your verified Google account, or receive a one-time link at your work email. No password required."}</p>${google}<form id="login-form"><label class="login-email-label" for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required autofocus placeholder="you@yourshop.com"/><p class="login-error" id="login-error" hidden></p><p class="login-sent" id="login-sent" role="status" hidden></p>${isLocalShell() ? "" : `<div class="turnstile-slot" id="login-turnstile"></div>`}<button class="primary login-button" type="submit">${icon("mail", 16)} Email me a sign-in link</button></form><div class="login-security">${icon("lock-keyhole", 15)}<span>${isLocalShell() ? "Local development uses the seeded admin profile; cloud APIs remain protected." : "Google verifies the account email. Access still requires an active ShopCrank customer or employee profile."}</span></div></section></main>` }
 
 
 async function upgradeShopPlan() { const plans = [["shop", "Shop · $139/mo"], ["solo", "Solo · $69/mo"], ["shop_pro", "Shop Pro · $279/mo"], ["enterprise", "Enterprise · $559/mo"]]; showModal(`<form class="modal" id="upgrade-plan-form"><div class="modal-head"><h2>Choose a plan</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><label>Plan<select name="planId">${plans.map(([id, name]) => `<option value="${id}">${name}</option>`).join("")}</select></label><label>Billing<select name="interval"><option value="monthly">Monthly</option><option value="annual">Annual · 2 months free</option></select></label><p>Unlimited users on every plan. Live OEM programming is Shop Pro and Enterprise.</p><p class="login-error" id="upgrade-plan-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">Continue</button></div></form>`); document.querySelector("#upgrade-plan-form").onsubmit = async event => { event.preventDefault(); const data = readFormValues(event.target), error = document.querySelector("#upgrade-plan-error"); try { const result = await platformApi("/billing/checkout", { method: "POST", body: JSON.stringify({ planId: data.planId, interval: data.interval, successUrl: `${location.origin}/?billing=success`, cancelUrl: `${location.origin}/?billing=cancelled`, referralCode: window.ShopCrankReferral?.get()?.code || undefined, referralSource: window.ShopCrankReferral?.get()?.source || undefined }) }); toast("Opening secure subscription checkout"); if (result.url && (String(result.url).startsWith("http") || String(result.url).startsWith("/"))) location.assign(result.url) } catch (requestError) { error.textContent = requestError.message || "Could not start upgrade"; error.hidden = false } } }
@@ -1207,7 +1207,8 @@ function openPasswordReset() { showModal(`<div class="modal"><div class="modal-h
 function render() {
   const root = document.querySelector("#root");
   if (!currentUser()) {
-    root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true } });
+    // target="_blank" must survive: in the desktop app it routes Google sign-in to the system browser.
+    root.innerHTML = DOMPurify.sanitize(pendingAuthProfile ? pendingProfileScreen() : loginScreen(), { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
     lucide.createIcons();
     bind();
     return;
@@ -1659,7 +1660,7 @@ function openJournal() { const options = state.chartOfAccounts.map(x => `<option
 const importTypes = IMPORT_TYPES;
 function imports() { const cards = Object.entries(importTypes).map(([type, def]) => `<article class="import-card"><div class="import-card-icon">${icon(def.icon, 20)}</div><div><h3>${def.title}</h3><p>Required: ${def.required}</p><p class="import-columns">Columns: ${def.columns}</p></div><button class="secondary" data-import-type="${type}">${icon("upload", 14)} Choose CSV</button><button class="template-link" data-template="${type}">${icon("download", 13)} Template</button></article>`).join(""); return shell(`${heading("Data management", "Import records", "Bring historical CSV data into ShopCrank. Records are checked before they are added.", false)}<input id="csv-input" type="file" accept=".csv,text/csv" hidden/><div class="import-note">${icon("shield-check", 16)}<span>Review each batch before confirming it. Valid rows are added to this shop and synced when you are signed in.</span></div><div class="import-grid">${cards}</div>${importPreview ? previewMarkup() : ""}`) }
 function entityName(type) { return type === "orders" ? "work order" : type.slice(0, -1) }
-function previewMarkup() { const p = importPreview, rows = p.records.slice(0, 5).map((record, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(Object.values(record).slice(0, 4).join(" · "))}</td></tr>`).join(""); return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} records</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map(error => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>` }
+function previewMarkup() { const p = importPreview, rows = p.records.slice(0, 5).map((record, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(Object.values(record).slice(0, 4).join(" · "))}</td></tr>`).join(""); return `<section class="import-preview"><div><div class="eyebrow">Ready to import</div><h2>${p.records.length} valid ${entityName(p.type)} record${p.records.length === 1 ? "" : "s"}</h2><p>${p.skipped} duplicate or invalid row${p.skipped === 1 ? "" : "s"} will not be imported.</p></div><div class="import-preview-actions"><button class="secondary" id="cancel-import">Cancel</button><button class="primary" id="confirm-import">${icon("check", 15)} Import ${p.records.length} ${p.records.length === 1 ? "record" : "records"}</button></div><table><thead><tr><th>Row</th><th>Preview</th></tr></thead><tbody>${rows || `<tr><td colspan="2">No valid rows found.</td></tr>`}</tbody></table>${p.errors.length ? `<div class="import-errors"><strong>${p.errors.length} row issue${p.errors.length === 1 ? "" : "s"}</strong>${p.errors.slice(0, 4).map(error => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}</section>` }
 
 function prepareImport(type, text) { return prepareImportRecords(type, text, { customers: state.customers, vehicles: state.vehicles, orders: state.orders, expenses: state.expenses, invoices: state.invoices, estimates: state.estimates, taxRate: Number(state.taxSettings?.rate) || 0, today: localIsoDate(), createdAt: new Date().toISOString() }) }
 function downloadTemplate(type) { const link = document.createElement("a"), file = importTypes[type]; link.href = URL.createObjectURL(new Blob([file.sample], { type: "text/csv" })); link.download = `shopcrank-${type}-template.csv`; link.click(); URL.revokeObjectURL(link.href) }
@@ -1857,17 +1858,17 @@ function openFullReset() { showModal(`<form class="modal" id="full-reset-form"><
 const settingsDataResetCore = settings;
 settings = function () { const page = settingsDataResetCore(); if (currentUser()?.role !== "admin") return page; return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon("trash-2", 14)} Remove all shop data</button></div></section></main>`) };
 const bindDataResetCore = bindExpandedFeatures;
-bindExpandedFeatures = function () { bindDataResetCore(); document.querySelector("#open-full-reset")?.addEventListener("click", openFullReset) };
+bindExpandedFeatures = function () { bindDataResetCore(); document.querySelector("#open-full-reset")?.addEventListener("click", openFullReset); bindPhoneUsagePanel() };
 const settingsAgentPhoneCore = settings;
 settings = function () {
   const page = settingsAgentPhoneCore();
   const twilioPanel = twilioInlineSettingsPanelHtml();
   const isAdmin = currentUser()?.role === "admin";
-  if (!twilioPanel && !isAdmin) return page;
+  if (!twilioPanel && !isAdmin) return page.replace("</main>", `${phoneUsagePanel()}</main>`);
   const agentPhonePanel = isAdmin
     ? `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above — not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>`
     : "";
-  return page.replace("</main>", `${twilioPanel}${agentPhonePanel}</main>`);
+  return page.replace("</main>", `${phoneUsagePanel()}${twilioPanel}${agentPhonePanel}</main>`);
 };
 const settingsAppsBillingCore = settings;
 settings = function () { const page = settingsAppsBillingCore(); if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page; return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`) };
@@ -1875,7 +1876,7 @@ settings = function () { const page = settingsAppsBillingCore(); if (!["admin", 
 const bindAgentPhoneSettingsCore = bindExpandedFeatures;
 bindExpandedFeatures = function () { bindAgentPhoneSettingsCore(); document.querySelector("#agentphone-config-form")?.addEventListener("submit", async event => { event.preventDefault(); const form = event.target, data = readFormValues(form), button = form.querySelector("button[type=submit]"); button.disabled = true; try { const result = await apiFetch("/agentphone/configure", { method: "POST", body: JSON.stringify({ apiKey: data.apiKey, agentId: data.agentId, contextLimit: Number(data.contextLimit), timeout: Number(data.timeout) }) }); form.reset(); toast(`AgentPhone connected for ${result.agentId}`); render() } catch (error) { toast(error.message || "AgentPhone could not be connected"); button.disabled = false } }) };
 const bindAssistantGlobalCore = bind;
-bind = function () { bindAssistantGlobalCore(); const existing = document.querySelector("#global-assistant-controls"); if (!currentUser()) { existing?.remove(); return } if (existing) return; document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Open ShopCrank Assistant">${icon("sparkles", 16)}<span>Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`); document.querySelector("#global-assistant").onclick = openGlobalAssistant; document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause; lucide.createIcons() };
+bind = function () { bindAssistantGlobalCore(); const existing = document.querySelector("#global-assistant-controls"); if (!currentUser()) { existing?.remove(); return } if (existing) return; document.body.insertAdjacentHTML("beforeend", `<div id="global-assistant-controls" aria-label="Assistant controls"><button type="button" class="assistant-float-main" id="global-assistant" title="Talk to ShopCrank AI (live voice)" aria-label="Start live AI" aria-pressed="false">${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span></button><button type="button" class="assistant-float-pause ${assistantPaused ? "paused" : ""}" data-assistant-pause title="${assistantPaused ? "Resume assistant" : "Pause assistant"}" aria-label="${assistantPaused ? "Resume assistant" : "Pause assistant"}">${icon(assistantPaused ? "play" : "pause", 15)}</button></div>`); document.querySelector("#global-assistant").onclick = toggleGlobalLiveAssistant; document.querySelector("[data-assistant-pause]").onclick = toggleAssistantPause; lucide.createIcons(); updateGrokVoiceUiControls() };
 const apiFetchAssistantCore = apiFetch;
 apiFetch = async function (path, options = {}) { return apiFetchAssistantCore(path, options) };
 if ("serviceWorker" in navigator && isSecureContext && !isDesktopApp) { window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch(error => console.error("Service worker registration failed", error))) }
@@ -1955,6 +1956,7 @@ function openCustomerIntake() {
     taxRate: Number(state.taxSettings?.rate || 0),
     onSave: saveIntakeDraft,
     onCancel: current => { saveIntakeDraft(current); closeModal() },
+    onBlocked: problems => toast(`Can't convert yet: ${problems[0]}`),
     decodeVin: async vin => {
       const normalized = String(vin || "").trim().toUpperCase();
       if (normalized.length !== 17) throw new Error("Enter a 17-character VIN first.");
@@ -6647,6 +6649,30 @@ bind = function () {
 
 // --- Grok Realtime Voice & Phone Call Forwarding ---
 let grokVoiceSettings = { loaded: false, loading: false, configured: false, voice: "eve", recentCalls: [] };
+let phoneUsage = null, phoneUsageLoading = false;
+async function loadPhoneUsage(force = false) {
+  if (phoneUsageLoading || (phoneUsage && !force)) return;
+  phoneUsageLoading = true;
+  try { phoneUsage = await apiFetch("/phone-usage") } catch (error) { phoneUsage = { error: error.message || "AI phone usage is unavailable" } }
+  phoneUsageLoading = false;
+  if (state.route === "settings" || (state.route === "ai" && aiTab === "phone")) render();
+}
+function phoneUsagePanel() {
+  if (isOfflineDesktop()) return "";
+  if (!phoneUsage && !phoneUsageLoading) void loadPhoneUsage();
+  return phoneUsagePanelHtml(phoneUsage, { canEdit: ["admin", "owner", "super_admin"].includes(currentUser().role), escapeHtml, icon });
+}
+function bindPhoneUsagePanel() {
+  document.querySelector("#phone-usage-cap-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const overageCapCents = capCentsFromInput(event.target.querySelector("[name=cap]").value);
+      phoneUsage = await apiFetch("/phone-usage", { method: "PUT", body: JSON.stringify({ overageCapCents }) });
+      toast(overageCapCents === null ? "AI phone overage cap removed" : `AI phone overage cap set to $${(overageCapCents / 100).toFixed(2)}`);
+      render();
+    } catch (error) { toast(error.message) }
+  });
+}
 let activeGrokSession = null;
 let activeGrokPhase = "idle";
 let activeGrokTarget = null; // 'assistant' | 'phone' | 'intake'
@@ -6714,6 +6740,19 @@ function updateGrokVoiceUiControls() {
   const srStatus = document.querySelector("#assistant-voice-sr-status");
   if (srStatus) {
     srStatus.textContent = isLive && placeholder ? `Grok Voice: ${placeholder}` : "";
+  }
+
+  // Floating Assistant button (live voice control)
+  const floatBtn = document.querySelector("#global-assistant");
+  if (floatBtn) {
+    floatBtn.classList.toggle("is-live", isLive);
+    floatBtn.setAttribute("aria-pressed", isLive ? "true" : "false");
+    floatBtn.setAttribute("aria-label", isLive ? `End live AI (${placeholder || "Live"})` : "Start live AI");
+    floatBtn.title = isLive ? "Click to end the live AI session" : "Talk to ShopCrank AI (live voice)";
+    floatBtn.innerHTML = isLive
+      ? `${grokWaveformButtonIcon(true, phase)}<span class="assistant-float-label">${escapeHtml(placeholder || "Live")}</span>`
+      : `${icon("sparkles", 16)}<span class="assistant-float-label">Assistant</span>`;
+    if (!isLive) globalThis.lucide?.createIcons?.();
   }
 
   // Phone intake tab button
@@ -6894,7 +6933,7 @@ aiPhoneForm = function () {
 
   const grokReceptionistCard = `<section class="ai-panel grok-phone-panel"><div class="statement-head"><div><div class="eyebrow">Grok Realtime Voice (grok-voice-latest)</div><h2>Grok Phone Call Answering & Auto-Intake</h2><p>Forward your shop phone line to Twilio so Grok answers customer calls 24/7, gives ballpark estimates using your $${Number(shopProfile().laborRate || 140).toFixed(2)}/hr labor rate, and automatically fills in Customer Intake forms, Estimates, and Work Orders.</p></div><div class="head-actions"><button type="button" class="primary grok-voice-btn ${isLive ? "is-live" : ""}" id="grok-phone-live-btn">${grokWaveformButtonIcon(isLive, phase)}<span>${isLive ? `End Call (${placeholder || "Live"})` : "Answer / Test Call with Grok"}</span></button><button type="button" class="secondary" id="grok-open-intake-modal">${icon("clipboard-list", 14)} Open Intake Form</button></div></div><div class="agentphone-webhook-preview"><span>Twilio Voice Webhook URL (HTTP POST when a call comes in)</span><code>${escapeHtml(webhookUrl)}</code><small class="form-help">Forward your shop phone number (e.g. dial <b>*72</b> + your Twilio number, or enable No-Answer Call Forwarding with your carrier) to your Twilio Voice number pointing to this webhook. Configure your xAI API key and voice in <b>Settings → Grok Voice & Phone Call Forwarding</b>.</small></div><div class="data-panel" style="margin-top:12px"><table><thead><tr><th>RO</th><th>Caller</th><th>Vehicle</th><th>Concern / Symptoms</th><th>Quoted Estimate</th><th>Actions</th></tr></thead><tbody>${callRows || `<tr><td colspan="6">No Grok phone intakes recorded yet. Click <b>Answer / Test Call with Grok</b> above or call your forwarded shop number to see forms fill automatically.</td></tr>`}</tbody></table></div></section>`;
 
-  return `${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
+  return `${phoneUsagePanel()}${grokReceptionistCard}${aiPhoneFormBeforeGrok()}`;
 };
 
 function grokSettingsPanelHtml() {

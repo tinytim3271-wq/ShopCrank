@@ -170,14 +170,6 @@ AI_ENABLED=1
 # these optional overrides are only for local stubbing of the API base URL).
 # PARTSTECH_API_BASE=https://api.partstech.com
 
-# QuickBooks Online OAuth app (Intuit Developer). Per-shop tokens are encrypted in D1.
-# Register redirect: https://www.shopcrank.com/api/integrations/quickbooks/callback
-# (local: http://127.0.0.1:8787/api/integrations/quickbooks/callback — the SPA posts code/state/realmId)
-# QUICKBOOKS_CLIENT_ID=replace-with-intuit-client-id
-# QUICKBOOKS_CLIENT_SECRET=replace-with-intuit-client-secret
-# QUICKBOOKS_REDIRECT_URI=http://127.0.0.1:8787/qbo/callback
-# QUICKBOOKS_SANDBOX=1
-
 # Labor web fallback (used only when no MOTOR/ALLDATA/ShopKey provider is connected).
 # Brave Search: https://brave.com/search/api/ — results are labeled "web estimate — not book time".
 # LABOR_WEB_SEARCH_PROVIDER=brave

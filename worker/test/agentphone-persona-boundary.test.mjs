@@ -18,6 +18,10 @@ async function fixture() {
   const encrypted = await encryptSecret(webhookSecret, env.INTEGRATION_ENCRYPTION_KEY);
   await env.DB.prepare('INSERT INTO integration_secrets (shop_id, secret_name, ciphertext, iv, updated_at) VALUES (?, ?, ?, ?, ?)')
     .bind('shop-1', 'agentphone-webhook-secret', encrypted.ciphertext, encrypted.iv, new Date().toISOString()).run();
+  // AI phone minutes come with a plan: the shop needs an active one for the agent to answer.
+  env.DB.sqlite.exec('PRAGMA foreign_keys = OFF');
+  await env.DB.prepare("INSERT INTO subscriptions (shop_id, plan_id, status, updated_at) VALUES ('shop-1', 'shop', 'active', ?)")
+    .bind(new Date().toISOString()).run();
   for (const [permission, marker] of [
     ['customer_safe', 'CUSTOMER_SAFE_MARKER'],
     ['staff', 'STAFF_ONLY_MARKER'],
@@ -161,4 +165,35 @@ test('authenticated internal assistant retains staff knowledge and staff memory 
   await runAnthropicTurn(env, { shopId: 'shop-1', role: 'technician', message: 'Oil service policy' });
   assert.match(system, /STAFF_ONLY_MARKER/);
   assert.doesNotMatch(system, /ACCOUNTING_ONLY_MARKER|OTHER_TENANT_MARKER/);
+});
+
+async function signedEvent(body) {
+  const payload = JSON.stringify(body);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = `sha256=${await hmacHex(webhookSecret, `${timestamp}.${payload}`)}`;
+  return new Request('https://www.shopcrank.com/api/agentphone/webhook/shop-1', {
+    method: 'POST', body: payload,
+    headers: { 'Content-Type': 'application/json', 'X-Webhook-Timestamp': timestamp, 'X-Webhook-Signature': signature },
+  });
+}
+
+test('AgentPhone call minutes count once against the plan, even when the webhook retries', async () => {
+  const env = await fixture();
+  const ended = { event: 'agent.call_ended', channel: 'voice', data: { callId: 'ap-call-1', durationSeconds: 125, from: '+18065550111', transcript: 'caller: hi' } };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await worker.fetch(await signedEvent(ended), env, { waitUntil() {} });
+    assert.equal(response.status, 200);
+  }
+  const rows = env.DB.sqlite.prepare("SELECT voice_seconds, metadata_json FROM ai_usage_events WHERE shop_id = 'shop-1' AND user_id = 'agentphone-call'").all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].voice_seconds, 125);
+  assert.equal(JSON.parse(rows[0].metadata_json).metering.billableMinutes, 3);
+});
+
+test('AgentPhone voice gets a send-to-the-shop reply instead of the AI when the shop has no active plan', async () => {
+  const env = await fixture();
+  env.DB.sqlite.prepare("UPDATE subscriptions SET status = 'canceled' WHERE shop_id = 'shop-1'").run();
+  const response = await worker.fetch(await signedEvent({ event: 'agent.message', channel: 'voice', data: { transcript: 'Can I book an oil change?' } }), env, { waitUntil() {} });
+  assert.equal(response.status, 200);
+  assert.match((await response.json()).text, /can't take this call right now/);
 });
