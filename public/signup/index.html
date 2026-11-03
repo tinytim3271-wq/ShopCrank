@@ -109,6 +109,7 @@
           // A code typed by hand is an indirect referral; one from the ambassador's link keeps its source.
           const referralSource = referralCode && captured?.code === referralCode ? captured.source : "ambassador_referral";
           if (referralCode) window.ShopCrankReferral?.set(referralCode, referralSource);
+          else window.ShopCrankReferral?.clear();
           try {
             if (invite && foundingNames[planId]) {
               const claim = await fetch("/api/founding/claim", {
