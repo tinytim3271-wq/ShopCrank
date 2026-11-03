@@ -8,6 +8,14 @@ import {
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
 import { syncAccessUser } from '../access-users.mjs';
+import {
+  CUSTOMER_LINKED_TYPES,
+  RECORD_DELETE_DENIED,
+  canDeleteRecords,
+  describeLinkedCounts,
+  hasLinkedRecords,
+  requiresAdminDelete,
+} from '../../../src/modules/record-deletion.js';
 
 function entityRecord(row, type = '') {
   if (!row) return null;
@@ -158,10 +166,44 @@ export async function listChatMessagesForConversations(env, shopId, email, { lim
   };
 }
 
-async function hasLinkedCustomerEntity(env, shopId, type, customerName) {
-  return Boolean(await env.DB.prepare(
-    "SELECT 1 AS found FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, '$.customer') = ? LIMIT 1",
-  ).bind(shopId, type, customerName).first());
+async function listCustomerLinkedIds(env, shopId, type, customerName) {
+  const result = await env.DB.prepare(
+    "SELECT entity_id, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, '$.customer') = ?",
+  ).bind(shopId, type, customerName).all();
+  return (result.results || []).map(row => ({ id: row.entity_id, record: entityRecord(row) || {} }));
+}
+
+/**
+ * Everything linked to a customer by name, plus payments on the customer's invoices.
+ * Returns `{ [type]: [{ id, record }] }` for CUSTOMER_LINKED_TYPES.
+ */
+export async function customerLinkedEntities(env, shopId, customerName) {
+  const name = String(customerName || '').trim();
+  const linked = Object.fromEntries(CUSTOMER_LINKED_TYPES.map(type => [type, []]));
+  if (!name) return linked;
+  for (const type of CUSTOMER_LINKED_TYPES) linked[type] = await listCustomerLinkedIds(env, shopId, type, name);
+  const paymentIds = new Set(linked.payments.map(item => item.id));
+  for (const invoice of linked.invoices) {
+    for (const payment of await listPaymentsByInvoice(env, shopId, invoice.record.number || invoice.id)) {
+      if (payment.id && !paymentIds.has(payment.id)) {
+        paymentIds.add(payment.id);
+        linked.payments.push({ id: payment.id, record: payment });
+      }
+    }
+  }
+  return linked;
+}
+
+/** D1 statements that remove a customer and everything linked to it, in one batch. */
+export function buildCustomerCascadeStatements(env, context, customerId, linked) {
+  const remove = (type, id) => env.DB.prepare(
+    'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+  ).bind(context.shopId, type, id);
+  const statements = [remove('customers', customerId)];
+  for (const type of CUSTOMER_LINKED_TYPES) {
+    for (const item of linked[type] || []) statements.push(remove(type, item.id));
+  }
+  return statements;
 }
 
 async function listPaymentsByInvoice(env, shopId, invoiceNumber) {
@@ -293,11 +335,16 @@ export async function handleEntities(request, env, context, segments) {
       && (!members(existing).includes(context.email) || (context.role !== 'admin' && existing.createdBy !== context.userId))) {
       throw new HttpError(403, 'Not permitted');
     }
+    if (requiresAdminDelete(type) && !canDeleteRecords(context.role)) throw new HttpError(403, RECORD_DELETE_DENIED);
     if (type === 'customers') {
-      const linkedTypes = ['vehicles', 'orders', 'invoices'];
-      const links = await Promise.all(linkedTypes.map(linkedType => hasLinkedCustomerEntity(env, context.shopId, linkedType, existing.name)));
-      if (links.some(Boolean)) {
-        throw new HttpError(409, "Delete this customer's vehicles, work orders, and invoices first");
+      const linked = await customerLinkedEntities(env, context.shopId, existing.name);
+      if (hasLinkedRecords(linked)) {
+        const cascade = new URL(request.url).searchParams.get('cascade') === '1';
+        if (!cascade) {
+          throw new HttpError(409, `${existing.name || 'This customer'} has ${describeLinkedCounts(linked)}. Delete them too, or delete those records first.`);
+        }
+        await env.DB.batch(buildCustomerCascadeStatements(env, context, id, linked));
+        return new Response(null, { status: 204 });
       }
     }
     const relatedPayments = type === 'invoices'
