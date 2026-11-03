@@ -453,7 +453,11 @@ async function main() {
       if (result.sent.status >= 300) throw new Error(`send: ${result.sent.status} ${JSON.stringify(result.sent.body).slice(0, 200)}`);
       const twilio = providerCalls.find(c => c.path.includes('/Messages.json'));
       if (!twilio || twilio.body.To !== '+15125550123' || !/Your car is ready/.test(twilio.body.Body || '') || !/^Basic /.test(twilio.auth)) throw new Error(`Twilio request: ${JSON.stringify(twilio || null).slice(0, 200)}`);
+      // The text went out through the API, so reload for a fresh inbox (the page caches it).
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.waitForSelector('[data-route=messaging]', { timeout: 30_000 });
       await route('messaging');
+      await page.waitForFunction(() => /Your car is ready/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
       if (!/Your car is ready/.test(await main())) throw new Error('sent text missing from the inbox');
     });
     await check('upgrade to paid opens Stripe checkout for the chosen plan', async () => {

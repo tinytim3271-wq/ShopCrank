@@ -36,7 +36,7 @@ jobs:
                GROUP BY shop_id
                HAVING sum(secret_name = 'twilio-auth-token') = 0
                ORDER BY shop_id"
-          npx wrangler d1 execute shopcrank --remote --json --command "$SQL" > result.json
+          npx --no-install wrangler d1 execute shopcrank --remote --json --command "$SQL" > result.json
           COUNT="$(node -e "const r=require('./result.json');console.log((r[0]?.results||[]).length)")"
           node -e "const r=require('./result.json');for(const row of r[0]?.results||[])console.log(row.shop_id+'  has: '+row.saved)"
           {

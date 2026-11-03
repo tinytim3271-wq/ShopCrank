@@ -144,7 +144,9 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
             echo "present=true" >> "$GITHUB_OUTPUT"
           fi
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+        if: steps.keys.outputs.present == 'true'
+      - run: npm rebuild esbuild
         if: steps.keys.outputs.present == 'true'
       - run: npm run sync
         if: steps.keys.outputs.present == 'true'
