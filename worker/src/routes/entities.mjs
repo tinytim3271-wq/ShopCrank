@@ -120,6 +120,25 @@ async function countLinkedEntities(env, shopId, spec) {
   return Number(row?.found || 0);
 }
 
+async function archiveEntity(env, context, type, id, existing, reasons) {
+  const record = archivedRecord(existing, { actor: context.email, reasons });
+  const updatedAt = new Date().toISOString();
+  const patch = {
+    archivedAt: record.archivedAt,
+    archivedBy: record.archivedBy,
+    archiveReasons: record.archiveReasons,
+    updatedAt,
+    ...('active' in existing ? { active: false } : {}),
+  };
+  await env.DB.prepare(`
+    UPDATE entities SET data_json = json_patch(data_json, ?), updated_at = ?
+    WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
+  `).bind(JSON.stringify(patch), updatedAt, context.shopId, type, id).run();
+  const updated = await getEntity(env, context.shopId, type, id);
+  if (!updated) throw new HttpError(404, 'Not found');
+  return updated;
+}
+
 export async function linkCountsForRecord(env, shopId, type, record) {
   const { financial, blocking } = linkLookups(type, record);
   const counts = {};
@@ -138,7 +157,7 @@ function membershipDeleteAllowed(existing, context) {
  * Remove an entity under the shop deletion policy: owner/admin only; records
  * with financial ties are archived; returns `{ status, body }`.
  */
-export async function removeEntity(env, context, type, id, { putEntity: put = putEntity } = {}) {
+export async function removeEntity(env, context, type, id) {
   const existing = await getEntity(env, context.shopId, type, id);
   if (!existing) throw new HttpError(404, 'Not found');
   if (SELF_MANAGED_DELETE_TYPES.has(type)) {
@@ -151,7 +170,7 @@ export async function removeEntity(env, context, type, id, { putEntity: put = pu
   const plan = deletionPlan(type, existing, await linkCountsForRecord(env, context.shopId, type, existing));
   if (plan.action === 'blocked') throw new HttpError(409, plan.message);
   if (plan.action === 'archive') {
-    const record = await put(env, context, type, id, archivedRecord(existing, { actor: context.email, reasons: plan.reasons }));
+    const record = await archiveEntity(env, context, type, id, existing, plan.reasons);
     if (type === 'employees' && existing.email) {
       await env.DB.prepare('DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?').bind(existing.email, context.shopId).run();
     }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
+import { removeEntity } from '../src/routes/entities.mjs';
 
 const shopId = 'shop-del';
 const stamp = '2026-10-31T08:00:00.000Z';
@@ -63,6 +64,46 @@ test('invoices are archived with their payments kept', async () => {
   assert.ok(invoice.archivedAt);
   assert.match(invoice.archiveReasons.join(' '), /financial record/);
   assert.ok(await stored('payments', 'pay-1'), 'payment history must survive');
+});
+
+test('archiving preserves invoice changes made after the initial read', async () => {
+  const { DB, seed, stored } = await setup();
+  await seed('invoices', 'INV-RACE', { number: 'INV-RACE', customer: 'Pat', amount: 100 });
+  let mutated = false;
+  const raceDB = {
+    prepare(sql) {
+      const statement = DB.prepare(sql);
+      if (!sql.includes('SELECT data_json FROM entities')) return statement;
+      return {
+        bind(...values) {
+          const bound = statement.bind(...values);
+          return {
+            first: async () => {
+              const row = await bound.first();
+              if (!mutated && values[1] === 'invoices' && values[2] === 'INV-RACE') {
+                DB.sqlite.prepare(`
+                  UPDATE entities SET data_json = json_set(data_json, '$.signatureKey', ?)
+                  WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
+                `).run('signed-during-archive', shopId, 'invoices', 'INV-RACE');
+                mutated = true;
+              }
+              return row;
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const result = await removeEntity(
+    { DB: raceDB },
+    { shopId, email: people.admin, userId: 'admin-user', role: 'admin' },
+    'invoices',
+    'INV-RACE',
+  );
+  assert.equal(result.action, 'archive');
+  assert.equal((await stored('invoices', 'INV-RACE')).signatureKey, 'signed-during-archive');
+  assert.equal(result.body.record.signatureKey, 'signed-during-archive');
 });
 
 test('work orders with an invoice are archived; customers with history are archived; vehicles still block', async () => {
