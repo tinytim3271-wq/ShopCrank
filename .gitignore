@@ -30,3 +30,8 @@ secon.code-workspace
 wrangler.local.json
 # Browser smoke test screenshots
 smoke-artifacts/
+
+# Separate repository (BlackFlag ECU tool); not part of ShopCrank.
+blackflag-ecu/
+# Local clone of the public PowerShell repo; not part of ShopCrank.
+PowerShell/

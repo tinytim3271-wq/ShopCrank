@@ -632,7 +632,7 @@
     const method = String(options.method || "GET").toUpperCase();
     const isEntityMutation = path.startsWith("/entities/") && ["POST", "PUT", "DELETE"].includes(method);
     const containsSensitiveEndpoint = path === "/agentphone/configure" || path === "/voice/grok/configure";
-    const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !containsSensitiveEndpoint;
+    const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !CASCADE_DELETE.test(path) && !containsSensitiveEndpoint;
     if (!queueable) return { path, options, queueable: false };
     let body = null;
     if (options.body) {
@@ -654,10 +654,11 @@
       key: entityKey
     };
   }
-  var OFFLINE_QUEUE_BLOCKED;
+  var OFFLINE_QUEUE_BLOCKED, CASCADE_DELETE;
   var init_prepare_entity_mutation = __esm({
     "src/runtime/prepare-entity-mutation.js"() {
       OFFLINE_QUEUE_BLOCKED = /\/entities\/(employees|payrollentries|shopsettings|invoices|payments|expenses)(\/|$)/i;
+      CASCADE_DELETE = /[?&]cascade=/i;
     }
   });
 
@@ -6994,6 +6995,53 @@ button{margin-top:12px;padding:8px 14px}
     }
   });
 
+  // src/modules/record-deletion.js
+  function canDeleteRecords(role) {
+    return RECORD_DELETE_ROLES.includes(String(role || ""));
+  }
+  function sameText(a, b) {
+    return String(a ?? "").trim() !== "" && String(a ?? "").trim() === String(b ?? "").trim();
+  }
+  function customerLinkedRecords(customer, collections = {}) {
+    const name = customer?.name;
+    const linked = {};
+    for (const type of CUSTOMER_LINKED_TYPES) {
+      const rows = Array.isArray(collections[type]) ? collections[type] : [];
+      linked[type] = rows.filter((row) => sameText(row?.customer, name));
+    }
+    const invoiceNumbers = new Set(linked.invoices.map((invoice) => String(invoice.number || invoice.id || "")).filter(Boolean));
+    const payments2 = Array.isArray(collections.payments) ? collections.payments : [];
+    for (const payment of payments2) {
+      if (!linked.payments.includes(payment) && invoiceNumbers.has(String(payment?.invoiceNumber || ""))) linked.payments.push(payment);
+    }
+    return linked;
+  }
+  function describeLinkedCounts(counts = {}) {
+    const parts = CUSTOMER_LINKED_TYPES.map((type) => [type, Number(Array.isArray(counts[type]) ? counts[type].length : counts[type] || 0)]).filter(([, count]) => count > 0).map(([type, count]) => `${count} ${LINK_LABELS[type][count === 1 ? 0 : 1]}`);
+    if (parts.length <= 1) return parts.join("");
+    return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  }
+  function hasLinkedRecords(counts = {}) {
+    return CUSTOMER_LINKED_TYPES.some((type) => Number(Array.isArray(counts[type]) ? counts[type].length : counts[type] || 0) > 0);
+  }
+  var RECORD_DELETE_ROLES, ADMIN_DELETE_TYPES, RECORD_DELETE_DENIED, CUSTOMER_LINKED_TYPES, LINK_LABELS;
+  var init_record_deletion = __esm({
+    "src/modules/record-deletion.js"() {
+      RECORD_DELETE_ROLES = Object.freeze(["owner", "admin", "super_admin"]);
+      ADMIN_DELETE_TYPES = Object.freeze(/* @__PURE__ */ new Set(["customers", "vehicles", "orders", "invoices", "payments"]));
+      RECORD_DELETE_DENIED = "Only the shop owner or an admin can delete customers, vehicles, work orders, and invoices";
+      CUSTOMER_LINKED_TYPES = Object.freeze(["vehicles", "orders", "invoices", "estimates", "payments", "appointments"]);
+      LINK_LABELS = {
+        vehicles: ["vehicle", "vehicles"],
+        orders: ["work order", "work orders"],
+        invoices: ["invoice", "invoices"],
+        estimates: ["estimate", "estimates"],
+        payments: ["payment", "payments"],
+        appointments: ["appointment", "appointments"]
+      };
+    }
+  });
+
   // src/modules/offline-desktop.js
   function escapeText(value2) {
     return String(value2 || "").replace(/[&<>"']/g, (char) => ({
@@ -10039,6 +10087,9 @@ button{margin-top:12px;padding:8px 14px}
     const jwtRole = sessionClaimRole(session.claims);
     return jwtRole && jwtRole !== profile.role ? { ...profile, role: jwtRole } : profile;
   }
+  function userCanDeleteRecords() {
+    return canDeleteRecords(currentUser()?.role);
+  }
   function canAccess(route) {
     const user = currentUser();
     const routes = user && routesForRole(user.role);
@@ -12358,7 +12409,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const item = state.inventory.find((record) => record.id === line.inventoryId || line.inventorySku && record.sku === line.inventorySku);
       return `<p><b>${escapeHtml(item?.sku || line.inventorySku || "Unknown SKU")}</b> \xB7 ${escapeHtml(item?.name || line.service)} \xB7 ${Number(line.committedQuantity || 0)} committed</p>`;
     }).join("")}${x.inventoryDeducted ? `<small>Deducted ${new Date(x.inventoryCommittedAt).toLocaleString()}</small>` : ""}</section>` : "", assignment = canManage ? `<label>Assigned technician<select id="detail-tech"><option>Unassigned</option>${technicians.map((t) => `<option ${t === x.tech ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select></label><label>Labor hours<select id="detail-hours">${[0, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8].map((h) => `<option value="${h}" ${Number(x.laborHours ?? 0) === h ? "selected" : ""}>${h === 0 ? "Not set" : h.toFixed(2) + " hours"}</option>`).join("")}</select></label>` : `<section><h3>Assignment</h3><p>${escapeHtml(x.tech)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} labor hours</p></section>`;
-    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge3(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button><button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
+    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge3(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `${userCanDeleteRecords() ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button>` : ""}<button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
     bindWorkOrderMileage(".modal");
     if (canManage) {
       const baySelect = document.querySelector("#detail-bay");
@@ -12393,7 +12444,11 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       };
     }
     document.querySelector("#delete-order")?.addEventListener("click", () => {
-      if (confirm(`Delete ${x.id}?`)) {
+      if (!userCanDeleteRecords()) {
+        toast(RECORD_DELETE_DENIED);
+        return;
+      }
+      if (confirm(`Delete ${x.id}? This cannot be undone.`)) {
         state.orders = state.orders.filter((o) => o.id !== id);
         state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== id);
         state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== id);
@@ -12545,11 +12600,34 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const vehicle = state.vehicles.find((v) => v.id === id);
     if (!vehicle) return;
     const history = linkedOrders(vehicle), photos = vehicle.photoKeys || [];
-    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge3(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions"><button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
+    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge3(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions">${userCanDeleteRecords() ? `<button class="secondary danger" id="vd-delete">${icon("trash-2", 14)} Delete vehicle</button>` : ""}<button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
     document.querySelector("#vd-edit")?.addEventListener("click", () => {
       closeModal();
       openVehicleForm(vehicle);
     });
+    document.querySelector("#vd-delete")?.addEventListener("click", () => {
+      void deleteVehicleRecord(vehicle.id);
+    });
+  }
+  async function deleteVehicleRecord(id) {
+    if (!userCanDeleteRecords()) {
+      toast(RECORD_DELETE_DENIED);
+      return;
+    }
+    const vehicle = state.vehicles.find((item) => item.id === id);
+    if (!vehicle) return;
+    const history = linkedOrders(vehicle).length;
+    if (!confirm(`Delete ${vehicleLabel3(vehicle)}?${history ? ` Its ${history} work order${history === 1 ? "" : "s"} will be kept.` : ""} This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/entities/vehicles/${encodeURIComponent(vehicle.id)}`, { method: "DELETE" });
+      state.vehicles = state.vehicles.filter((item) => item !== vehicle);
+      save();
+      closeModal();
+      toast("Vehicle deleted");
+      render();
+    } catch (error) {
+      toast(error.message || "Vehicle could not be deleted");
+    }
   }
   function attachShopOperationsRoute() {
     const firstNav = document.querySelector(".sidebar .nav");
@@ -13126,24 +13204,64 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       }
     };
   }
+  function customerDeletionCollections() {
+    return { vehicles: state.vehicles || [], orders: state.orders || [], invoices: state.invoices || [], estimates: state.estimates || [], payments: state.payments || [], appointments: state.appointments || [] };
+  }
+  function removeCustomerFromState(customer, linked = null) {
+    state.customers = state.customers.filter((item) => item !== customer);
+    if (linked) {
+      for (const [type, rows] of Object.entries(linked)) if (Array.isArray(state[type]) && rows.length) {
+        const gone = new Set(rows);
+        state[type] = state[type].filter((item) => !gone.has(item));
+      }
+    }
+    save();
+    render();
+  }
   async function deleteCustomerRecord(key) {
+    if (!userCanDeleteRecords()) {
+      toast(RECORD_DELETE_DENIED);
+      return;
+    }
     const customer = state.customers.find((item) => customerRecordKey(item) === key);
     if (!customer) return;
-    const linked = state.vehicles.filter((item) => item.customer === customer.name).length + state.orders.filter((item) => item.customer === customer.name).length + state.invoices.filter((item) => item.customer === customer.name).length;
-    if (linked) {
-      toast("Delete this customer's vehicles, work orders, and invoices first");
+    const linked = customerLinkedRecords(customer, customerDeletionCollections());
+    if (hasLinkedRecords(linked)) {
+      openCustomerCascadeDelete(customer, linked);
       return;
     }
     if (!confirm(`Delete ${customer.name}? This cannot be undone.`)) return;
     try {
       await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}`, { method: "DELETE" });
-      state.customers = state.customers.filter((item) => item !== customer);
-      save();
+      removeCustomerFromState(customer);
       toast("Customer deleted");
-      render();
     } catch (error) {
       toast(error.message || "Customer could not be deleted");
     }
+  }
+  function openCustomerCascadeDelete(customer, linked) {
+    const summary = describeLinkedCounts(linked);
+    showModal(`<form class="modal" id="customer-cascade-delete-form"><div class="modal-head"><h2>Delete ${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status blocked">${icon("triangle-alert", 17)}<div><strong>This permanently deletes the customer and their history</strong><span>${escapeHtml(customer.name)} has ${escapeHtml(summary)}. All of it will be deleted, including payment records. This cannot be undone.</span></div></div><label>Type <b>${escapeHtml(customer.name)}</b> to confirm<input name="confirmation" autocomplete="off" required/></label></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="danger" type="submit">${icon("trash-2", 14)} Delete customer and history</button></div></form>`);
+    const form = document.querySelector("#customer-cascade-delete-form");
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const typedName = (value2) => String(value2 || "").trim().replace(/\s+/g, " ").toLowerCase();
+      if (typedName(form.elements.confirmation.value) !== typedName(customer.name)) {
+        toast("Type the customer's name to confirm");
+        return;
+      }
+      const button = form.querySelector("button[type=submit]");
+      button.disabled = true;
+      try {
+        await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}?cascade=1`, { method: "DELETE" });
+        closeModal();
+        removeCustomerFromState(customer, linked);
+        toast(`${customer.name} and ${summary} deleted`);
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Customer could not be deleted");
+      }
+    };
   }
   function invoiceRecordKey(invoice) {
     return invoice.id || invoice.number;
@@ -13174,17 +13292,20 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     };
   }
   async function deleteInvoiceRecord(key) {
+    if (!userCanDeleteRecords()) {
+      toast(RECORD_DELETE_DENIED);
+      return;
+    }
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
     if (!invoice) return;
     const payments2 = state.payments.filter((payment) => payment.invoiceNumber === invoice.number);
-    if (!confirm(`Delete ${invoice.number}${invoicePaid(invoice) > 0 ? " and its payment history" : ""}? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${invoice.number}${payments2.length || invoicePaid(invoice) > 0 ? " and its payment history" : ""}? This cannot be undone.`)) return;
     try {
-      await Promise.all(payments2.filter((payment) => payment.id).map((payment) => apiFetch(`/entities/payments/${encodeURIComponent(payment.id)}`, { method: "DELETE" })));
       await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE" });
       state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
       state.invoices = state.invoices.filter((item) => item !== invoice);
       save();
-      toast("Invoice and related payment data deleted");
+      toast(payments2.length ? "Invoice and its payments deleted" : "Invoice deleted");
       render();
     } catch (error) {
       toast(error.message || "Invoice could not be deleted");
@@ -16774,6 +16895,7 @@ ${line}`.trim();
       init_mileage();
       init_filing();
       init_customer_metrics();
+      init_record_deletion();
       init_offline_desktop();
       init_catalog_inspection_ui();
       init_entity_persistence();
@@ -17232,6 +17354,7 @@ ${line}`.trim();
       bindInvoiceDeleteActionsCore = bindEstimateActions;
       bindEstimateActions = function() {
         bindInvoiceDeleteActionsCore();
+        if (!userCanDeleteRecords()) return;
         document.querySelectorAll("[data-print-invoice]").forEach((button) => {
           if (button.parentElement.querySelector("[data-delete-invoice]")) return;
           const invoice = state.invoices.find((item) => item.number === button.dataset.printInvoice);
@@ -17299,14 +17422,14 @@ ${line}`.trim();
       customers = function() {
         const q = query.toLowerCase(), cards = state.customers.filter((item) => !q || Object.values(item).join(" ").toLowerCase().includes(q)).map((item) => {
           const key = encodeURIComponent(customerRecordKey(item));
-          return `<article class="customer-card" data-open-customer="${encodeURIComponent(item.name)}"><div class="customer-top"><div class="avatar">${initials(item.name)}</div><div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.phone || "No phone")} \xB7 ${escapeHtml(item.email || "No email")}</p></div></div><div class="customer-stats"><div><span>Vehicles</span><b>${Number(item.vehicles || state.vehicles.filter((vehicle) => vehicle.customer === item.name).length)}</b></div><div><span>Lifetime spend</span><b>${money4(Number(item.spend || 0))}</b></div><div><span>Shop visits</span><b>${Number(item.visits || 0)}</b></div><div><span>Balance</span><b>${money4(customerBalance(item.name))}</b></div></div><div class="customer-card-actions"><button class="customer-message" data-message-customer="${encodeURIComponent(item.name)}" data-message-phone="${encodeURIComponent(item.phone || "")}" data-message-email="${encodeURIComponent(item.email || "")}">${icon("send", 14)} Message</button><button class="mini-action" data-edit-customer="${key}">${icon("pencil", 14)} Edit</button><button class="mini-action danger" data-delete-customer="${key}">${icon("trash-2", 14)} Delete</button></div></article>`;
+          return `<article class="customer-card" data-open-customer="${encodeURIComponent(item.name)}"><div class="customer-top"><div class="avatar">${initials(item.name)}</div><div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.phone || "No phone")} \xB7 ${escapeHtml(item.email || "No email")}</p></div></div><div class="customer-stats"><div><span>Vehicles</span><b>${Number(item.vehicles || state.vehicles.filter((vehicle) => vehicle.customer === item.name).length)}</b></div><div><span>Lifetime spend</span><b>${money4(Number(item.spend || 0))}</b></div><div><span>Shop visits</span><b>${Number(item.visits || 0)}</b></div><div><span>Balance</span><b>${money4(customerBalance(item.name))}</b></div></div><div class="customer-card-actions"><button class="customer-message" data-message-customer="${encodeURIComponent(item.name)}" data-message-phone="${encodeURIComponent(item.phone || "")}" data-message-email="${encodeURIComponent(item.email || "")}">${icon("send", 14)} Message</button><button class="mini-action" data-edit-customer="${key}">${icon("pencil", 14)} Edit</button>${userCanDeleteRecords() ? `<button class="mini-action danger" data-delete-customer="${key}">${icon("trash-2", 14)} Delete</button>` : ""}</div></article>`;
         }).join("");
         return shell(`${heading("Relationships", "Customers", "Edit customer contact details and safely remove unlinked records.")}<div class="customer-grid">${cards || empty("No customers yet")}</div>`);
       };
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice), key = escapeHtml(invoiceRecordKey(invoice));
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button><button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button>${userCanDeleteRecords() ? `<button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>` : ""}${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Edit invoice details and safely remove invoices without payment history.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows || `<tr><td colspan="7">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
@@ -17562,7 +17685,7 @@ ${line}`.trim();
           const vehicleCount = state.vehicles.filter((vehicle) => vehicle.customer === item.name).length;
           const visitCount = state.orders.filter((order) => order.customer === item.name).length;
           const lifetimeSpend = customerLifetimeSpend(item, state.invoices);
-          return `<article class="customer-card" data-open-customer="${encodeURIComponent(item.name)}"><div class="customer-top"><div class="avatar">${initials(item.name)}</div><div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.phone || "No phone")} \xB7 ${escapeHtml(item.email || "No email")}</p>${item.billingAddress ? `<p>${escapeHtml(item.billingAddress)}</p>` : ""}</div></div><div class="customer-stats"><div><span>Vehicles</span><b>${Math.max(Number(item.vehicles || 0), vehicleCount)}</b></div><div><span>Lifetime spend</span><b>${money4(lifetimeSpend)}</b></div><div><span>Shop visits</span><b>${Math.max(Number(item.visits || 0), visitCount)}</b></div><div><span>Balance</span><b>${money4(customerBalance(item.name))}</b></div></div><div class="customer-card-actions"><button class="customer-message" data-message-customer="${encodeURIComponent(item.name)}" data-message-phone="${encodeURIComponent(item.phone || "")}" data-message-email="${encodeURIComponent(item.email || "")}">${icon("send", 14)} Message</button><button class="mini-action" data-edit-customer="${key}">${icon("pencil", 14)} Edit</button><button class="mini-action danger" data-delete-customer="${key}">${icon("trash-2", 14)} Delete</button></div></article>`;
+          return `<article class="customer-card" data-open-customer="${encodeURIComponent(item.name)}"><div class="customer-top"><div class="avatar">${initials(item.name)}</div><div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.phone || "No phone")} \xB7 ${escapeHtml(item.email || "No email")}</p>${item.billingAddress ? `<p>${escapeHtml(item.billingAddress)}</p>` : ""}</div></div><div class="customer-stats"><div><span>Vehicles</span><b>${Math.max(Number(item.vehicles || 0), vehicleCount)}</b></div><div><span>Lifetime spend</span><b>${money4(lifetimeSpend)}</b></div><div><span>Shop visits</span><b>${Math.max(Number(item.visits || 0), visitCount)}</b></div><div><span>Balance</span><b>${money4(customerBalance(item.name))}</b></div></div><div class="customer-card-actions"><button class="customer-message" data-message-customer="${encodeURIComponent(item.name)}" data-message-phone="${encodeURIComponent(item.phone || "")}" data-message-email="${encodeURIComponent(item.email || "")}">${icon("send", 14)} Message</button><button class="mini-action" data-edit-customer="${key}">${icon("pencil", 14)} Edit</button>${userCanDeleteRecords() ? `<button class="mini-action danger" data-delete-customer="${key}">${icon("trash-2", 14)} Delete</button>` : ""}</div></article>`;
         }).join("");
         return shell(`${heading("Relationships", "Customers", "Create, find, and update customer records saved to this shop.", false)}<div class="ops-actions"><button class="primary" id="new-customer">${icon("user-plus", 14)} Add customer</button></div><div class="customer-grid">${cards || empty("No customers yet")}</div>`);
       };
@@ -17667,7 +17790,7 @@ ${line}`.trim();
           toast("Only an admin or service writer can edit this work order");
           return;
         }
-        showModal(`<form class="modal wide" id="work-order-edit-form"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Edit work order</h2></div><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Customer & vehicle</h3><div class="form-grid"><label>Customer *<select name="customer" required>${customerOptions(order.customer)}</select></label><label>Phone<input name="phone" value="${escapeAttr(order.phone || "")}"/></label><label class="full">Vehicle description *<input name="vehicle" required value="${escapeAttr(order.vehicle || "")}"/></label><label class="full">VIN<input name="vin" maxlength="17" value="${escapeAttr(order.vin === "VIN pending" ? "" : order.vin || "")}"/></label></div><h3>Service details</h3><div class="form-grid"><label class="full">Customer complaint *<textarea name="complaint" required>${escapeHtml(order.complaint || "")}</textarea></label><label>Status<select name="status">${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${label(status)}</option>`).join("")}</select></label><label>Priority<select name="priority">${["normal", "high", "low"].map((priority) => `<option value="${priority}" ${order.priority === priority ? "selected" : ""}>${label(priority)}</option>`).join("")}</select></label><label>Technician<select name="tech">${techOptions(order.tech || "Unassigned")}</select></label><label>Bay / assignment<select name="bay">${["Unassigned", "Bay 1", "Bay 2", "Bay 3", "Bay 4", "Mobile"].map((bay) => `<option ${order.bay === bay ? "selected" : ""}>${bay}</option>`).join("")}</select></label><label>Promise time<input name="promise" value="${escapeAttr(order.promise || "")}"/></label><label>Labor hours<input name="laborHours" type="number" min="0" step=".25" value="${Number(order.laborHours || 0)}"/></label><label class="full">Technician / service notes<textarea name="notes">${escapeHtml(order.notes || "")}</textarea></label></div></div><div class="modal-actions"><button class="secondary danger" type="button" id="delete-order">${icon("trash-2", 14)} Delete</button><button class="primary" type="submit">${icon("save", 14)} Save work order</button></div></form>`);
+        showModal(`<form class="modal wide" id="work-order-edit-form"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Edit work order</h2></div><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><h3>Customer & vehicle</h3><div class="form-grid"><label>Customer *<select name="customer" required>${customerOptions(order.customer)}</select></label><label>Phone<input name="phone" value="${escapeAttr(order.phone || "")}"/></label><label class="full">Vehicle description *<input name="vehicle" required value="${escapeAttr(order.vehicle || "")}"/></label><label class="full">VIN<input name="vin" maxlength="17" value="${escapeAttr(order.vin === "VIN pending" ? "" : order.vin || "")}"/></label></div><h3>Service details</h3><div class="form-grid"><label class="full">Customer complaint *<textarea name="complaint" required>${escapeHtml(order.complaint || "")}</textarea></label><label>Status<select name="status">${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${label(status)}</option>`).join("")}</select></label><label>Priority<select name="priority">${["normal", "high", "low"].map((priority) => `<option value="${priority}" ${order.priority === priority ? "selected" : ""}>${label(priority)}</option>`).join("")}</select></label><label>Technician<select name="tech">${techOptions(order.tech || "Unassigned")}</select></label><label>Bay / assignment<select name="bay">${["Unassigned", "Bay 1", "Bay 2", "Bay 3", "Bay 4", "Mobile"].map((bay) => `<option ${order.bay === bay ? "selected" : ""}>${bay}</option>`).join("")}</select></label><label>Promise time<input name="promise" value="${escapeAttr(order.promise || "")}"/></label><label>Labor hours<input name="laborHours" type="number" min="0" step=".25" value="${Number(order.laborHours || 0)}"/></label><label class="full">Technician / service notes<textarea name="notes">${escapeHtml(order.notes || "")}</textarea></label></div></div><div class="modal-actions">${userCanDeleteRecords() ? `<button class="secondary danger" type="button" id="delete-order">${icon("trash-2", 14)} Delete</button>` : ""}<button class="primary" type="submit">${icon("save", 14)} Save work order</button></div></form>`);
         const form = document.querySelector("#work-order-edit-form");
         form.onsubmit = async (event) => {
           event.preventDefault();
@@ -17706,8 +17829,13 @@ ${line}`.trim();
             toast(error.message || "Work order could not be saved");
           }
         };
-        document.querySelector("#delete-order").onclick = async () => {
-          if (!confirm(`Delete ${order.id}?`)) return;
+        const deleteOrderButton = document.querySelector("#delete-order");
+        if (deleteOrderButton) deleteOrderButton.onclick = async () => {
+          if (!userCanDeleteRecords()) {
+            toast(RECORD_DELETE_DENIED);
+            return;
+          }
+          if (!confirm(`Delete ${order.id}? This cannot be undone.`)) return;
           try {
             if (!isOfflineDesktop()) await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
             state.orders = state.orders.filter((item) => item !== order);
@@ -17793,10 +17921,12 @@ ${line}`.trim();
         const workActions = canManage && order.status === "approved" ? `<div class="job-actions"><button class="primary" id="start-job-work">${icon("play", 14)} Start work</button></div>` : canManage && ["in_progress", "waiting_parts"].includes(order.status) ? `<div class="job-actions"><button class="primary" id="complete-job-card">${icon("circle-check", 14)} Complete job & generate invoice</button></div>` : "";
         const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge3(invoice.status)} \xB7 ${money4(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
         const assignments = canManage ? laborAssignmentPanel(order, estimate) : "";
-        showModal(`<div class="modal wide job-card-modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Job card</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body">${jobWorkflowSteps(order, invoice)}${detailsEditor}${estimatePresentation(order, estimate, { locked: false })}${assignments}${editor}${approvalActions}${workActions}${invoiceCard}</div><div class="modal-actions"><button class="secondary" type="button" id="print-job-card">${icon("printer", 14)} Print job card</button><button class="secondary" data-close>Close</button></div></div>`);
+        showModal(`<div class="modal wide job-card-modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Job card</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body">${jobWorkflowSteps(order, invoice)}${detailsEditor}${estimatePresentation(order, estimate, { locked: false })}${assignments}${editor}${approvalActions}${workActions}${invoiceCard}</div><div class="modal-actions">${userCanDeleteRecords() ? `<button class="secondary danger" type="button" id="delete-job-card">${icon("trash-2", 14)} Delete work order</button>` : ""}<button class="secondary" type="button" id="print-job-card">${icon("printer", 14)} Print job card</button><button class="secondary" data-close>Close</button></div></div>`);
         const editorRoot = document.querySelector("#job-estimate-editor");
         let jobCardDirty = false;
         let jobCardSaving = false;
+        let jobCardDeleting = false;
+        let jobCardSavePromise = null;
         let jobCardTimer = 0;
         const setAutosaveStatus = (message) => {
           const status = document.querySelector("#job-autosave-status");
@@ -17848,7 +17978,7 @@ ${line}`.trim();
           return { revised, editedAt };
         };
         const persistJobCard = async ({ silent = false, reopen = false } = {}) => {
-          if (!canManage || jobCardSaving) return false;
+          if (!canManage || jobCardSaving || jobCardDeleting) return false;
           if (!jobCardDirty && silent) return true;
           const { revised, editedAt } = buildRevisedOrder();
           if (!revised.customer || !revised.vehicle || !revised.complaint) {
@@ -17868,6 +17998,10 @@ ${line}`.trim();
             return true;
           }
           jobCardSaving = true;
+          let resolveJobCardSave;
+          jobCardSavePromise = new Promise((resolve) => {
+            resolveJobCardSave = resolve;
+          });
           setAutosaveStatus("Saving\u2026");
           const revisedInvoice = invoice ? {
             ...invoiceWithEditedWorkOrder(invoice, revised, editedAt),
@@ -17884,7 +18018,7 @@ ${line}`.trim();
             save();
             jobCardDirty = false;
             setAutosaveStatus("Saved");
-            if (!silent) {
+            if (!silent && !jobCardDeleting) {
               setModalAutosave(null);
               closeModal();
               toast(`${order.id} updated${revisedInvoice ? ` \xB7 ${invoice.number} synchronized` : ""}`);
@@ -17901,9 +18035,12 @@ ${line}`.trim();
             return false;
           } finally {
             jobCardSaving = false;
+            resolveJobCardSave();
+            jobCardSavePromise = null;
           }
         };
         const markJobCardDirty = () => {
+          if (jobCardDeleting) return;
           jobCardDirty = true;
           setAutosaveStatus("Unsaved changes");
           clearTimeout(jobCardTimer);
@@ -17911,16 +18048,17 @@ ${line}`.trim();
             void persistJobCard({ silent: true });
           }, 700);
         };
+        const flushJobCardAutosave = ({ reason } = {}) => {
+          clearTimeout(jobCardTimer);
+          if (!jobCardDirty) return;
+          void persistJobCard({ silent: true });
+          if (reason === "close") toast(`${order.id} autosaved`);
+        };
         if (canManage) {
           document.querySelector(".job-details-editor")?.addEventListener("input", markJobCardDirty);
           document.querySelector(".job-details-editor")?.addEventListener("change", markJobCardDirty);
           document.querySelector(".labor-assignment-panel")?.addEventListener("change", markJobCardDirty);
-          setModalAutosave(({ reason }) => {
-            clearTimeout(jobCardTimer);
-            if (!jobCardDirty) return;
-            void persistJobCard({ silent: true });
-            if (reason === "close") toast(`${order.id} autosaved`);
-          });
+          setModalAutosave(flushJobCardAutosave);
         }
         if (editorRoot) {
           bindEstimateEditor(editorRoot, { taxRate: estimate.taxRate, fees: estimate.fees });
@@ -17977,6 +18115,50 @@ ${line}`.trim();
         });
         document.querySelectorAll("[data-print-invoice]").forEach((button) => button.onclick = () => printInvoice(button.dataset.printInvoice));
         document.querySelector("#print-job-card")?.addEventListener("click", () => printJobCard(order));
+        document.querySelector("#delete-job-card")?.addEventListener("click", async (event) => {
+          if (!userCanDeleteRecords()) {
+            toast(RECORD_DELETE_DENIED);
+            return;
+          }
+          const keepsInvoice = invoice ? ` ${invoice.number} will be kept; delete it from Invoices if it should go too.` : "";
+          if (!confirm(`Delete ${order.id}?${keepsInvoice} This cannot be undone.`)) return;
+          const controls = [...document.querySelectorAll(".job-card-modal input, .job-card-modal textarea, .job-card-modal select, .job-card-modal button:not(#delete-job-card)")];
+          const controlDisabledStates = controls.map((control) => control.disabled);
+          jobCardDeleting = true;
+          clearTimeout(jobCardTimer);
+          setModalAutosave(null);
+          controls.forEach((control) => {
+            control.disabled = true;
+          });
+          const button = event.currentTarget;
+          button.disabled = true;
+          try {
+            if (jobCardSavePromise) await jobCardSavePromise;
+            await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            jobCardDirty = false;
+            state.orders = state.orders.filter((item) => item !== order);
+            state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== order.id);
+            state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== order.id);
+            save();
+            closeModal();
+            toast(`${order.id} deleted`);
+            render();
+          } catch (error) {
+            jobCardDeleting = false;
+            controls.forEach((control, index) => {
+              control.disabled = controlDisabledStates[index];
+            });
+            button.disabled = false;
+            setModalAutosave(flushJobCardAutosave);
+            if (jobCardDirty) {
+              setAutosaveStatus("Unsaved changes");
+              jobCardTimer = setTimeout(() => {
+                void persistJobCard({ silent: true });
+              }, 700);
+            }
+            toast(error.message || "Work order could not be deleted");
+          }
+        });
         document.querySelector("#apply-bulk-technicians")?.addEventListener("click", () => {
           const selected = new Set([...document.querySelectorAll(".bulk-technician:checked")].map((input) => input.value));
           document.querySelectorAll(".labor-assignment-row").forEach((row) => {

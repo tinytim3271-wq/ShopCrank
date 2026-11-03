@@ -48,7 +48,15 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
+import { buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities } from './routes/entities.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
+import {
+  RECORD_DELETE_DENIED,
+  canDeleteRecords,
+  describeLinkedCounts,
+  hasLinkedRecords,
+  requiresAdminDelete,
+} from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
@@ -820,12 +828,6 @@ async function listChatMessagesForConversations(env, shopId, email, { limit = 0,
   };
 }
 
-async function hasLinkedCustomerEntity(env, shopId, type, customerName) {
-  return Boolean(await env.DB.prepare(
-    "SELECT 1 AS found FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, '$.customer') = ? LIMIT 1",
-  ).bind(shopId, type, customerName).first());
-}
-
 async function listPaymentsByInvoice(env, shopId, invoiceNumber) {
   const result = await env.DB.prepare(
     "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'payments' AND json_extract(data_json, '$.invoiceNumber') = ?",
@@ -970,28 +972,24 @@ async function handleEntities(request, env, context, segments, analytics) {
       && (!members(existing).includes(context.email) || (context.role !== 'admin' && existing.createdBy !== context.userId))) {
       throw new HttpError(403, 'Not permitted');
     }
+    if (requiresAdminDelete(type) && !canDeleteRecords(context.role)) throw new HttpError(403, RECORD_DELETE_DENIED);
+
+    let statements;
     if (type === 'customers') {
-      const linkedTypes = ['vehicles', 'orders', 'invoices'];
-      const links = await Promise.all(linkedTypes.map(linkedType => hasLinkedCustomerEntity(env, context.shopId, linkedType, existing.name)));
-      if (links.some(Boolean)) {
-        throw new HttpError(409, "Delete this customer's vehicles, work orders, and invoices first");
+      const linked = await customerLinkedEntities(env, context.shopId, existing.name);
+      if (hasLinkedRecords(linked)) {
+        const cascade = new URL(request.url).searchParams.get('cascade') === '1';
+        if (!cascade) {
+          throw new HttpError(409, `${existing.name || 'This customer'} has ${describeLinkedCounts(linked)}. Delete them too, or delete those records first.`);
+        }
+        statements = buildCustomerCascadeStatements(env, context, id, linked);
       }
     }
-    const statements = [env.DB.prepare(
-      'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-    ).bind(context.shopId, type, id)];
-    if (type === 'invoices') {
-      const payments = await listPaymentsByInvoice(env, context.shopId, existing.number || existing.id);
-      for (const payment of payments.filter(record => record.invoiceNumber === (existing.number || existing.id))) {
-        statements.push(env.DB.prepare(
-          'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-        ).bind(context.shopId, 'payments', payment.id));
-      }
-    }
-    if (type === 'employees' && existing.email) {
-      statements.push(env.DB.prepare(
-        'DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?',
-      ).bind(existing.email, context.shopId));
+    if (!statements) {
+      const relatedPayments = type === 'invoices'
+        ? await listPaymentsByInvoice(env, context.shopId, existing.number || existing.id)
+        : [];
+      statements = buildEntityDeleteStatements(env, context, type, id, existing, relatedPayments);
     }
     await env.DB.batch(statements);
     captureForContext(analytics, context, 'entity_deleted', { entity_type: type });
@@ -3225,17 +3223,21 @@ async function handleAuthCallback(request, env) {
       },
     });
   }
+  // Claim the link before creating a session: two simultaneous redemptions of one
+  // link must not both sign in.
+  const claimedAt = new Date().toISOString();
+  const claimed = await env.DB.prepare(
+    'UPDATE login_tokens SET used_at = ? WHERE id = ? AND token_hash = ? AND used_at IS NULL AND expires_at > ?',
+  ).bind(claimedAt, loginToken.id, tokenHash, claimedAt).run();
+  if (Number(claimed?.meta?.changes) !== 1) throw new HttpError(401, 'The sign-in link has expired');
   const sessionToken = crypto.randomUUID().replaceAll('-', '');
   const sessionId = crypto.randomUUID();
   const sessionHash = await hashValue(sessionToken);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
-  await env.DB.batch([
-    env.DB.prepare(`
-      INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(sessionId, user.id, sessionHash, expiresAt, new Date().toISOString()),
-    env.DB.prepare('UPDATE login_tokens SET used_at = ? WHERE id = ?').bind(new Date().toISOString(), loginToken.id),
-  ]);
+  await env.DB.prepare(`
+    INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(sessionId, user.id, sessionHash, expiresAt, claimedAt).run();
   const posthog = getPostHog(env);
   posthog?.identify({
     distinctId: String(user.id),
