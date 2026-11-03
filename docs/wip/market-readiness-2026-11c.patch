@@ -1,0 +1,61 @@
+From cc202fd9c32ebc3473c7e2f10d6596157fc04de7 Mon Sep 17 00:00:00 2001
+From: Lee_Alderman <tinytim3271@gmail.com>
+Date: Tue, 3 Nov 2026 05:32:28 -0600
+Subject: [PATCH] Smoke: reload before checking the texting inbox; CI installs
+ skip package scripts
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GGEY5cQcwh34RQLfpVUQwK
+---
+ .github/workflows/android-apk.yml            | 4 +++-
+ .github/workflows/ops-twilio-token-check.yml | 2 +-
+ scripts/smoke/browser-smoke.mjs              | 4 ++++
+ 3 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/android-apk.yml b/.github/workflows/android-apk.yml
+index 1be823e..d7755fd 100644
+--- a/.github/workflows/android-apk.yml
++++ b/.github/workflows/android-apk.yml
+@@ -144,7 +144,9 @@ jobs:
+             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+             echo "present=true" >> "$GITHUB_OUTPUT"
+           fi
+-      - run: npm ci
++      - run: npm ci --ignore-scripts
++        if: steps.keys.outputs.present == 'true'
++      - run: npm rebuild esbuild
+         if: steps.keys.outputs.present == 'true'
+       - run: npm run sync
+         if: steps.keys.outputs.present == 'true'
+diff --git a/.github/workflows/ops-twilio-token-check.yml b/.github/workflows/ops-twilio-token-check.yml
+index d6f7953..50509c2 100644
+--- a/.github/workflows/ops-twilio-token-check.yml
++++ b/.github/workflows/ops-twilio-token-check.yml
+@@ -36,7 +36,7 @@ jobs:
+                GROUP BY shop_id
+                HAVING sum(secret_name = 'twilio-auth-token') = 0
+                ORDER BY shop_id"
+-          npx wrangler d1 execute shopcrank --remote --json --command "$SQL" > result.json
++          npx --no-install wrangler d1 execute shopcrank --remote --json --command "$SQL" > result.json
+           COUNT="$(node -e "const r=require('./result.json');console.log((r[0]?.results||[]).length)")"
+           node -e "const r=require('./result.json');for(const row of r[0]?.results||[])console.log(row.shop_id+'  has: '+row.saved)"
+           {
+diff --git a/scripts/smoke/browser-smoke.mjs b/scripts/smoke/browser-smoke.mjs
+index e57fcf0..7d3ca0e 100644
+--- a/scripts/smoke/browser-smoke.mjs
++++ b/scripts/smoke/browser-smoke.mjs
+@@ -453,7 +453,11 @@ async function main() {
+       if (result.sent.status >= 300) throw new Error(`send: ${result.sent.status} ${JSON.stringify(result.sent.body).slice(0, 200)}`);
+       const twilio = providerCalls.find(c => c.path.includes('/Messages.json'));
+       if (!twilio || twilio.body.To !== '+15125550123' || !/Your car is ready/.test(twilio.body.Body || '') || !/^Basic /.test(twilio.auth)) throw new Error(`Twilio request: ${JSON.stringify(twilio || null).slice(0, 200)}`);
++      // The text went out through the API, so reload for a fresh inbox (the page caches it).
++      await page.reload({ waitUntil: 'networkidle' });
++      await page.waitForSelector('[data-route=messaging]', { timeout: 30_000 });
+       await route('messaging');
++      await page.waitForFunction(() => /Your car is ready/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
+       if (!/Your car is ready/.test(await main())) throw new Error('sent text missing from the inbox');
+     });
+     await check('upgrade to paid opens Stripe checkout for the chosen plan', async () => {
+-- 
+2.43.0
+

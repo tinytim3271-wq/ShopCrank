@@ -1,0 +1,1681 @@
+From e296da63d3ca53ebef87be8ac6395dac1de40b20 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 22:23:13 -0600
+Subject: [PATCH 1/3] Audit fixes: fail-closed voice webhooks, atomic sign-in
+ links, desktop URL policy
+
+- Twilio voice webhooks (incoming, status, after-stream, handoff) now refuse
+  requests when the shop has no Twilio token instead of skipping the signature
+  check. An unsigned "incoming call" could otherwise obtain a signed AI stream
+  on the shop's xAI key and metered minutes. DEV_AUTH_BYPASS=1 still skips it
+  for local development; TWILIO_VERIFY_VOICE=0 remains an explicit opt-out.
+- Magic-link sign-in claims the link with a conditional UPDATE before creating
+  a session, so two simultaneous redemptions can no longer both sign in.
+- Desktop: pop-ups only hand https ShopCrank pages to shell.openExternal (never
+  file: URLs), and file: navigation is limited to the app's own folder.
+  Rules live in desktop/url-policy.js with tests.
+- Assistant search-source links accept only http(s) URLs.
+- CI now runs tests that no script ran before: record-deletion,
+  customer-metrics, perf, shop-entity-load, merge-open-prs, url-policy,
+  gemini-assistant.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GGEY5cQcwh34RQLfpVUQwK
+---
+ desktop/main.js                               | 18 ++-----
+ desktop/url-policy.js                         | 52 +++++++++++++++++++
+ desktop/url-policy.test.js                    | 39 ++++++++++++++
+ package.json                                  |  4 +-
+ src/modules/gemini-assistant.js               | 12 ++++-
+ src/modules/gemini-assistant.test.mjs         | 14 +++++
+ worker/src/grok-voice.mjs                     |  8 ++-
+ worker/src/index.js                           | 18 ++++---
+ worker/test/auth-hardening.test.mjs           | 20 +++++++
+ worker/test/auth.test.mjs                     | 43 ++++++++++-----
+ worker/test/phone-metering.test.mjs           |  3 +-
+ .../test/twilio-voice-verification.test.mjs   | 47 +++++++++++++++++
+ 12 files changed, 241 insertions(+), 37 deletions(-)
+ create mode 100644 desktop/url-policy.js
+ create mode 100644 desktop/url-policy.test.js
+ create mode 100644 src/modules/gemini-assistant.test.mjs
+ create mode 100644 worker/test/twilio-voice-verification.test.mjs
+
+diff --git a/desktop/main.js b/desktop/main.js
+index 8179290..82efb1e 100644
+--- a/desktop/main.js
++++ b/desktop/main.js
+@@ -7,6 +7,7 @@ const edition = require('./edition.json');
+ const vault = require('./local-vault');
+ const { configurePortableData } = require('./portable-data');
+ const { isPrintPopupUrl } = require('./print-window');
++const { TRUSTED_ORIGINS, canOpenExternally, isTrustedNavigation } = require('./url-policy');
+ 
+ try {
+   configurePortableData(app, edition);
+@@ -17,20 +18,11 @@ try {
+ 
+ let mainWindow = null;
+ 
+-const trustedOrigins = new Set([
+-  'https://www.shopcrank.com',
+-  'https://shopcrank.com',
+-  'https://shopcrank-dispatch.pages.dev',
+-  'https://accounts.google.com',
+-]);
++const trustedOrigins = new Set(TRUSTED_ORIGINS);
++const appRoot = path.join(__dirname, '..');
+ 
+ function isTrustedUrl(rawUrl) {
+-  try {
+-    const url = new URL(rawUrl);
+-    return url.protocol === 'file:' || (edition.demo !== true && trustedOrigins.has(url.origin));
+-  } catch {
+-    return false;
+-  }
++  return isTrustedNavigation(rawUrl, { appRoot, demo: edition.demo === true });
+ }
+ 
+ function isGoogleSignInStart(rawUrl) {
+@@ -144,7 +136,7 @@ function createWindow() {
+         },
+       };
+     }
+-    if (edition.demo !== true && isTrustedUrl(url)) void shell.openExternal(url);
++    if (canOpenExternally(url, { demo: edition.demo === true })) void shell.openExternal(url);
+     return { action: 'deny' };
+   });
+   window.webContents.on('will-navigate', (event, url) => {
+diff --git a/desktop/url-policy.js b/desktop/url-policy.js
+new file mode 100644
+index 0000000..65cf535
+--- /dev/null
++++ b/desktop/url-policy.js
+@@ -0,0 +1,52 @@
++const path = require('node:path');
++const { fileURLToPath } = require('node:url');
++
++const TRUSTED_ORIGINS = Object.freeze([
++  'https://www.shopcrank.com',
++  'https://shopcrank.com',
++  'https://shopcrank-dispatch.pages.dev',
++  'https://accounts.google.com',
++]);
++
++function parse(rawUrl) {
++  try {
++    return new URL(String(rawUrl || ''));
++  } catch {
++    return null;
++  }
++}
++
++/** True when a file: URL points at a file inside the packaged app folder. */
++function isAppFile(url, appRoot, pathApi = path) {
++  if (!url || url.protocol !== 'file:' || !appRoot) return false;
++  let filePath;
++  try {
++    filePath = fileURLToPath(url, { windows: pathApi === path.win32 });
++  } catch {
++    return false;
++  }
++  const relative = pathApi.relative(pathApi.resolve(appRoot), pathApi.resolve(filePath));
++  return relative !== '' && !relative.startsWith('..') && !pathApi.isAbsolute(relative);
++}
++
++/**
++ * Where the app window may navigate: the bundled app's own files, or the
++ * ShopCrank sites (not in the offline USB demo).
++ */
++function isTrustedNavigation(rawUrl, { appRoot, demo = false, pathApi = path } = {}) {
++  const url = parse(rawUrl);
++  if (!url) return false;
++  if (url.protocol === 'file:') return isAppFile(url, appRoot, pathApi);
++  return demo !== true && url.protocol === 'https:' && TRUSTED_ORIGINS.includes(url.origin);
++}
++
++/**
++ * What a pop-up may hand to the system (shell.openExternal). Only https pages on
++ * the ShopCrank sites: a file: URL here would make Windows open or run that file.
++ */
++function canOpenExternally(rawUrl, { demo = false } = {}) {
++  const url = parse(rawUrl);
++  return Boolean(url) && demo !== true && url.protocol === 'https:' && TRUSTED_ORIGINS.includes(url.origin);
++}
++
++module.exports = { TRUSTED_ORIGINS, canOpenExternally, isTrustedNavigation };
+diff --git a/desktop/url-policy.test.js b/desktop/url-policy.test.js
+new file mode 100644
+index 0000000..4acb78a
+--- /dev/null
++++ b/desktop/url-policy.test.js
+@@ -0,0 +1,39 @@
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const path = require('node:path');
++const { canOpenExternally, isTrustedNavigation } = require('./url-policy');
++
++test('pop-ups only hand https ShopCrank pages to the system, never local files', () => {
++  assert.equal(canOpenExternally('https://www.shopcrank.com/pricing'), true);
++  assert.equal(canOpenExternally('file:///C:/Windows/System32/calc.exe'), false);
++  assert.equal(canOpenExternally('file:///etc/passwd'), false);
++  assert.equal(canOpenExternally('http://www.shopcrank.com/'), false);
++  assert.equal(canOpenExternally('https://evil.example/'), false);
++  assert.equal(canOpenExternally('javascript:alert(1)'), false);
++  assert.equal(canOpenExternally('not a url'), false);
++  assert.equal(canOpenExternally('https://www.shopcrank.com/', { demo: true }), false);
++});
++
++test('the window may load the app\'s own files but not other files on disk (POSIX)', () => {
++  const appRoot = '/opt/ShopCrank/resources/app.asar';
++  assert.equal(isTrustedNavigation('file:///opt/ShopCrank/resources/app.asar/index.html', { appRoot, pathApi: path.posix }), true);
++  assert.equal(isTrustedNavigation('file:///opt/ShopCrank/resources/app.asar/index.html#/orders', { appRoot, pathApi: path.posix }), true);
++  assert.equal(isTrustedNavigation('file:///opt/ShopCrank/resources/other.html', { appRoot, pathApi: path.posix }), false);
++  assert.equal(isTrustedNavigation('file:///opt/ShopCrank/resources/app.asar/../evil.html', { appRoot, pathApi: path.posix }), false);
++  assert.equal(isTrustedNavigation('file:///home/user/Downloads/invoice.html', { appRoot, pathApi: path.posix }), false);
++});
++
++test('Windows paths: app files allowed, downloads and other drives refused', () => {
++  const appRoot = 'C:\\Program Files\\ShopCrank\\resources\\app.asar';
++  const opts = { appRoot, pathApi: path.win32 };
++  assert.equal(isTrustedNavigation('file:///C:/Program%20Files/ShopCrank/resources/app.asar/index.html', opts), true);
++  assert.equal(isTrustedNavigation('file:///C:/Users/shop/Downloads/invoice.html', opts), false);
++  assert.equal(isTrustedNavigation('file:///D:/index.html', opts), false);
++});
++
++test('https navigation keeps the trusted-origin list and is off in the demo', () => {
++  assert.equal(isTrustedNavigation('https://www.shopcrank.com/app', { appRoot: '/app' }), true);
++  assert.equal(isTrustedNavigation('https://accounts.google.com/o/oauth2', { appRoot: '/app' }), true);
++  assert.equal(isTrustedNavigation('https://evil.example/', { appRoot: '/app' }), false);
++  assert.equal(isTrustedNavigation('https://www.shopcrank.com/app', { appRoot: '/app', demo: true }), false);
++});
+diff --git a/package.json b/package.json
+index 903c055..4278a00 100644
+--- a/package.json
++++ b/package.json
+@@ -53,7 +53,7 @@
+     "test:chat": "node --test src/modules/chat/utils.test.mjs src/modules/grok-voice-client.test.mjs",
+     "test:storage": "node --test src/modules/storage.test.mjs",
+     "test:upload": "node --test src/modules/file-upload.test.mjs",
+-    "test:desktop": "node --test desktop/start-url.test.js desktop/auth-deep-link.test.js desktop/diagnostics-secrets.test.js desktop/diagnostics-bridge.test.js desktop/local-vault.test.js desktop/portable-data.test.js desktop/print-window.test.js",
++    "test:desktop": "node --test desktop/start-url.test.js desktop/auth-deep-link.test.js desktop/diagnostics-secrets.test.js desktop/diagnostics-bridge.test.js desktop/local-vault.test.js desktop/portable-data.test.js desktop/print-window.test.js desktop/url-policy.test.js",
+     "test:offline": "node --test src/modules/offline-desktop.test.mjs",
+     "test:mutation": "node --test src/runtime/prepare-entity-mutation.test.mjs src/runtime/entity-persistence.test.mjs src/runtime/mutation-queue-store.test.mjs",
+     "test:imports": "node --test src/modules/imports.test.mjs src/modules/import-mappers.test.mjs",
+@@ -76,7 +76,7 @@
+     "test:diagnostics-identity": "node --test src/modules/diagnostics/vehicle-identity.test.mjs",
+     "test:work-orders": "node --test src/modules/work-order-editor.test.mjs",
+     "issue-invite": "node scripts/issue-founding-invite.mjs",
+-    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:growth && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shell-defects && npm run test:shop-os && npm run test:diagnostics-identity && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs src/modules/health-check.test.mjs src/modules/assistant-media.test.mjs src/modules/phone-usage.test.mjs",
++    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:growth && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shell-defects && npm run test:shop-os && npm run test:diagnostics-identity && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs src/modules/health-check.test.mjs src/modules/assistant-media.test.mjs src/modules/phone-usage.test.mjs && node --test src/modules/record-deletion.test.mjs src/modules/gemini-assistant.test.mjs src/modules/customer-metrics.test.mjs src/modules/perf.test.mjs src/runtime/shop-entity-load.test.mjs scripts/merge-open-prs.test.mjs",
+     "test:filing": "node --test src/modules/filing/withholding.test.mjs src/modules/filing/jurisdictions.test.mjs",
+     "test:shell-defects": "node --test src/runtime/shell-defects.test.mjs src/runtime/audit-showstoppers.test.mjs",
+     "test:growth": "node --test src/modules/sms-inbox.test.mjs src/modules/growth-settings.test.mjs src/modules/shop-kpis.test.mjs src/modules/vehicle-lookups.test.mjs src/modules/pricing-matrix.test.mjs src/modules/scan-to-estimate.test.mjs"
+diff --git a/src/modules/gemini-assistant.js b/src/modules/gemini-assistant.js
+index fab7737..2ae05ef 100644
+--- a/src/modules/gemini-assistant.js
++++ b/src/modules/gemini-assistant.js
+@@ -77,6 +77,16 @@ function getShopContext() {
+ /**
+  * Format grounding search queries and web sources markup
+  */
++/** Search-grounding links are external data: only http(s) URLs become links. */
++export function safeSourceUrl(value) {
++  try {
++    const url = new URL(String(value || ''));
++    return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
++  } catch {
++    return '#';
++  }
++}
++
+ function renderGroundingSources(grounding) {
+   if (!grounding) return '';
+   const queries = Array.isArray(grounding.queries) ? grounding.queries : [];
+@@ -98,7 +108,7 @@ function renderGroundingSources(grounding) {
+           ${sources
+             .slice(0, 4)
+             .map((s) => {
+-              const url = s.url || '#';
++              const url = safeSourceUrl(s.url);
+               const title = s.title || url.replace(/^https?:\/\//, '').split('/')[0];
+               return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" class="grounding-link">${escapeHtml(title)}</a></li>`;
+             })
+diff --git a/src/modules/gemini-assistant.test.mjs b/src/modules/gemini-assistant.test.mjs
+new file mode 100644
+index 0000000..ff8d44e
+--- /dev/null
++++ b/src/modules/gemini-assistant.test.mjs
+@@ -0,0 +1,14 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { safeSourceUrl } from './gemini-assistant.js';
++
++test('search source links keep http(s) URLs and drop script or local URLs', () => {
++  assert.equal(safeSourceUrl('https://example.com/a?b=1'), 'https://example.com/a?b=1');
++  assert.equal(safeSourceUrl('http://example.com/'), 'http://example.com/');
++  assert.equal(safeSourceUrl('javascript:alert(1)'), '#');
++  assert.equal(safeSourceUrl(' JavaScript:alert(1)'), '#');
++  assert.equal(safeSourceUrl('data:text/html,<script>1</script>'), '#');
++  assert.equal(safeSourceUrl('file:///C:/Windows/System32/calc.exe'), '#');
++  assert.equal(safeSourceUrl(''), '#');
++  assert.equal(safeSourceUrl(undefined), '#');
++});
+diff --git a/worker/src/grok-voice.mjs b/worker/src/grok-voice.mjs
+index 420aaf3..0e64afe 100644
+--- a/worker/src/grok-voice.mjs
++++ b/worker/src/grok-voice.mjs
+@@ -1305,7 +1305,13 @@ export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '',
+ export async function verifyTwilioVoiceRequest(request, env, shopId, params, getSecret) {
+   const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
+   const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
+-  if (!authToken || String(env?.TWILIO_VERIFY_VOICE || '1') === '0') return;
++  if (String(env?.TWILIO_VERIFY_VOICE || '1') === '0') return;
++  // Fail closed: without a token nothing proves the request came from Twilio, and an
++  // unsigned "incoming call" would hand out a signed AI stream on the shop's keys.
++  if (!authToken) {
++    if (env?.DEV_AUTH_BYPASS === '1') return;
++    throw new HttpError(503, 'Twilio voice webhook verification is not configured for this shop');
++  }
+   const valid = await verifyTwilioWebhookSignature({
+     authToken,
+     url: new URL(request.url).toString(),
+diff --git a/worker/src/index.js b/worker/src/index.js
+index f4a0529..61814fe 100644
+--- a/worker/src/index.js
++++ b/worker/src/index.js
+@@ -3225,17 +3225,21 @@ async function handleAuthCallback(request, env) {
+       },
+     });
+   }
++  // Claim the link before creating a session: two simultaneous redemptions of one
++  // link must not both sign in.
++  const claimedAt = new Date().toISOString();
++  const claimed = await env.DB.prepare(
++    'UPDATE login_tokens SET used_at = ? WHERE id = ? AND token_hash = ? AND used_at IS NULL AND expires_at > ?',
++  ).bind(claimedAt, loginToken.id, tokenHash, claimedAt).run();
++  if (Number(claimed?.meta?.changes) !== 1) throw new HttpError(401, 'The sign-in link has expired');
+   const sessionToken = crypto.randomUUID().replaceAll('-', '');
+   const sessionId = crypto.randomUUID();
+   const sessionHash = await hashValue(sessionToken);
+   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+-  await env.DB.batch([
+-    env.DB.prepare(`
+-      INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
+-      VALUES (?, ?, ?, ?, ?)
+-    `).bind(sessionId, user.id, sessionHash, expiresAt, new Date().toISOString()),
+-    env.DB.prepare('UPDATE login_tokens SET used_at = ? WHERE id = ?').bind(new Date().toISOString(), loginToken.id),
+-  ]);
++  await env.DB.prepare(`
++    INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
++    VALUES (?, ?, ?, ?, ?)
++  `).bind(sessionId, user.id, sessionHash, expiresAt, claimedAt).run();
+   const posthog = getPostHog(env);
+   posthog?.identify({
+     distinctId: String(user.id),
+diff --git a/worker/test/auth-hardening.test.mjs b/worker/test/auth-hardening.test.mjs
+index 3fdf3d5..e0ddc61 100644
+--- a/worker/test/auth-hardening.test.mjs
++++ b/worker/test/auth-hardening.test.mjs
+@@ -202,3 +202,23 @@ test('browser email sign-in still signs the browser in on confirm', async () =>
+   assert.equal(confirm.status, 302);
+   assert.match(confirm.headers.get('Set-Cookie') || '', /^shopcrank_session=/);
+ });
++
++test('two simultaneous confirmations of one browser sign-in link create only one session', async () => {
++  const env = { DB: createD1(), AUTH_EXPOSE_LOGIN_LINK: '1' };
++  const start = await worker.fetch(new Request(`${ORIGIN}/api/auth/magic-link`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.51' },
++    body: JSON.stringify({ email: 'race@example.org', returnTo: '/' }),
++  }), env);
++  const emailToken = new URL((await start.json()).loginUrl).searchParams.get('token');
++  const confirm = () => worker.fetch(new Request(`${ORIGIN}/api/auth/callback`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: ORIGIN },
++    body: `token=${emailToken}`,
++  }), env);
++
++  const responses = await Promise.all([confirm(), confirm()]);
++  assert.deepEqual(responses.map(response => response.status).sort(), [302, 401]);
++  const sessions = env.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM sessions').get();
++  assert.equal(Number(sessions.n), 1);
++});
+diff --git a/worker/test/auth.test.mjs b/worker/test/auth.test.mjs
+index f18752c..d980ddd 100644
+--- a/worker/test/auth.test.mjs
++++ b/worker/test/auth.test.mjs
+@@ -249,9 +249,11 @@ function confirmSignIn(token) {
+ }
+ 
+ function callbackDb({ sessionError = null } = {}) {
+-  let batchCalls = 0;
++  let sessionInserts = 0;
++  let linkClaims = 0;
+   return {
+-    get batchCalls() { return batchCalls; },
++    get sessionInserts() { return sessionInserts; },
++    get linkClaims() { return linkClaims; },
+     prepare(sql) {
+       return {
+         sql,
+@@ -285,16 +287,25 @@ function callbackDb({ sessionError = null } = {}) {
+               }
+               assert.fail(`unexpected callback query: ${sql}`);
+             },
++            async run() {
++              if (/UPDATE login_tokens SET used_at/.test(sql)) {
++                assert.match(sql, /used_at IS NULL/);
++                linkClaims += 1;
++                return { meta: { changes: 1 } };
++              }
++              if (/INSERT INTO sessions/.test(sql)) {
++                sessionInserts += 1;
++                if (sessionError) throw sessionError;
++                return { meta: { changes: 1 } };
++              }
++              assert.fail(`unexpected callback write: ${sql}`);
++            },
+           };
+         },
+       };
+     },
+-    async batch(statements) {
+-      batchCalls += 1;
+-      assert.match(statements[0].sql, /INSERT INTO sessions/);
+-      assert.match(statements[1].sql, /UPDATE login_tokens SET used_at/);
+-      if (sessionError) throw sessionError;
+-      return [{ success: true }, { success: true }];
++    async batch() {
++      assert.fail('sign-in must claim the link before creating a session, not batch both');
+     },
+   };
+ }
+@@ -310,7 +321,8 @@ test('magic-link callback creates a session when optional founding tables are ab
+   assert.equal(response.status, 302);
+   assert.equal(response.headers.get('Location'), 'https://app.example.test/app');
+   assert.match(response.headers.get('Set-Cookie') || '', /^shopcrank_session=/);
+-  assert.equal(DB.batchCalls, 1);
++  assert.equal(DB.linkClaims, 1);
++  assert.equal(DB.sessionInserts, 1);
+ });
+ 
+ test('auth callback reports schema failures safely and does not issue a session cookie', async (t) => {
+@@ -332,7 +344,8 @@ test('auth callback reports schema failures safely and does not issue a session
+   assert.equal(payload.requestId, response.headers.get('X-Request-ID'));
+   assert.doesNotMatch(JSON.stringify(payload), /sessions|D1_ERROR|SQLITE/i);
+   assert.equal(response.headers.get('Set-Cookie'), null);
+-  assert.equal(DB.batchCalls, 1);
++  assert.equal(DB.linkClaims, 1);
++  assert.equal(DB.sessionInserts, 1);
+   assert.equal(errors.mock.callCount(), 1);
+   const serverLog = JSON.parse(errors.mock.calls[0].arguments[0]);
+   assert.match(serverLog.error, /no such table: sessions/);
+@@ -716,6 +729,7 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
+   t.mock.method(console, 'error', () => {});
+   const token = 'e'.repeat(32);
+   const batches = [];
++  const writes = [];
+   const env = {
+     DB: {
+       prepare(sql) {
+@@ -740,6 +754,10 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
+                 assert.fail(`unexpected query: ${sql}`);
+               },
+               async run() {
++                if (/UPDATE login_tokens SET used_at/.test(sql) || /INSERT INTO sessions/.test(sql)) {
++                  writes.push(sql);
++                  return { meta: { changes: 1 } };
++                }
+                 assert.fail(`unexpected run: ${sql}`);
+               },
+             };
+@@ -758,7 +776,7 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
+   );
+   assert.equal(response.status, 302);
+   assert.equal(response.headers.get('Location'), 'https://app.example.test/app');
+-  assert.equal(batches.length, 3);
++  assert.equal(batches.length, 2);
+   assert.match(batches[0][0].sql, /INSERT INTO shops/);
+   assert.equal(batches[0][0].args[1], 'Trial Shop');
+   assert.equal(batches[0][2].args[3], 'Trial Owner');
+@@ -771,5 +789,6 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
+   assert.ok(Number.isFinite(trialEnds));
+   assert.ok(trialEnds > Date.now() + 13 * 86400000);
+   assert.ok(trialEnds < Date.now() + 15 * 86400000);
+-  assert.match(batches[2][0].sql, /INSERT INTO sessions/);
++  assert.match(writes[0], /UPDATE login_tokens SET used_at/);
++  assert.match(writes[1], /INSERT INTO sessions/);
+ });
+diff --git a/worker/test/phone-metering.test.mjs b/worker/test/phone-metering.test.mjs
+index 99e7625..8f16d31 100644
+--- a/worker/test/phone-metering.test.mjs
++++ b/worker/test/phone-metering.test.mjs
+@@ -154,7 +154,8 @@ test('when the AI cannot take a call (no active plan or cap reached), Twilio rin
+   const { DB } = setup({ planId: null });
+   DB.sqlite.prepare(`INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+     VALUES (?, 'shopsettings', 'front_desk_questionnaire', ?, 'test', 'now', 'now')`).run(SHOP, JSON.stringify({ answers: { transferTargets: [{ name: 'Front desk', phone: '+18065550100' }] } }));
+-  const env = { DB };
++  // Signature checks are covered in twilio-voice-verification.test.mjs.
++  const env = { DB, TWILIO_VERIFY_VOICE: '0' };
+   const request = new Request(`https://www.shopcrank.com/api/voice/twilio/incoming/${SHOP}`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+diff --git a/worker/test/twilio-voice-verification.test.mjs b/worker/test/twilio-voice-verification.test.mjs
+new file mode 100644
+index 0000000..7553827
+--- /dev/null
++++ b/worker/test/twilio-voice-verification.test.mjs
+@@ -0,0 +1,47 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { handleTwilioVoiceIncoming, verifyTwilioVoiceRequest } from '../src/grok-voice.mjs';
++import { HttpError } from '../src/http.mjs';
++
++const SHOP = 'shop-voice-1';
++
++function incoming(headers = {}) {
++  return new Request(`https://www.shopcrank.com/api/voice/twilio/incoming/${SHOP}`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
++    body: new URLSearchParams({ From: '+18065550199', CallSid: 'CA-forged' }).toString(),
++  });
++}
++
++async function twilioSignature(authToken, url, params) {
++  const data = url + [...params.keys()].sort().map(key => `${key}${params.get(key)}`).join('');
++  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(authToken), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
++  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data)));
++  return btoa(String.fromCharCode(...digest));
++}
++
++const noSecrets = async () => '';
++
++test('an unsigned incoming call is refused when the shop has no Twilio token', async () => {
++  await assert.rejects(
++    handleTwilioVoiceIncoming(incoming(), {}, SHOP, { getSecret: noSecrets }),
++    error => error instanceof HttpError && error.status === 503,
++  );
++});
++
++test('local development may skip the check only with DEV_AUTH_BYPASS', async () => {
++  const params = new URLSearchParams({ From: '+18065550199' });
++  await assert.doesNotReject(verifyTwilioVoiceRequest(incoming(), { DEV_AUTH_BYPASS: '1' }, SHOP, params, noSecrets));
++});
++
++test('a wrong signature is rejected and a correct one accepted', async () => {
++  const env = { TWILIO_AUTH_TOKEN: 'twilio-test-token' };
++  const params = new URLSearchParams({ From: '+18065550199', CallSid: 'CA1' });
++  const url = `https://www.shopcrank.com/api/voice/twilio/incoming/${SHOP}`;
++  await assert.rejects(
++    verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': 'forged' }), env, SHOP, params, noSecrets),
++    error => error instanceof HttpError && error.status === 401,
++  );
++  const good = await twilioSignature('twilio-test-token', url, params);
++  await assert.doesNotReject(verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': good }), env, SHOP, params, noSecrets));
++});
+-- 
+2.43.0
+
+
+From ea0bc0e6a51c9e2e1c357cecc9ddfb12be89c0ad Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 23:26:04 -0600
+Subject: [PATCH 2/3] Voice webhooks: TWILIO_VERIFY_VOICE=0 only works with
+ DEV_AUTH_BYPASS
+
+The signature check on Twilio voice webhooks can no longer be switched off in
+production by a stray TWILIO_VERIFY_VOICE=0; skipping it now also requires
+DEV_AUTH_BYPASS=1. Test envs that used the switch set both.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GGEY5cQcwh34RQLfpVUQwK
+---
+ worker/src/grok-voice.mjs                      | 13 ++++++-------
+ worker/test/grok-voice.test.mjs                |  2 +-
+ worker/test/phone-metering.test.mjs            |  2 +-
+ worker/test/production-host.test.mjs           |  2 +-
+ worker/test/twilio-voice-stream.test.mjs       |  2 +-
+ worker/test/twilio-voice-verification.test.mjs | 13 +++++++++++++
+ 6 files changed, 23 insertions(+), 11 deletions(-)
+
+diff --git a/worker/src/grok-voice.mjs b/worker/src/grok-voice.mjs
+index 0e64afe..8030fc3 100644
+--- a/worker/src/grok-voice.mjs
++++ b/worker/src/grok-voice.mjs
+@@ -1305,13 +1305,12 @@ export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '',
+ export async function verifyTwilioVoiceRequest(request, env, shopId, params, getSecret) {
+   const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
+   const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
+-  if (String(env?.TWILIO_VERIFY_VOICE || '1') === '0') return;
+-  // Fail closed: without a token nothing proves the request came from Twilio, and an
+-  // unsigned "incoming call" would hand out a signed AI stream on the shop's keys.
+-  if (!authToken) {
+-    if (env?.DEV_AUTH_BYPASS === '1') return;
+-    throw new HttpError(503, 'Twilio voice webhook verification is not configured for this shop');
+-  }
++  // Fail closed: without a valid signature nothing proves the request came from Twilio,
++  // and an unsigned "incoming call" would hand out a signed AI stream on the shop's keys.
++  // Skipping the check is for local development only, never production.
++  const devBypass = env?.DEV_AUTH_BYPASS === '1';
++  if (devBypass && (!authToken || String(env?.TWILIO_VERIFY_VOICE || '1') === '0')) return;
++  if (!authToken) throw new HttpError(503, 'Twilio voice webhook verification is not configured for this shop');
+   const valid = await verifyTwilioWebhookSignature({
+     authToken,
+     url: new URL(request.url).toString(),
+diff --git a/worker/test/grok-voice.test.mjs b/worker/test/grok-voice.test.mjs
+index a235532..335086c 100644
+--- a/worker/test/grok-voice.test.mjs
++++ b/worker/test/grok-voice.test.mjs
+@@ -193,7 +193,7 @@ test('Twilio incoming voice webhook returns Connect Stream TwiML with verifiable
+   const env = {
+     XAI_API_KEY: 'xai-test-key-1234567890abcdef',
+     INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
+-    TWILIO_VERIFY_VOICE: '0',
++    TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1',
+   };
+   const body = new URLSearchParams({
+     From: '+18065550123',
+diff --git a/worker/test/phone-metering.test.mjs b/worker/test/phone-metering.test.mjs
+index 8f16d31..c7f7a70 100644
+--- a/worker/test/phone-metering.test.mjs
++++ b/worker/test/phone-metering.test.mjs
+@@ -155,7 +155,7 @@ test('when the AI cannot take a call (no active plan or cap reached), Twilio rin
+   DB.sqlite.prepare(`INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+     VALUES (?, 'shopsettings', 'front_desk_questionnaire', ?, 'test', 'now', 'now')`).run(SHOP, JSON.stringify({ answers: { transferTargets: [{ name: 'Front desk', phone: '+18065550100' }] } }));
+   // Signature checks are covered in twilio-voice-verification.test.mjs.
+-  const env = { DB, TWILIO_VERIFY_VOICE: '0' };
++  const env = { DB, TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1' };
+   const request = new Request(`https://www.shopcrank.com/api/voice/twilio/incoming/${SHOP}`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+diff --git a/worker/test/production-host.test.mjs b/worker/test/production-host.test.mjs
+index 36e602e..6d446e9 100644
+--- a/worker/test/production-host.test.mjs
++++ b/worker/test/production-host.test.mjs
+@@ -127,7 +127,7 @@ test('legacy Twilio voice callbacks return a stream URL on the legacy host', asy
+   ), {
+     XAI_API_KEY: 'xai-test-key-1234567890abcdef',
+     INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
+-    TWILIO_VERIFY_VOICE: '0',
++    TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1',
+   });
+ 
+   assert.equal(response.status, 200);
+diff --git a/worker/test/twilio-voice-stream.test.mjs b/worker/test/twilio-voice-stream.test.mjs
+index 9cbbbd6..065c905 100644
+--- a/worker/test/twilio-voice-stream.test.mjs
++++ b/worker/test/twilio-voice-stream.test.mjs
+@@ -8,7 +8,7 @@ import { createD1 } from './helpers/d1-sqlite.mjs';
+ const ENV = {
+   XAI_API_KEY: 'xai-test-key-1234567890abcdef',
+   INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
+-  TWILIO_VERIFY_VOICE: '0',
++  TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1',
+ };
+ 
+ function twilioSignature(authToken, url, params) {
+diff --git a/worker/test/twilio-voice-verification.test.mjs b/worker/test/twilio-voice-verification.test.mjs
+index 7553827..155e3a4 100644
+--- a/worker/test/twilio-voice-verification.test.mjs
++++ b/worker/test/twilio-voice-verification.test.mjs
+@@ -45,3 +45,16 @@ test('a wrong signature is rejected and a correct one accepted', async () => {
+   const good = await twilioSignature('twilio-test-token', url, params);
+   await assert.doesNotReject(verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': good }), env, SHOP, params, noSecrets));
+ });
++
++test('TWILIO_VERIFY_VOICE=0 cannot switch the check off outside local development', async () => {
++  const params = new URLSearchParams({ From: '+18065550199' });
++  await assert.rejects(
++    verifyTwilioVoiceRequest(incoming(), { TWILIO_VERIFY_VOICE: '0' }, SHOP, params, noSecrets),
++    error => error instanceof HttpError && error.status === 503,
++  );
++  await assert.rejects(
++    verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': 'forged' }), { TWILIO_VERIFY_VOICE: '0', TWILIO_AUTH_TOKEN: 'twilio-test-token' }, SHOP, params, noSecrets),
++    error => error instanceof HttpError && error.status === 401,
++  );
++  await assert.doesNotReject(verifyTwilioVoiceRequest(incoming(), { TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1', TWILIO_AUTH_TOKEN: 'twilio-test-token' }, SHOP, params, noSecrets));
++});
+-- 
+2.43.0
+
+
+From 2c57d1bf5b5e86e7630bd064dac47325f0d0278f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 02:03:40 -0600
+Subject: [PATCH 3/3] Audit follow-ups: encrypted offline shop file, write-once
+ uploads, link cap, cleanup
+
+- Offline desktop: the shop file is encrypted with Windows DPAPI (Electron
+  safeStorage) on installed copies; the portable USB edition stays plain so the
+  drive opens on any PC. Existing plain files are read and encrypted on the next
+  save. A file that cannot be unlocked is set aside, never overwritten.
+- Uploads are write-once (R2 onlyIf etagDoesNotMatch '*'): every upload gets a
+  fresh key, so no role can replace an existing photo or PDF.
+- Signed/approved customer document links stay viewable for a year after
+  signing, then expire (they never expired before).
+- Removed the broken blackflag-ecu and PowerShell gitlinks (no .gitmodules) and
+  ignore both folders; they are separate repositories.
+- Removed src/modules/gemini-assistant.js, which nothing imported.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GGEY5cQcwh34RQLfpVUQwK
+---
+ .gitignore                              |   5 +
+ PowerShell                              |   1 -
+ blackflag-ecu                           |   1 -
+ desktop/local-vault.js                  |  45 +-
+ desktop/local-vault.test.js             |  35 +-
+ desktop/main.js                         |  18 +-
+ package.json                            |   2 +-
+ src/modules/gemini-assistant.js         | 664 ------------------------
+ src/modules/gemini-assistant.test.mjs   |  14 -
+ worker/src/customer-documents.mjs       |  10 +-
+ worker/src/routes/files.mjs             |   5 +-
+ worker/test/customer-documents.test.mjs |  11 +
+ worker/test/routes.test.mjs             |  22 +-
+ 13 files changed, 128 insertions(+), 705 deletions(-)
+ delete mode 160000 PowerShell
+ delete mode 160000 blackflag-ecu
+ delete mode 100644 src/modules/gemini-assistant.js
+ delete mode 100644 src/modules/gemini-assistant.test.mjs
+
+diff --git a/.gitignore b/.gitignore
+index 056758a..0108238 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -30,3 +30,8 @@ secon.code-workspace
+ wrangler.local.json
+ # Browser smoke test screenshots
+ smoke-artifacts/
++
++# Separate repository (BlackFlag ECU tool); not part of ShopCrank.
++blackflag-ecu/
++# Local clone of the public PowerShell repo; not part of ShopCrank.
++PowerShell/
+diff --git a/PowerShell b/PowerShell
+deleted file mode 160000
+index edcbda3..0000000
+--- a/PowerShell
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit edcbda3ae12dfdbce68f382572515c7bacde59b2
+diff --git a/blackflag-ecu b/blackflag-ecu
+deleted file mode 160000
+index ac68bf5..0000000
+--- a/blackflag-ecu
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit ac68bf5e2fcb4700d9b0baf4d6a009c923aaed46
+diff --git a/desktop/local-vault.js b/desktop/local-vault.js
+index 9981aaf..1797ce1 100644
+--- a/desktop/local-vault.js
++++ b/desktop/local-vault.js
+@@ -102,21 +102,48 @@ function signIn(dir, input = {}) {
+   return { email: record.email, name: record.name || '' };
+ }
+ 
+-function loadShop(dir) {
++/**
++ * `cipher` is optional OS encryption from the Electron main process
++ * ({ encrypt(text) -> Buffer, decrypt(Buffer) -> text }, e.g. safeStorage/DPAPI).
++ * With it the shop file is unreadable outside this Windows account; without it
++ * (portable USB edition) the file stays plain JSON so it opens on any PC.
++ */
++function keepUnreadableShopFile(dir) {
++  const target = path.join(dir, `offline-shop.unreadable-${Date.now()}.json`);
++  renameSync(shopFile(dir), target);
++  return target;
++}
++
++function loadShop(dir, { cipher = null } = {}) {
+   const record = readJson(shopFile(dir));
+-  if (!record?.state || typeof record.state !== 'object' || Array.isArray(record.state)) return null;
+-  return stripSecrets(record.state);
++  if (!record) return null;
++  let state = record.state;
++  if (record.encrypted === 'os') {
++    try {
++      if (!cipher) throw new Error('no cipher');
++      state = JSON.parse(cipher.decrypt(Buffer.from(String(record.data || ''), 'base64')));
++    } catch {
++      // Keep the only copy: the app would otherwise start empty and its next save overwrite it.
++      const kept = keepUnreadableShopFile(dir);
++      throw new Error(`This shop file is encrypted for another computer or Windows account. It was kept as ${path.basename(kept)}.`);
++    }
++  }
++  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
++  return stripSecrets(state);
+ }
+ 
+-function saveShop(dir, snapshot) {
++function saveShop(dir, snapshot, { cipher = null } = {}) {
+   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+     throw new Error('The shop file could not be saved.');
+   }
+-  const state = stripSecrets(snapshot);
+-  const body = JSON.stringify({ version: 1, savedAt: new Date().toISOString(), state });
+-  if (Buffer.byteLength(body) > MAX_SHOP_BYTES) throw new Error('This shop file is too large to save on this computer.');
+-  writeJsonAtomic(shopFile(dir), JSON.parse(body));
+-  return { saved: true };
++  const stateJson = JSON.stringify(stripSecrets(snapshot));
++  if (Buffer.byteLength(stateJson) > MAX_SHOP_BYTES) throw new Error('This shop file is too large to save on this computer.');
++  const savedAt = new Date().toISOString();
++  const record = cipher
++    ? { version: 2, encrypted: 'os', savedAt, data: Buffer.from(cipher.encrypt(stateJson)).toString('base64') }
++    : { version: 1, savedAt, state: JSON.parse(stateJson) };
++  writeJsonAtomic(shopFile(dir), record);
++  return { saved: true, encrypted: Boolean(cipher) };
+ }
+ 
+ module.exports = {
+diff --git a/desktop/local-vault.test.js b/desktop/local-vault.test.js
+index b5972a4..875ddab 100644
+--- a/desktop/local-vault.test.js
++++ b/desktop/local-vault.test.js
+@@ -2,7 +2,7 @@
+ 
+ const { describe, it } = require('node:test');
+ const assert = require('node:assert/strict');
+-const { mkdtempSync, readFileSync } = require('node:fs');
++const { mkdtempSync, readFileSync, readdirSync } = require('node:fs');
+ const { tmpdir } = require('node:os');
+ const path = require('node:path');
+ const { accountStatus, createAccount, loadShop, saveShop, signIn } = require('./local-vault');
+@@ -38,3 +38,36 @@ describe('local vault', () => {
+     assert.equal(loadShop(path.join(dir, 'missing')), null);
+   });
+ });
++
++// Stand-in for Electron safeStorage: reversible, and the plain text never appears in the output.
++const fakeCipher = {
++  encrypt: (text) => Buffer.from(Buffer.from(text, 'utf8').map(byte => byte ^ 0x5a)),
++  decrypt: (buffer) => Buffer.from(buffer.map(byte => byte ^ 0x5a)).toString('utf8'),
++};
++
++describe('local vault encryption', () => {
++  it('with OS encryption the shop file holds no readable customer data', () => {
++    const dir = tempDir();
++    const result = saveShop(dir, { customers: [{ name: 'Dana Ruiz', phone: '555-0142' }] }, { cipher: fakeCipher });
++    assert.equal(result.encrypted, true);
++    const raw = readFileSync(path.join(dir, 'offline-shop.json'), 'utf8');
++    assert.doesNotMatch(raw, /Dana Ruiz|555-0142/);
++    assert.equal(JSON.parse(raw).encrypted, 'os');
++    assert.deepEqual(loadShop(dir, { cipher: fakeCipher }).customers, [{ name: 'Dana Ruiz', phone: '555-0142' }]);
++    assert.throws(() => loadShop(dir), /encrypted for another computer/);
++    // The unreadable file is set aside, never left where the next save would overwrite it.
++    const kept = readdirSync(dir).filter(name => name.startsWith('offline-shop.unreadable-'));
++    assert.equal(kept.length, 1);
++    assert.equal(readFileSync(path.join(dir, kept[0]), 'utf8'), raw);
++    assert.equal(loadShop(dir), null);
++  });
++
++  it('an existing plain shop file still opens and is encrypted on the next save', () => {
++    const dir = tempDir();
++    saveShop(dir, { orders: [{ id: 'RO-7' }] });
++    assert.deepEqual(loadShop(dir, { cipher: fakeCipher }).orders, [{ id: 'RO-7' }]);
++    saveShop(dir, loadShop(dir, { cipher: fakeCipher }), { cipher: fakeCipher });
++    assert.doesNotMatch(readFileSync(path.join(dir, 'offline-shop.json'), 'utf8'), /RO-7/);
++    assert.deepEqual(loadShop(dir, { cipher: fakeCipher }).orders, [{ id: 'RO-7' }]);
++  });
++});
+diff --git a/desktop/main.js b/desktop/main.js
+index 82efb1e..f005bd5 100644
+--- a/desktop/main.js
++++ b/desktop/main.js
+@@ -1,4 +1,4 @@
+-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
++const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage } = require('electron');
+ const path = require('node:path');
+ const diagnostics = require('./diagnostics-bridge');
+ const { resolveDesktopStart } = require('./start-url');
+@@ -34,14 +34,26 @@ function isGoogleSignInStart(rawUrl) {
+   }
+ }
+ 
++/**
++ * OS encryption for the offline shop file (DPAPI on Windows). Off for the portable
++ * USB edition: DPAPI ties data to one Windows account, so the drive would not open elsewhere.
++ */
++function shopFileCipher() {
++  if (edition.portable === true || !safeStorage?.isEncryptionAvailable?.()) return null;
++  return {
++    encrypt: (text) => safeStorage.encryptString(text),
++    decrypt: (buffer) => safeStorage.decryptString(buffer),
++  };
++}
++
+ function registerOfflineIpc() {
+   if (edition.offline !== true) return;
+   const handlers = {
+     'local-auth:status': () => vault.accountStatus(app.getPath('userData')),
+     'local-auth:create': (_event, payload) => vault.createAccount(app.getPath('userData'), payload || {}),
+     'local-auth:sign-in': (_event, payload) => vault.signIn(app.getPath('userData'), payload || {}),
+-    'local-shop:load': () => vault.loadShop(app.getPath('userData')),
+-    'local-shop:save': (_event, snapshot) => vault.saveShop(app.getPath('userData'), snapshot || {}),
++    'local-shop:load': () => vault.loadShop(app.getPath('userData'), { cipher: shopFileCipher() }),
++    'local-shop:save': (_event, snapshot) => vault.saveShop(app.getPath('userData'), snapshot || {}, { cipher: shopFileCipher() }),
+   };
+   Object.entries(handlers).forEach(([channel, handler]) => {
+     ipcMain.handle(channel, async (_event, ...args) => {
+diff --git a/package.json b/package.json
+index 4278a00..f9ec616 100644
+--- a/package.json
++++ b/package.json
+@@ -76,7 +76,7 @@
+     "test:diagnostics-identity": "node --test src/modules/diagnostics/vehicle-identity.test.mjs",
+     "test:work-orders": "node --test src/modules/work-order-editor.test.mjs",
+     "issue-invite": "node scripts/issue-founding-invite.mjs",
+-    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:growth && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shell-defects && npm run test:shop-os && npm run test:diagnostics-identity && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs src/modules/health-check.test.mjs src/modules/assistant-media.test.mjs src/modules/phone-usage.test.mjs && node --test src/modules/record-deletion.test.mjs src/modules/gemini-assistant.test.mjs src/modules/customer-metrics.test.mjs src/modules/perf.test.mjs src/runtime/shop-entity-load.test.mjs scripts/merge-open-prs.test.mjs",
++    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:growth && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shell-defects && npm run test:shop-os && npm run test:diagnostics-identity && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs src/modules/health-check.test.mjs src/modules/assistant-media.test.mjs src/modules/phone-usage.test.mjs && node --test src/modules/record-deletion.test.mjs src/modules/customer-metrics.test.mjs src/modules/perf.test.mjs src/runtime/shop-entity-load.test.mjs scripts/merge-open-prs.test.mjs",
+     "test:filing": "node --test src/modules/filing/withholding.test.mjs src/modules/filing/jurisdictions.test.mjs",
+     "test:shell-defects": "node --test src/runtime/shell-defects.test.mjs src/runtime/audit-showstoppers.test.mjs",
+     "test:growth": "node --test src/modules/sms-inbox.test.mjs src/modules/growth-settings.test.mjs src/modules/shop-kpis.test.mjs src/modules/vehicle-lookups.test.mjs src/modules/pricing-matrix.test.mjs src/modules/scan-to-estimate.test.mjs"
+diff --git a/src/modules/gemini-assistant.js b/src/modules/gemini-assistant.js
+deleted file mode 100644
+index 2ae05ef..0000000
+--- a/src/modules/gemini-assistant.js
++++ /dev/null
+@@ -1,664 +0,0 @@
+-/**
+- * ShopCrank Gemini Voice & Chat Assistant Module
+- * Features:
+- * - Real-time conversational AI powered by Gemini 2.5 Flash / 3.8 Flash
+- * - Grounded with Google Search data on all responses
+- * - Voice features: Speech-to-text recording, audio transcription, and voice playback (TTS)
+- * - Accessible via button on every page in the app
+- * - Context-aware of active work orders, customer dispatches, vehicles, and shop operations
+- */
+-
+-import { escapeHtml, escapeAttr } from '../shared/html.js';
+-
+-let conversationHistory = [];
+-let lastInteractionId = null;
+-let isVoiceRecording = false;
+-let mediaRecorder = null;
+-let audioStream = null;
+-let audioChunks = [];
+-let speechSynthUtterance = null;
+-let activeTtsAudio = null;
+-let isSpeaking = false;
+-let voiceOutputEnabled = true;
+-let isModalOpen = false;
+-
+-export function isAssistantOpen() {
+-  return isModalOpen;
+-}
+-
+-// Quick action suggestions
+-const QUICK_PROMPTS = [
+-  'Status of today\'s mobile dispatches',
+-  'Diagnose DTC code P0300 on Ram 1500',
+-  'Look up front brake rotor torque specs',
+-  'Search manufacturer recall for Ford F-150',
+-  'Estimate labor time for water pump replacement',
+-];
+-
+-/**
+- * Gather current application state for shop context
+- */
+-function getShopContext() {
+-  try {
+-    const rawState = window.__SHOP_CRANK_STATE__ || {};
+-    const orders = Array.isArray(rawState.orders) ? rawState.orders : [];
+-    const activeOrders = orders
+-      .filter((o) => !['completed', 'invoiced', 'declined', 'archived'].includes(o.status))
+-      .map((o) => ({
+-        id: o.id,
+-        customer: o.customer,
+-        vehicle: o.vehicle,
+-        complaint: o.complaint,
+-        status: o.status,
+-        mobile: Boolean(o.mobile),
+-        tech: o.tech,
+-        promise: o.promise,
+-        address: o.jobAddress || o.address || '',
+-      }));
+-
+-    const mobileOrders = activeOrders.filter((o) => o.mobile);
+-
+-    return {
+-      currentRoute: rawState.route || 'dispatch',
+-      activeOrders: activeOrders.slice(0, 10),
+-      mobileOrders,
+-      orderCount: activeOrders.length,
+-      shopProfile: {
+-        shopName: 'ShopCrank Mobile & Shop Service',
+-        laborRate: 140,
+-        address: '101 Main St, Lubbock, TX',
+-      },
+-    };
+-  } catch {
+-    return { currentRoute: 'dispatch', activeOrders: [] };
+-  }
+-}
+-
+-/**
+- * Format grounding search queries and web sources markup
+- */
+-/** Search-grounding links are external data: only http(s) URLs become links. */
+-export function safeSourceUrl(value) {
+-  try {
+-    const url = new URL(String(value || ''));
+-    return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
+-  } catch {
+-    return '#';
+-  }
+-}
+-
+-function renderGroundingSources(grounding) {
+-  if (!grounding) return '';
+-  const queries = Array.isArray(grounding.queries) ? grounding.queries : [];
+-  const sources = Array.isArray(grounding.sources) ? grounding.sources : [];
+-
+-  if (queries.length === 0 && sources.length === 0) return '';
+-
+-  const queriesHtml = queries.length
+-    ? `<div class="grounding-queries">
+-        <span class="grounding-label">Google Search:</span>
+-        ${queries.map((q) => `<span class="search-query-chip">${escapeHtml(q)}</span>`).join('')}
+-       </div>`
+-    : '';
+-
+-  const sourcesHtml = sources.length
+-    ? `<div class="grounding-sources">
+-        <span class="grounding-label">Sources:</span>
+-        <ul class="grounding-links-list">
+-          ${sources
+-            .slice(0, 4)
+-            .map((s) => {
+-              const url = safeSourceUrl(s.url);
+-              const title = s.title || url.replace(/^https?:\/\//, '').split('/')[0];
+-              return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" class="grounding-link">${escapeHtml(title)}</a></li>`;
+-            })
+-            .join('')}
+-        </ul>
+-       </div>`
+-    : '';
+-
+-  return `<div class="gemini-grounding-box">
+-    <div class="grounding-header">
+-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+-      <span>Grounded with Google Search data</span>
+-    </div>
+-    ${queriesHtml}
+-    ${sourcesHtml}
+-  </div>`;
+-}
+-
+-/**
+- * Render single message markup
+- */
+-function renderMessageItem(msg) {
+-  const isUser = msg.role === 'user';
+-  const roleLabel = isUser ? 'You' : 'Gemini Assistant';
+-  const timeStr = msg.time || new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+-  const groundingHtml = !isUser && msg.grounding ? renderGroundingSources(msg.grounding) : '';
+-
+-  return `
+-    <article class="gemini-msg ${isUser ? 'user' : 'assistant'}">
+-      <div class="gemini-msg-header">
+-        <span class="gemini-msg-author">${roleLabel}</span>
+-        <time class="gemini-msg-time">${timeStr}</time>
+-      </div>
+-      <div class="gemini-msg-body">
+-        ${escapeHtml(msg.content).replace(/\n/g, '<br>')}
+-      </div>
+-      ${groundingHtml}
+-    </article>
+-  `;
+-}
+-
+-/**
+- * Text-to-speech speak function (Gemini 3.8 TTS with Web Speech API fallback)
+- */
+-async function speakText(text) {
+-  if (!voiceOutputEnabled) return;
+-  const cleanSpeech = String(text || '')
+-    .replace(/https?:\/\/\S+/g, '')
+-    .replace(/[*_#`~]/g, '')
+-    .slice(0, 600);
+-  if (!cleanSpeech.trim()) return;
+-
+-  stopSpeaking();
+-
+-  if (typeof window.Audio === 'function' && typeof fetch === 'function') {
+-    try {
+-      const ttsRes = await fetch('/api/ai/tts', {
+-        method: 'POST',
+-        headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({
+-          text: cleanSpeech,
+-          model: 'gemini-3.8-flash-tts',
+-          voice: 'Kore',
+-          style: 'cheerful and friendly',
+-        }),
+-      });
+-      if (ttsRes && ttsRes.ok) {
+-        const ttsPayload = await ttsRes.json().catch(() => null);
+-        if (ttsPayload?.audio) {
+-          const mime = ttsPayload.mimeType || 'audio/wav';
+-          activeTtsAudio = new window.Audio(`data:${mime};base64,${ttsPayload.audio}`);
+-          isSpeaking = true;
+-          updateVoicePlayButton(true);
+-          activeTtsAudio.onended = () => {
+-            isSpeaking = false;
+-            updateVoicePlayButton(false);
+-          };
+-          activeTtsAudio.onerror = () => {
+-            isSpeaking = false;
+-            updateVoicePlayButton(false);
+-          };
+-          await activeTtsAudio.play();
+-          return;
+-        }
+-      }
+-    } catch {
+-      // Fall back to browser speechSynthesis below
+-    }
+-  }
+-
+-  if (!('speechSynthesis' in window)) return;
+-  try {
+-    window.speechSynthesis.cancel();
+-    const UtteranceClass = window.SpeechSynthesisUtterance;
+-    if (!UtteranceClass) return;
+-    speechSynthUtterance = new UtteranceClass(cleanSpeech.slice(0, 450));
+-    speechSynthUtterance.rate = 1.05;
+-    speechSynthUtterance.pitch = 1.0;
+-    speechSynthUtterance.onstart = () => {
+-      isSpeaking = true;
+-      updateVoicePlayButton(true);
+-    };
+-    speechSynthUtterance.onend = () => {
+-      isSpeaking = false;
+-      updateVoicePlayButton(false);
+-    };
+-    speechSynthUtterance.onerror = () => {
+-      isSpeaking = false;
+-      updateVoicePlayButton(false);
+-    };
+-    window.speechSynthesis.speak(speechSynthUtterance);
+-  } catch (err) {
+-    console.warn('Speech synthesis error:', err);
+-  }
+-}
+-
+-export function isAssistantSpeaking() {
+-  return isSpeaking;
+-}
+-
+-function stopSpeaking() {
+-  if (activeTtsAudio) {
+-    try {
+-      activeTtsAudio.pause();
+-      activeTtsAudio.currentTime = 0;
+-    } catch {
+-      // Ignore audio pause errors
+-    }
+-    activeTtsAudio = null;
+-  }
+-  if ('speechSynthesis' in window) {
+-    window.speechSynthesis.cancel();
+-  }
+-  isSpeaking = false;
+-  updateVoicePlayButton(false);
+-}
+-
+-function updateVoicePlayButton(speaking) {
+-  const btn = document.querySelector('#gemini-tts-toggle');
+-  if (btn) {
+-    btn.classList.toggle('active', speaking);
+-    btn.setAttribute('title', speaking ? 'Stop voice playback' : 'Voice output active');
+-  }
+-}
+-
+-/**
+- * Start/Stop audio recording with microphone
+- */
+-async function toggleVoiceRecording() {
+-  const micBtn = document.querySelector('#gemini-mic-btn');
+-  const statusEl = document.querySelector('#gemini-voice-indicator');
+-
+-  if (isVoiceRecording) {
+-    // Stop recording
+-    if (mediaRecorder && mediaRecorder.state === 'recording') {
+-      mediaRecorder.stop();
+-    }
+-    isVoiceRecording = false;
+-    if (micBtn) {
+-      micBtn.classList.remove('recording');
+-      micBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg> <span>Speak</span>`;
+-    }
+-    if (statusEl) statusEl.textContent = 'Transcribing with Gemini…';
+-    return;
+-  }
+-
+-  // Try browser Web Speech API for immediate live speech recognition if supported
+-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+-  if (SpeechRecognition) {
+-    try {
+-      const recognition = new SpeechRecognition();
+-      recognition.continuous = false;
+-      recognition.interimResults = true;
+-      recognition.lang = 'en-US';
+-
+-      const input = document.querySelector('#gemini-chat-input');
+-
+-      recognition.onstart = () => {
+-        isVoiceRecording = true;
+-        if (micBtn) {
+-          micBtn.classList.add('recording');
+-          micBtn.innerHTML = `<span class="rec-dot"></span> <span>Listening…</span>`;
+-        }
+-        if (statusEl) statusEl.textContent = 'Listening to speech…';
+-      };
+-
+-      recognition.onresult = (event) => {
+-        const transcript = Array.from(event.results)
+-          .map((result) => result[0].transcript)
+-          .join('');
+-        if (input) input.value = transcript;
+-      };
+-
+-      recognition.onend = () => {
+-        isVoiceRecording = false;
+-        if (micBtn) {
+-          micBtn.classList.remove('recording');
+-          micBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg> <span>Speak</span>`;
+-        }
+-        if (statusEl) statusEl.textContent = '';
+-        if (input && input.value.trim()) {
+-          handleSendMessage(input.value.trim());
+-          input.value = '';
+-        }
+-      };
+-
+-      recognition.onerror = () => {
+-        // Fallback to MediaRecorder audio upload
+-        fallbackMediaRecorderRecording();
+-      };
+-
+-      recognition.start();
+-      return;
+-    } catch {
+-      // Fallback to mediaRecorder
+-    }
+-  }
+-
+-  fallbackMediaRecorderRecording();
+-}
+-
+-async function fallbackMediaRecorderRecording() {
+-  const micBtn = document.querySelector('#gemini-mic-btn');
+-  const statusEl = document.querySelector('#gemini-voice-indicator');
+-
+-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+-    if (statusEl) statusEl.textContent = 'Audio input is not supported in this browser.';
+-    return;
+-  }
+-
+-  try {
+-    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+-    audioChunks = [];
+-    mediaRecorder = new window.MediaRecorder(audioStream);
+-
+-    mediaRecorder.ondataavailable = (event) => {
+-      if (event.data.size > 0) audioChunks.push(event.data);
+-    };
+-
+-    mediaRecorder.onstop = async () => {
+-      audioStream?.getTracks().forEach((track) => track.stop());
+-      const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+-
+-      if (statusEl) statusEl.textContent = 'Transcribing with Gemini…';
+-
+-      try {
+-        const response = await fetch('/api/ai/transcribe', {
+-          method: 'POST',
+-          headers: { 'Content-Type': audioBlob.type },
+-          body: audioBlob,
+-        });
+-
+-        const data = await response.json();
+-        if (data.transcript && data.transcript.trim()) {
+-          const input = document.querySelector('#gemini-chat-input');
+-          if (input) input.value = data.transcript;
+-          handleSendMessage(data.transcript);
+-          if (input) input.value = '';
+-        } else {
+-          if (statusEl) statusEl.textContent = 'Could not catch audio, please try again.';
+-          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+-        }
+-      } catch (err) {
+-        if (statusEl) statusEl.textContent = 'Voice transcription error: ' + err.message;
+-      }
+-    };
+-
+-    mediaRecorder.start();
+-    isVoiceRecording = true;
+-    if (micBtn) {
+-      micBtn.classList.add('recording');
+-      micBtn.innerHTML = `<span class="rec-dot"></span> <span>Recording…</span>`;
+-    }
+-    if (statusEl) statusEl.textContent = 'Recording speech (click to send)…';
+-  } catch {
+-    if (statusEl) statusEl.textContent = 'Microphone permission was not granted.';
+-  }
+-}
+-
+-/**
+- * Send user message to Gemini endpoint
+- */
+-async function handleSendMessage(text) {
+-  const trimmed = String(text || '').trim();
+-  if (!trimmed) return;
+-
+-  const sendBtn = document.querySelector('#gemini-send-btn');
+-  const statusEl = document.querySelector('#gemini-voice-indicator');
+-
+-  // Push user message
+-  conversationHistory.push({
+-    role: 'user',
+-    content: trimmed,
+-    time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+-  });
+-
+-  // Re-render list
+-  renderMessagesInContainer();
+-
+-  if (sendBtn) sendBtn.disabled = true;
+-  if (statusEl) statusEl.textContent = 'Gemini searching Google & generating answer…';
+-
+-  try {
+-    const shopContext = getShopContext();
+-    const historyPayload = conversationHistory.slice(-6).map((m) => ({
+-      role: m.role,
+-      content: m.content,
+-    }));
+-
+-    const response = await fetch('/api/ai/assistant', {
+-      method: 'POST',
+-      headers: { 'Content-Type': 'application/json' },
+-      body: JSON.stringify({
+-        message: trimmed,
+-        history: historyPayload,
+-        context: shopContext,
+-        ...(lastInteractionId ? { previousInteractionId: lastInteractionId } : {}),
+-      }),
+-    });
+-
+-    const data = await response.json();
+-    if (data.interactionId) {
+-      lastInteractionId = data.interactionId;
+-    }
+-    const answer = data.message || data.content || 'I completed the request.';
+-
+-    conversationHistory.push({
+-      role: 'assistant',
+-      content: answer,
+-      grounding: data.grounding || null,
+-      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+-    });
+-
+-    renderMessagesInContainer();
+-
+-    // Auto-speak reply if enabled
+-    if (voiceOutputEnabled) {
+-      speakText(answer);
+-    }
+-  } catch (err) {
+-    conversationHistory.push({
+-      role: 'assistant',
+-      content: `Sorry, an error occurred: ${err.message}. Please verify your connection.`,
+-      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+-    });
+-    renderMessagesInContainer();
+-  } finally {
+-    if (sendBtn) sendBtn.disabled = false;
+-    if (statusEl) statusEl.textContent = '';
+-  }
+-}
+-
+-function renderMessagesInContainer() {
+-  const container = document.querySelector('#gemini-messages-list');
+-  if (!container) return;
+-
+-  if (conversationHistory.length === 0) {
+-    container.innerHTML = `
+-      <div class="gemini-welcome-empty">
+-        <div class="gemini-empty-badge">
+-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+-        </div>
+-        <h3>Gemini Voice &amp; Dispatch Assistant</h3>
+-        <p>Ask anything about active work orders, customer dispatches, vehicle diagnostics, torque specs, or repair procedures. Grounded with live Google Search data.</p>
+-        <div class="gemini-quick-prompts">
+-          ${QUICK_PROMPTS.map((qp) => `<button type="button" class="gemini-chip" data-quick-prompt="${escapeAttr(qp)}">${escapeHtml(qp)}</button>`).join('')}
+-        </div>
+-      </div>
+-    `;
+-    bindQuickChips();
+-    return;
+-  }
+-
+-  container.innerHTML = conversationHistory.map(renderMessageItem).join('');
+-  container.scrollTop = container.scrollHeight;
+-}
+-
+-function bindQuickChips() {
+-  document.querySelectorAll('[data-quick-prompt]').forEach((btn) => {
+-    btn.onclick = () => {
+-      const qp = btn.dataset.quickPrompt;
+-      if (qp) handleSendMessage(qp);
+-    };
+-  });
+-}
+-
+-/**
+- * Open the Gemini Assistant Modal
+- */
+-export function openGeminiAssistant(initialPrompt = '') {
+-  isModalOpen = true;
+-
+-  let modalBackdrop = document.querySelector('#gemini-assistant-modal');
+-  if (!modalBackdrop) {
+-    modalBackdrop = document.createElement('div');
+-    modalBackdrop.id = 'gemini-assistant-modal';
+-    modalBackdrop.className = 'gemini-modal-backdrop';
+-    document.body.appendChild(modalBackdrop);
+-  }
+-
+-  modalBackdrop.innerHTML = `
+-    <div class="gemini-drawer" role="dialog" aria-modal="true" aria-label="Gemini Assistant">
+-      <header class="gemini-drawer-head">
+-        <div class="gemini-brand-box">
+-          <div class="gemini-sparkle-icon">
+-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+-          </div>
+-          <div>
+-            <h2>Gemini AI Assistant</h2>
+-            <div class="gemini-status-tag">
+-              <span class="pulse-indicator"></span>
+-              <span>Grounded with Google Search · Live Voice Active</span>
+-            </div>
+-          </div>
+-        </div>
+-        <div class="gemini-head-actions">
+-          <button type="button" class="gemini-icon-btn ${voiceOutputEnabled ? 'active' : ''}" id="gemini-tts-toggle" title="${voiceOutputEnabled ? 'Voice output is enabled' : 'Voice output is muted'}">
+-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+-          </button>
+-          <button type="button" class="gemini-icon-btn" id="gemini-clear-btn" title="Clear chat history">
+-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+-          </button>
+-          <button type="button" class="gemini-close-btn" id="gemini-close-drawer" aria-label="Close Gemini Assistant">
+-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+-          </button>
+-        </div>
+-      </header>
+-
+-      <div class="gemini-messages-wrapper" id="gemini-messages-list"></div>
+-
+-      <div class="gemini-footer">
+-        <div id="gemini-voice-indicator" class="gemini-status-text"></div>
+-        <form class="gemini-chat-form" id="gemini-chat-form">
+-          <textarea
+-            id="gemini-chat-input"
+-            name="message"
+-            rows="2"
+-            placeholder="Type or click 'Speak' to ask Gemini with Google Search data…"
+-            aria-label="Ask Gemini"
+-          ></textarea>
+-          <div class="gemini-controls-row">
+-            <button type="button" class="gemini-mic-btn" id="gemini-mic-btn" title="Speak question">
+-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+-              <span>Speak</span>
+-            </button>
+-            <button type="button" class="gemini-stop-speech-btn" id="gemini-stop-speech-btn" title="Stop speaking">
+-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" x2="23" y1="1" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/></svg>
+-            </button>
+-            <button type="submit" class="gemini-send-btn" id="gemini-send-btn" title="Send message">
+-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+-              <span>Ask Gemini</span>
+-            </button>
+-          </div>
+-        </form>
+-      </div>
+-    </div>
+-  `;
+-
+-  modalBackdrop.style.display = 'flex';
+-
+-  // Bind close
+-  document.querySelector('#gemini-close-drawer')?.addEventListener('click', closeGeminiAssistant);
+-  modalBackdrop.addEventListener('click', (e) => {
+-    if (e.target === modalBackdrop) closeGeminiAssistant();
+-  });
+-
+-  // Bind clear
+-  document.querySelector('#gemini-clear-btn')?.addEventListener('click', () => {
+-    conversationHistory = [];
+-    stopSpeaking();
+-    renderMessagesInContainer();
+-  });
+-
+-  // Bind TTS toggle
+-  document.querySelector('#gemini-tts-toggle')?.addEventListener('click', () => {
+-    voiceOutputEnabled = !voiceOutputEnabled;
+-    const btn = document.querySelector('#gemini-tts-toggle');
+-    if (btn) btn.classList.toggle('active', voiceOutputEnabled);
+-    if (!voiceOutputEnabled) stopSpeaking();
+-  });
+-
+-  // Bind mic
+-  document.querySelector('#gemini-mic-btn')?.addEventListener('click', toggleVoiceRecording);
+-  document.querySelector('#gemini-stop-speech-btn')?.addEventListener('click', stopSpeaking);
+-
+-  // Bind form
+-  const form = document.querySelector('#gemini-chat-form');
+-  const input = document.querySelector('#gemini-chat-input');
+-
+-  form?.addEventListener('submit', (e) => {
+-    e.preventDefault();
+-    if (!input) return;
+-    const text = input.value.trim();
+-    if (text) {
+-      handleSendMessage(text);
+-      input.value = '';
+-    }
+-  });
+-
+-  // Ctrl+Enter / Enter to send
+-  input?.addEventListener('keydown', (e) => {
+-    if (e.key === 'Enter' && !e.shiftKey) {
+-      e.preventDefault();
+-      form?.requestSubmit();
+-    }
+-  });
+-
+-  renderMessagesInContainer();
+-
+-  if (initialPrompt) {
+-    handleSendMessage(initialPrompt);
+-  } else {
+-    input?.focus();
+-  }
+-}
+-
+-export function closeGeminiAssistant() {
+-  isModalOpen = false;
+-  stopSpeaking();
+-  if (isVoiceRecording) toggleVoiceRecording();
+-  const modalBackdrop = document.querySelector('#gemini-assistant-modal');
+-  if (modalBackdrop) {
+-    modalBackdrop.style.display = 'none';
+-  }
+-}
+-
+-/**
+- * Mount the Universal Gemini Assistant launcher button on every page
+- */
+-export function mountUniversalGeminiButton() {
+-  if (document.querySelector('#gemini-universal-launcher')) return;
+-
+-  const launcher = document.createElement('div');
+-  launcher.id = 'gemini-universal-launcher';
+-  launcher.className = 'gemini-universal-launcher';
+-  launcher.innerHTML = `
+-    <button type="button" class="gemini-float-btn" id="gemini-fab-button" title="Open Gemini AI Voice Assistant (Grounded with Google Search)" aria-label="Open Gemini Voice &amp; Chat Assistant">
+-      <span class="gemini-fab-sparkle">
+-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+-      </span>
+-      <span class="gemini-fab-text">Gemini AI</span>
+-      <span class="gemini-fab-voice-icon">
+-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+-      </span>
+-    </button>
+-  `;
+-
+-  document.body.appendChild(launcher);
+-
+-  document.querySelector('#gemini-fab-button')?.addEventListener('click', () => {
+-    openGeminiAssistant();
+-  });
+-}
+diff --git a/src/modules/gemini-assistant.test.mjs b/src/modules/gemini-assistant.test.mjs
+deleted file mode 100644
+index ff8d44e..0000000
+--- a/src/modules/gemini-assistant.test.mjs
++++ /dev/null
+@@ -1,14 +0,0 @@
+-import test from 'node:test';
+-import assert from 'node:assert/strict';
+-import { safeSourceUrl } from './gemini-assistant.js';
+-
+-test('search source links keep http(s) URLs and drop script or local URLs', () => {
+-  assert.equal(safeSourceUrl('https://example.com/a?b=1'), 'https://example.com/a?b=1');
+-  assert.equal(safeSourceUrl('http://example.com/'), 'http://example.com/');
+-  assert.equal(safeSourceUrl('javascript:alert(1)'), '#');
+-  assert.equal(safeSourceUrl(' JavaScript:alert(1)'), '#');
+-  assert.equal(safeSourceUrl('data:text/html,<script>1</script>'), '#');
+-  assert.equal(safeSourceUrl('file:///C:/Windows/System32/calc.exe'), '#');
+-  assert.equal(safeSourceUrl(''), '#');
+-  assert.equal(safeSourceUrl(undefined), '#');
+-});
+diff --git a/worker/src/customer-documents.mjs b/worker/src/customer-documents.mjs
+index 0800f01..9bb9117 100644
+--- a/worker/src/customer-documents.mjs
++++ b/worker/src/customer-documents.mjs
+@@ -13,6 +13,8 @@ import { HttpError, json, requestJson } from './http.mjs';
+ import { putSignatureEvidence } from './routes/files.mjs';
+ 
+ const LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
++/** A signed/approved document stays viewable as the customer's receipt for this long, then the link expires. */
++export const COMPLETED_LINK_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+ const SIGNATURE_LIMIT = 1024 * 1024;
+ const RESPONSE_BODY_LIMIT = 1536 * 1024;
+ 
+@@ -465,11 +467,17 @@ async function documentMedia(request, env, link, document) {
+   return new Response(object.body, { headers });
+ }
+ 
++/** Open links expire after LINK_TTL_MS; completed ones a year after the customer signed or answered. */
++export function linkExpired(link, now = Date.now()) {
++  if (link.consumed_at) return new Date(link.consumed_at).getTime() + COMPLETED_LINK_TTL_MS <= now;
++  return new Date(link.expires_at).getTime() <= now;
++}
++
+ export async function handleCustomerDocument(request, env, token, subresource = '') {
+   if (!/^[A-Za-z0-9_-]{40,100}$/.test(token)) throw new HttpError(404, 'Document link not found');
+   const link = await linkRecord(env, token);
+   if (!link) throw new HttpError(404, 'Document link not found');
+-  if (!link.consumed_at && new Date(link.expires_at).getTime() <= Date.now()) throw new HttpError(410, 'This link has expired');
++  if (linkExpired(link)) throw new HttpError(410, 'This link has expired');
+   const row = await entityRow(env, link.shop_id, entityTypeForDocument(link.document_type), link.document_id);
+   const document = parseEntity(row);
+   if (!document) throw new HttpError(404, 'Document not found');
+diff --git a/worker/src/routes/files.mjs b/worker/src/routes/files.mjs
+index defdafc..5b7eb0f 100644
+--- a/worker/src/routes/files.mjs
++++ b/worker/src/routes/files.mjs
+@@ -88,7 +88,10 @@ export async function storeUploadedFile(files, key, body, metadata, maxBytes = M
+     if (isSignatureEvidenceKey(key)) {
+       await putSignatureEvidence(files, key, upload, metadata);
+     } else {
+-      await files.put(key, upload, metadata);
++      // Write-once: every upload gets a fresh key from presign-upload, so an existing
++      // object is never replaced (a staff member cannot swap someone else's photo or PDF).
++      const stored = await files.put(key, upload, { ...metadata, onlyIf: { etagDoesNotMatch: '*' } });
++      if (stored === null) throw new HttpError(409, 'A file already exists at this location. Upload it again to get a new one.');
+     }
+   } catch (error) {
+     if (error instanceof UploadTooLargeError) throw new HttpError(413, `File exceeds ${Math.floor(maxBytes / (1024 * 1024))} MB`);
+diff --git a/worker/test/customer-documents.test.mjs b/worker/test/customer-documents.test.mjs
+index ac6872b..840e64c 100644
+--- a/worker/test/customer-documents.test.mjs
++++ b/worker/test/customer-documents.test.mjs
+@@ -623,3 +623,14 @@ test('losing claim on an unused token returns 409 before writing the document',
+   );
+   assert.equal(fixture.entities.get(fixture.key('shop-1', 'invoices', 'INV-1100')).signature, undefined);
+ });
++
++test('a signed document link works as a receipt for a year, then expires', async () => {
++  const { linkExpired, COMPLETED_LINK_TTL_MS } = await import('../src/customer-documents.mjs');
++  const signedAt = Date.parse('2026-01-15T12:00:00Z');
++  const signed = { consumed_at: new Date(signedAt).toISOString(), expires_at: '2026-02-14T12:00:00Z' };
++  assert.equal(linkExpired(signed, signedAt + 60 * 24 * 60 * 60 * 1000), false, 'still viewable after the 30-day window');
++  assert.equal(linkExpired(signed, signedAt + COMPLETED_LINK_TTL_MS + 1000), true);
++  const open = { consumed_at: null, expires_at: '2026-02-14T12:00:00Z' };
++  assert.equal(linkExpired(open, Date.parse('2026-02-01T00:00:00Z')), false);
++  assert.equal(linkExpired(open, Date.parse('2026-02-15T00:00:00Z')), true);
++});
+diff --git a/worker/test/routes.test.mjs b/worker/test/routes.test.mjs
+index 5f9f460..a9cb361 100644
+--- a/worker/test/routes.test.mjs
++++ b/worker/test/routes.test.mjs
+@@ -251,7 +251,7 @@ test('both signature namespaces use atomic create-only writes, including concurr
+   }
+ });
+ 
+-test('legacy evidence at ordinary paths is protected without blocking unrelated file replacement', async () => {
++test('legacy evidence at ordinary paths is protected and ordinary uploads are write-once', async () => {
+   const DB = createD1();
+   const protectedKeys = ['shops/shop-1/photos/estimate.png', 'shops/shop-1/file/invoice.png'];
+   for (const [type, field, key] of [
+@@ -261,23 +261,27 @@ test('legacy evidence at ordinary paths is protected without blocking unrelated
+     await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+       .bind('shop-1', type, type, JSON.stringify({ [field]: { signatureKey: key } }), 'writer', 'now', 'now').run();
+   }
+-  const writes = [];
++  const stored = new Map();
+   const env = { DB, FILES: { async put(key, bytes, options) {
+-    assert.equal(options.onlyIf, undefined);
+-    writes.push({ key, bytes });
++    // R2 semantics: onlyIf etagDoesNotMatch '*' returns null when the key already exists.
++    assert.deepEqual(options.onlyIf, { etagDoesNotMatch: '*' });
++    if (stored.has(key)) return null;
++    stored.set(key, bytes);
++    return { key };
+   } } };
+   const upload = key => handleFiles(new Request(`https://example.test/api/files/upload?key=${key}`, {
+     method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: 'replacement',
+   }), env, { shopId: 'shop-1', userId: 'tech' }, ['files', 'upload']);
+   for (const key of protectedKeys) await assert.rejects(() => upload(key), error => error.status === 409);
+-  assert.equal(writes.length, 0);
++  assert.equal(stored.size, 0);
+   const ordinaryKey = 'shops/shop-1/photos/ordinary.png';
+   assert.equal((await upload(ordinaryKey)).status, 204);
+-  assert.equal((await upload(ordinaryKey)).status, 204);
+-  assert.equal(writes.length, 2);
++  await assert.rejects(() => upload(ordinaryKey), error => error.status === 409, 'an existing upload is never replaced');
++  assert.equal(stored.size, 1);
++  const otherKey = 'shops/shop-1/photos/second.png';
+   await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+-    .bind('shop-other', 'orders', 'other', JSON.stringify({ estimateApproval: { signatureKey: ordinaryKey } }), 'writer', 'now', 'now').run();
+-  assert.equal((await upload(ordinaryKey)).status, 204, 'foreign tenant records do not lock this shop uploads');
++    .bind('shop-other', 'orders', 'other', JSON.stringify({ estimateApproval: { signatureKey: otherKey } }), 'writer', 'now', 'now').run();
++  assert.equal((await upload(otherKey)).status, 204, 'foreign tenant records do not lock this shop uploads');
+ });
+ 
+ test('files route rejects streamed uploads that exceed the 15 MB limit', async () => {
+-- 
+2.43.0
+

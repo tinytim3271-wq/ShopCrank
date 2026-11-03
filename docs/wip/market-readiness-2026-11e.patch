@@ -1,0 +1,660 @@
+From e1c6b05a6b6d5946a904e6d0a435f98093eadd35 Mon Sep 17 00:00:00 2001
+From: Lee_Alderman <tinytim3271@gmail.com>
+Date: Tue, 3 Nov 2026 06:41:51 -0600
+Subject: [PATCH] SMS consent for A2P, Azure Trusted Signing, legacy.js growth
+ ratchet
+
+- Text messaging terms page (/sms-terms/) with program description, opt-in
+  methods, frequency, rates, STOP/HELP, carrier and privacy language; linked
+  from privacy, terms and the booking form.
+- Online booking no longer texts without consent: an unchecked opt-in box with
+  the full disclosure records consent; a STOP on file always wins.
+- The first text a shop sends to a number carries "Reply STOP to opt out, HELP
+  for help. Msg & data rates may apply."
+- A2P campaign message flow now describes every opt-in path with the terms and
+  privacy URLs reviewers check.
+- Windows signing: Azure Trusted Signing support (repository variables +
+  app-registration secrets) alongside a certificate file; CI verifies the
+  Authenticode signature whenever signing is configured.
+- legacy.js ratchet test (override count and size may only go down) and
+  AGENTS.md / CLAUDE.md / Copilot rules for where new code goes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GGEY5cQcwh34RQLfpVUQwK
+---
+ .github/copilot-instructions.md          |  1 +
+ .github/workflows/windows-desktop.yml    | 33 ++++++++++---
+ AGENTS.md                                | 10 ++++
+ CLAUDE.md                                |  3 ++
+ package.json                             |  4 +-
+ public/_routes.json                      |  2 +
+ public/privacy/index.html                |  2 +-
+ public/sitemap.xml                       |  1 +
+ public/sms-terms/index.html              | 59 ++++++++++++++++++++++
+ public/terms/index.html                  |  2 +-
+ scripts/build-offline-windows.mjs        | 10 +++-
+ scripts/windows-signing.mjs              | 62 ++++++++++++++++++++++++
+ scripts/windows-signing.test.mjs         | 29 +++++++++++
+ src/runtime/legacy-growth.test.mjs       | 33 +++++++++++++
+ worker/src/integration-routes.mjs        |  6 ++-
+ worker/src/integrations/sms.mjs          | 18 +++++++
+ worker/src/onboarding/twilio-plans.mjs   | 14 +++++-
+ worker/src/online-booking.mjs            | 26 ++++++++--
+ worker/test/growth-review-fixes.test.mjs | 26 +++++++++-
+ 19 files changed, 319 insertions(+), 22 deletions(-)
+ create mode 100644 .github/copilot-instructions.md
+ create mode 100644 CLAUDE.md
+ create mode 100644 public/sms-terms/index.html
+ create mode 100644 scripts/windows-signing.mjs
+ create mode 100644 scripts/windows-signing.test.mjs
+ create mode 100644 src/runtime/legacy-growth.test.mjs
+
+diff --git a/.github/copilot-instructions.md b/.github/copilot-instructions.md
+new file mode 100644
+index 0000000..88ddf3e
+--- /dev/null
++++ b/.github/copilot-instructions.md
+@@ -0,0 +1 @@
++Follow AGENTS.md in the repository root, especially the "Where new code goes" section: no new `name = function` overrides in src/runtime/legacy.js; new behaviour goes in src/modules with tests.
+diff --git a/.github/workflows/windows-desktop.yml b/.github/workflows/windows-desktop.yml
+index ead5499..bb45ccd 100644
+--- a/.github/workflows/windows-desktop.yml
++++ b/.github/workflows/windows-desktop.yml
+@@ -73,30 +73,40 @@ jobs:
+       - run: npm rebuild esbuild electron
+       - name: Build web bundle
+         run: npm run build:web
+-      - name: Check code-signing certificate
++      - name: Choose Windows signing
++        id: signing
+         shell: bash
+         env:
+           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
++          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
++          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
++          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
++          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+         run: |
+-          if [ -z "$CSC_LINK" ]; then
+-            echo "::warning title=Windows installer is unsigned::SmartScreen will warn customers. Buy an OV/EV code-signing certificate and add WINDOWS_CSC_LINK (base64 .pfx or https URL) and WINDOWS_CSC_KEY_PASSWORD as repository secrets."
++          METHOD="$(node scripts/windows-signing.mjs package.json dist/signing/builder.json | sed 's/Windows signing: //')"
++          echo "method=$METHOD" >> "$GITHUB_OUTPUT"
++          if [ "$METHOD" = "none" ]; then
++            echo "::warning title=Windows installer is unsigned::SmartScreen will warn customers. Set up Azure Trusted Signing (repository variables AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE, AZURE_SIGNING_PUBLISHER and secrets AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET), or add WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD for a certificate file."
+           fi
+       - name: Build NSIS installer and portable zip
+         env:
+-          # electron-builder signs automatically when these are set and skips signing when empty.
++          # Azure Trusted Signing (via the generated config) or a certificate file; unsigned when neither is set.
+           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+-        run: npx electron-builder --win nsis zip --publish never
++          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
++          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
++          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
++        run: npx --no-install electron-builder --win nsis zip --publish never --config dist/signing/builder.json
+       - name: Verify Authenticode signature
+         shell: pwsh
+         env:
+-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
++          SIGNING: ${{ steps.signing.outputs.method }}
+         run: |
+           $exe = Get-ChildItem dist/windows/*.exe | Select-Object -First 1
+           $sig = Get-AuthenticodeSignature $exe.FullName
+-          Write-Host "Signature status: $($sig.Status) $($sig.SignerCertificate.Subject)"
+-          if ($env:CSC_LINK -and $sig.Status -ne 'Valid') { throw "Installer signing failed: $($sig.Status)" }
++          Write-Host "Signature ($env:SIGNING): $($sig.Status) $($sig.SignerCertificate.Subject)"
++          if ($env:SIGNING -ne 'none' -and $sig.Status -ne 'Valid') { throw "Installer signing failed: $($sig.Status)" }
+       - name: Smoke test Windows artifacts
+         shell: bash
+         run: |
+@@ -110,6 +120,13 @@ jobs:
+           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
++          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
++          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
++          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
++          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
++          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
++          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
++          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+         run: npm run build:windows:offline
+       - name: Smoke test offline installer
+         shell: bash
+diff --git a/AGENTS.md b/AGENTS.md
+index 30decb7..96a0fe4 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -35,3 +35,13 @@ Cloud Agent boots run `.cursor/start.sh`. It serves this PWA at `http://127.0.0.
+ - **Cloudflare diagnostics API** (`/api/diagnostics/coverage`, `/api/diagnostics/audit`, `/api/diagnostics/authorize`) deploys with the Worker.
+ - **Programming/flashing** (key programming, module reflash) is gated by ECDSA P-256 capability tokens: the Worker signs with `DIAGNOSTICS_SIGNING_PRIVATE_KEY`; hosts verify with the public key only and fail closed without it. See `diagnostics/keys/README.md` for key provisioning (`.cursor/install.sh` generates local dev keys). `simulate` mode drives the Node bench simulator; `live` mode requires shop AutoAuth credentials + a licensed `ISecurityAccessProvider` (OEM seed/key is never bundled or bypassed).
+ - The Node simulator is fully testable on Linux: `npm run test:worker` (capability tokens + authorize) and `npm run test:j2534` (SecurityAccess, key programming, and flash sequences). The `.NET` host is Windows-only and not built in CI Linux.
++
++## Where new code goes (read before changing the app)
++
++About 40% of recent commits repaired earlier work. The cause is `src/runtime/legacy.js`: each change wrapped an existing function again (`render = function () { … renderCore() }`), so the newest wrapper quietly changed what older ones did. To stop that:
++
++- **Do not add another `name = function` override to `legacy.js`.** `src/runtime/legacy-growth.test.mjs` fails if the override count or the file size goes up. If you remove overrides, lower the limits in that test in the same commit.
++- **Put new behaviour in a module** under `src/modules/` (or `worker/src/` for the API) with its own `*.test.mjs`, and call it from the existing function in `legacy.js`. `src/modules/archived-records.js` and `src/modules/record-deletion.js` are examples.
++- **Fix the function that is wrong**, not a wrapper around it. Search for every override of the name first (`grep -n "^render = " src/runtime/legacy.js`); the last one in the file wins.
++- **Every fix gets a test that fails without it**, and `npm run build:web` must be run so `app.js` and the `?v=` stamps in `index.html` match (`scripts/stamp-assets.test.mjs` checks).
++- **Merges go through a pull request** with the CI `quality` and Cloudflare `validate` checks green; `main` is protected.
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 0000000..65789a5
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1,3 @@
++# CLAUDE.md
++
++Follow AGENTS.md, especially "Where new code goes".
+diff --git a/package.json b/package.json
+index 897ce5c..6aac977 100644
+--- a/package.json
++++ b/package.json
+@@ -15,7 +15,7 @@
+     "test:questionnaire": "node --test src/modules/front-desk-questionnaire.test.mjs",
+     "test:licenses": "node --test src/modules/vehicle-key-license.test.mjs worker/test/licenses.test.mjs worker/test/license-worker-e2e.test.mjs",
+     "sync:config": "node scripts/sync-frontend-config.mjs",
+-    "test:config": "node scripts/sync-frontend-config.test.mjs && node scripts/resolve-r2-upload-env.test.mjs && node --test scripts/setup-email-signin.test.mjs && node --test scripts/provision-shopcrank-com.test.mjs && node --test scripts/stamp-assets.test.mjs",
++    "test:config": "node scripts/sync-frontend-config.test.mjs && node scripts/resolve-r2-upload-env.test.mjs && node --test scripts/setup-email-signin.test.mjs && node --test scripts/provision-shopcrank-com.test.mjs && node --test scripts/stamp-assets.test.mjs scripts/windows-signing.test.mjs",
+     "provision:shopcrank-com": "node scripts/provision-shopcrank-com.mjs",
+     "verify:google-oauth": "node scripts/verify-google-oauth-cutover.mjs",
+     "build:web": "node scripts/sync-frontend-config.mjs && node scripts/build-web.mjs",
+@@ -78,7 +78,7 @@
+     "issue-invite": "node scripts/issue-founding-invite.mjs",
+     "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:growth && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shell-defects && npm run test:shop-os && npm run test:diagnostics-identity && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs src/modules/health-check.test.mjs src/modules/ambassadors.test.mjs src/modules/assistant-media.test.mjs src/modules/phone-usage.test.mjs && node --test src/modules/record-deletion.test.mjs src/modules/archived-records.test.mjs src/modules/customer-metrics.test.mjs src/modules/perf.test.mjs src/runtime/shop-entity-load.test.mjs scripts/merge-open-prs.test.mjs",
+     "test:filing": "node --test src/modules/filing/withholding.test.mjs src/modules/filing/jurisdictions.test.mjs",
+-    "test:shell-defects": "node --test src/runtime/shell-defects.test.mjs src/runtime/audit-showstoppers.test.mjs",
++    "test:shell-defects": "node --test src/runtime/shell-defects.test.mjs src/runtime/audit-showstoppers.test.mjs src/runtime/legacy-growth.test.mjs",
+     "test:growth": "node --test src/modules/sms-inbox.test.mjs src/modules/growth-settings.test.mjs src/modules/shop-kpis.test.mjs src/modules/vehicle-lookups.test.mjs src/modules/pricing-matrix.test.mjs src/modules/scan-to-estimate.test.mjs"
+   },
+   "devDependencies": {
+diff --git a/public/_routes.json b/public/_routes.json
+index b2eed54..87d31c6 100644
+--- a/public/_routes.json
++++ b/public/_routes.json
+@@ -27,6 +27,8 @@
+     "/terms/*",
+     "/privacy",
+     "/privacy/*",
++    "/sms-terms",
++    "/sms-terms/*",
+     "/founding",
+     "/founding/*",
+     "/ambassador",
+diff --git a/public/privacy/index.html b/public/privacy/index.html
+index 5cf2973..15939fd 100644
+--- a/public/privacy/index.html
++++ b/public/privacy/index.html
+@@ -62,7 +62,7 @@
+         <p>We may also disclose data when the law requires it, to protect the rights and safety of ShopCrank, its customers or others, or as part of a merger or sale of the business, in which case this policy continues to apply.</p>
+ 
+         <h2>Text messaging</h2>
+-        <p>Shops use ShopCrank to text their own customers about appointments, estimates, repair status, invoices and payments. Shops are responsible for getting each customer's consent before texting them. Message frequency varies with the customer's service. Message and data rates may apply. Reply STOP to stop messages from a shop and HELP for help; STOP replies are recorded and honored automatically.</p>
++        <p>Shops use ShopCrank to text their own customers about appointments, estimates, repair status, invoices and payments. Shops are responsible for getting each customer's consent before texting them. Message frequency varies with the customer's service. Message and data rates may apply. Reply STOP to stop messages from a shop and HELP for help; STOP replies are recorded and honored automatically. Customers agree to texts by checking an unchecked box on a shop's booking form, by texting the shop first, or by telling staff, who record it before any text is sent; agreeing is never a condition of service. The full program terms are on the <a href="/sms-terms/">text messaging terms</a> page.</p>
+         <p>No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Text messaging opt-in data and consent are not shared with any third party, except the service providers that deliver the messages.</p>
+ 
+         <h2>How long we keep it</h2>
+diff --git a/public/sitemap.xml b/public/sitemap.xml
+index 52ef8c8..87c84c5 100644
+--- a/public/sitemap.xml
++++ b/public/sitemap.xml
+@@ -5,5 +5,6 @@
+   <url><loc>https://www.shopcrank.com/signup/</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+   <url><loc>https://www.shopcrank.com/ambassador/</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+   <url><loc>https://www.shopcrank.com/privacy/</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
++  <url><loc>https://www.shopcrank.com/sms-terms/</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+   <url><loc>https://www.shopcrank.com/terms/</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+ </urlset>
+diff --git a/public/sms-terms/index.html b/public/sms-terms/index.html
+new file mode 100644
+index 0000000..37924cb
+--- /dev/null
++++ b/public/sms-terms/index.html
+@@ -0,0 +1,59 @@
++<!doctype html>
++<html lang="en">
++  <head>
++    <meta charset="UTF-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <title>ShopCrank text messaging terms</title>
++    <meta name="description" content="Terms for repair-shop text messages sent through ShopCrank: what you receive, how often, costs, and how to stop." />
++    <link rel="canonical" href="https://www.shopcrank.com/sms-terms/" />
++    <link rel="icon" href="/assets/brand/logo-icon-192.png" type="image/png" />
++    <link rel="stylesheet" href="/assets/fonts/fonts.css" />
++    <link rel="stylesheet" href="/market.css" />
++  </head>
++  <body>
++    <div class="wrap">
++      <header class="site-header">
++        <a class="brand" href="/features"><span class="brand-mark" role="img" aria-label="ShopCrank"></span><span><strong>ShopCrank</strong><small>Run the shop. Read the car. Get paid.</small></span></a>
++        <nav class="nav" aria-label="Product">
++          <a href="/features">Features</a>
++          <a href="/pricing">Pricing</a>
++          <a href="/login">Sign in</a>
++        </nav>
++      </header>
++      <article class="legal">
++        <p class="eyebrow">Text messaging</p>
++        <h1>Text messaging terms</h1>
++        <p>Last updated November 3, 2026. These terms cover text messages that auto repair shops send to their customers through ShopCrank, a service of Alderman Enterprises LLC DBA ShopCrank. Each shop is the sender of its own messages; ShopCrank provides the software and delivery.</p>
++
++        <h2>What you will receive</h2>
++        <p>If you agree to texts from a shop, it may text you about your vehicle service: appointment confirmations and reminders, estimates to review and approve, repair status and pickup notices, invoices and payment links, and replies to questions you send. Shops do not use this program for marketing or promotional messages.</p>
++
++        <h2>How you agree</h2>
++        <p>You agree by checking the unchecked text-message box on a shop's online booking form, by texting the shop's number first, or by telling shop staff in person or by phone that they may text you, which the staff records in ShopCrank before any text is sent. Agreeing is never a condition of getting service or making a purchase.</p>
++
++        <h2>How often</h2>
++        <p>Message frequency varies with your service, typically a few messages per visit.</p>
++
++        <h2>Cost</h2>
++        <p>Message and data rates may apply, depending on your mobile plan. ShopCrank and the shop do not charge you for texts.</p>
++
++        <h2>How to stop or get help</h2>
++        <p>Reply <strong>STOP</strong> to any message to stop texts from that shop. You will get one message confirming you are unsubscribed, and no more after that. Reply <strong>START</strong> to resubscribe. Reply <strong>HELP</strong> for help, contact the shop directly, or email <strong>support@shopcrank.com</strong>.</p>
++
++        <h2>Carriers</h2>
++        <p>Mobile carriers are not liable for delayed or undelivered messages. Supported carriers include all major U.S. carriers.</p>
++
++        <h2>Privacy</h2>
++        <p>Your mobile number and text-message consent are used only to send the messages described here. No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Text messaging opt-in data and consent are not shared with any third party, except the service providers that deliver the messages. See the <a href="/privacy/">privacy policy</a> for details.</p>
++
++        <h2>Contact</h2>
++        <p>Alderman Enterprises LLC DBA ShopCrank. Email <strong>support@shopcrank.com</strong>.</p>
++      </article>
++      <footer class="site-footer">
++        <a href="/features">Back to ShopCrank</a>
++        <a href="/privacy">Privacy</a>
++        <a href="/terms">Terms</a>
++      </footer>
++    </div>
++  </body>
++</html>
+diff --git a/public/terms/index.html b/public/terms/index.html
+index 270b1b4..cf75fff 100644
+--- a/public/terms/index.html
++++ b/public/terms/index.html
+@@ -49,7 +49,7 @@
+         <p>You are responsible for having the right to store and use the information you enter, including your customers' details, and for the accuracy of what you enter.</p>
+ 
+         <h2>Texting and calls</h2>
+-        <p>You are the sender of the texts and calls your shop makes through ShopCrank. You must get each customer's consent before texting them, honor opt-outs, and follow the Telephone Consumer Protection Act, carrier rules, and other laws that apply. ShopCrank records STOP replies and blocks further texts to that number. Do not use ShopCrank for unsolicited marketing.</p>
++        <p>You are the sender of the texts and calls your shop makes through ShopCrank. You must get each customer's consent before texting them, honor opt-outs, and follow the Telephone Consumer Protection Act, carrier rules, and other laws that apply. ShopCrank records STOP replies and blocks further texts to that number. Do not use ShopCrank for unsolicited marketing. Texts follow the <a href="/sms-terms/">text messaging terms</a>, and you may not remove the opt-out instructions ShopCrank adds to a customer's first message.</p>
+ 
+         <h2>AI features</h2>
+         <p>AI suggestions, estimates, call summaries, and diagnostic worksheets are aids to a qualified person. They can be wrong. Check them against the vehicle manufacturer's service information before acting, and review every estimate before you send it. The AI phone assistant's default greeting tells callers they are speaking with an automated assistant; if you change the greeting, keep that disclosure.</p>
+diff --git a/scripts/build-offline-windows.mjs b/scripts/build-offline-windows.mjs
+index b635f06..25da5bd 100644
+--- a/scripts/build-offline-windows.mjs
++++ b/scripts/build-offline-windows.mjs
+@@ -1,6 +1,7 @@
+ import { spawnSync } from 'node:child_process';
+ import { readFileSync, writeFileSync } from 'node:fs';
+ import { fileURLToPath } from 'node:url';
++import { writeSignedConfig } from './windows-signing.mjs';
+ 
+ const editionPath = new URL('../desktop/edition.json', import.meta.url);
+ const originalEdition = readFileSync(editionPath);
+@@ -19,7 +20,14 @@ try {
+   if (!demo) {
+     run('npm', ['run', 'build:j2534']);
+   }
+-  run('npx', ['--no-install', 'electron-builder', '--win', demo ? 'zip' : 'nsis', '--x64', '--publish', 'never', '--config', demo ? 'desktop/builder-demo.json' : 'desktop/builder-offline.json']);
++  // The demo ZIP stays unsigned; the offline installer is signed when CI has signing secrets.
++  let config = demo ? 'desktop/builder-demo.json' : 'desktop/builder-offline.json';
++  if (!demo) {
++    const signed = 'dist/signing/builder-offline.json';
++    console.log(`Windows signing: ${writeSignedConfig(fileURLToPath(new URL(`../${config}`, import.meta.url)), fileURLToPath(new URL(`../${signed}`, import.meta.url)))}`);
++    config = signed;
++  }
++  run('npx', ['--no-install', 'electron-builder', '--win', demo ? 'zip' : 'nsis', '--x64', '--publish', 'never', '--config', config]);
+ } finally {
+   writeFileSync(editionPath, originalEdition);
+ }
+diff --git a/scripts/windows-signing.mjs b/scripts/windows-signing.mjs
+new file mode 100644
+index 0000000..8e3b21b
+--- /dev/null
++++ b/scripts/windows-signing.mjs
+@@ -0,0 +1,62 @@
++#!/usr/bin/env node
++/**
++ * Windows code signing for electron-builder, chosen by what CI has secrets for:
++ *
++ *  - Azure Trusted Signing (recommended: no hardware token, about $10/month)
++ *    AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE,
++ *    AZURE_SIGNING_PUBLISHER (full subject, e.g. "CN=Alderman Enterprises LLC, O=Alderman Enterprises LLC, L=Lubbock, S=Texas, C=US"),
++ *    plus AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET for the app registration.
++ *  - A certificate file: CSC_LINK + CSC_KEY_PASSWORD (electron-builder reads these itself).
++ *  - Neither: the build stays unsigned and CI warns.
++ *
++ * Usage: node scripts/windows-signing.mjs <source config: package.json | builder.json> <output.json>
++ */
++import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
++import { dirname } from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const AZURE_KEYS = ['AZURE_SIGNING_ENDPOINT', 'AZURE_SIGNING_ACCOUNT', 'AZURE_SIGNING_PROFILE', 'AZURE_SIGNING_PUBLISHER'];
++
++export function signingMethod(env = process.env) {
++  if (AZURE_KEYS.every(key => String(env[key] || '').trim())) return 'azure';
++  if (String(env.CSC_LINK || env.WIN_CSC_LINK || '').trim()) return 'certificate';
++  return 'none';
++}
++
++/** Returns the electron-builder config with Azure signing added when it is configured. */
++export function withWindowsSigning(config, env = process.env) {
++  if (signingMethod(env) !== 'azure') return config;
++  const publisher = String(env.AZURE_SIGNING_PUBLISHER).trim();
++  if (!/^CN=/.test(publisher)) throw new Error('AZURE_SIGNING_PUBLISHER must be the full certificate subject, starting with CN=');
++  return {
++    ...config,
++    win: {
++      ...(config.win || {}),
++      sign: {
++        type: 'azure',
++        endpoint: String(env.AZURE_SIGNING_ENDPOINT).trim(),
++        codeSigningAccountName: String(env.AZURE_SIGNING_ACCOUNT).trim(),
++        certificateProfileName: String(env.AZURE_SIGNING_PROFILE).trim(),
++        publisherName: publisher,
++      },
++    },
++  };
++}
++
++export function builderConfigFrom(path) {
++  const json = JSON.parse(readFileSync(path, 'utf8'));
++  return path.endsWith('package.json') ? json.build : json;
++}
++
++export function writeSignedConfig(source, output, env = process.env) {
++  const config = withWindowsSigning(builderConfigFrom(source), env);
++  mkdirSync(dirname(output), { recursive: true });
++  writeFileSync(output, `${JSON.stringify(config, null, 2)}\n`);
++  return signingMethod(env);
++}
++
++if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
++  const [source, output] = process.argv.slice(2);
++  if (!source || !output) { console.error('usage: windows-signing.mjs <source> <output>'); process.exit(2); }
++  console.log(`Windows signing: ${writeSignedConfig(source, output)}`);
++}
+diff --git a/scripts/windows-signing.test.mjs b/scripts/windows-signing.test.mjs
+new file mode 100644
+index 0000000..7720d03
+--- /dev/null
++++ b/scripts/windows-signing.test.mjs
+@@ -0,0 +1,29 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { signingMethod, withWindowsSigning } from './windows-signing.mjs';
++
++const azure = {
++  AZURE_SIGNING_ENDPOINT: 'https://eus.codesigning.azure.net/',
++  AZURE_SIGNING_ACCOUNT: 'shopcrank',
++  AZURE_SIGNING_PROFILE: 'public',
++  AZURE_SIGNING_PUBLISHER: 'CN=Alderman Enterprises LLC, O=Alderman Enterprises LLC, C=US',
++};
++
++test('picks Azure, then a certificate file, then unsigned', () => {
++  assert.equal(signingMethod(azure), 'azure');
++  assert.equal(signingMethod({ CSC_LINK: 'base64' }), 'certificate');
++  assert.equal(signingMethod({ AZURE_SIGNING_ENDPOINT: 'x' }), 'none');
++});
++
++test('adds the Azure sign block and keeps the rest of the config', () => {
++  const out = withWindowsSigning({ appId: 'a', win: { target: ['nsis'] } }, azure);
++  assert.equal(out.appId, 'a');
++  assert.deepEqual(out.win.target, ['nsis']);
++  assert.equal(out.win.sign.type, 'azure');
++  assert.equal(out.win.sign.certificateProfileName, 'public');
++  assert.deepEqual(withWindowsSigning({ appId: 'a' }, {}), { appId: 'a' });
++});
++
++test('a bare publisher name is refused (electron-builder needs the full subject)', () => {
++  assert.throws(() => withWindowsSigning({}, { ...azure, AZURE_SIGNING_PUBLISHER: 'Alderman Enterprises' }), /CN=/);
++});
+diff --git a/src/runtime/legacy-growth.test.mjs b/src/runtime/legacy-growth.test.mjs
+new file mode 100644
+index 0000000..45f1480
+--- /dev/null
++++ b/src/runtime/legacy-growth.test.mjs
+@@ -0,0 +1,33 @@
++/**
++ * Ratchet for src/runtime/legacy.js. Most regressions in this repo came from
++ * layering one more `render = function () { … renderCore() }` override on top of
++ * the last one, so a later fix silently undid an earlier one. New behaviour goes
++ * in a module under src/modules/ with its own test, and legacy.js only calls it.
++ *
++ * These numbers may only go DOWN. When you remove overrides or move code out of
++ * legacy.js, lower them in the same commit.
++ */
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync, statSync } from 'node:fs';
++
++const LEGACY = new URL('./legacy.js', import.meta.url);
++const MAX_OVERRIDES = 129;
++const MAX_BYTES = 816_000;
++const MAX_OVERRIDES_PER_NAME = { bind: 17, settings: 10, render: 8, bindEstimateActions: 6, bindExpandedFeatures: 5 };
++
++const source = readFileSync(LEGACY, 'utf8');
++const overrides = [...source.matchAll(/^([A-Za-z_$][\w$]*) = (?:async )?function\b/gm)].map(match => match[1]);
++
++test('legacy.js gets no new function overrides', () => {
++  assert.ok(overrides.length <= MAX_OVERRIDES, `legacy.js has ${overrides.length} top-level "x = function" overrides (limit ${MAX_OVERRIDES}). Put the new behaviour in src/modules/ and call it from the existing function instead of wrapping it again.`);
++  const counts = overrides.reduce((all, name) => ({ ...all, [name]: (all[name] || 0) + 1 }), {});
++  for (const [name, limit] of Object.entries(MAX_OVERRIDES_PER_NAME)) {
++    assert.ok((counts[name] || 0) <= limit, `${name} is wrapped ${counts[name]} times (limit ${limit})`);
++  }
++});
++
++test('legacy.js does not grow', () => {
++  const bytes = statSync(LEGACY).size;
++  assert.ok(bytes <= MAX_BYTES, `legacy.js is ${bytes} bytes (limit ${MAX_BYTES}). Move new code into src/modules/.`);
++});
+diff --git a/worker/src/integration-routes.mjs b/worker/src/integration-routes.mjs
+index 438f382..32ae5f1 100644
+--- a/worker/src/integration-routes.mjs
++++ b/worker/src/integration-routes.mjs
+@@ -13,6 +13,7 @@ import {
+   resolveTwilioShopConfig,
+   sendSms,
+   smsIntegrationStatus,
++  withFirstMessageDisclosure,
+ } from './integrations/sms.mjs';
+ import { QUICKBOOKS_TOKEN_SECRET, QuickBooksError, createQuickBooksIntegration } from './integrations/quickbooks.mjs';
+ import { resolveSubscriptionEntitlements } from './plans.mjs';
+@@ -212,8 +213,9 @@ export async function handleMessagingIntegration(request, env, context, segments
+         ? 'This customer opted out of SMS'
+         : 'Record the customer’s explicit SMS consent before sending');
+     }
+-    const message = String(body.body || '').trim();
+-    if (!message) throw new HttpError(400, 'Message body is required');
++    const written = String(body.body || '').trim();
++    if (!written) throw new HttpError(400, 'Message body is required');
++    const message = await withFirstMessageDisclosure(env, context.shopId, phone, written);
+     try {
+       const callbackUrl = new URL(request.url);
+       if (env.TWILIO_WEBHOOK_URL) {
+diff --git a/worker/src/integrations/sms.mjs b/worker/src/integrations/sms.mjs
+index 3131b3d..9c18c47 100644
+--- a/worker/src/integrations/sms.mjs
++++ b/worker/src/integrations/sms.mjs
+@@ -11,6 +11,24 @@ export const MAX_SMS_TEXT_LENGTH = 1600;
+ 
+ const encoder = new TextEncoder();
+ 
++/** Added to the first text a shop sends to a number (carrier opt-in disclosure rules). */
++export const FIRST_MESSAGE_DISCLOSURE = 'Reply STOP to opt out, HELP for help. Msg & data rates may apply.';
++
++/**
++ * The first text a shop sends to a phone number carries the opt-out and rates
++ * notice; later texts go as written. A message that already mentions STOP is left alone.
++ */
++export async function withFirstMessageDisclosure(env, shopId, phone, body) {
++  const text = String(body || '').trim();
++  if (/\bSTOP\b/i.test(text)) return text;
++  const earlier = await env.DB.prepare(
++    "SELECT 1 AS sent FROM customer_messages WHERE shop_id = ? AND phone = ? AND direction = 'outbound' LIMIT 1",
++  ).bind(shopId, phone).first().catch(() => null);
++  if (earlier) return text;
++  const combined = `${text}\n\n${FIRST_MESSAGE_DISCLOSURE}`;
++  return combined.length <= MAX_SMS_TEXT_LENGTH ? combined : text;
++}
++
+ export class SmsIntegrationError extends Error {
+   constructor(message, { code = 'sms_error', status = 500 } = {}) {
+     super(message);
+diff --git a/worker/src/onboarding/twilio-plans.mjs b/worker/src/onboarding/twilio-plans.mjs
+index a32dd6e..1019a9f 100644
+--- a/worker/src/onboarding/twilio-plans.mjs
++++ b/worker/src/onboarding/twilio-plans.mjs
+@@ -164,6 +164,18 @@ export function defaultMessageSamples(intake) {
+   ];
+ }
+ 
++/**
++ * Carriers reject campaigns whose message flow is vague. The shop's own wording
++ * is kept and followed by how ShopCrank actually collects consent, with the
++ * public terms and privacy URLs reviewers check.
++ */
++export function campaignMessageFlow(intake) {
++  const name = intake.dbaName || intake.legalName;
++  const standard = `Customers of ${name} opt in one of three ways: (1) by checking an unchecked, optional box on the shop's online booking form (https://www.shopcrank.com/api/book/${intake.shopId}) next to this disclosure: "Text me about this appointment and my vehicle service from ${name}: confirmations, reminders, estimates, status and pickup. Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of service."; (2) by texting the shop's number first; or (3) by telling shop staff in person or by phone, which staff record in ShopCrank before any text can be sent (the software blocks texts to numbers without recorded consent). The first text includes STOP/HELP instructions. Terms: https://www.shopcrank.com/sms-terms/ Privacy: https://www.shopcrank.com/privacy/`;
++  const own = String(intake.optInWording || '').trim();
++  return (own ? `${own} ${standard}` : standard).slice(0, 2048);
++}
++
+ /** Phase 2: the campaign, once the brand is approved. */
+ export function planA2pCampaign(intake, { messagingServiceSid, brandSid }) {
+   const name = intake.dbaName || intake.legalName;
+@@ -174,7 +186,7 @@ export function planA2pCampaign(intake, { messagingServiceSid, brandSid }) {
+     form: {
+       BrandRegistrationSid: brandSid,
+       Description: `${name} sends repair status updates, estimate approvals, appointment reminders, and replies to customer questions about their vehicle service.`,
+-      MessageFlow: intake.optInWording,
++      MessageFlow: campaignMessageFlow(intake),
+       MessageSamples: samples,
+       UsAppToPersonUsecase: intake.campaignUseCase,
+       HasEmbeddedLinks: 'true',
+diff --git a/worker/src/online-booking.mjs b/worker/src/online-booking.mjs
+index 2a9b7e6..b658be6 100644
+--- a/worker/src/online-booking.mjs
++++ b/worker/src/online-booking.mjs
+@@ -1,6 +1,10 @@
+ import { HttpError, json } from './http.mjs';
+ import { BookingError, bookAppointment, loadBookingContext, nextAvailability, shopEntitled, validBookingDate } from './scheduling.mjs';
+-import { resolveTwilioShopConfig, sendSms } from './integrations/sms.mjs';
++import { resolveTwilioShopConfig, sendSms, withFirstMessageDisclosure } from './integrations/sms.mjs';
++
++function wantsTexts(body) {
++  return body?.smsOptIn === true || body?.smsOptIn === 'yes' || body?.smsOptIn === 'on';
++}
+ import { toE164 } from './customer-followups.mjs';
+ import { automatedSmsEnabled, onlineBookingEnabled } from './growth-flags.mjs';
+ 
+@@ -46,7 +50,7 @@ function bookingPage({ shopId, shopName, hoursText, services, token }) {
+     ? services.map(service => `<option>${escapeHtml(service)}</option>`).join('') + '<option value="">Something else (describe below)</option>'
+     : '';
+   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Book service · ${escapeHtml(shopName)}</title>
+-<style>:root{--ink:#14201c;--muted:#68766f;--line:#d9ddd8;--green:#1f654b}*{box-sizing:border-box}body{margin:0;padding:20px;background:#f3f1eb;color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:560px;margin:auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:22px}h1{margin:0 0 4px}p.sub{margin:0 0 16px;color:var(--muted)}label{display:block;margin:12px 0 4px;font-weight:700}input,select,textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:6px;font:inherit}.slots{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.slots button{padding:9px 13px;border:1px solid var(--line);border-radius:6px;background:#fff;font:inherit;cursor:pointer}.slots button.on{background:var(--green);color:#fff;border-color:var(--green)}button.primary{margin-top:18px;width:100%;min-height:48px;border:0;border-radius:6px;background:var(--green);color:#fff;font-weight:800;font-size:16px;cursor:pointer}.error{color:#a63f36}.done{padding:16px;background:#edf5ef;border-radius:8px}</style></head>
++<style>:root{--ink:#14201c;--muted:#68766f;--line:#d9ddd8;--green:#1f654b}*{box-sizing:border-box}body{margin:0;padding:20px;background:#f3f1eb;color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:560px;margin:auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:22px}h1{margin:0 0 4px}p.sub{margin:0 0 16px;color:var(--muted)}label{display:block;margin:12px 0 4px;font-weight:700}input,select,textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:6px;font:inherit}.slots{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.slots button{padding:9px 13px;border:1px solid var(--line);border-radius:6px;background:#fff;font:inherit;cursor:pointer}.slots button.on{background:var(--green);color:#fff;border-color:var(--green)}button.primary{margin-top:18px;width:100%;min-height:48px;border:0;border-radius:6px;background:var(--green);color:#fff;font-weight:800;font-size:16px;cursor:pointer}.error{color:#a63f36}.done{padding:16px;background:#edf5ef;border-radius:8px}label.optin{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:14px;color:var(--muted);margin-top:16px}label.optin input{width:22px;height:22px;flex:none;margin-top:2px}</style></head>
+ <body><main><h1>${escapeHtml(shopName)}</h1><p class="sub">Book a service appointment online.${hoursText ? ` Hours: ${escapeHtml(hoursText)}` : ''}</p>
+ <form id="book"><label for="name">Your name</label><input id="name" name="customerName" autocomplete="name" required maxlength="120">
+ <label for="phone">Mobile number</label><input id="phone" name="phone" type="tel" autocomplete="tel" required maxlength="40">
+@@ -55,6 +59,7 @@ function bookingPage({ shopId, shopName, hoursText, services, token }) {
+ ${options ? `<label for="service">Service</label><select id="service" name="service">${options}</select>` : ''}
+ <label for="notes">${options ? 'Anything else we should know?' : 'What do you need done?'}</label><textarea id="notes" name="notes" rows="3" maxlength="1000" ${options ? '' : 'required'}></textarea>
+ <label for="date">Day</label><input id="date" name="date" type="date" required><div class="slots" id="slots"></div>
++<label class="optin"><input type="checkbox" name="smsOptIn" value="yes"> <span>Text me about this appointment and my vehicle service from ${escapeHtml(shopName)}: confirmations, reminders, estimates, status and pickup. Msg frequency varies. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of service. <a href="https://www.shopcrank.com/sms-terms/" target="_blank" rel="noopener">Text terms</a> · <a href="https://www.shopcrank.com/privacy/" target="_blank" rel="noopener">Privacy</a></span></label>
+ <p class="error" id="error" hidden></p><button class="primary" type="submit">Book appointment</button></form></main>
+ <script nonce="${token}">
+ const api=${JSON.stringify(`/api/book/${shopId}`)},form=document.querySelector('#book'),slots=document.querySelector('#slots'),error=document.querySelector('#error');let time='';
+@@ -105,10 +110,21 @@ export async function handlePublicBooking(request, env, segments, { hashValue, g
+       const { appointment } = await bookAppointment(env, shopId, { ...body, phone }, { source: 'online_booking', createdBy: 'online-booking' });
+       let confirmationSent = false;
+       try {
+-        const consent = await env.DB.prepare('SELECT status FROM sms_consent WHERE shop_id = ? AND phone = ?').bind(shopId, phone).first();
+-        const twilio = !automatedSmsEnabled(env) || consent?.status === 'opted_out' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
++        let consent = await env.DB.prepare('SELECT status FROM sms_consent WHERE shop_id = ? AND phone = ?').bind(shopId, phone).first();
++        // Texts need the customer's opt-in: the unchecked box on this form, or consent already on file.
++        // A STOP on file always wins over the box.
++        if (wantsTexts(body) && consent?.status !== 'opted_out') {
++          await env.DB.prepare(`
++            INSERT INTO sms_consent (shop_id, phone, status, source, updated_at, recorded_by)
++            VALUES (?, ?, 'opted_in', 'online_booking_form', ?, NULL)
++            ON CONFLICT(shop_id, phone) DO UPDATE SET status = 'opted_in', source = 'online_booking_form', updated_at = excluded.updated_at
++            WHERE sms_consent.status <> 'opted_out'
++          `).bind(shopId, phone, new Date().toISOString()).run();
++          consent = { status: 'opted_in' };
++        }
++        const twilio = !automatedSmsEnabled(env) || consent?.status !== 'opted_in' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
+         if (twilio?.configured) {
+-          const text = `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.`;
++          const text = await withFirstMessageDisclosure(env, shopId, phone, `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.`);
+           const result = await sendSms(env, { to: phone, body: text }, { config: twilio });
+           confirmationSent = true;
+           await env.DB.prepare(`
+diff --git a/worker/test/growth-review-fixes.test.mjs b/worker/test/growth-review-fixes.test.mjs
+index 96d8d7e..bf34cff 100644
+--- a/worker/test/growth-review-fixes.test.mjs
++++ b/worker/test/growth-review-fixes.test.mjs
+@@ -125,7 +125,7 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
+   let twilioCalls = 0;
+   globalThis.fetch = async (url, init) => (String(url).includes('api.twilio.com') ? (twilioCalls += 1, Response.json({ sid: 'SM1', status: 'queued' })) : realFetch(url, init));
+   try {
+-    const book = (phone, time) => worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'X', phone, vehicle: 'Civic', service: 'Oil', date: day.date, time }) }), env, {});
++    const book = (phone, time, smsOptIn = 'yes') => worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'X', phone, vehicle: 'Civic', service: 'Oil', date: day.date, time, smsOptIn }) }), env, {});
+     const optedOut = await book('806-555-0150', day.slots[0]);
+     assert.equal(optedOut.status, 201);
+     assert.equal((await optedOut.json()).confirmationSent, false);
+@@ -135,6 +135,9 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
+     assert.equal((await confirmed.json()).confirmationSent, true);
+     assert.equal(twilioCalls, 1);
+     assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM customer_messages WHERE message_type = 'booking_confirmation'").get().n, 1);
++    assert.match(DB.sqlite.prepare("SELECT body FROM customer_messages WHERE message_type = 'booking_confirmation'").get().body, /Reply STOP to opt out, HELP for help\. Msg & data rates may apply\./, 'the first text carries the opt-out notice');
++    assert.equal(DB.sqlite.prepare("SELECT source FROM sms_consent WHERE phone = '+18065550151'").get().source, 'online_booking_form', 'the checkbox is recorded as consent');
++    assert.equal(DB.sqlite.prepare("SELECT status FROM sms_consent WHERE phone = '+18065550150'").get().status, 'opted_out', 'a STOP on file beats the checkbox');
+     const smsOff = { ...env, AUTOMATED_SMS_ENABLED: '0' };
+     const quiet = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Y', phone: '806-555-0152', vehicle: 'Civic', service: 'Oil', date: day.date, time: day.slots[2] }) }), smsOff, {});
+     assert.equal(quiet.status, 201, 'booking still works with automated texts off');
+@@ -142,6 +145,8 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
+     assert.equal(twilioCalls, 1, 'but no confirmation text goes out');
+     const page = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`), env, {})).text();
+     assert.match(page, /b\.confirmationSent\?/, 'the success screen only promises a text when one was sent');
++    assert.match(page, /<input type="checkbox" name="smsOptIn" value="yes">/, 'the opt-in box starts unchecked');
++    assert.match(page, /sms-terms/);
+   } finally {
+     globalThis.fetch = realFetch;
+   }
+@@ -208,3 +213,22 @@ test('review fixes: attention is yellow, shop-scoped photo keys print, new calle
+   assert.doesNotMatch(reminder.body, /\/api\/book\//);
+   assert.match(reminder.body, /Reply to this text to schedule/);
+ });
++
++test('online booking sends no text without the opt-in box', async () => {
++  const { DB } = shop();
++  const slots = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w/slots`), { ...FLAGS_ON, DB }, {})).json();
++  const day = slots.days.find(item => item.slots.length >= 1);
++  const env = { ...FLAGS_ON, DB, TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 't', TWILIO_FROM_NUMBER: '+18065550000' };
++  const realFetch = globalThis.fetch;
++  let twilioCalls = 0;
++  globalThis.fetch = async (url, init) => (String(url).includes('api.twilio.com') ? (twilioCalls += 1, Response.json({ sid: 'SM1', status: 'queued' })) : realFetch(url, init));
++  try {
++    const response = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Z', phone: '806-555-0160', vehicle: 'Civic', service: 'Oil', date: day.date, time: day.slots[0] }) }), env, {});
++    assert.equal(response.status, 201);
++    assert.equal((await response.json()).confirmationSent, false);
++    assert.equal(twilioCalls, 0);
++    assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM sms_consent WHERE phone = '+18065550160'").get().n, 0);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
+-- 
+2.43.0
+
