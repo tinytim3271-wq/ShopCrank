@@ -673,12 +673,12 @@ test('commission totals include all matching rows while ledger results are pagin
   const amb = await createAmbassador(call, { email: 'pages@amb.test' });
   const insert = DB.sqlite.prepare(`
     INSERT INTO ambassador_commissions
-      (id, ambassador_id, shop_id, period, plan_id, tier, amount_cents, status, accrued_via, created_at)
-    VALUES (?, ?, ?, ?, 'shop', 'shop', 100, ?, 'manual', ?)
+      (id, ambassador_id, shop_id, period, earning_period, plan_id, tier, amount_cents, status, accrued_via, created_at)
+    VALUES (?, ?, ?, ?, ?, 'shop', 'shop', 100, ?, 'manual', ?)
   `);
   const now = new Date().toISOString();
   for (let index = 0; index < 2001; index += 1) {
-    insert.run(`commission-${index}`, amb.id, `commission-shop-${String(index).padStart(4, '0')}`, LAST_MONTH, index === 2000 ? 'paid' : 'pending', now);
+    insert.run(`commission-${index}`, amb.id, `commission-shop-${String(index).padStart(4, '0')}`, LAST_MONTH, LAST_MONTH, index === 2000 ? 'paid' : 'pending', now);
   }
 
   const firstPage = await call('GET', `/admin/ambassador-commissions?period=${LAST_MONTH}&ambassadorId=${amb.id}`);

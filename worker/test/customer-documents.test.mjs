@@ -623,3 +623,14 @@ test('losing claim on an unused token returns 409 before writing the document', 
   );
   assert.equal(fixture.entities.get(fixture.key('shop-1', 'invoices', 'INV-1100')).signature, undefined);
 });
+
+test('a signed document link works as a receipt for a year, then expires', async () => {
+  const { linkExpired, COMPLETED_LINK_TTL_MS } = await import('../src/customer-documents.mjs');
+  const signedAt = Date.parse('2026-01-15T12:00:00Z');
+  const signed = { consumed_at: new Date(signedAt).toISOString(), expires_at: '2026-02-14T12:00:00Z' };
+  assert.equal(linkExpired(signed, signedAt + 60 * 24 * 60 * 60 * 1000), false, 'still viewable after the 30-day window');
+  assert.equal(linkExpired(signed, signedAt + COMPLETED_LINK_TTL_MS + 1000), true);
+  const open = { consumed_at: null, expires_at: '2026-02-14T12:00:00Z' };
+  assert.equal(linkExpired(open, Date.parse('2026-02-01T00:00:00Z')), false);
+  assert.equal(linkExpired(open, Date.parse('2026-02-15T00:00:00Z')), true);
+});

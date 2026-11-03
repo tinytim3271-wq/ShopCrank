@@ -61,3 +61,10 @@ test('withOptimisticConcurrencyHeaders attaches If-Match for online and offline 
     { method: 'PUT' },
   );
 });
+
+test('customer cascade deletes are never queued for later replay', () => {
+  const plain = prepareEntityMutation('/entities/customers/c1', { method: 'DELETE' });
+  const cascade = prepareEntityMutation('/entities/customers/c1?cascade=1', { method: 'DELETE' });
+  assert.equal(plain.queueable, true);
+  assert.equal(cascade.queueable, false);
+});

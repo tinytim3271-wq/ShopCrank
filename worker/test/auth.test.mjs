@@ -249,9 +249,11 @@ function confirmSignIn(token) {
 }
 
 function callbackDb({ sessionError = null } = {}) {
-  let batchCalls = 0;
+  let sessionInserts = 0;
+  let linkClaims = 0;
   return {
-    get batchCalls() { return batchCalls; },
+    get sessionInserts() { return sessionInserts; },
+    get linkClaims() { return linkClaims; },
     prepare(sql) {
       return {
         sql,
@@ -286,16 +288,25 @@ function callbackDb({ sessionError = null } = {}) {
               }
               assert.fail(`unexpected callback query: ${sql}`);
             },
+            async run() {
+              if (/UPDATE login_tokens SET used_at/.test(sql)) {
+                assert.match(sql, /used_at IS NULL/);
+                linkClaims += 1;
+                return { meta: { changes: 1 } };
+              }
+              if (/INSERT INTO sessions/.test(sql)) {
+                sessionInserts += 1;
+                if (sessionError) throw sessionError;
+                return { meta: { changes: 1 } };
+              }
+              assert.fail(`unexpected callback write: ${sql}`);
+            },
           };
         },
       };
     },
-    async batch(statements) {
-      batchCalls += 1;
-      assert.match(statements[0].sql, /INSERT INTO sessions/);
-      assert.match(statements[1].sql, /UPDATE login_tokens SET used_at/);
-      if (sessionError) throw sessionError;
-      return [{ success: true }, { success: true }];
+    async batch() {
+      assert.fail('sign-in must claim the link before creating a session, not batch both');
     },
   };
 }
@@ -311,7 +322,8 @@ test('magic-link callback creates a session when optional founding tables are ab
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('Location'), 'https://app.example.test/app');
   assert.match(response.headers.get('Set-Cookie') || '', /^shopcrank_session=/);
-  assert.equal(DB.batchCalls, 1);
+  assert.equal(DB.linkClaims, 1);
+  assert.equal(DB.sessionInserts, 1);
 });
 
 test('auth callback reports schema failures safely and does not issue a session cookie', async (t) => {
@@ -333,7 +345,8 @@ test('auth callback reports schema failures safely and does not issue a session 
   assert.equal(payload.requestId, response.headers.get('X-Request-ID'));
   assert.doesNotMatch(JSON.stringify(payload), /sessions|D1_ERROR|SQLITE/i);
   assert.equal(response.headers.get('Set-Cookie'), null);
-  assert.equal(DB.batchCalls, 1);
+  assert.equal(DB.linkClaims, 1);
+  assert.equal(DB.sessionInserts, 1);
   assert.equal(errors.mock.callCount(), 1);
   const serverLog = JSON.parse(errors.mock.calls[0].arguments[0]);
   assert.match(serverLog.error, /no such table: sessions/);
@@ -719,6 +732,7 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
   t.mock.method(console, 'error', () => {});
   const token = 'e'.repeat(32);
   const batches = [];
+  const writes = [];
   const env = {
     DB: {
       prepare(sql) {
@@ -743,6 +757,10 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
                 assert.fail(`unexpected query: ${sql}`);
               },
               async run() {
+                if (/UPDATE login_tokens SET used_at/.test(sql) || /INSERT INTO sessions/.test(sql)) {
+                  writes.push(sql);
+                  return { meta: { changes: 1 } };
+                }
                 assert.fail(`unexpected run: ${sql}`);
               },
             };
@@ -761,7 +779,7 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
   );
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('Location'), 'https://app.example.test/app');
-  assert.equal(batches.length, 3);
+  assert.equal(batches.length, 2);
   assert.match(batches[0][0].sql, /INSERT INTO shops/);
   assert.equal(batches[0][0].args[1], 'Trial Shop');
   assert.equal(batches[0][2].args[3], 'Trial Owner');
@@ -774,7 +792,8 @@ test('magic-link callback creates a 14-day public trial for new shops', async (t
   assert.ok(Number.isFinite(trialEnds));
   assert.ok(trialEnds > Date.now() + 13 * 86400000);
   assert.ok(trialEnds < Date.now() + 15 * 86400000);
-  assert.match(batches[2][0].sql, /INSERT INTO sessions/);
+  assert.match(writes[0], /UPDATE login_tokens SET used_at/);
+  assert.match(writes[1], /INSERT INTO sessions/);
 });
 
 test('magic-link signup retries persisted referral attribution on a later sign-in', async (t) => {
@@ -784,7 +803,8 @@ test('magic-link signup retries persisted referral attribution on a later sign-i
   let userExists = false;
   let pending = null;
   let ambassadorLookups = 0;
-  let sessionBatches = 0;
+  let loginTokenClaims = 0;
+  let sessionInserts = 0;
   const env = {
     DB: {
       prepare(sql) {
@@ -833,6 +853,15 @@ test('magic-link signup retries persisted referral attribution on a later sign-i
                 assert.fail(`unexpected query: ${sql}`);
               },
               async run() {
+                if (/UPDATE login_tokens SET used_at/.test(sql)) {
+                  assert.match(sql, /used_at IS NULL/);
+                  loginTokenClaims += 1;
+                  return { meta: { changes: 1 } };
+                }
+                if (/INSERT INTO sessions/.test(sql)) {
+                  sessionInserts += 1;
+                  return { meta: { changes: 1 } };
+                }
                 if (/DELETE FROM pending_membership_attributions/.test(sql)) {
                   pending = null;
                   return { success: true };
@@ -860,10 +889,6 @@ test('magic-link signup retries persisted referral attribution on a later sign-i
         if (/UPDATE subscriptions SET sold_by_ambassador_id/.test(statements[0].sql)) {
           return [{ meta: { changes: 1 } }, { success: true }];
         }
-        if (/INSERT INTO sessions/.test(statements[0].sql)) {
-          sessionBatches += 1;
-          return statements.map(() => ({ success: true }));
-        }
         assert.fail(`unexpected batch: ${statements[0].sql}`);
       },
     },
@@ -878,5 +903,6 @@ test('magic-link signup retries persisted referral attribution on a later sign-i
   assert.equal(nextLogin.status, 302);
   assert.equal(pending, null);
   assert.equal(ambassadorLookups, 2);
-  assert.equal(sessionBatches, 2);
+  assert.equal(loginTokenClaims, 2);
+  assert.equal(sessionInserts, 2);
 });

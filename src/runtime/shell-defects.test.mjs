@@ -229,6 +229,18 @@ test('printed per-finding inspection photos have width and height bounds', () =>
   assert.match(source, /\.finding-photos img\{[^}]*width:120px;[^}]*height:90px;[^}]*max-width:100%;[^}]*max-height:90px;[^}]*object-fit:contain/);
 });
 
+test('deleting a job card pauses autosave and waits for in-flight saves', () => {
+  const deleteHandler = legacy.slice(
+    legacy.indexOf('document.querySelector("#delete-job-card")'),
+    legacy.indexOf('document.querySelector("#apply-bulk-technicians")'),
+  );
+  assert.match(legacy, /if \(jobCardDeleting\) return;\s*jobCardDirty = true;/);
+  assert.match(legacy, /if \(!canManage \|\| jobCardSaving \|\| jobCardDeleting\) return false;/);
+  assert.match(deleteHandler, /jobCardDeleting = true;[\s\S]*setModalAutosave\(null\);[\s\S]*controls\.forEach\(control => \{ control\.disabled = true \}\);/);
+  assert.match(deleteHandler, /if \(jobCardSavePromise\) await jobCardSavePromise;[\s\S]*await apiFetch\(`\/entities\/orders\/\$\{encodeURIComponent\(order\.id\)\}`, \{ method: "DELETE" \}\);/);
+  assert.match(deleteHandler, /catch \(error\) \{[\s\S]*jobCardDeleting = false;[\s\S]*setModalAutosave\(flushJobCardAutosave\);[\s\S]*if \(jobCardDirty\) \{/);
+});
+
 /** Returns the source of the function whose definition starts with `prefix`. */
 function functionSource(prefix) {
   return sourceFunction(prefix, legacy);

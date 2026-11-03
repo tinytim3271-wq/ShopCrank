@@ -202,3 +202,23 @@ test('browser email sign-in still signs the browser in on confirm', async () => 
   assert.equal(confirm.status, 302);
   assert.match(confirm.headers.get('Set-Cookie') || '', /^shopcrank_session=/);
 });
+
+test('two simultaneous confirmations of one browser sign-in link create only one session', async () => {
+  const env = { DB: createD1(), AUTH_EXPOSE_LOGIN_LINK: '1' };
+  const start = await worker.fetch(new Request(`${ORIGIN}/api/auth/magic-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.51' },
+    body: JSON.stringify({ email: 'race@example.org', returnTo: '/' }),
+  }), env);
+  const emailToken = new URL((await start.json()).loginUrl).searchParams.get('token');
+  const confirm = () => worker.fetch(new Request(`${ORIGIN}/api/auth/callback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: ORIGIN },
+    body: `token=${emailToken}`,
+  }), env);
+
+  const responses = await Promise.all([confirm(), confirm()]);
+  assert.deepEqual(responses.map(response => response.status).sort(), [302, 401]);
+  const sessions = env.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM sessions').get();
+  assert.equal(Number(sessions.n), 1);
+});
