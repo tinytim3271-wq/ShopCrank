@@ -145,7 +145,8 @@ export function relatedForRemoval(type, record = {}, collections = {}) {
   const realVin = vin => /^[A-HJ-NPR-Z0-9]{17}$/i.test(String(vin || '').trim());
   if (type === 'invoices') {
     const number = record.number || record.id;
-    return { payments: list('payments').filter(p => same(p.invoiceNumber, number)) };
+    // Deposits are recorded against the work order before the invoice exists.
+    return { payments: list('payments').filter(p => same(p.invoiceNumber, number) || (record.ro && same(p.workOrderId, record.ro))) };
   }
   if (type === 'orders') {
     return {

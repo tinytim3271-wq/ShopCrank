@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { STAMPED_ASSETS, contentVersion, stampAssets, stampIndexHtml } from './stamp-assets.mjs';
 
 test('stamping replaces old and missing versions and leaves other URLs alone', () => {
@@ -30,7 +31,7 @@ test('stampAssets rewrites index.html from the files on disk', () => {
 });
 
 test('the committed index.html matches the committed assets (run npm run build:web)', () => {
-  const root = new URL('..', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('..', import.meta.url));
   const html = readFileSync(join(root, 'index.html'), 'utf8');
   for (const asset of STAMPED_ASSETS) {
     const version = contentVersion(readFileSync(join(root, asset)));

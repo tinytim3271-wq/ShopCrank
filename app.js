@@ -6292,11 +6292,11 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function cannedServicesForCodes(codes = [], services = [], { vehicle = "" } = {}) {
     const normalized = [...new Set(codes.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean))];
     const used = /* @__PURE__ */ new Set();
-    const matches = [];
+    const matches2 = [];
     const diagnostic = generalDiagnosticService(services, used, vehicle);
     if (diagnostic && normalized.length) {
       used.add(diagnostic.id);
-      matches.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
+      matches2.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
     }
     for (const rule of DTC_SERVICE_RULES) {
       const hit = normalized.filter((code) => rule.test(code));
@@ -6304,9 +6304,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       const service = bestService(services, rule.keywords, used, vehicle);
       if (!service) continue;
       used.add(service.id);
-      matches.push({ service, reason: rule.label, codes: hit });
+      matches2.push({ service, reason: rule.label, codes: hit });
     }
-    return matches;
+    return matches2;
   }
   function cannedServiceLines(match, { laborRate = 0, scanId = "" } = {}) {
     const { service, codes, reason } = match;
@@ -6327,15 +6327,15 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     return lines;
   }
   function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = "", vehicle = "" } = {}) {
-    const matches = cannedServicesForCodes(codes, services, { vehicle });
-    const canned = matches.flatMap((match) => cannedServiceLines(match, { laborRate, scanId }));
+    const matches2 = cannedServicesForCodes(codes, services, { vehicle });
+    const canned = matches2.flatMap((match) => cannedServiceLines(match, { laborRate, scanId }));
     const seen = new Set(canned.map((line) => String(line.description).toLowerCase()));
     const extra = aiLines.filter((line) => !seen.has(String(line.description || "").toLowerCase()));
-    return { lines: [...canned, ...extra], matches };
+    return { lines: [...canned, ...extra], matches: matches2 };
   }
-  function scanEstimateSummary({ matches = [], lines = [] }) {
+  function scanEstimateSummary({ matches: matches2 = [], lines = [] }) {
     if (!lines.length) return "No canned services or AI lines matched these codes.";
-    const canned = matches.map((match) => `${match.service.name} (${match.codes.join(", ")})`).join("; ");
+    const canned = matches2.map((match) => `${match.service.name} (${match.codes.join(", ")})`).join("; ");
     return `${lines.length} line${lines.length === 1 ? "" : "s"}${canned ? ` \xB7 canned: ${canned}` : ""}`;
   }
   var range, DTC_SERVICE_RULES, GENERAL_DIAGNOSTIC, NARROW_DIAGNOSTIC, round3;
@@ -7122,22 +7122,30 @@ button{margin-top:12px;padding:8px 14px}
     if (type === "payments") return `${money5(Number(item.amount || 0))}${item.invoiceNumber ? ` \xB7 ${item.invoiceNumber}` : ""}${item.customer ? ` \xB7 ${item.customer}` : ""}`;
     return `${item.id}${item.customer ? ` \xB7 ${item.customer}` : ""}`;
   }
-  function applyRemovalResult(collections, result) {
+  function applyRemovalResult(collections, result, at = (/* @__PURE__ */ new Date()).toISOString()) {
     if (!result || result.action !== "archive") return false;
-    for (const bucket of [result.archived || {}, result.deleted || {}]) {
-      for (const [type, ids] of Object.entries(bucket)) {
-        if (!Array.isArray(collections[type])) continue;
-        const gone = new Set((ids || []).map(String));
-        collections[type] = collections[type].filter((item) => !gone.has(String(item?.id ?? "")) && !(item?.number != null && gone.has(String(item.number))));
-      }
+    for (const [type, list] of Object.entries(result.archived || {})) {
+      if (!Array.isArray(collections[type])) continue;
+      const ids = new Set((list || []).map(String));
+      collections[type] = KEPT_WHEN_ARCHIVED.has(type) ? collections[type].map((item) => matches(ids, item) ? { ...item, archivedAt: item.archivedAt || at, archiveReason: result.reason || item.archiveReason } : item) : collections[type].filter((item) => !matches(ids, item));
+    }
+    for (const [type, list] of Object.entries(result.deleted || {})) {
+      if (!Array.isArray(collections[type])) continue;
+      const ids = new Set((list || []).map(String));
+      collections[type] = collections[type].filter((item) => !matches(ids, item));
     }
     return true;
   }
-  var ARCHIVE_NOTE, ARCHIVE_TYPE_LABELS;
+  function withoutArchived(rows = []) {
+    return rows.filter((item) => !(item && String(item.archivedAt || "").trim()));
+  }
+  var ARCHIVE_NOTE, ARCHIVE_TYPE_LABELS, KEPT_WHEN_ARCHIVED, matches;
   var init_archived_records = __esm({
     "src/modules/archived-records.js"() {
       ARCHIVE_NOTE = "Records with payments, signatures or a sent invoice are archived for your tax records and can be restored from Settings \u2192 Archived records. Everything else is permanently deleted.";
       ARCHIVE_TYPE_LABELS = Object.freeze({ customers: "Customers", vehicles: "Vehicles", orders: "Work orders", invoices: "Invoices", payments: "Payments" });
+      KEPT_WHEN_ARCHIVED = Object.freeze(/* @__PURE__ */ new Set(["invoices", "payments"]));
+      matches = (ids, item) => ids.has(String(item?.id ?? "")) || item?.number != null && ids.has(String(item.number));
     }
   });
 
@@ -7199,7 +7207,7 @@ button{margin-top:12px;padding:8px 14px}
     const realVin = (vin) => /^[A-HJ-NPR-Z0-9]{17}$/i.test(String(vin || "").trim());
     if (type === "invoices") {
       const number = record.number || record.id;
-      return { payments: list("payments").filter((p) => same(p.invoiceNumber, number)) };
+      return { payments: list("payments").filter((p) => same(p.invoiceNumber, number) || record.ro && same(p.workOrderId, record.ro)) };
     }
     if (type === "orders") {
       return {
@@ -10119,7 +10127,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   async function loadInvoicesFromApi() {
     try {
-      state.invoices = await apiFetch("/entities/invoices");
+      state.invoices = await apiFetch("/entities/invoices?archived=include");
       save();
     } catch (error) {
       console.error("Failed to load invoices from API; using local data", error);
@@ -10134,7 +10142,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   async function loadPaymentsFromApi() {
     try {
-      state.payments = await apiFetch("/entities/payments");
+      state.payments = await apiFetch("/entities/payments?archived=include");
       save();
     } catch (error) {
       console.error("Failed to load payments from API; using local data", error);
@@ -10253,7 +10261,7 @@ button{margin-top:12px;padding:8px 14px}
   async function loadShopEntities() {
     const role = currentUser()?.role || "";
     const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
-    const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+    const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}${ENTITY_LIST_QUERY[type] || ""}`)));
     const failed = applySettledShopEntityResults(
       types,
       results,
@@ -10458,7 +10466,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function shell(content) {
     const user = currentUser(), profile = shopProfile(), shift = openShift(user.id);
-    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
+    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${escapeHtml(query)}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
   }
   function heading(kicker, title, description, action = true) {
     return `<div class="page-head"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p>${description}</p></div><div class="head-actions"><button class="secondary" id="export-button">${icon("download", 15)} Export</button>${action ? `<button class="primary" id="new-ro-button">${icon("plus", 15)} New work order</button>` : ""}</div></div>`;
@@ -10476,7 +10484,7 @@ button{margin-top:12px;padding:8px 14px}
     return `<div class="stats ${tech ? "tech-stats" : ""}">${cells.map((x) => `<div class="stat"><div class="stat-top"><span>${x[1]}</span>${icon(x[0])}</div><div class="stat-value">${x[2]}</div><div class="stat-note ${x[4]}">${x[3]}</div></div>`).join("")}</div>`;
   }
   function toolbar() {
-    return `<div class="toolbar"><div class="tabs">${[["active", "Active"], ["completed", "Completed"], ["all", "All orders"]].map((x) => `<button class="tab ${filter === x[0] ? "active" : ""}" data-filter="${x[0]}">${x[1]}</button>`).join("")}</div><label class="toolbar-search">${icon("search")}<input id="order-search" value="${query}" placeholder="Filter this view..."/></label></div>`;
+    return `<div class="toolbar"><div class="tabs">${[["active", "Active"], ["completed", "Completed"], ["all", "All orders"]].map((x) => `<button class="tab ${filter === x[0] ? "active" : ""}" data-filter="${x[0]}">${x[1]}</button>`).join("")}</div><label class="toolbar-search">${icon("search")}<input id="order-search" value="${escapeHtml(query)}" placeholder="Filter this view..."/></label></div>`;
   }
   function card(x) {
     return `<button class="job-card ${x.priority}" data-order="${x.id}"><div class="job-meta"><span>${x.id}</span><span>\xB7</span><span>${x.bay}</span>${x.mobile ? `<span class="mobile">${icon("map-pin", 10)} Mobile</span>` : ""}</div><h4>${x.customer}</h4><div class="vehicle">${x.vehicle}</div><p class="complaint">${x.complaint}</p><div class="job-foot"><span class="tech"><span class="mini-avatar">${initials(x.tech)}</span>${x.tech}</span><span class="promise">${icon("clock-3", 11)}${x.promise}</span></div></button>`;
@@ -13462,6 +13470,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       try {
         await apiFetch(`/entities/${button.dataset.restoreType}/${button.dataset.restoreId}/restore`, { method: "POST" });
         await loadShopEntities();
+        await loadCustomersFromApi().catch(() => {
+        });
         toast("Restored, together with anything archived with it");
         render();
         openArchivedRecords();
@@ -13562,11 +13572,8 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     if (!confirm(archives ? `Archive ${invoice.number}${payments2.length ? " and its payments" : ""}? It was sent, signed or paid, so it is kept for your tax records and can be restored from Settings \u2192 Archived records.` : `Delete ${invoice.number}? It is a draft with no payments, so it will be permanently deleted.`)) return;
     try {
       const result = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE" });
-      if (applyRemovalResult2(result)) {
-        state.invoices = state.invoices.filter((item) => item !== invoice);
-        save();
-        toast(`${invoice.number} archived`);
-      } else {
+      if (applyRemovalResult2(result)) toast(`${invoice.number} archived`);
+      else {
         state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
         state.invoices = state.invoices.filter((item) => item !== invoice);
         save();
@@ -14173,11 +14180,11 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       resultsElement.innerHTML = `<div class="customer-search-status">${escapeHtml(message)}</div>`;
       input.setAttribute("aria-expanded", "true");
     };
-    const showResults = (matches, source) => {
-      results = matches;
+    const showResults = (matches2, source) => {
+      results = matches2;
       resultsElement.hidden = false;
       input.setAttribute("aria-expanded", "true");
-      resultsElement.innerHTML = `<div class="customer-search-head"><span>${matches.length ? `${matches.length} existing customer${matches.length === 1 ? "" : "s"} found${source === "local" ? " \xB7 saved on this device" : ""}` : "No matching customers found"}</span><button type="button" class="customer-search-dismiss">Dismiss</button></div>${matches.map(customerIntakeResultMarkup).join("")}`;
+      resultsElement.innerHTML = `<div class="customer-search-head"><span>${matches2.length ? `${matches2.length} existing customer${matches2.length === 1 ? "" : "s"} found${source === "local" ? " \xB7 saved on this device" : ""}` : "No matching customers found"}</span><button type="button" class="customer-search-dismiss">Dismiss</button></div>${matches2.map(customerIntakeResultMarkup).join("")}`;
       resultsElement.querySelector(".customer-search-dismiss").onclick = () => {
         dismissedQuery = input.value.trim();
         hideResults();
@@ -14288,13 +14295,13 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       return likelyDuplicateCustomers(data, state.customers, state.vehicles);
     }
   }
-  function showIntakeDuplicateWarning(form, matches, picker, confirmationKey) {
+  function showIntakeDuplicateWarning(form, matches2, picker, confirmationKey) {
     const warning = document.querySelector("#duplicate-customer-warning");
     warning.hidden = false;
-    warning.innerHTML = `<strong>Possible duplicate customer</strong><p>This phone or email matches an existing customer. Link this work order or explicitly continue:</p>${matches.map((match, index) => `<button type="button" class="duplicate-customer-use" data-duplicate-result="${index}">Use ${escapeHtml(match.name)} instead</button>`).join("")}<button type="button" class="duplicate-customer-continue">Create a new customer anyway</button>`;
+    warning.innerHTML = `<strong>Possible duplicate customer</strong><p>This phone or email matches an existing customer. Link this work order or explicitly continue:</p>${matches2.map((match, index) => `<button type="button" class="duplicate-customer-use" data-duplicate-result="${index}">Use ${escapeHtml(match.name)} instead</button>`).join("")}<button type="button" class="duplicate-customer-continue">Create a new customer anyway</button>`;
     warning.querySelectorAll("[data-duplicate-result]").forEach((button) => {
       button.onclick = () => {
-        picker.select(matches[Number(button.dataset.duplicateResult)]);
+        picker.select(matches2[Number(button.dataset.duplicateResult)]);
         form.requestSubmit();
       };
     });
@@ -14520,11 +14527,34 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const signatureSrc = normalized.type === "signature" ? approvalSignatureSrc(normalized) : "";
     return `<section class="estimate-approval-record"><div><span>Estimate authorization</span><strong>${escapeHtml(summary)}</strong></div>${signatureSrc ? `<img src="${escapeAttr(signatureSrc)}" alt="Customer signature"/>` : ""}</section>`;
   }
+  async function refuseOrderServices(order, { customerName = "", note = "" } = {}, button = null) {
+    const who = customerName || order.customer || "The customer";
+    if (!confirm(`Record that ${who} refused the services on ${order.id}?
+
+The job card will be moved to the archive and taken off the board. An owner or admin can restore it from Settings \u2192 Archived records.
+
+Continue?`)) return;
+    if (button) button.disabled = true;
+    try {
+      const result = await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}/refuse`, { method: "POST", body: JSON.stringify({ customerName, note }) });
+      if (result?.queued) throw new Error("Reconnect to the online shop service to archive a refused job card.");
+      applyRemovalResult2(result);
+      state.orders = state.orders.filter((item) => item.id !== order.id);
+      save();
+      closeModal();
+      toast(`${order.id} archived: customer refused services`);
+      render();
+    } catch (error) {
+      if (button) button.disabled = false;
+      toast(error.message || "Could not archive the job card");
+    }
+  }
   function onsiteSignatureModal(kind, record) {
     const estimate = kind === "estimate" ? coherentOrderEstimate(record) : record;
     const number = kind === "estimate" ? record.id : record.number;
     const lineChoices = kind === "estimate" ? `<fieldset class="onsite-line-choices"><legend>Approve or decline each line</legend>${estimate.lines.map((line) => `<label><input type="checkbox" name="approvedLine" value="${escapeAttr(line.id)}" checked><span><b>${escapeHtml(line.description)}</b><small>${line.type === "part" ? `${line.quantity} \xD7 ${money4(line.unitPrice)}` : line.type === "fee" ? `Flat fee \xB7 ${money4(line.total)}` : `${line.hours.toFixed(2)} hr \xD7 ${money4(line.laborRate)}`}</small></span><strong>${money4(line.total)}</strong></label>`).join("")}</fieldset>` : "";
-    const typeOptions = ESTIMATE_APPROVAL_TYPES.map((option) => `<option value="${option.value}">${escapeHtml(option.label)}</option>`).join("");
+    const canRefuse = kind === "estimate" && record.id && !["completed", "invoiced"].includes(record.status) && ["owner", "admin", "super_admin", "service_writer"].includes(currentUser()?.role || "") && !isOfflineDesktop();
+    const typeOptions = ESTIMATE_APPROVAL_TYPES.map((option) => `<option value="${option.value}">${escapeHtml(option.label)}</option>`).join("") + (canRefuse ? `<option value="${SERVICE_REFUSED}">Customer refused services \xB7 archive job card</option>` : "");
     const approvalFields = kind === "estimate" ? `<div class="form-grid approval-method-fields"><label>Approval type *<select name="approvalType" id="approval-type">${typeOptions}</select></label><label id="custom-approval-label" hidden>Custom approval type *<input name="customLabel" maxlength="${APPROVAL_CUSTOM_LABEL_MAX}" placeholder="e.g. Approved via fleet manager email"/></label><label class="full">Approval note (optional)<textarea name="approvalNote" maxlength="${APPROVAL_NOTE_MAX}" placeholder="Who approved, callback number, or other audit detail"></textarea></label></div>` : "";
     showModal(`<form class="modal wide" id="document-signature-form"><div class="modal-head"><h2>${kind === "estimate" ? "Authorize estimate" : "Sign invoice"} on this device</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(number)} \xB7 ${escapeHtml(record.vehicle || "")}</span><strong>${money4(estimate.total ?? estimate.amount)}</strong></div>${lineChoices}${approvalFields}<label>Approver name *<input name="authorizationName" maxlength="100" required value="${escapeAttr(record.customer || "")}"/></label><label class="signature-label" id="signature-capture">Draw signature *<canvas id="signature-pad" width="720" height="220"></canvas></label><p class="ai-disclaimer" id="approval-disclaimer">${kind === "estimate" ? "A signature authorizes the selected work. For phone, in-person, email, text, or other approval, ShopCrank records the current staff user and time instead." : "Signing acknowledges this invoice and the completed work listed on it."}</p></div><div class="modal-actions"><button type="button" class="secondary" id="clear-signature">Clear</button><button type="submit" class="primary" id="save-document-approval">${icon("signature", 14)} ${kind === "estimate" ? "Sign & approve" : "Sign invoice"}</button></div></form>`);
     const canvas = document.querySelector("#signature-pad"), context = canvas.getContext("2d");
@@ -14572,7 +14602,13 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       customApproval.hidden = !other;
       customApproval.style.display = other ? "" : "none";
       document.querySelector('[name="customLabel"]').required = other;
-      document.querySelector("#save-document-approval").innerHTML = `${icon(signature ? "signature" : "circle-check", 14)} ${signature ? "Sign & approve" : "Record approval"}`;
+      const refused = approvalType.value === SERVICE_REFUSED;
+      const lineChoicesBox = document.querySelector(".onsite-line-choices");
+      if (lineChoicesBox) lineChoicesBox.style.display = refused ? "none" : "";
+      const saveButton = document.querySelector("#save-document-approval");
+      saveButton.classList.toggle("danger", refused);
+      saveButton.classList.toggle("primary", !refused);
+      saveButton.innerHTML = refused ? `${icon("archive", 14)} Refuse services & archive` : `${icon(signature ? "signature" : "circle-check", 14)} ${signature ? "Sign & approve" : "Record approval"}`;
       lucide.createIcons();
     };
     approvalType?.addEventListener("change", syncApprovalMethod);
@@ -14581,6 +14617,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       event.preventDefault();
       const data = new FormData(event.target);
       const selectedType = kind === "estimate" ? String(data.get("approvalType") || "signature") : "signature";
+      if (selectedType === SERVICE_REFUSED) return refuseOrderServices(record, { customerName: String(data.get("authorizationName") || "").trim(), note: String(data.get("approvalNote") || "").trim() }, event.target.querySelector("button[type=submit]"));
       if (selectedType === "signature" && !drawn) return toast("Draw the customer signature first");
       const approvedIds = new Set([...event.target.querySelectorAll('[name="approvedLine"]:checked')].map((input) => input.value));
       if (kind === "estimate" && !approvedIds.size) return toast("Approve at least one line or close without signing");
@@ -17074,14 +17111,14 @@ ${line}`.trim();
     if (!scan || !order) return toast("Link this scan to a repair order first");
     const codes = scan.aiAnalysis?.codes?.length ? scan.aiAnalysis.codes : (scan.dtcs || []).map((item) => item.code || item);
     const aiLines = scan.aiAnalysis?.draft && !scan.aiAnalysis.appliedAt ? diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes }) : [];
-    const { lines, matches } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
+    const { lines, matches: matches2 } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
     const existing = new Set((order.estimate?.lines || []).map((line) => line.id));
     const fresh = lines.filter((line) => !existing.has(line.id));
     if (!fresh.length && !(order.estimate?.lines || []).length) return toast("No canned services or AI lines matched these codes");
     if (fresh.length && !await addLinesToTargetOrder(fresh, "the scan estimate", order.id)) return;
     await sendJobEstimate(state.orders.find((item) => item.id === order.id), "sms");
-    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: scan.aiAnalysis.appliedAt || now(), approvalSentAt: now(), cannedServices: matches.map((match) => match.service.id) } });
-    toast(scanEstimateSummary({ matches, lines: fresh }));
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: scan.aiAnalysis.appliedAt || now(), approvalSentAt: now(), cannedServices: matches2.map((match) => match.service.id) } });
+    toast(scanEstimateSummary({ matches: matches2, lines: fresh }));
     render();
   }
   async function runPaymentImport(mode, extra = {}) {
@@ -17322,7 +17359,20 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsArchiveCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  function withCurrentFinancialRecords(view) {
+    return function(...args) {
+      const allInvoices = state.invoices, allPayments = state.payments;
+      state.invoices = withoutArchived(allInvoices || []);
+      state.payments = withoutArchived(allPayments || []);
+      try {
+        return view.apply(this, args);
+      } finally {
+        state.invoices = allInvoices;
+        state.payments = allPayments;
+      }
+    };
+  }
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, ENTITY_LIST_QUERY, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsArchiveCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, SERVICE_REFUSED, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok, renderKeepingFocusCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -17536,6 +17586,7 @@ ${line}`.trim();
       }));
       shopEntityCollections = { calls: "calls", vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
       shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
+      ENTITY_LIST_QUERY = { invoices: "?archived=include", payments: "?archived=include" };
       roleLabel = { super_admin: "Super Admin", admin: "Admin", technician: "Technician", office: "Office", service_writer: "Service Writer" };
       roleRoutes = { super_admin: ["superadmin"], admin: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "accounting", "payroll", "messaging", "payments", "integrations", "support", "imports", "reports", "settings", "employees"], technician: ["dispatch", "orders", "schedule", "shopops", "oem-diagnostics", "obd", "keys", "chat", "ai", "payroll", "integrations", "support"], office: ["customers", "shopops", "chat", "invoices", "pos", "accounting", "messaging", "integrations", "support"], service_writer: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "messaging", "integrations", "support"] };
       attentionDismissBound = false;
@@ -18080,7 +18131,7 @@ ${line}`.trim();
       };
       loadInvoicesFromApi = async function() {
         try {
-          applyRemoteList("invoices", await apiFetch("/entities/invoices"));
+          applyRemoteList("invoices", await apiFetch("/entities/invoices?archived=include"));
         } catch (error) {
           console.error("Failed to load invoices from API; using local data", error);
         }
@@ -18095,7 +18146,7 @@ ${line}`.trim();
       loadShopEntities = async function() {
         const role = currentUser()?.role || "";
         const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
-        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}${ENTITY_LIST_QUERY[type] || ""}`)));
         const failed = applySettledShopEntityResults(
           types,
           results,
@@ -18366,6 +18417,7 @@ ${line}`.trim();
         document.querySelector("#add-after-midnight-fee").onclick = () => addAfterMidnightFeeToEditor(root, append);
         bindEstimateEditor(root);
       };
+      SERVICE_REFUSED = "refused";
       ensureInvoiceForOrder = async function(order) {
         if (!["completed", "invoiced"].includes(order.status)) return null;
         const existing = state.invoices.find((invoice2) => invoice2.ro === order.id);
@@ -18677,7 +18729,7 @@ ${line}`.trim();
       loadShopEntities = async function() {
         const role = currentUser()?.role || "";
         const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
-        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}${ENTITY_LIST_QUERY[type] || ""}`)));
         const failed = applySettledShopEntityResults(
           types,
           results,
@@ -20017,6 +20069,26 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         });
       };
       void startApp();
+      renderKeepingFocusCore = render;
+      render = function(...args) {
+        const active = document.activeElement;
+        const keep = active && active.id && /^(INPUT|TEXTAREA)$/.test(active.tagName) && !active.closest(".modal") ? { id: active.id, start: active.selectionStart, end: active.selectionEnd, value: active.value } : null;
+        const result = renderKeepingFocusCore.apply(this, args);
+        if (keep) {
+          const next = document.getElementById(keep.id);
+          if (next && next !== document.activeElement && /^(INPUT|TEXTAREA)$/.test(next.tagName)) {
+            if (next.value !== keep.value && keep.id.endsWith("search")) next.value = keep.value;
+            next.focus({ preventScroll: true });
+            try {
+              next.setSelectionRange(keep.start, keep.end);
+            } catch {
+            }
+          }
+        }
+        return result;
+      };
+      invoices = withCurrentFinancialRecords(invoices);
+      payments = withCurrentFinancialRecords(payments);
     }
   });
 

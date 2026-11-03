@@ -140,6 +140,8 @@ async function startStack() {
     TWILIO_ACCOUNT_SID: 'ACsmoke0000000000000000000000000000',
     TWILIO_AUTH_TOKEN: 'smoke-twilio-token',
     TWILIO_FROM_NUMBER: '+15005550006',
+    // Delivery-status callbacks must be HTTPS; the smoke proxy serves this origin over TLS.
+    TWILIO_WEBHOOK_URL: ORIGIN,
     AUTH_EXPOSE_LOGIN_LINK: '1',
     ALLOWED_ORIGINS: ORIGIN,
     INTEGRATION_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
@@ -413,15 +415,11 @@ async function main() {
       // Draft: permanently deleted (204).
       let prompt = '';
       page.once('dialog', dialog => { prompt = dialog.message(); dialog.accept(); });
-      const draftGone = removal('DRAFT-7001');
-      await page.locator('tr:has-text("DRAFT-7001") [data-delete-invoice]').first().click();
-      const draft = await draftGone;
+      const [draft] = await Promise.all([removal('DRAFT-7001'), page.locator('tr:has-text("DRAFT-7001") [data-delete-invoice]').first().click()]);
       if (draft.status !== 204 || !/permanently deleted/.test(prompt)) throw new Error(`draft delete: ${draft.status} ${prompt}`);
       // Paid with payments: archived, not deleted.
       page.once('dialog', dialog => { prompt = dialog.message(); dialog.accept(); });
-      const paidGone = removal('MIG-5001');
-      await page.locator('tr:has-text("MIG-5001") [data-delete-invoice]').first().click();
-      const paid = await paidGone;
+      const [paid] = await Promise.all([removal('MIG-5001'), page.locator('tr:has-text("MIG-5001") [data-delete-invoice]').first().click()]);
       if (paid.status !== 200 || paid.body?.action !== 'archive' || !(paid.body.archived?.payments || []).length) throw new Error(`paid invoice: ${paid.status} ${JSON.stringify(paid.body).slice(0, 200)}`);
       if (!/Archive MIG-5001/.test(prompt)) throw new Error(`archive prompt: ${prompt}`);
       await page.waitForTimeout(500);
@@ -431,9 +429,11 @@ async function main() {
       await route('settings');
       await page.click('#open-archived-records');
       await page.waitForSelector('#archived-records-modal li:has-text("MIG-5001")', { timeout: 15_000 });
-      const restored = page.waitForResponse(r => r.url().includes('/restore') && r.request().method() === 'POST', { timeout: 20_000 });
-      await page.locator('#archived-records-modal li:has-text("MIG-5001") [data-restore-type]').click();
-      if ((await restored).status() !== 200) throw new Error('restore failed');
+      const [restored] = await Promise.all([
+        page.waitForResponse(r => r.url().includes('/restore') && r.request().method() === 'POST', { timeout: 20_000 }),
+        page.locator('#archived-records-modal li:has-text("MIG-5001") [data-restore-type=invoices]').click(),
+      ]);
+      if (restored.status() !== 200) throw new Error('restore failed');
       await page.keyboard.press('Escape').catch(() => {});
       await page.locator('.modal [data-close]').first().click().catch(() => {});
       await route('invoices');
@@ -462,9 +462,7 @@ async function main() {
       await page.click('#upgrade-shop-plan');
       await page.waitForSelector('#upgrade-plan-form', { timeout: 10_000 });
       await page.locator('#upgrade-plan-form [name=planId]').selectOption('shop');
-      const landed = page.waitForURL(CHECKOUT_URL, { timeout: 20_000 });
-      await page.locator('#upgrade-plan-form button[type=submit]').click();
-      await landed;
+      await Promise.all([page.waitForURL(CHECKOUT_URL, { timeout: 20_000 }), page.locator('#upgrade-plan-form button[type=submit]').click()]);
       const session = providerCalls.find(c => c.path.startsWith('/stripe/v1/checkout/sessions'));
       if (!session || session.body.mode !== 'subscription' || session.body['line_items[0][price]'] !== 'price_1SmokeShopMonthly' || !session.body.success_url?.startsWith(ORIGIN)) throw new Error(`Stripe request: ${JSON.stringify(session || null).slice(0, 240)}`);
       await page.goto(ORIGIN, { waitUntil: 'networkidle' });

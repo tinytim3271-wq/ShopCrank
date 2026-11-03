@@ -144,11 +144,13 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 
 /* ── Market-readiness usability fixes (Nov 2026) ───────────────────────────
    Contrast: every text color below reaches WCAG AA 4.5:1 on its background. */
-:root{--muted:#58646c;--orange-text:#b83a1d}
+/* Light mode only: dark mode keeps its own --muted and tab colors. */
+:root:not([data-theme="dark"]){--muted:#58646c;--orange-text:#b83a1d}
+[data-theme="dark"]{--orange-text:#f28a68}
 .eyebrow{color:var(--orange-text)}
 .nav-label{color:#a9bab3}
 .brand small,.shop-card span,.user-row span,.user-row svg{color:#b4c3bc}
-.tab{color:#55616a}
+:root:not([data-theme="dark"]) .tab{color:#55616a}
 
 /* Tap targets: 32px minimum with a mouse, 44px on touch screens. */
 .mini-action{min-height:32px;padding:0 10px}
@@ -171,7 +173,7 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
 }
 
 .stat-note.warn{color:var(--orange-text)}
-.job-card .mobile,span.mobile{color:#2a64a8}
+.job-card .mobile,:root:not([data-theme="dark"]) span.mobile{color:#2a64a8}
 .tab{min-height:32px}
 .template-link{display:inline-flex;align-items:center;min-height:32px}
 

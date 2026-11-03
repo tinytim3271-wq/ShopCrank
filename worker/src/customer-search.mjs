@@ -80,6 +80,7 @@ async function enrichedCustomers(
     LEFT JOIN entities vehicle
       ON vehicle.shop_id = ?
       AND vehicle.entity_type = 'vehicles'
+      AND json_extract(vehicle.data_json, '$.archivedAt') IS NULL
       AND (
         json_extract(vehicle.data_json, '$.customerId') = customer.entity_id
         OR (

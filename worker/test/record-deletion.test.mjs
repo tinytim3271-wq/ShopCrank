@@ -195,3 +195,44 @@ test('other record types keep their existing delete rules', async () => {
   await seed(env.DB, 'shop-1', 'inventory', 'part-1', { name: 'Oil filter' });
   assert.equal((await remove(env, 'technician', 'inventory', 'part-1')).status, 204);
 });
+
+test('a service writer records a refused service: the job card is archived with the refusal and an admin can restore it', async () => {
+  const env = await shopWithHistory();
+  assert.equal((await call(env, 'technician', 'POST', 'orders/RO-3/refuse', {})).status, 403);
+  const refused = await call(env, 'service_writer', 'POST', 'orders/RO-3/refuse', { customerName: 'Other Customer', note: 'Declined over the phone' });
+  assert.equal(refused.status, 200);
+  const body = await refused.json();
+  assert.equal(body.action, 'archive');
+  assert.deepEqual(body.archived, { orders: ['RO-3'] });
+  const listed = await (await call(env, 'admin', 'GET', 'orders')).json();
+  assert.ok(!(Array.isArray(listed) ? listed : listed.records).some(order => order.id === 'RO-3'));
+  const archived = await (await call(env, 'admin', 'GET', 'orders?archived=only')).json();
+  const order = (Array.isArray(archived) ? archived : archived.records).find(item => item.id === 'RO-3');
+  assert.equal(order.archiveReason, 'Customer refused service');
+  assert.equal(order.serviceRefusal.note, 'Declined over the phone');
+  assert.equal((await call(env, 'service_writer', 'POST', 'orders/RO-3/refuse', {})).status, 409);
+  assert.equal((await call(env, 'admin', 'POST', 'orders/RO-3/restore')).status, 200);
+  const back = await (await call(env, 'admin', 'GET', 'orders/RO-3')).json();
+  assert.ok(!back.archivedAt);
+});
+
+test('a save cannot set or change archive fields', async () => {
+  const env = await shopWithHistory();
+  const put = await call(env, 'service_writer', 'PUT', 'orders/RO-3', { id: 'RO-3', customer: 'Other Customer', archivedAt: '2026-11-01T00:00:00Z', archiveReason: 'sneaky' });
+  assert.ok(put.status < 300, String(put.status));
+  const listed = await (await call(env, 'admin', 'GET', 'orders')).json();
+  assert.ok((Array.isArray(listed) ? listed : listed.records).some(order => order.id === 'RO-3'), 'order must stay visible');
+});
+
+test('an invoice whose work order has a deposit is archived, deposit included', async () => {
+  const env = await shopWithHistory();
+  await seed(env.DB, 'shop-1', 'invoices', 'INV-9', { number: 'INV-9', customer: 'Other Customer', ro: 'RO-3', status: 'sent' });
+  await seed(env.DB, 'shop-1', 'payments', 'dep-9', { workOrderId: 'RO-3', amount: 50, kind: 'deposit' });
+  const response = await remove(env, 'admin', 'invoices', 'INV-9');
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.action, 'archive');
+  assert.deepEqual(body.archived.payments, ['dep-9']);
+  const invoices = await (await call(env, 'office', 'GET', 'invoices?archived=include')).json();
+  assert.ok((Array.isArray(invoices) ? invoices : invoices.records).some(item => item.id === 'INV-9' && item.archivedAt), 'readers can load archived invoices for accounting');
+});

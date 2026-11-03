@@ -20,14 +20,29 @@ export function archivedRecordLabel(type, item = {}, money = value => `$${Number
  * permanent delete and `{ action: 'archive', archived, deleted }` for an archive;
  * archived and deleted records both leave the everyday lists. Returns true for an archive.
  */
-export function applyRemovalResult(collections, result) {
+/** Types kept in memory once archived, so accounting and tax views still count them. */
+export const KEPT_WHEN_ARCHIVED = Object.freeze(new Set(['invoices', 'payments']));
+
+const matches = (ids, item) => ids.has(String(item?.id ?? '')) || (item?.number != null && ids.has(String(item.number)));
+
+export function applyRemovalResult(collections, result, at = new Date().toISOString()) {
   if (!result || result.action !== 'archive') return false;
-  for (const bucket of [result.archived || {}, result.deleted || {}]) {
-    for (const [type, ids] of Object.entries(bucket)) {
-      if (!Array.isArray(collections[type])) continue;
-      const gone = new Set((ids || []).map(String));
-      collections[type] = collections[type].filter(item => !gone.has(String(item?.id ?? '')) && !(item?.number != null && gone.has(String(item.number))));
-    }
+  for (const [type, list] of Object.entries(result.archived || {})) {
+    if (!Array.isArray(collections[type])) continue;
+    const ids = new Set((list || []).map(String));
+    collections[type] = KEPT_WHEN_ARCHIVED.has(type)
+      ? collections[type].map(item => (matches(ids, item) ? { ...item, archivedAt: item.archivedAt || at, archiveReason: result.reason || item.archiveReason } : item))
+      : collections[type].filter(item => !matches(ids, item));
+  }
+  for (const [type, list] of Object.entries(result.deleted || {})) {
+    if (!Array.isArray(collections[type])) continue;
+    const ids = new Set((list || []).map(String));
+    collections[type] = collections[type].filter(item => !matches(ids, item));
   }
   return true;
+}
+
+/** Everyday lists (Invoices, Payments) leave archived records out. */
+export function withoutArchived(rows = []) {
+  return rows.filter(item => !(item && String(item.archivedAt || '').trim()));
 }

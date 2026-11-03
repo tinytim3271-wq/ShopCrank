@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyRemovalResult, archivedRecordLabel } from './archived-records.js';
+import { applyRemovalResult, archivedRecordLabel, withoutArchived } from './archived-records.js';
 
 test('an archive response removes the archived and deleted records from the lists', () => {
   const state = { invoices: [{ id: 'i1', number: 'INV-1' }, { id: 'i2', number: 'INV-2' }], payments: [{ id: 'p1' }, { id: 'p2' }], appointments: [{ id: 'a1' }] };
   const archived = applyRemovalResult(state, { action: 'archive', archived: { invoices: ['INV-1'], payments: ['p1'] }, deleted: { appointments: ['a1'] } });
   assert.equal(archived, true);
-  assert.deepEqual(state.invoices.map(i => i.id), ['i2']);
-  assert.deepEqual(state.payments.map(p => p.id), ['p2']);
+  // Invoices and payments stay loaded (marked) so accounting totals keep them.
+  assert.deepEqual(state.invoices.map(i => [i.id, Boolean(i.archivedAt)]), [['i1', true], ['i2', false]]);
+  assert.deepEqual(withoutArchived(state.payments).map(p => p.id), ['p2']);
   assert.deepEqual(state.appointments, []);
+  const orders = { orders: [{ id: 'RO-1' }, { id: 'RO-2' }] };
+  applyRemovalResult(orders, { action: 'archive', archived: { orders: ['RO-1'] } });
+  assert.deepEqual(orders.orders.map(o => o.id), ['RO-2']);
 });
 
 test('a permanent delete (204, no body) leaves the lists for the caller to update', () => {

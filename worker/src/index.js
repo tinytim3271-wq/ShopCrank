@@ -48,7 +48,7 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
-import { archiveFieldsForSave, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
+import { archiveFieldsForSave, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, refuseShopOrder, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
 import { ARCHIVABLE_TYPES } from '../../src/modules/record-deletion.js';
 import { providerBase } from './provider-base.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
@@ -868,7 +868,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       nextCursor = result.nextCursor;
     } else {
       const archived = ARCHIVABLE_TYPES.has(type) ? params.archived : 'include';
-      if (archived !== 'exclude' && ARCHIVABLE_TYPES.has(type) && !canDeleteRecords(context.role)) {
+      if ((archived === 'only' || (archived === 'include' && !['invoices', 'payments'].includes(type))) && !canDeleteRecords(context.role)) {
         throw new HttpError(403, 'Only the shop owner or an admin can view archived records');
       }
       const result = await listEntities(env, context.shopId, type, { ...params, archived });
@@ -895,6 +895,11 @@ async function handleEntities(request, env, context, segments, analytics) {
       if (!conversation || !members(conversation).includes(context.email)) throw new HttpError(404, 'Not found');
     }
     return json(type === 'employees' ? redactEmployee(record, context.role) : record);
+  }
+  if (request.method === 'POST' && id && type === 'orders' && segments.at(-1) === 'refuse') {
+    const result = await refuseShopOrder(env, context, decodeURIComponent(segments.slice(2, -1).join('/')), await requestJson(request));
+    captureForContext(analytics, context, 'service_refused', { entity_type: type });
+    return json(result);
   }
   if (request.method === 'POST' && id && ARCHIVABLE_TYPES.has(type) && segments.at(-1) === 'restore') {
     const result = await restoreShopRecord(env, context, type, decodeURIComponent(segments.slice(2, -1).join('/')));
