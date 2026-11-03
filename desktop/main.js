@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage } = require('electron');
 const path = require('node:path');
 const diagnostics = require('./diagnostics-bridge');
 const { resolveDesktopStart } = require('./start-url');
@@ -34,14 +34,26 @@ function isGoogleSignInStart(rawUrl) {
   }
 }
 
+/**
+ * OS encryption for the offline shop file (DPAPI on Windows). Off for the portable
+ * USB edition: DPAPI ties data to one Windows account, so the drive would not open elsewhere.
+ */
+function shopFileCipher() {
+  if (edition.portable === true || !safeStorage?.isEncryptionAvailable?.()) return null;
+  return {
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (buffer) => safeStorage.decryptString(buffer),
+  };
+}
+
 function registerOfflineIpc() {
   if (edition.offline !== true) return;
   const handlers = {
     'local-auth:status': () => vault.accountStatus(app.getPath('userData')),
     'local-auth:create': (_event, payload) => vault.createAccount(app.getPath('userData'), payload || {}),
     'local-auth:sign-in': (_event, payload) => vault.signIn(app.getPath('userData'), payload || {}),
-    'local-shop:load': () => vault.loadShop(app.getPath('userData')),
-    'local-shop:save': (_event, snapshot) => vault.saveShop(app.getPath('userData'), snapshot || {}),
+    'local-shop:load': () => vault.loadShop(app.getPath('userData'), { cipher: shopFileCipher() }),
+    'local-shop:save': (_event, snapshot) => vault.saveShop(app.getPath('userData'), snapshot || {}, { cipher: shopFileCipher() }),
   };
   Object.entries(handlers).forEach(([channel, handler]) => {
     ipcMain.handle(channel, async (_event, ...args) => {
