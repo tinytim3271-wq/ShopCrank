@@ -6193,6 +6193,7 @@ async function openSaleCredit(shopId) {
     const error = document.querySelector("#amb-credit-error"), data = readFormValues(form);
     error.hidden = true;
     try {
+      if ((data.ambassadorId || "") !== (sale.ambassadorId || "") && data.soldBy === sale.soldBy) data.soldBy = "";
       await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/attribution`, { method: "POST", body: JSON.stringify({ ambassadorId: data.ambassadorId || null, saleSource: data.saleSource, soldBy: data.soldBy, reason: data.reason }) });
       closeModal();
       toast("Sale credit updated");
