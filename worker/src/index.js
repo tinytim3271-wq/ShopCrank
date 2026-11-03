@@ -2672,6 +2672,24 @@ async function createPublicTrialSubscription(env, { shopId, email, ownerName, sh
   return { planId: plan, trialEnds };
 }
 
+async function retryPendingSignupAttribution(env, shopId) {
+  const pending = await env.DB.prepare(`
+    SELECT referral_code, sale_source, changed_by, reason
+    FROM pending_membership_attributions WHERE shop_id = ?
+  `).bind(shopId).first();
+  if (!pending) return false;
+  await attributeMembership(env, shopId, {
+    referralCode: pending.referral_code,
+    saleSource: pending.sale_source,
+    defaultSource: 'shopcrank_online',
+    changedBy: pending.changed_by,
+    reason: pending.reason,
+    onlyIfUncredited: true,
+  });
+  await env.DB.prepare('DELETE FROM pending_membership_attributions WHERE shop_id = ?').bind(shopId).run();
+  return true;
+}
+
 async function ensureSaasUser(env, email, name, signup = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) throw new HttpError(400, 'A valid email is required');
@@ -2686,6 +2704,13 @@ async function ensureSaasUser(env, email, name, signup = {}) {
         .bind(userId, now, normalized).run();
       existing.id = userId;
     }
+    if (existing.shop_id) {
+      try {
+        await retryPendingSignupAttribution(env, existing.shop_id);
+      } catch (error) {
+        console.error(JSON.stringify({ message: 'signup attribution retry failed', shopId: existing.shop_id, error: String(error?.message || error) }));
+      }
+    }
     // Do not attach founding plans to existing shops on login. Claim emails are
     // unverified, so applying here would let a stolen invite rewrite a live plan.
     return existing;
@@ -2698,6 +2723,7 @@ async function ensureSaasUser(env, email, name, signup = {}) {
   const userId = crypto.randomUUID();
   const now = new Date().toISOString();
   const shopId = `shop-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const referralCode = normalizeReferralCode(signup.referralCode);
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO shops (id, name, slug, timezone, billing_status, created_at, updated_at)
@@ -2725,6 +2751,15 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       createdAt: now,
       updatedAt: now,
     }), userId, now, now),
+    ...(referralCode ? [env.DB.prepare(`
+      INSERT INTO pending_membership_attributions (
+        shop_id, referral_code, sale_source, changed_by, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(shop_id) DO NOTHING
+    `).bind(
+      shopId, referralCode, signup.referralSource || null, `signup:${normalized}`,
+      `Self-signup with referral code ${referralCode}`, now,
+    )] : []),
   ]);
   const founding = await applyPendingFoundingClaim(env, {
     email: normalized,
@@ -2741,17 +2776,24 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       planId: intent.planId,
     });
   }
-  try {
-    await attributeMembership(env, shopId, {
-      referralCode: signup.referralCode,
-      saleSource: signup.referralSource,
-      defaultSource: 'shopcrank_online',
-      changedBy: `signup:${normalized}`,
-      reason: signup.referralCode ? `Self-signup with referral code ${normalizeReferralCode(signup.referralCode)}` : 'Self-signup',
-    });
-  } catch (error) {
-    // Attribution must never block a new shop from signing in.
-    console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+  if (referralCode) {
+    try {
+      await retryPendingSignupAttribution(env, shopId);
+    } catch (error) {
+      console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+    }
+  } else {
+    try {
+      await attributeMembership(env, shopId, {
+        saleSource: signup.referralSource,
+        defaultSource: 'shopcrank_online',
+        changedBy: `signup:${normalized}`,
+        reason: 'Self-signup',
+      });
+    } catch (error) {
+      // Attribution must never block a new shop from signing in.
+      console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+    }
   }
   return { id: userId, email: normalized, shop_id: shopId, role: 'admin', name: intent.ownerName, enabled: 1 };
 }
