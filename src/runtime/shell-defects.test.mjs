@@ -78,6 +78,22 @@ test('archived vehicles stay in history but are hidden from operations and new-r
   assert.equal(context.state.vehicles.includes(archived), true);
 });
 
+test('inspection pickers hide archived vehicles but keep the historical selection', () => {
+  const active = { id: 'vehicle-active' };
+  const archived = { id: 'vehicle-archived', archivedAt: '2026-10-31T00:00:00.000Z' };
+  const context = {
+    state: { vehicles: [active, archived] },
+    isArchived: record => Boolean(record.archivedAt),
+  };
+  vm.createContext(context);
+  vm.runInContext(functionSource('function withActiveInspectionVehicles('), context);
+  const selectedForNew = context.withActiveInspectionVehicles(null, () => [...context.state.vehicles].map(vehicle => vehicle.id).join(','));
+  const selectedForHistory = context.withActiveInspectionVehicles({ vehicleId: archived.id }, () => [...context.state.vehicles].map(vehicle => vehicle.id).join(','));
+  assert.equal(selectedForNew, 'vehicle-active');
+  assert.equal(selectedForHistory, 'vehicle-active,vehicle-archived');
+  assert.deepEqual(context.state.vehicles.map(vehicle => vehicle.id), [active.id, archived.id]);
+});
+
 test('Texas filing mismatches block generation, exports, and printing but not other states', async () => {
   const state = { taxSettings: { state: 'TX', rate: 8.25, jurisdictions: null } };
   const context = {

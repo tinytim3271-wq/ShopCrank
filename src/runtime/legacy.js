@@ -1876,7 +1876,7 @@ function requestRecordRemoval(type, record) {
     button.disabled = true;
     try {
       const archivedRecord = archive ? { ...record, archivedAt: now(), archivedBy: currentUser()?.email || "", archiveReasons: plan.reasons } : null;
-      const result = await apiFetch(`/entities/${type}/${encodeURIComponent(spec.id(record))}`, { method: "DELETE", queuedArchiveRecord: archivedRecord });
+      const result = await apiFetch(`/entities/${type}/${encodeURIComponent(spec.id(record))}`, { method: "DELETE", archive: Boolean(archivedRecord), queuedArchiveRecord: archivedRecord });
       const outcome = result?.queued
         ? (archive ? { archived: true, record: archivedRecord } : { archived: false })
         : result?.archived ? { archived: true, record: result.record } : { archived: false };
@@ -6940,5 +6940,13 @@ document.addEventListener("click", event => {
   showArchivedRecords = !showArchivedRecords;
   render();
 });
+
+function withActiveInspectionVehicles(existing, open) {
+  const vehicles = state.vehicles;
+  state.vehicles = vehicles.filter(vehicle => !isArchived(vehicle) || (existing && vehicle.id === existing.vehicleId));
+  try { return open(existing) } finally { state.vehicles = vehicles }
+}
+const openInspectionFormOriginal = openInspectionForm;
+openInspectionForm = function (existing = null) { return withActiveInspectionVehicles(existing, openInspectionFormOriginal) };
 
 void startApp();

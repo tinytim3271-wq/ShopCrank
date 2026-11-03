@@ -18,10 +18,15 @@ export function withOptimisticConcurrencyHeaders(options = {}, expectedUpdatedAt
 
 export function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
   const method = String(options.method || 'GET').toUpperCase();
+  const archive = method === 'DELETE' && options.archive === true;
   const isEntityMutation = path.startsWith('/entities/') && ['POST', 'PUT', 'DELETE'].includes(method);
   const containsSensitiveEndpoint = path === '/agentphone/configure' || path === '/voice/grok/configure';
-  const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !containsSensitiveEndpoint;
+  const queueable = isEntityMutation
+    && (!OFFLINE_QUEUE_BLOCKED.test(path) || archive)
+    && !containsSensitiveEndpoint;
   if (!queueable) return { path, options, queueable: false };
+  const requestOptions = { ...options };
+  delete requestOptions.archive;
   let body = null;
   if (options.body) {
     try { body = JSON.parse(options.body); } catch { body = null; }
@@ -34,7 +39,8 @@ export function prepareEntityMutation(path, options, createMutationId = defaultM
     : path;
   return {
     path,
-    options: { ...options, method, body: body ? JSON.stringify(body) : undefined },
+    options: { ...requestOptions, method, body: body ? JSON.stringify(body) : undefined },
+    archive,
     queueable: Boolean(body) || method === 'DELETE',
     expectedUpdatedAt: method === 'PUT' ? body?.updatedAt : null,
     key: entityKey,

@@ -22,6 +22,11 @@ test('withPrintBaseStyles injects into the head and keeps the doctype first', ()
   assert.equal(withPrintBaseStyles(withHead), withHead);
 });
 
+test('record print styles retain state-bearing damage-zone buttons', () => {
+  const css = readFileSync(new URL('../../styles.css', import.meta.url), 'utf8');
+  assert.match(css, /button:not\(\.damage-zone\)/);
+});
+
 function fakeModal({ matches = false, head = true, body = true } = {}) {
   return {
     matches: () => matches,

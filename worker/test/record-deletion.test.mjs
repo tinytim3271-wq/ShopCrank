@@ -257,6 +257,21 @@ test('stale saves keep the archive flag; only owners/admins restore', async () =
   assert.equal((await stored('invoices', 'INV-3')).archivedAt, null);
 });
 
+for (const modular of [false, true]) {
+  test(`PUT rejects empty archive timestamps (${modular ? 'module' : 'deployed'} handler)`, async () => {
+    const { seed, call, stored } = await setup(modular);
+    await seed('invoices', 'INV-4', { number: 'INV-4', customer: 'Pat', amount: 20 });
+    const active = await call('owner', 'PUT', 'invoices/INV-4', { id: 'INV-4', archivedAt: ' ' });
+    assert.equal(active.status, 400);
+    assert.equal((await stored('invoices', 'INV-4')).archivedAt, undefined);
+
+    await call('owner', 'DELETE', 'invoices/INV-4');
+    const archived = await call('writer', 'PUT', 'invoices/INV-4', { id: 'INV-4', archivedAt: '' });
+    assert.equal(archived.status, 400);
+    assert.ok((await stored('invoices', 'INV-4')).archivedAt);
+  });
+}
+
 test('chat housekeeping keeps its membership rule', async () => {
   const { seed, call, stored } = await setup();
   await seed('conversations', 'conv-1', { kind: 'direct', memberEmails: [people.tech, people.writer] });

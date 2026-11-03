@@ -97,6 +97,10 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
  */
 export function preservedArchiveFields(existingRow, body, context) {
   const previous = existingRow ? entityRecord(existingRow) : null;
+  if (Object.hasOwn(body || {}, 'archivedAt') && body.archivedAt !== null
+    && (typeof body.archivedAt !== 'string' || !body.archivedAt.trim())) {
+    throw new HttpError(400, 'archivedAt must be a non-empty timestamp or null');
+  }
   if (!isArchived(previous)) {
     if (isArchived(body) && !canDeleteRecords(context.role)) {
       throw new HttpError(403, 'Only the shop owner or an admin can archive records');

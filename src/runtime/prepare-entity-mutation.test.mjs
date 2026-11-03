@@ -31,6 +31,16 @@ test('DELETE without a body remains queueable', () => {
   assert.equal(result.key, '/entities/orders/RO-1');
 });
 
+test('explicit archive deletes are queueable for financial records', () => {
+  const result = prepareEntityMutation('/entities/invoices/INV-1', {
+    method: 'DELETE',
+    archive: true,
+  }, mutationId);
+  assert.equal(result.queueable, true);
+  assert.equal(result.archive, true);
+  assert.equal(result.options.archive, undefined);
+});
+
 test('blocked payroll entities are never queued', () => {
   const result = prepareEntityMutation('/entities/payrollentries', {
     method: 'POST',
