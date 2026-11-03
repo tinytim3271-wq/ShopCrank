@@ -12664,7 +12664,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
           state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== id);
           state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== id);
         }
-        deleteOrderInApi(id);
+        void deleteOrderInApi(id);
         save();
         closeModal();
         toast(archives ? `${id} archived` : `${id} deleted`);
@@ -13474,7 +13474,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         });
         toast("Restored, together with anything archived with it");
         render();
-        openArchivedRecords();
+        void openArchivedRecords();
       } catch (error) {
         button.disabled = false;
         toast(error.message || "Could not restore");
