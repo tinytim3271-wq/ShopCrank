@@ -64,3 +64,18 @@ test('every shop screen still has a view function', () => {
   assert.match(legacy, /invoices:/);
   assert.match(legacy, /estimates:/);
 });
+
+test('robots.txt and sitemap.xml are real files the Pages site serves', async () => {
+  const { existsSync } = await import('node:fs');
+  const robots = readFileSync(new URL('../public/robots.txt', import.meta.url), 'utf8');
+  const sitemap = readFileSync(new URL('../public/sitemap.xml', import.meta.url), 'utf8');
+  const routes = JSON.parse(readFileSync(new URL('../public/_routes.json', import.meta.url), 'utf8'));
+  assert.match(robots, /^User-agent: \*/m);
+  assert.match(robots, /^Disallow: \/api\//m, 'the API stays out of search results');
+  assert.match(robots, /^Sitemap: https:\/\/www\.shopcrank\.com\/sitemap\.xml$/m);
+  assert.match(sitemap, /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
+  const locs = [...sitemap.matchAll(/<loc>https:\/\/www\.shopcrank\.com\/([^<]*)<\/loc>/g)].map(match => match[1]);
+  assert.ok(locs.length >= 5);
+  for (const path of locs) assert.ok(existsSync(new URL(`../public/${path}index.html`, import.meta.url)), `sitemap lists /${path} but public/${path}index.html is missing`);
+  for (const file of ['/robots.txt', '/sitemap.xml']) assert.ok(routes.exclude.includes(file), `${file} must bypass the Worker so the static file is served, not the app`);
+});
