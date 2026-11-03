@@ -112,17 +112,28 @@ export function statementHtml(statement, { escapeHtml, icon }) {
   return `<div class="modal wide"><div class="modal-head"><h2>Statement · ${escapeHtml(ambassador.ambassadorNumber)} ${escapeHtml(ambassador.name)}</h2><button type="button" class="close" data-close>${icon('x')}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article></div><p class="ops-note">Ambassadors can see this at /ambassador with code <span class="mono">${escapeHtml(ambassador.referralCode)}</span> and their email.</p><div class="data-panel"><table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No commissions yet.</td></tr>'}</tbody></table></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
 }
 
+function payoutTierRateLabel(item) {
+  const entries = item.rateBreakdown?.length
+    ? item.rateBreakdown
+    : item.count && Number.isFinite(Number(item.rateCents))
+      ? [{ rateCents: Number(item.rateCents) }]
+      : [];
+  if (!entries.length) return '—';
+  if (entries.length === 1) return formatCents(entries[0].rateCents);
+  return `Mixed (${entries.map(entry => formatCents(entry.rateCents)).join(', ')})`;
+}
+
 /** View/print dialog for one month, with a mark-paid form per ambassador. */
 export function payoutReportDialogHtml(report, { escapeHtml, icon, today = new Date().toISOString().slice(0, 10) }) {
   const tierHead = TIERS.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join('');
   const rows = report.ambassadors.map(entry => {
-    const tiers = TIERS.map(([tier]) => `<td>${entry.tiers[tier].count}<small>${formatCents(entry.tiers[tier].subtotalCents)}</small></td>`).join('');
+    const tiers = TIERS.map(([tier]) => `<td>${entry.tiers[tier].count}<small>${formatCents(entry.tiers[tier].subtotalCents)} @ ${escapeHtml(payoutTierRateLabel(entry.tiers[tier]))}</small></td>`).join('');
     const sources = REPORT_SOURCES.map(source => `${escapeHtml(saleSourceLabel(source))}: ${entry.sources[source].count}`).join(' · ');
     const pay = entry.payout
       ? `<span class="badge paid">Paid</span><small>Check ${escapeHtml(entry.payout.checkNumber)} · ${escapeHtml(entry.payout.paidOn)}</small>`
       : `<form class="amb-pay-form" data-ambassador="${escapeHtml(entry.ambassadorId)}"><input name="checkNumber" placeholder="Check #" required size="8"/><input name="paidOn" type="date" value="${escapeHtml(today)}" required/><button class="mini-action" type="submit">${icon('badge-check', 13)} Mark paid</button></form>`;
     return `<tr><td><b class="mono">${escapeHtml(entry.ambassadorNumber)}</b><small class="mono">${escapeHtml(entry.referralCode)}</small></td><td><b>${escapeHtml(entry.name)}</b><small>${sources}</small></td>${tiers}<td><b>${formatCents(entry.totalCents)}</b></td><td>${pay}</td></tr>`;
   }).join('');
-  const totals = TIERS.map(([tier]) => `<td><b>${report.totals.tiers[tier].count}</b><small>${formatCents(report.totals.tiers[tier].subtotalCents)} @ ${formatCents(report.totals.tiers[tier].rateCents)}</small></td>`).join('');
+  const totals = TIERS.map(([tier]) => `<td><b>${report.totals.tiers[tier].count}</b><small>${formatCents(report.totals.tiers[tier].subtotalCents)} @ ${escapeHtml(payoutTierRateLabel(report.totals.tiers[tier]))}</small></td>`).join('');
   return `<div class="modal wide" id="amb-report-dialog" data-period="${escapeHtml(report.period)}"><div class="modal-head"><h2>Ambassador Payout Report · ${escapeHtml(report.periodLabel)}</h2><button type="button" class="close" data-close>${icon('x')}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Grand total</span><strong>${formatCents(report.totals.grandTotalCents)}</strong></article><article><span>Ambassadors</span><strong>${report.totals.ambassadorCount}</strong></article><article><span>Paid so far</span><strong>${formatCents(report.paidCents)}</strong></article><article><span>By source</span><strong>${REPORT_SOURCES.map(source => report.totals.sources[source].count).join(' / ')}</strong></article></div><div class="platform-action-buttons"><button class="secondary" type="button" id="amb-report-print">${icon('printer', 14)} Print</button><button class="secondary" type="button" id="amb-report-pdf">${icon('download', 14)} Download PDF</button></div><div class="data-panel"><table><thead><tr><th>Ambassador</th><th>Name · sources</th>${tierHead}<th>Total due</th><th>Payout</th></tr></thead><tbody>${rows || `<tr><td colspan="${TIERS.length + 4}">No ambassador commissions this month.</td></tr>`}</tbody><tfoot><tr><td colspan="2"><b>All ambassadors</b><small>Sources: ${REPORT_SOURCES.map(source => `${escapeHtml(saleSourceLabel(source))} ${formatCents(report.totals.sources[source].amountCents)}`).join(' · ')}</small></td>${totals}<td><b>${formatCents(report.totals.grandTotalCents)}</b></td><td></td></tr></tfoot></table></div><p class="ops-note">Snapshot generated ${escapeHtml(String(report.generatedAt).slice(0, 16).replace('T', ' '))} UTC by ${escapeHtml(report.generatedBy)}. It will not change; marking a check paid is recorded alongside it.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
 }

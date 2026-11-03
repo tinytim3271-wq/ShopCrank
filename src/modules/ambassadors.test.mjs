@@ -76,13 +76,21 @@ test('tabs render ambassadors, sales filters, commission rates, and reports', ()
 });
 
 test('payout dialog shows tiers, sources, totals, and mark-paid only for unpaid ambassadors', () => {
+  const janeTiers = tiers({ solo: 1, shop: 3, shop_pro: 1 });
+  const totalTiers = tiers({ solo: 1, shop: 3, shop_pro: 1, enterprise: 1 });
+  for (const tierData of [janeTiers.shop, totalTiers.shop]) {
+    tierData.rateBreakdown = [
+      { rateCents: 1000, count: 1, subtotalCents: 1000 },
+      { rateCents: 2500, count: 2, subtotalCents: 5000 },
+    ];
+  }
   const report = {
     period: '2026-10', periodLabel: 'October 2026', generatedAt: '2026-11-01T09:00:00Z', generatedBy: 'cron', paidCents: 11000,
     ambassadors: [
-      { ambassadorId: 'a1', ambassadorNumber: 'AMB-0001', referralCode: 'TX4K9P', name: 'Jane', tiers: tiers({ solo: 1, shop: 3, shop_pro: 1 }), sources: sources({ ambassador_site: 2, ambassador_referral: 2, shopcrank_online: 1 }), totalCents: 11000, payout: { checkNumber: '1001', paidOn: '2026-11-03' } },
+      { ambassadorId: 'a1', ambassadorNumber: 'AMB-0001', referralCode: 'TX4K9P', name: 'Jane', tiers: janeTiers, sources: sources({ ambassador_site: 2, ambassador_referral: 2, shopcrank_online: 1 }), totalCents: 11000, payout: { checkNumber: '1001', paidOn: '2026-11-03' } },
       { ambassadorId: 'a2', ambassadorNumber: 'AMB-0002', referralCode: 'LBK22Z', name: 'Marco', tiers: tiers({ enterprise: 1 }), sources: sources({ ambassador_referral: 1 }), totalCents: 10000, payout: null },
     ],
-    totals: { grandTotalCents: 21000, ambassadorCount: 2, tiers: tiers({ solo: 1, shop: 3, shop_pro: 1, enterprise: 1 }), sources: sources({ ambassador_site: 2, ambassador_referral: 3, shopcrank_online: 1 }) },
+    totals: { grandTotalCents: 21000, ambassadorCount: 2, tiers: totalTiers, sources: sources({ ambassador_site: 2, ambassador_referral: 3, shopcrank_online: 1 }) },
   };
   const html = payoutReportDialogHtml(report, { ...helpers, today: '2026-11-05' });
   assert.match(html, /Check 1001 · 2026-11-03/);
@@ -90,7 +98,7 @@ test('payout dialog shows tiers, sources, totals, and mark-paid only for unpaid 
   assert.match(html, /data-ambassador="a2"/);
   assert.match(html, /value="2026-11-05"/);
   assert.match(html, /\$210\.00/);
-  assert.match(html, /\$60\.00 @ \$20\.00/);
+  assert.match(html, /\$60\.00 @ Mixed \(\$10\.00, \$25\.00\)/);
   assert.match(html, /Ambassador site: 2 · Ambassador referral: 2/);
   assert.match(html, /id="amb-report-print"/);
   assert.match(html, /id="amb-report-pdf"/);

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
-import { AMBASSADOR_PAYOUT_CRON, assembleReport } from '../src/ambassadors/payout-report.mjs';
+import { AMBASSADOR_PAYOUT_CRON, assembleReport, payoutReportHtml, payoutReportPdf } from '../src/ambassadors/payout-report.mjs';
 import { generateCommissionLedger, periodBounds, periodOf, previousPeriod, shiftPeriod } from '../src/ambassadors/commissions.mjs';
 import { applyAttribution, normalizeReferralCode, randomReferralCode } from '../src/ambassadors/store.mjs';
 import { provisionShopRoles } from '../src/onboarding/roles.mjs';
@@ -476,7 +476,7 @@ test('payout report: tiers, sources, frozen snapshot, mark paid, print and PDF',
   const j = report.ambassadors.find(item => item.ambassadorNumber === 'AMB-0001');
   assert.equal(j.referralCode, jane.referralCode);
   assert.deepEqual(['solo', 'shop', 'shop_pro', 'enterprise'].map(tier => j.tiers[tier].count), [1, 3, 1, 0]);
-  assert.deepEqual(['solo', 'shop', 'shop_pro', 'enterprise'].map(tier => j.tiers[tier].rateCents), [1000, 2000, 4000, 10000]);
+  assert.deepEqual(['solo', 'shop', 'shop_pro', 'enterprise'].map(tier => j.tiers[tier].rateCents), [1000, 2000, 4000, null]);
   assert.equal(j.tiers.shop.subtotalCents, 6000);
   assert.equal(j.totalCents, 1000 + 6000 + 4000);
   assert.deepEqual(['shopcrank_online', 'ambassador_site', 'ambassador_referral'].map(source => j.sources[source].count), [1, 2, 2]);
@@ -583,7 +583,7 @@ test('statements: admin view and ambassador self-service by code and email', asy
 });
 
 test('report assembly and PDF writer handle empty months and long statements', () => {
-  const empty = assembleReport({ period: '2026-01', rates: { solo: 1000, shop: 2000, shop_pro: 4000, enterprise: 10000 }, lines: [], ambassadors: new Map(), generatedAt: '2026-02-01T09:00:00.000Z', generatedBy: 'cron' });
+  const empty = assembleReport({ period: '2026-01', lines: [], ambassadors: new Map(), generatedAt: '2026-02-01T09:00:00.000Z', generatedBy: 'cron' });
   assert.equal(empty.totals.grandTotalCents, 0);
   assert.equal(empty.periodLabel, 'January 2026');
   const many = Array.from({ length: 120 }, (_, index) => ({ text: `Line ${index} (with parens) \\ and ünïcode` }));
@@ -593,4 +593,29 @@ test('report assembly and PDF writer handle empty months and long statements', (
   assert.match(text, /\(Line 7 \\\(with parens\\\) \\\\ and \?n\?code\) Tj/);
   const xref = Number(/startxref\n(\d+)/.exec(text)[1]);
   assert.ok(text.slice(xref).startsWith('xref'), 'startxref points at the xref table');
+});
+
+test('payout rate breakdowns use accrued amounts and label mixed rates', () => {
+  const report = assembleReport({
+    period: '2026-01',
+    lines: [
+      { id: 'c1', ambassador_id: 'a1', shop_id: 's1', shop_name: 'Shop One', tier: 'shop', amount_cents: 2000 },
+      { id: 'c2', ambassador_id: 'a1', shop_id: 's2', shop_name: 'Shop Two', tier: 'shop', amount_cents: 2500 },
+    ],
+    ambassadors: new Map([['a1', { ambassador_number: 'AMB-0001', name: 'Jane' }]]),
+    generatedAt: '2026-02-01T09:00:00.000Z',
+    generatedBy: 'cron',
+  });
+  const tier = report.totals.tiers.shop;
+  assert.equal(tier.rateCents, null);
+  assert.deepEqual(tier.rateBreakdown, [
+    { rateCents: 2000, count: 1, subtotalCents: 2000 },
+    { rateCents: 2500, count: 1, subtotalCents: 2500 },
+  ]);
+  assert.equal(tier.subtotalCents, 4500);
+  assert.match(payoutReportHtml(report), /Mixed \(\$20\.00, \$25\.00\)/);
+  const pdf = Buffer.from(payoutReportPdf(report).bytes).toString('latin1');
+  assert.match(pdf, /mixed/);
+  assert.match(pdf, /1 x \$20\.00/);
+  assert.match(pdf, /1 x \$25\.00/);
 });

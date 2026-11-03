@@ -3,7 +3,7 @@
 // Mark-paid data (check number/date) lives beside the snapshot, never in it.
 
 import { HttpError } from '../http.mjs';
-import { COMMISSION_TIERS, TIER_LABELS, generateCommissionLedger, periodBounds, periodHasEnded, previousPeriod, requirePeriod, tierRates } from './commissions.mjs';
+import { COMMISSION_TIERS, TIER_LABELS, generateCommissionLedger, periodBounds, periodHasEnded, previousPeriod, requirePeriod } from './commissions.mjs';
 import { SALE_SOURCE_LABELS } from './store.mjs';
 import { buildPdf } from './pdf.mjs';
 
@@ -23,8 +23,8 @@ export function periodLabel(period) {
   return new Date(start).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
-function emptyTiers(rates) {
-  return Object.fromEntries(COMMISSION_TIERS.map(tier => [tier, { tier, label: TIER_LABELS[tier], count: 0, rateCents: rates[tier] || 0, subtotalCents: 0 }]));
+function emptyTiers() {
+  return Object.fromEntries(COMMISSION_TIERS.map(tier => [tier, { tier, label: TIER_LABELS[tier], count: 0, rateCents: null, rateBreakdown: [], subtotalCents: 0 }]));
 }
 
 function emptySources() {
@@ -37,9 +37,9 @@ function emptySources() {
 }
 
 /** Pure: group ledger lines into the report shape. */
-export function assembleReport({ period, rates, lines, ambassadors, generatedAt, generatedBy }) {
+export function assembleReport({ period, lines, ambassadors, generatedAt, generatedBy }) {
   const byAmbassador = new Map();
-  const totals = { tiers: emptyTiers(rates), sources: emptySources(), grandTotalCents: 0, lineCount: 0 };
+  const totals = { tiers: emptyTiers(), sources: emptySources(), grandTotalCents: 0, lineCount: 0 };
   for (const line of lines) {
     if (!byAmbassador.has(line.ambassador_id)) {
       const ambassador = ambassadors.get(line.ambassador_id) || {};
@@ -52,7 +52,7 @@ export function assembleReport({ period, rates, lines, ambassadors, generatedAt,
         phone: ambassador.phone || '',
         mailingAddress: ambassador.mailing_address || '',
         payoutMethod: ambassador.payout_method || 'check',
-        tiers: emptyTiers(rates),
+        tiers: emptyTiers(),
         sources: emptySources(),
         lines: [],
         totalCents: 0,
@@ -63,8 +63,16 @@ export function assembleReport({ period, rates, lines, ambassadors, generatedAt,
     const tier = COMMISSION_TIERS.includes(line.tier) ? line.tier : 'shop';
     const source = REPORT_SOURCES.includes(line.sale_source) ? line.sale_source : OTHER_SOURCE;
     for (const bucket of [entry, totals]) {
-      bucket.tiers[tier].count += 1;
-      bucket.tiers[tier].subtotalCents += amount;
+      const tierTotals = bucket.tiers[tier];
+      tierTotals.count += 1;
+      tierTotals.subtotalCents += amount;
+      let rate = tierTotals.rateBreakdown.find(item => item.rateCents === amount);
+      if (!rate) {
+        rate = { rateCents: amount, count: 0, subtotalCents: 0 };
+        tierTotals.rateBreakdown.push(rate);
+      }
+      rate.count += 1;
+      rate.subtotalCents += amount;
       bucket.sources[source].count += 1;
       bucket.sources[source].amountCents += amount;
     }
@@ -84,13 +92,24 @@ export function assembleReport({ period, rates, lines, ambassadors, generatedAt,
     });
   }
   const list = [...byAmbassador.values()].sort((a, b) => a.ambassadorNumber.localeCompare(b.ambassadorNumber));
-  for (const entry of list) entry.lines.sort((a, b) => a.shopName.localeCompare(b.shopName));
+  for (const entry of list) {
+    entry.lines.sort((a, b) => a.shopName.localeCompare(b.shopName));
+    for (const tier of COMMISSION_TIERS) {
+      const rateBreakdown = entry.tiers[tier].rateBreakdown;
+      rateBreakdown.sort((a, b) => a.rateCents - b.rateCents);
+      if (rateBreakdown.length === 1) entry.tiers[tier].rateCents = rateBreakdown[0].rateCents;
+    }
+  }
+  for (const tier of COMMISSION_TIERS) {
+    const rateBreakdown = totals.tiers[tier].rateBreakdown;
+    rateBreakdown.sort((a, b) => a.rateCents - b.rateCents);
+    if (rateBreakdown.length === 1) totals.tiers[tier].rateCents = rateBreakdown[0].rateCents;
+  }
   return {
     period,
     periodLabel: periodLabel(period),
     generatedAt,
     generatedBy,
-    rates,
     ambassadors: list,
     totals: { ...totals, ambassadorCount: list.length },
   };
@@ -110,7 +129,6 @@ export async function buildPayoutReport(env, period, { generatedBy = 'system', n
   }
   return assembleReport({
     period,
-    rates: await tierRates(env),
     lines: lines.results || [],
     ambassadors,
     generatedAt: now.toISOString(),
@@ -218,8 +236,41 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '
 const nl2br = value => escapeHtml(value).replace(/\r?\n/g, '<br>');
 
 function tierTable(tiers) {
-  const rows = COMMISSION_TIERS.map(tier => tiers[tier]).map(item => `<tr><td>${escapeHtml(item.label)}</td><td class="num">${item.count}</td><td class="num">${formatCents(item.rateCents)}</td><td class="num">${formatCents(item.subtotalCents)}</td></tr>`).join('');
+  const rows = COMMISSION_TIERS.map(tier => tiers[tier]).map(item => `<tr><td>${escapeHtml(item.label)}</td><td class="num">${item.count}</td><td class="num">${escapeHtml(tierRateLabel(item))}</td><td class="num">${formatCents(item.subtotalCents)}</td></tr>`).join('');
   return `<table><thead><tr><th>Tier</th><th class="num">Active paid sales</th><th class="num">Rate / month</th><th class="num">Subtotal</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function tierRateEntries(item) {
+  return item.rateBreakdown?.length
+    ? item.rateBreakdown
+    : item.count && Number.isFinite(Number(item.rateCents))
+      ? [{ rateCents: Number(item.rateCents), count: item.count }]
+      : [];
+}
+
+function tierRateLabel(item) {
+  const entries = tierRateEntries(item);
+  if (!entries.length) return '—';
+  if (entries.length === 1) return formatCents(entries[0].rateCents);
+  return `Mixed (${entries.map(entry => formatCents(entry.rateCents)).join(', ')})`;
+}
+
+function tierRateDetail(item) {
+  const entries = tierRateEntries(item);
+  if (!entries.length) return '0 sales';
+  const breakdown = entries.map(entry => `${entry.count} x ${formatCents(entry.rateCents)}`).join(', ');
+  return entries.length === 1 ? breakdown : `Mixed: ${breakdown}`;
+}
+
+function tierPdfRows(item) {
+  const entries = tierRateEntries(item);
+  if (entries.length <= 1) {
+    return [{ columns: [item.label, tierRateDetail(item), formatCents(item.subtotalCents)], widths: [150, 150, 100] }];
+  }
+  return entries.map(entry => ({
+    columns: [`${item.label} (mixed)`, `${entry.count} x ${formatCents(entry.rateCents)}`, formatCents(entry.subtotalCents)],
+    widths: [150, 150, 100],
+  }));
 }
 
 function sourceTable(sources) {
@@ -299,7 +350,7 @@ export function payoutReportPdf(report) {
     })),
     { rule: true },
     { text: 'By tier', size: 11, bold: true },
-    ...COMMISSION_TIERS.map(tier => report.totals.tiers[tier]).map(item => ({ columns: [item.label, `${item.count} x ${formatCents(item.rateCents)}`, formatCents(item.subtotalCents)], widths: [150, 150, 100] })),
+    ...COMMISSION_TIERS.flatMap(tier => tierPdfRows(report.totals.tiers[tier])),
     { text: 'By source', size: 11, bold: true },
     ...[...REPORT_SOURCES, OTHER_SOURCE].map(source => report.totals.sources[source])
       .filter(item => REPORT_SOURCES.includes(item.source) || item.count)
@@ -322,7 +373,7 @@ export function payoutReportPdf(report) {
       { columns: ['Shop', 'Plan', 'Source', 'Commission'], widths: [220, 80, 120, 92], bold: true },
       ...entry.lines.map(line => ({ columns: [line.shopName, line.tierLabel, line.saleSourceLabel, formatCents(line.amountCents)], widths: [220, 80, 120, 92] })),
       { rule: true },
-      ...COMMISSION_TIERS.map(tier => entry.tiers[tier]).map(item => ({ columns: [item.label, `${item.count} x ${formatCents(item.rateCents)}`, formatCents(item.subtotalCents)], widths: [150, 150, 100] })),
+      ...COMMISSION_TIERS.flatMap(tier => tierPdfRows(entry.tiers[tier])),
       { gap: 4 },
       ...REPORT_SOURCES.map(source => entry.sources[source]).map(item => ({ columns: [item.label, `${item.count} sales`, formatCents(item.amountCents)], widths: [150, 150, 100] })),
       ...(entry.sources[OTHER_SOURCE].count ? [{ columns: [entry.sources[OTHER_SOURCE].label, `${entry.sources[OTHER_SOURCE].count} sales`, formatCents(entry.sources[OTHER_SOURCE].amountCents)], widths: [150, 150, 100] }] : []),
