@@ -13,10 +13,29 @@ import {
   intakeWizardHtml,
   localDiagnosticChecklist,
   missingRequiredPhotos,
+  mountIntakeWizard,
   priceIntakeEstimate,
   searchLaborGuide,
   unavailableLaborSources,
 } from './intake-wizard.js';
+
+test('intake wizard invokes its render callback after each render', () => {
+  let nextHandler;
+  const host = {
+    innerHTML: '',
+    querySelector(selector) {
+      if (selector === '#intake-next') return { addEventListener: (event, handler) => { if (event === 'click') nextHandler = handler; } };
+      return null;
+    },
+    querySelectorAll: () => [],
+  };
+  let renders = 0;
+  mountIntakeWizard(host, { draft: emptyIntakeDraft(), onRender: () => { renders += 1; } });
+
+  assert.equal(renders, 1);
+  nextHandler();
+  assert.equal(renders, 2);
+});
 
 test('findIntakeCustomer matches normalized phone numbers or email addresses', () => {
   const customers = [

@@ -4019,6 +4019,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     laborRate = 165,
     taxRate = 0,
     onSave,
+    onRender,
     onCancel,
     onConvert,
     decodeVin,
@@ -4031,6 +4032,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const paint = () => {
       host.innerHTML = intakeWizardHtml(current, { users, laborRate, taxRate });
       bind2();
+      onRender?.(host);
     };
     const persist = (reason) => {
       current.savedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -13727,6 +13729,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       laborRate: Number(profile.laborRate || 165),
       taxRate: Number(state.taxSettings?.rate || 0),
       onSave: saveIntakeDraft,
+      onRender: () => addModalPrintButton(backdrop, { onPrint: () => printRecordView(window), iconHtml: icon("printer", 14) }),
       onCancel: (current) => {
         saveIntakeDraft(current);
         closeModal();

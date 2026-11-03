@@ -2041,6 +2041,7 @@ function openCustomerIntake() {
     laborRate: Number(profile.laborRate || 165),
     taxRate: Number(state.taxSettings?.rate || 0),
     onSave: saveIntakeDraft,
+    onRender: () => addModalPrintButton(backdrop, { onPrint: () => printRecordView(window), iconHtml: icon("printer", 14) }),
     onCancel: current => { saveIntakeDraft(current); closeModal() },
     decodeVin: async vin => {
       const normalized = String(vin || "").trim().toUpperCase();

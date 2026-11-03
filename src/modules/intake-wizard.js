@@ -601,6 +601,7 @@ export function mountIntakeWizard(host, {
   laborRate = 165,
   taxRate = 0,
   onSave,
+  onRender,
   onCancel,
   onConvert,
   decodeVin,
@@ -613,6 +614,7 @@ export function mountIntakeWizard(host, {
   const paint = () => {
     host.innerHTML = intakeWizardHtml(current, { users, laborRate, taxRate });
     bind();
+    onRender?.(host);
   };
   const persist = (reason) => {
     current.savedAt = new Date().toISOString();
