@@ -6959,5 +6959,9 @@ function withActiveInspectionVehicles(existing, open) {
 }
 const openInspectionFormOriginal = openInspectionForm;
 openInspectionForm = function (existing = null) { return withActiveInspectionVehicles(existing, openInspectionFormOriginal) };
+const openCatalogInspectionOriginal = openCatalogInspection;
+openCatalogInspection = function (existing = null, catalogId = existing?.catalogId) {
+  return withActiveInspectionVehicles(existing, record => openCatalogInspectionOriginal(record, catalogId));
+};
 
 void startApp();
