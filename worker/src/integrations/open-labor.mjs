@@ -170,7 +170,7 @@ export async function searchOpenLabor(env, input = {}, { fetcher = fetch } = {})
   let make = input.make || parsed.make;
   let model = structured ? input.model || parsed.model : parsed.model || input.model;
   let engine = input.engine;
-  if (!(year && make && model) && /^[A-HJ-NPR-Z0-9]{17}$/i.test(String(input.vin || ''))) {
+  if (!(year && make && model && engine) && /^[A-HJ-NPR-Z0-9]{17}$/i.test(String(input.vin || ''))) {
     const decoded = await decodeVinNhtsa(input.vin, { fetcher });
     year = year || decoded.year;
     make = make || decoded.make;
