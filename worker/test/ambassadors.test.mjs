@@ -217,6 +217,29 @@ test('every creation path records sold_by and sale_source', async () => {
   assert.ok(log.every(row => row.changed_by && row.created_at));
 });
 
+test('invalid subscription attribution does not change membership', async () => {
+  const { call, DB } = setup();
+  await createShop(call, 'invalid-subscription-credit');
+  const before = {
+    account: DB.sqlite.prepare('SELECT * FROM accounts WHERE shop_id = ?').get('invalid-subscription-credit'),
+    shop: DB.sqlite.prepare('SELECT * FROM shops WHERE id = ?').get('invalid-subscription-credit'),
+    subscription: subscription(DB, 'invalid-subscription-credit'),
+  };
+
+  const result = await call('POST', '/admin/accounts/invalid-subscription-credit/subscription', {
+    mode: 'trialing',
+    trialDays: 30,
+    soldByAmbassadorId: 'missing',
+  });
+
+  assert.equal(result.status, 400);
+  assert.deepEqual({
+    account: DB.sqlite.prepare('SELECT * FROM accounts WHERE shop_id = ?').get('invalid-subscription-credit'),
+    shop: DB.sqlite.prepare('SELECT * FROM shops WHERE id = ?').get('invalid-subscription-credit'),
+    subscription: subscription(DB, 'invalid-subscription-credit'),
+  }, before);
+});
+
 test('only one concurrent first-credit attribution wins and is audited', async () => {
   const { call, DB, env } = setup();
   const jane = await createAmbassador(call);

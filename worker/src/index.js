@@ -2504,6 +2504,16 @@ async function handleAdmin(request, env, context, segments, analytics) {
     }
     const account = await env.DB.prepare('SELECT * FROM accounts WHERE shop_id = ?').bind(target).first();
     if (!account) throw new HttpError(404, 'Customer account not found');
+    let attribution = null;
+    if (body.saleSource || body.soldByAmbassadorId || body.referralCode) {
+      attribution = await resolveAttribution(env, {
+        ambassadorId: String(body.soldByAmbassadorId || '').trim(),
+        referralCode: body.referralCode,
+        saleSource: body.saleSource,
+        defaultSource: 'admin_manual',
+        trusted: true,
+      });
+    }
     const now = new Date();
     const nowIso = now.toISOString();
     let subscriptionStatus = String(account.subscription_status || 'trialing');
@@ -2535,14 +2545,12 @@ async function handleAdmin(request, env, context, segments, analytics) {
         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
     `).bind(target, planId, subscriptionStatus, subscriptionExpiresAt, nowIso, nowIso).run();
     let credit = null;
-    if (body.saleSource || body.soldByAmbassadorId || body.referralCode) {
-      credit = await attributeMembership(env, target, {
-        ambassadorId: String(body.soldByAmbassadorId || '').trim(),
-        referralCode: body.referralCode,
-        saleSource: body.saleSource,
-        defaultSource: 'admin_manual',
-        trusted: true,
+    if (attribution) {
+      credit = await applyAttribution(env, target, {
+        ambassador: attribution.ambassador,
+        saleSource: attribution.saleSource,
         soldBy: body.soldBy,
+        referralCode: body.referralCode,
         changedBy: context.email || context.userId,
         reason: String(body.reason || '').trim() || `Admin set membership to ${mode}`,
       });
