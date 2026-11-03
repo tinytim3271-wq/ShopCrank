@@ -17925,6 +17925,8 @@ ${line}`.trim();
         const editorRoot = document.querySelector("#job-estimate-editor");
         let jobCardDirty = false;
         let jobCardSaving = false;
+        let jobCardDeleting = false;
+        let jobCardSavePromise = null;
         let jobCardTimer = 0;
         const setAutosaveStatus = (message) => {
           const status = document.querySelector("#job-autosave-status");
@@ -17976,7 +17978,7 @@ ${line}`.trim();
           return { revised, editedAt };
         };
         const persistJobCard = async ({ silent = false, reopen = false } = {}) => {
-          if (!canManage || jobCardSaving) return false;
+          if (!canManage || jobCardSaving || jobCardDeleting) return false;
           if (!jobCardDirty && silent) return true;
           const { revised, editedAt } = buildRevisedOrder();
           if (!revised.customer || !revised.vehicle || !revised.complaint) {
@@ -17996,6 +17998,10 @@ ${line}`.trim();
             return true;
           }
           jobCardSaving = true;
+          let resolveJobCardSave;
+          jobCardSavePromise = new Promise((resolve) => {
+            resolveJobCardSave = resolve;
+          });
           setAutosaveStatus("Saving\u2026");
           const revisedInvoice = invoice ? {
             ...invoiceWithEditedWorkOrder(invoice, revised, editedAt),
@@ -18012,7 +18018,7 @@ ${line}`.trim();
             save();
             jobCardDirty = false;
             setAutosaveStatus("Saved");
-            if (!silent) {
+            if (!silent && !jobCardDeleting) {
               setModalAutosave(null);
               closeModal();
               toast(`${order.id} updated${revisedInvoice ? ` \xB7 ${invoice.number} synchronized` : ""}`);
@@ -18029,9 +18035,12 @@ ${line}`.trim();
             return false;
           } finally {
             jobCardSaving = false;
+            resolveJobCardSave();
+            jobCardSavePromise = null;
           }
         };
         const markJobCardDirty = () => {
+          if (jobCardDeleting) return;
           jobCardDirty = true;
           setAutosaveStatus("Unsaved changes");
           clearTimeout(jobCardTimer);
@@ -18039,16 +18048,17 @@ ${line}`.trim();
             void persistJobCard({ silent: true });
           }, 700);
         };
+        const flushJobCardAutosave = ({ reason } = {}) => {
+          clearTimeout(jobCardTimer);
+          if (!jobCardDirty) return;
+          void persistJobCard({ silent: true });
+          if (reason === "close") toast(`${order.id} autosaved`);
+        };
         if (canManage) {
           document.querySelector(".job-details-editor")?.addEventListener("input", markJobCardDirty);
           document.querySelector(".job-details-editor")?.addEventListener("change", markJobCardDirty);
           document.querySelector(".labor-assignment-panel")?.addEventListener("change", markJobCardDirty);
-          setModalAutosave(({ reason }) => {
-            clearTimeout(jobCardTimer);
-            if (!jobCardDirty) return;
-            void persistJobCard({ silent: true });
-            if (reason === "close") toast(`${order.id} autosaved`);
-          });
+          setModalAutosave(flushJobCardAutosave);
         }
         if (editorRoot) {
           bindEstimateEditor(editorRoot, { taxRate: estimate.taxRate, fees: estimate.fees });
@@ -18112,11 +18122,20 @@ ${line}`.trim();
           }
           const keepsInvoice = invoice ? ` ${invoice.number} will be kept; delete it from Invoices if it should go too.` : "";
           if (!confirm(`Delete ${order.id}?${keepsInvoice} This cannot be undone.`)) return;
+          const controls = [...document.querySelectorAll(".job-card-modal input, .job-card-modal textarea, .job-card-modal select, .job-card-modal button:not(#delete-job-card)")];
+          const controlDisabledStates = controls.map((control) => control.disabled);
+          jobCardDeleting = true;
           clearTimeout(jobCardTimer);
-          jobCardDirty = false;
-          event.currentTarget.disabled = true;
+          setModalAutosave(null);
+          controls.forEach((control) => {
+            control.disabled = true;
+          });
+          const button = event.currentTarget;
+          button.disabled = true;
           try {
+            if (jobCardSavePromise) await jobCardSavePromise;
             await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            jobCardDirty = false;
             state.orders = state.orders.filter((item) => item !== order);
             state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== order.id);
             state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== order.id);
@@ -18125,7 +18144,18 @@ ${line}`.trim();
             toast(`${order.id} deleted`);
             render();
           } catch (error) {
-            event.currentTarget.disabled = false;
+            jobCardDeleting = false;
+            controls.forEach((control, index) => {
+              control.disabled = controlDisabledStates[index];
+            });
+            button.disabled = false;
+            setModalAutosave(flushJobCardAutosave);
+            if (jobCardDirty) {
+              setAutosaveStatus("Unsaved changes");
+              jobCardTimer = setTimeout(() => {
+                void persistJobCard({ silent: true });
+              }, 700);
+            }
             toast(error.message || "Work order could not be deleted");
           }
         });
