@@ -1305,7 +1305,12 @@ export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '',
 export async function verifyTwilioVoiceRequest(request, env, shopId, params, getSecret) {
   const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
   const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
-  if (!authToken || String(env?.TWILIO_VERIFY_VOICE || '1') === '0') return;
+  // Fail closed: without a valid signature nothing proves the request came from Twilio,
+  // and an unsigned "incoming call" would hand out a signed AI stream on the shop's keys.
+  // Skipping the check is for local development only, never production.
+  const devBypass = env?.DEV_AUTH_BYPASS === '1';
+  if (devBypass && (!authToken || String(env?.TWILIO_VERIFY_VOICE || '1') === '0')) return;
+  if (!authToken) throw new HttpError(503, 'Twilio voice webhook verification is not configured for this shop');
   const valid = await verifyTwilioWebhookSignature({
     authToken,
     url: new URL(request.url).toString(),

@@ -38,6 +38,40 @@ test('HTML sinks fail closed if DOMPurify is unavailable, including decoded DOM 
   assert.equal(render(attack), '');
 });
 
+test('ambassador loads keep the latest requested tab when an earlier request is pending', async () => {
+  let releaseSales;
+  let salesStarted;
+  const pendingSales = new Promise(resolve => { releaseSales = resolve; });
+  const salesRequestStarted = new Promise(resolve => { salesStarted = resolve; });
+  const context = {
+    ambassadorData: { tab: 'ambassadors', salesFilters: {}, ledgerPeriod: '2026-10' },
+    ambassadorLoadId: 0,
+    Ambassadors: { lastMonth: () => '2026-10', salesQuery: () => '' },
+    state: { route: 'ambassadors' },
+    platformApi: async path => {
+      if (path === '/admin/ambassadors') return { ambassadors: [] };
+      if (path.startsWith('/admin/ambassador-sales')) {
+        salesStarted();
+        return pendingSales;
+      }
+      if (path === '/admin/ambassador-payout-reports') return { reports: [{ period: '2026-10' }] };
+      throw new Error(`Unexpected request: ${path}`);
+    },
+    toast: error => assert.fail(error),
+    render() {},
+  };
+  const load = vm.runInNewContext(`${functionSource('async function loadAmbassadorData(')}; loadAmbassadorData`, context);
+
+  const salesLoad = load({ tab: 'sales' });
+  await salesRequestStarted;
+  await load({ tab: 'reports' });
+  releaseSales({ sales: [] });
+  await salesLoad;
+
+  assert.equal(context.ambassadorData.tab, 'reports');
+  assert.deepEqual(JSON.parse(JSON.stringify(context.ambassadorData.reports)), [{ period: '2026-10' }]);
+});
+
 test('fresh cloud shops use state-only Texas tax without changing demo or saved rates', () => {
   for (const demo of [false, true]) {
     const state = vm.runInNewContext(`${functionSource('function initialState(')}; initialState()`, {
@@ -193,6 +227,18 @@ test('one enhanced tax submit persists extended settings and valid custom jurisd
 test('printed per-finding inspection photos have width and height bounds', () => {
   const source = readFileSync(join(root, 'runtime', 'catalog-inspection-ui.js'), 'utf8');
   assert.match(source, /\.finding-photos img\{[^}]*width:120px;[^}]*height:90px;[^}]*max-width:100%;[^}]*max-height:90px;[^}]*object-fit:contain/);
+});
+
+test('deleting a job card pauses autosave and waits for in-flight saves', () => {
+  const deleteHandler = legacy.slice(
+    legacy.indexOf('document.querySelector("#delete-job-card")'),
+    legacy.indexOf('document.querySelector("#apply-bulk-technicians")'),
+  );
+  assert.match(legacy, /if \(jobCardDeleting\) return;\s*jobCardDirty = true;/);
+  assert.match(legacy, /if \(!canManage \|\| jobCardSaving \|\| jobCardDeleting\) return false;/);
+  assert.match(deleteHandler, /jobCardDeleting = true;[\s\S]*setModalAutosave\(null\);[\s\S]*controls\.forEach\(control => \{ control\.disabled = true \}\);/);
+  assert.match(deleteHandler, /if \(jobCardSavePromise\) await jobCardSavePromise;[\s\S]*await apiFetch\(`\/entities\/orders\/\$\{encodeURIComponent\(order\.id\)\}`, \{ method: "DELETE" \}\);/);
+  assert.match(deleteHandler, /catch \(error\) \{[\s\S]*jobCardDeleting = false;[\s\S]*setModalAutosave\(flushJobCardAutosave\);[\s\S]*if \(jobCardDirty\) \{/);
 });
 
 /** Returns the source of the function whose definition starts with `prefix`. */

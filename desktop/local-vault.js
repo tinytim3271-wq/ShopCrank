@@ -102,21 +102,48 @@ function signIn(dir, input = {}) {
   return { email: record.email, name: record.name || '' };
 }
 
-function loadShop(dir) {
-  const record = readJson(shopFile(dir));
-  if (!record?.state || typeof record.state !== 'object' || Array.isArray(record.state)) return null;
-  return stripSecrets(record.state);
+/**
+ * `cipher` is optional OS encryption from the Electron main process
+ * ({ encrypt(text) -> Buffer, decrypt(Buffer) -> text }, e.g. safeStorage/DPAPI).
+ * With it the shop file is unreadable outside this Windows account; without it
+ * (portable USB edition) the file stays plain JSON so it opens on any PC.
+ */
+function keepUnreadableShopFile(dir) {
+  const target = path.join(dir, `offline-shop.unreadable-${Date.now()}.json`);
+  renameSync(shopFile(dir), target);
+  return target;
 }
 
-function saveShop(dir, snapshot) {
+function loadShop(dir, { cipher = null } = {}) {
+  const record = readJson(shopFile(dir));
+  if (!record) return null;
+  let state = record.state;
+  if (record.encrypted === 'os') {
+    try {
+      if (!cipher) throw new Error('no cipher');
+      state = JSON.parse(cipher.decrypt(Buffer.from(String(record.data || ''), 'base64')));
+    } catch {
+      // Keep the only copy: the app would otherwise start empty and its next save overwrite it.
+      const kept = keepUnreadableShopFile(dir);
+      throw new Error(`This shop file is encrypted for another computer or Windows account. It was kept as ${path.basename(kept)}.`);
+    }
+  }
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+  return stripSecrets(state);
+}
+
+function saveShop(dir, snapshot, { cipher = null } = {}) {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
     throw new Error('The shop file could not be saved.');
   }
-  const state = stripSecrets(snapshot);
-  const body = JSON.stringify({ version: 1, savedAt: new Date().toISOString(), state });
-  if (Buffer.byteLength(body) > MAX_SHOP_BYTES) throw new Error('This shop file is too large to save on this computer.');
-  writeJsonAtomic(shopFile(dir), JSON.parse(body));
-  return { saved: true };
+  const stateJson = JSON.stringify(stripSecrets(snapshot));
+  if (Buffer.byteLength(stateJson) > MAX_SHOP_BYTES) throw new Error('This shop file is too large to save on this computer.');
+  const savedAt = new Date().toISOString();
+  const record = cipher
+    ? { version: 2, encrypted: 'os', savedAt, data: Buffer.from(cipher.encrypt(stateJson)).toString('base64') }
+    : { version: 1, savedAt, state: JSON.parse(stateJson) };
+  writeJsonAtomic(shopFile(dir), record);
+  return { saved: true, encrypted: Boolean(cipher) };
 }
 
 module.exports = {

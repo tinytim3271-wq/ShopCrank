@@ -251,7 +251,7 @@ test('both signature namespaces use atomic create-only writes, including concurr
   }
 });
 
-test('legacy evidence at ordinary paths is protected without blocking unrelated file replacement', async () => {
+test('legacy evidence at ordinary paths is protected and ordinary uploads are write-once', async () => {
   const DB = createD1();
   const protectedKeys = ['shops/shop-1/photos/estimate.png', 'shops/shop-1/file/invoice.png'];
   for (const [type, field, key] of [
@@ -261,23 +261,27 @@ test('legacy evidence at ordinary paths is protected without blocking unrelated 
     await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind('shop-1', type, type, JSON.stringify({ [field]: { signatureKey: key } }), 'writer', 'now', 'now').run();
   }
-  const writes = [];
+  const stored = new Map();
   const env = { DB, FILES: { async put(key, bytes, options) {
-    assert.equal(options.onlyIf, undefined);
-    writes.push({ key, bytes });
+    // R2 semantics: onlyIf etagDoesNotMatch '*' returns null when the key already exists.
+    assert.deepEqual(options.onlyIf, { etagDoesNotMatch: '*' });
+    if (stored.has(key)) return null;
+    stored.set(key, bytes);
+    return { key };
   } } };
   const upload = key => handleFiles(new Request(`https://example.test/api/files/upload?key=${key}`, {
     method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: 'replacement',
   }), env, { shopId: 'shop-1', userId: 'tech' }, ['files', 'upload']);
   for (const key of protectedKeys) await assert.rejects(() => upload(key), error => error.status === 409);
-  assert.equal(writes.length, 0);
+  assert.equal(stored.size, 0);
   const ordinaryKey = 'shops/shop-1/photos/ordinary.png';
   assert.equal((await upload(ordinaryKey)).status, 204);
-  assert.equal((await upload(ordinaryKey)).status, 204);
-  assert.equal(writes.length, 2);
+  await assert.rejects(() => upload(ordinaryKey), error => error.status === 409, 'an existing upload is never replaced');
+  assert.equal(stored.size, 1);
+  const otherKey = 'shops/shop-1/photos/second.png';
   await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind('shop-other', 'orders', 'other', JSON.stringify({ estimateApproval: { signatureKey: ordinaryKey } }), 'writer', 'now', 'now').run();
-  assert.equal((await upload(ordinaryKey)).status, 204, 'foreign tenant records do not lock this shop uploads');
+    .bind('shop-other', 'orders', 'other', JSON.stringify({ estimateApproval: { signatureKey: otherKey } }), 'writer', 'now', 'now').run();
+  assert.equal((await upload(otherKey)).status, 204, 'foreign tenant records do not lock this shop uploads');
 });
 
 test('files route rejects streamed uploads that exceed the 15 MB limit', async () => {

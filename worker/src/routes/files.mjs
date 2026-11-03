@@ -88,7 +88,10 @@ export async function storeUploadedFile(files, key, body, metadata, maxBytes = M
     if (isSignatureEvidenceKey(key)) {
       await putSignatureEvidence(files, key, upload, metadata);
     } else {
-      await files.put(key, upload, metadata);
+      // Write-once: every upload gets a fresh key from presign-upload, so an existing
+      // object is never replaced (a staff member cannot swap someone else's photo or PDF).
+      const stored = await files.put(key, upload, { ...metadata, onlyIf: { etagDoesNotMatch: '*' } });
+      if (stored === null) throw new HttpError(409, 'A file already exists at this location. Upload it again to get a new one.');
     }
   } catch (error) {
     if (error instanceof UploadTooLargeError) throw new HttpError(413, `File exceeds ${Math.floor(maxBytes / (1024 * 1024))} MB`);

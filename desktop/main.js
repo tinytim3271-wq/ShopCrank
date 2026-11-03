@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage } = require('electron');
 const path = require('node:path');
 const diagnostics = require('./diagnostics-bridge');
 const { resolveDesktopStart } = require('./start-url');
@@ -7,6 +7,7 @@ const edition = require('./edition.json');
 const vault = require('./local-vault');
 const { configurePortableData } = require('./portable-data');
 const { isPrintPopupUrl } = require('./print-window');
+const { TRUSTED_ORIGINS, canOpenExternally, isTrustedNavigation } = require('./url-policy');
 
 try {
   configurePortableData(app, edition);
@@ -17,20 +18,11 @@ try {
 
 let mainWindow = null;
 
-const trustedOrigins = new Set([
-  'https://www.shopcrank.com',
-  'https://shopcrank.com',
-  'https://shopcrank-dispatch.pages.dev',
-  'https://accounts.google.com',
-]);
+const trustedOrigins = new Set(TRUSTED_ORIGINS);
+const appRoot = path.join(__dirname, '..');
 
 function isTrustedUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    return url.protocol === 'file:' || (edition.demo !== true && trustedOrigins.has(url.origin));
-  } catch {
-    return false;
-  }
+  return isTrustedNavigation(rawUrl, { appRoot, demo: edition.demo === true });
 }
 
 function isGoogleSignInStart(rawUrl) {
@@ -42,14 +34,26 @@ function isGoogleSignInStart(rawUrl) {
   }
 }
 
+/**
+ * OS encryption for the offline shop file (DPAPI on Windows). Off for the portable
+ * USB edition: DPAPI ties data to one Windows account, so the drive would not open elsewhere.
+ */
+function shopFileCipher() {
+  if (edition.portable === true || !safeStorage?.isEncryptionAvailable?.()) return null;
+  return {
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (buffer) => safeStorage.decryptString(buffer),
+  };
+}
+
 function registerOfflineIpc() {
   if (edition.offline !== true) return;
   const handlers = {
     'local-auth:status': () => vault.accountStatus(app.getPath('userData')),
     'local-auth:create': (_event, payload) => vault.createAccount(app.getPath('userData'), payload || {}),
     'local-auth:sign-in': (_event, payload) => vault.signIn(app.getPath('userData'), payload || {}),
-    'local-shop:load': () => vault.loadShop(app.getPath('userData')),
-    'local-shop:save': (_event, snapshot) => vault.saveShop(app.getPath('userData'), snapshot || {}),
+    'local-shop:load': () => vault.loadShop(app.getPath('userData'), { cipher: shopFileCipher() }),
+    'local-shop:save': (_event, snapshot) => vault.saveShop(app.getPath('userData'), snapshot || {}, { cipher: shopFileCipher() }),
   };
   Object.entries(handlers).forEach(([channel, handler]) => {
     ipcMain.handle(channel, async (_event, ...args) => {
@@ -144,7 +148,7 @@ function createWindow() {
         },
       };
     }
-    if (edition.demo !== true && isTrustedUrl(url)) void shell.openExternal(url);
+    if (canOpenExternally(url, { demo: edition.demo === true })) void shell.openExternal(url);
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {

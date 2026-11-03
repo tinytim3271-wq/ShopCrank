@@ -8,7 +8,7 @@ import { createD1 } from './helpers/d1-sqlite.mjs';
 const ENV = {
   XAI_API_KEY: 'xai-test-key-1234567890abcdef',
   INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
-  TWILIO_VERIFY_VOICE: '0',
+  TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1',
 };
 
 function twilioSignature(authToken, url, params) {
