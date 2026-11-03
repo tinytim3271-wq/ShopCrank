@@ -130,11 +130,11 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   if (!rows.length) return { period, created: 0, eligible: 0, frozen: false };
   const results = await env.DB.batch(rows.map(row => env.DB.prepare(`
     INSERT INTO ambassador_commissions (
-      id, ambassador_id, shop_id, period, plan_id, tier, sale_source, amount_cents, status, accrued_via, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    ON CONFLICT(shop_id, period) DO NOTHING
+      id, ambassador_id, shop_id, period, earning_period, plan_id, tier, sale_source, amount_cents, status, accrued_via, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    ON CONFLICT(shop_id, earning_period) DO NOTHING
   `).bind(
-    crypto.randomUUID(), row.ambassador_id, row.shop_id, period, row.plan_id, row.tier,
+    crypto.randomUUID(), row.ambassador_id, row.shop_id, period, period, row.plan_id, row.tier,
     row.sale_source || null, Number(row.monthly_cents), accruedVia, now,
   )));
   const created = results.reduce((sum, result) => sum + Number(result?.meta?.changes || 0), 0);
@@ -184,14 +184,15 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };
-  const period = await openPeriodFor(env, periodOf(invoicePeriodStart(invoice)));
+  const earningPeriod = periodOf(invoicePeriodStart(invoice));
+  const period = await openPeriodFor(env, earningPeriod);
   const result = await env.DB.prepare(`
     INSERT INTO ambassador_commissions (
-      id, ambassador_id, shop_id, period, plan_id, tier, sale_source, amount_cents, status, accrued_via, stripe_invoice_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'invoice_paid', ?, ?)
-    ON CONFLICT(shop_id, period) DO NOTHING
+      id, ambassador_id, shop_id, period, earning_period, plan_id, tier, sale_source, amount_cents, status, accrued_via, stripe_invoice_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'invoice_paid', ?, ?)
+    ON CONFLICT(shop_id, earning_period) DO NOTHING
   `).bind(
-    crypto.randomUUID(), subscription.ambassador_id, shopId, period, subscription.plan_id, subscription.tier,
+    crypto.randomUUID(), subscription.ambassador_id, shopId, period, earningPeriod, subscription.plan_id, subscription.tier,
     subscription.sale_source || null, Number(subscription.monthly_cents), String(invoice?.id || '') || null,
     new Date().toISOString(),
   ).run();

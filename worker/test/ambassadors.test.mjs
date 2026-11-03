@@ -471,6 +471,15 @@ test('payout report: tiers, sources, frozen snapshot, mark paid, print and PDF',
   const lastMonthStart = Math.floor(Date.parse(periodBounds(LAST_MONTH).start) / 1000) + 3600;
   await signedWebhook(env, { id: 'evt_late', type: 'invoice.paid', data: { object: { id: 'in_late', metadata: { shopId: 'late-shop' }, amount_paid: 6900, period_start: lastMonthStart } } });
   assert.equal(DB.sqlite.prepare("SELECT period FROM ambassador_commissions WHERE shop_id = 'late-shop'").get().period, shiftPeriod(LAST_MONTH, 1));
+  await signedWebhook(env, { id: 'evt_late_duplicate', type: 'invoice.paid', data: { object: { id: 'in_late_duplicate', metadata: { shopId: 'late-shop' }, amount_paid: 6900, period_start: lastMonthStart } } });
+  backdateSale(DB, 'late-shop');
+  await generateCommissionLedger(env, shiftPeriod(LAST_MONTH, 1));
+  const lateShopLines = DB.sqlite.prepare("SELECT period, earning_period FROM ambassador_commissions WHERE shop_id = 'late-shop' ORDER BY earning_period").all()
+    .map(line => [line.period, line.earning_period]);
+  assert.deepEqual(lateShopLines, [
+    [shiftPeriod(LAST_MONTH, 1), LAST_MONTH],
+    [shiftPeriod(LAST_MONTH, 1), shiftPeriod(LAST_MONTH, 1)],
+  ]);
 
   // Mark paid.
   assert.equal((await call('POST', `/admin/ambassador-payout-reports/${LAST_MONTH}/payouts/${jane.id}`, { checkNumber: '', paidOn: '2026-11-03' })).status, 400);
