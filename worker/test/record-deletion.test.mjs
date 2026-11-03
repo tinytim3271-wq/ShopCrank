@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
-import { removeEntity } from '../src/routes/entities.mjs';
+import { handleEntities, removeEntity } from '../src/routes/entities.mjs';
+import { HttpError } from '../src/http.mjs';
 
 const shopId = 'shop-del';
 const stamp = '2026-10-31T08:00:00.000Z';
@@ -14,7 +15,7 @@ const people = {
   tech: 'tech@shop.test',
 };
 
-async function setup() {
+async function setup(modular = false) {
   const DB = createD1();
   // Shop owners are stored as `admin`; the PWA aliases `owner` to it.
   const roles = { owner: 'admin', admin: 'admin', writer: 'service_writer', office: 'office', tech: 'technician' };
@@ -25,11 +26,22 @@ async function setup() {
   const seed = async (type, id, record) => DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .bind(shopId, type, id, JSON.stringify({ id, ...record }), 'seed', stamp, stamp).run();
   const env = { DB, DEV_AUTH_BYPASS: '1' };
-  const call = (who, method, path, body) => worker.fetch(new Request(`https://app.example.test/api/entities/${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'X-ShopCrank-Dev-Email': people[who] },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  }), env);
+  const call = async (who, method, path, body) => {
+    const request = new Request(`https://app.example.test/api/entities/${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-ShopCrank-Dev-Email': people[who] },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!modular) return worker.fetch(request, env);
+    try {
+      return await handleEntities(request, env, {
+        shopId, userId: 'test-user', email: people[who], role: roles[who],
+      }, ['entities', ...path.split('/')]);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      return Response.json({ message: error.message }, { status: error.status });
+    }
+  };
   const stored = async (type, id) => {
     const row = await DB.prepare('SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?').bind(shopId, type, id).first();
     return row ? JSON.parse(row.data_json) : null;
@@ -180,6 +192,51 @@ test('employees with payroll are archived and lose access', async () => {
   const restoredAccess = await DB.prepare('SELECT enabled FROM users WHERE email = ?').bind(people.tech).first();
   assert.equal(restoredAccess.enabled, 1);
 });
+
+for (const modular of [false, true]) {
+  test(`employee access follows archive state (${modular ? 'module' : 'deployed'} handler)`, async () => {
+    const { DB, seed, call, stored } = await setup(modular);
+    const stale = { id: 'emp-tech', email: people.tech, name: 'Tech', active: true, role: 'technician' };
+    await seed('employees', stale.id, stale);
+    await seed('payrollentries', 'pay-row', { employeeId: stale.id, amount: 80 });
+    assert.equal((await call('owner', 'DELETE', `employees/${stale.id}`)).status, 200);
+    const archived = await stored('employees', stale.id);
+    const access = () => DB.prepare('SELECT enabled FROM users WHERE email = ?').bind(people.tech).first();
+
+    for (const [method, path, body] of [
+      ['PUT', `employees/${stale.id}`, stale],
+      ['PUT', `employees/${stale.id}`, { ...archived, active: true }],
+      ['POST', 'employees', stale],
+    ]) {
+      const response = await call('owner', method, path, body);
+      assert.equal(response.status, method === 'POST' ? 201 : 200);
+      const saved = await response.json();
+      assert.equal(saved.archivedAt, archived.archivedAt);
+      assert.equal(saved.active, false);
+      assert.equal((await stored('employees', stale.id)).active, false);
+      assert.equal((await access()).enabled, 0);
+    }
+
+    const before = await stored('employees', stale.id);
+    assert.equal((await call('writer', 'PUT', `employees/${stale.id}`, { ...stale, archivedAt: null })).status, 403);
+    assert.deepEqual(await stored('employees', stale.id), before);
+    assert.equal((await access()).enabled, 0);
+
+    await DB.prepare('INSERT INTO users (email, shop_id, role, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind('other@shop.test', 'other-shop', 'technician', 'Other', stamp, stamp).run();
+    const conflict = await call('owner', 'PUT', `employees/${stale.id}`, {
+      ...stale, email: 'other@shop.test', archivedAt: null,
+    });
+    assert.equal(conflict.status, 409);
+    assert.deepEqual(await stored('employees', stale.id), before);
+
+    const restored = await call('owner', 'PUT', `employees/${stale.id}`, { ...stale, archivedAt: null });
+    assert.equal(restored.status, 200);
+    assert.equal((await stored('employees', stale.id)).archivedAt, null);
+    assert.equal((await stored('employees', stale.id)).active, true);
+    assert.equal((await access()).enabled, 1);
+  });
+}
 
 test('stale saves keep the archive flag; only owners/admins restore', async () => {
   const { seed, call, stored } = await setup();

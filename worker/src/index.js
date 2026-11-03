@@ -516,6 +516,8 @@ export async function putEntity(
     updatedAt: now,
   };
   if (type === 'employees' && isArchived(record)) record.active = false;
+  // Validate shop access before writing so an email conflict cannot leave an orphan employee.
+  if (type === 'employees') await syncAccessUser(env, context, record);
   if (requireUnlockedEstimate) {
     // CAS on updated_at inside the same UPDATE as the unlock guard. The early
     // If-Match check above is not atomic with this write, so a concurrent staff
@@ -896,9 +898,6 @@ async function handleEntities(request, env, context, segments, analytics) {
       }
       body = { ...body, body: String(body.body).trim().slice(0, 4000), memberEmails: members(conversation), senderEmail: context.email };
     }
-    // Sync access before writing the entity so a cross-tenant email conflict
-    // cannot leave an orphan employee row behind.
-    if (type === 'employees') await syncAccessUser(env, context, body);
     // Orders must not silently overwrite on POST — intake/new-RO id races
     // previously lost the first work order via ON CONFLICT DO UPDATE.
     if (type === 'orders' && await getEntity(env, context.shopId, type, newId)) {
@@ -953,7 +952,6 @@ async function handleEntities(request, env, context, segments, analytics) {
       context.userId,
       { requireUnlockedEstimate, expectedOrderSnapshot },
     );
-    if (type === 'employees') await syncAccessUser(env, context, saved);
     captureForContext(analytics, context, 'entity_updated', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_updated', {
       entity_type: type,

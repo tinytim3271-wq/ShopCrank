@@ -80,6 +80,7 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     updatedAt: now,
   };
   if (type === 'employees' && isArchived(record)) record.active = false;
+  if (type === 'employees') await syncAccessUser(env, context, record);
   await env.DB.prepare(`
     INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -354,7 +355,6 @@ export async function handleEntities(request, env, context, segments) {
         senderEmail: context.email,
       };
     }
-    if (type === 'employees') await syncAccessUser(env, context, body);
     const saved = await putEntity(env, context, type, newId, body);
     return json(saved, 201);
   }
@@ -372,7 +372,6 @@ export async function handleEntities(request, env, context, segments) {
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
     const saved = await putEntity(env, context, type, id, body, request.headers.get('If-Match'));
-    if (type === 'employees') await syncAccessUser(env, context, saved);
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {
