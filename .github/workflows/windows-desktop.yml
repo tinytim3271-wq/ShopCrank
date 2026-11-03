@@ -73,30 +73,40 @@ jobs:
       - run: npm rebuild esbuild electron
       - name: Build web bundle
         run: npm run build:web
-      - name: Check code-signing certificate
+      - name: Choose Windows signing
+        id: signing
         shell: bash
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
         run: |
-          if [ -z "$CSC_LINK" ]; then
-            echo "::warning title=Windows installer is unsigned::SmartScreen will warn customers. Buy an OV/EV code-signing certificate and add WINDOWS_CSC_LINK (base64 .pfx or https URL) and WINDOWS_CSC_KEY_PASSWORD as repository secrets."
+          METHOD="$(node scripts/windows-signing.mjs package.json dist/signing/builder.json | sed 's/Windows signing: //')"
+          echo "method=$METHOD" >> "$GITHUB_OUTPUT"
+          if [ "$METHOD" = "none" ]; then
+            echo "::warning title=Windows installer is unsigned::SmartScreen will warn customers. Set up Azure Trusted Signing (repository variables AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE, AZURE_SIGNING_PUBLISHER and secrets AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET), or add WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD for a certificate file."
           fi
       - name: Build NSIS installer and portable zip
         env:
-          # electron-builder signs automatically when these are set and skips signing when empty.
+          # Azure Trusted Signing (via the generated config) or a certificate file; unsigned when neither is set.
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --win nsis zip --publish never
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: npx --no-install electron-builder --win nsis zip --publish never --config dist/signing/builder.json
       - name: Verify Authenticode signature
         shell: pwsh
         env:
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          SIGNING: ${{ steps.signing.outputs.method }}
         run: |
           $exe = Get-ChildItem dist/windows/*.exe | Select-Object -First 1
           $sig = Get-AuthenticodeSignature $exe.FullName
-          Write-Host "Signature status: $($sig.Status) $($sig.SignerCertificate.Subject)"
-          if ($env:CSC_LINK -and $sig.Status -ne 'Valid') { throw "Installer signing failed: $($sig.Status)" }
+          Write-Host "Signature ($env:SIGNING): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($env:SIGNING -ne 'none' -and $sig.Status -ne 'Valid') { throw "Installer signing failed: $($sig.Status)" }
       - name: Smoke test Windows artifacts
         shell: bash
         run: |
@@ -110,6 +120,13 @@ jobs:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: npm run build:windows:offline
       - name: Smoke test offline installer
         shell: bash

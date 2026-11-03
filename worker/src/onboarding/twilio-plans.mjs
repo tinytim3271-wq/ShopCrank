@@ -164,6 +164,18 @@ export function defaultMessageSamples(intake) {
   ];
 }
 
+/**
+ * Carriers reject campaigns whose message flow is vague. The shop's own wording
+ * is kept and followed by how ShopCrank actually collects consent, with the
+ * public terms and privacy URLs reviewers check.
+ */
+export function campaignMessageFlow(intake) {
+  const name = intake.dbaName || intake.legalName;
+  const standard = `Customers of ${name} opt in one of three ways: (1) by checking an unchecked, optional box on the shop's online booking form (https://www.shopcrank.com/api/book/${intake.shopId}) next to this disclosure: "Text me about this appointment and my vehicle service from ${name}: confirmations, reminders, estimates, status and pickup. Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of service."; (2) by texting the shop's number first; or (3) by telling shop staff in person or by phone, which staff record in ShopCrank before any text can be sent (the software blocks texts to numbers without recorded consent). The first text includes STOP/HELP instructions. Terms: https://www.shopcrank.com/sms-terms/ Privacy: https://www.shopcrank.com/privacy/`;
+  const own = String(intake.optInWording || '').trim();
+  return (own ? `${own} ${standard}` : standard).slice(0, 2048);
+}
+
 /** Phase 2: the campaign, once the brand is approved. */
 export function planA2pCampaign(intake, { messagingServiceSid, brandSid }) {
   const name = intake.dbaName || intake.legalName;
@@ -174,7 +186,7 @@ export function planA2pCampaign(intake, { messagingServiceSid, brandSid }) {
     form: {
       BrandRegistrationSid: brandSid,
       Description: `${name} sends repair status updates, estimate approvals, appointment reminders, and replies to customer questions about their vehicle service.`,
-      MessageFlow: intake.optInWording,
+      MessageFlow: campaignMessageFlow(intake),
       MessageSamples: samples,
       UsAppToPersonUsecase: intake.campaignUseCase,
       HasEmbeddedLinks: 'true',

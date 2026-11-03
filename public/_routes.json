@@ -27,6 +27,8 @@
     "/terms/*",
     "/privacy",
     "/privacy/*",
+    "/sms-terms",
+    "/sms-terms/*",
     "/founding",
     "/founding/*",
     "/ambassador",

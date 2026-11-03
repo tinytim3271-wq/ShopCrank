@@ -35,3 +35,13 @@ Cloud Agent boots run `.cursor/start.sh`. It serves this PWA at `http://127.0.0.
 - **Cloudflare diagnostics API** (`/api/diagnostics/coverage`, `/api/diagnostics/audit`, `/api/diagnostics/authorize`) deploys with the Worker.
 - **Programming/flashing** (key programming, module reflash) is gated by ECDSA P-256 capability tokens: the Worker signs with `DIAGNOSTICS_SIGNING_PRIVATE_KEY`; hosts verify with the public key only and fail closed without it. See `diagnostics/keys/README.md` for key provisioning (`.cursor/install.sh` generates local dev keys). `simulate` mode drives the Node bench simulator; `live` mode requires shop AutoAuth credentials + a licensed `ISecurityAccessProvider` (OEM seed/key is never bundled or bypassed).
 - The Node simulator is fully testable on Linux: `npm run test:worker` (capability tokens + authorize) and `npm run test:j2534` (SecurityAccess, key programming, and flash sequences). The `.NET` host is Windows-only and not built in CI Linux.
+
+## Where new code goes (read before changing the app)
+
+About 40% of recent commits repaired earlier work. The cause is `src/runtime/legacy.js`: each change wrapped an existing function again (`render = function () { … renderCore() }`), so the newest wrapper quietly changed what older ones did. To stop that:
+
+- **Do not add another `name = function` override to `legacy.js`.** `src/runtime/legacy-growth.test.mjs` fails if the override count or the file size goes up. If you remove overrides, lower the limits in that test in the same commit.
+- **Put new behaviour in a module** under `src/modules/` (or `worker/src/` for the API) with its own `*.test.mjs`, and call it from the existing function in `legacy.js`. `src/modules/archived-records.js` and `src/modules/record-deletion.js` are examples.
+- **Fix the function that is wrong**, not a wrapper around it. Search for every override of the name first (`grep -n "^render = " src/runtime/legacy.js`); the last one in the file wins.
+- **Every fix gets a test that fails without it**, and `npm run build:web` must be run so `app.js` and the `?v=` stamps in `index.html` match (`scripts/stamp-assets.test.mjs` checks).
+- **Merges go through a pull request** with the CI `quality` and Cloudflare `validate` checks green; `main` is protected.

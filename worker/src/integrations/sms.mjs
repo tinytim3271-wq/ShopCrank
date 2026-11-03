@@ -11,6 +11,24 @@ export const MAX_SMS_TEXT_LENGTH = 1600;
 
 const encoder = new TextEncoder();
 
+/** Added to the first text a shop sends to a number (carrier opt-in disclosure rules). */
+export const FIRST_MESSAGE_DISCLOSURE = 'Reply STOP to opt out, HELP for help. Msg & data rates may apply.';
+
+/**
+ * The first text a shop sends to a phone number carries the opt-out and rates
+ * notice; later texts go as written. A message that already mentions STOP is left alone.
+ */
+export async function withFirstMessageDisclosure(env, shopId, phone, body) {
+  const text = String(body || '').trim();
+  if (/\bSTOP\b/i.test(text)) return text;
+  const earlier = await env.DB.prepare(
+    "SELECT 1 AS sent FROM customer_messages WHERE shop_id = ? AND phone = ? AND direction = 'outbound' LIMIT 1",
+  ).bind(shopId, phone).first().catch(() => null);
+  if (earlier) return text;
+  const combined = `${text}\n\n${FIRST_MESSAGE_DISCLOSURE}`;
+  return combined.length <= MAX_SMS_TEXT_LENGTH ? combined : text;
+}
+
 export class SmsIntegrationError extends Error {
   constructor(message, { code = 'sms_error', status = 500 } = {}) {
     super(message);
