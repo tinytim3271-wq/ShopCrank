@@ -161,7 +161,14 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
 }
 
 function invoicePeriodStart(invoice) {
-  const seconds = Number(invoice?.period_start || invoice?.lines?.data?.[0]?.period?.start || invoice?.created || 0);
+  const lines = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : [];
+  const recurringLine = lines.find(line =>
+    line?.type === 'subscription'
+    || Boolean(line?.price?.recurring)
+    || line?.parent?.type === 'subscription_item_details'
+    || Boolean(line?.plan?.interval),
+  );
+  const seconds = Number(recurringLine?.period?.start || invoice?.period_start || lines[0]?.period?.start || invoice?.created || 0);
   return seconds > 0 ? new Date(seconds * 1000) : new Date();
 }
 

@@ -334,7 +334,17 @@ test('invoice.paid accrues one commission per shop per month and skips $0 and un
   await createShop(call, 'inv-shop', { soldByAmbassadorId: amb.id, planId: 'shop_pro' });
   await createShop(call, 'inv-direct', { planId: 'shop' });
   const periodStart = Math.floor(Date.parse(`${periodOf(new Date())}-01T00:00:00Z`) / 1000) + 86400;
-  const invoice = (id, extra = {}) => ({ id, type: 'invoice.paid', data: { object: { id: `in_${id}`, metadata: { shopId: 'inv-shop' }, amount_paid: 27900, period_start: periodStart, ...extra } } });
+  const servicePeriod = shiftPeriod(periodOf(new Date()), -4);
+  const servicePeriodStart = Math.floor(Date.parse(periodBounds(servicePeriod).start) / 1000) + 86400;
+  const invoice = (id, extra = {}) => ({
+    id,
+    type: 'invoice.paid',
+    data: { object: {
+      id: `in_${id}`, metadata: { shopId: 'inv-shop' }, amount_paid: 27900, period_start: periodStart,
+      lines: { data: [{ type: 'subscription', period: { start: servicePeriodStart } }] },
+      ...extra,
+    } },
+  });
 
   await signedWebhook(env, invoice('evt_inv_1'));
   await signedWebhook(env, invoice('evt_inv_1'));
@@ -347,7 +357,8 @@ test('invoice.paid accrues one commission per shop per month and skips $0 and un
   assert.equal(lines[0].amount_cents, 4000);
   assert.equal(lines[0].tier, 'shop_pro');
   assert.equal(lines[0].accrued_via, 'invoice_paid');
-  assert.equal(lines[0].period, periodOf(new Date()));
+  assert.equal(lines[0].period, servicePeriod);
+  assert.equal(lines[0].earning_period, servicePeriod);
 });
 
 test('invoice.paid recovers payment-failed memberships and skips canceled or suspended shops', async () => {
@@ -673,12 +684,12 @@ test('commission totals include all matching rows while ledger results are pagin
   const amb = await createAmbassador(call, { email: 'pages@amb.test' });
   const insert = DB.sqlite.prepare(`
     INSERT INTO ambassador_commissions
-      (id, ambassador_id, shop_id, period, plan_id, tier, amount_cents, status, accrued_via, created_at)
-    VALUES (?, ?, ?, ?, 'shop', 'shop', 100, ?, 'manual', ?)
+      (id, ambassador_id, shop_id, period, earning_period, plan_id, tier, amount_cents, status, accrued_via, created_at)
+    VALUES (?, ?, ?, ?, ?, 'shop', 'shop', 100, ?, 'manual', ?)
   `);
   const now = new Date().toISOString();
   for (let index = 0; index < 2001; index += 1) {
-    insert.run(`commission-${index}`, amb.id, `commission-shop-${String(index).padStart(4, '0')}`, LAST_MONTH, index === 2000 ? 'paid' : 'pending', now);
+    insert.run(`commission-${index}`, amb.id, `commission-shop-${String(index).padStart(4, '0')}`, LAST_MONTH, LAST_MONTH, index === 2000 ? 'paid' : 'pending', now);
   }
 
   const firstPage = await call('GET', `/admin/ambassador-commissions?period=${LAST_MONTH}&ambassadorId=${amb.id}`);
