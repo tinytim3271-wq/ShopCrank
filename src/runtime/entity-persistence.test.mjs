@@ -57,14 +57,15 @@ test('queued deletes hide records while waiting to sync', () => {
 
 test('queued archives retain archived records over remote lists', () => {
   const archivedRecord = { id: 'customer-1', name: 'Existing', archivedAt: '2026-10-31T12:00:00.000Z' };
+  const latestRemote = { id: 'customer-1', name: 'Updated', phone: '555-0100' };
   const queue = [{
     path: '/entities/customers/customer-1',
     method: 'DELETE',
     archivedRecord,
   }];
   assert.deepEqual(
-    applyQueuedEntityMutations('customers', [{ id: 'customer-1', name: 'Existing' }], queue),
-    [archivedRecord],
+    applyQueuedEntityMutations('customers', [latestRemote], queue),
+    [{ ...latestRemote, archivedAt: archivedRecord.archivedAt }],
   );
   assert.deepEqual(
     applyQueuedEntityMutations('customers', [], queue),

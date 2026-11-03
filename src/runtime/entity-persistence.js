@@ -37,8 +37,17 @@ export function applyQueuedEntityMutations(type, remoteRecords, queue) {
     if (!id) continue;
     if (method === 'DELETE') {
       const archivedRecord = mutation.archivedRecord;
-      if (archivedRecord && String(archivedRecord.id) === id) records.set(id, archivedRecord);
-      else records.delete(id);
+      if (archivedRecord && String(archivedRecord.id) === id) {
+        const current = records.get(id) || archivedRecord;
+        const archiveFields = Object.fromEntries(
+          ['archivedAt', 'archivedBy', 'archiveReasons']
+            .filter(field => archivedRecord[field] !== undefined)
+            .map(field => [field, archivedRecord[field]]),
+        );
+        records.set(id, { ...current, ...archiveFields });
+      } else {
+        records.delete(id);
+      }
     }
     if (method === 'POST' || method === 'PUT') records.set(id, body);
   }

@@ -241,10 +241,17 @@ for (const modular of [false, true]) {
 test('stale saves keep the archive flag; only owners/admins restore', async () => {
   const { seed, call, stored } = await setup();
   await seed('invoices', 'INV-3', { number: 'INV-3', customer: 'Pat', amount: 20 });
+  await seed('invoices', 'INV-4', { number: 'INV-4', customer: 'Pat', amount: 20 });
+  assert.equal((await call('writer', 'PUT', 'invoices/INV-4', {
+    id: 'INV-4', number: 'INV-4', archivedAt: '2026-10-31T12:00:00.000Z',
+  })).status, 403);
   assert.equal((await call('admin', 'DELETE', 'invoices/INV-3')).status, 200);
   const save = await call('writer', 'PUT', 'invoices/INV-3', { id: 'INV-3', number: 'INV-3', customer: 'Pat', amount: 25 });
   assert.equal(save.status, 200);
   assert.ok((await stored('invoices', 'INV-3')).archivedAt, 'a stale save must not un-archive');
+  assert.equal((await call('owner', 'PUT', 'invoices/INV-3', {
+    id: 'INV-3', number: 'INV-3', archivedAt: '',
+  })).status, 400);
   assert.equal((await call('writer', 'PUT', 'invoices/INV-3', { id: 'INV-3', number: 'INV-3', archivedAt: null })).status, 403);
   assert.equal((await call('owner', 'PUT', 'invoices/INV-3', { id: 'INV-3', number: 'INV-3', customer: 'Pat', amount: 25, archivedAt: null })).status, 200);
   assert.equal((await stored('invoices', 'INV-3')).archivedAt, null);

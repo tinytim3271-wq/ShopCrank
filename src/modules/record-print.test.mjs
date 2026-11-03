@@ -1,9 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { PRINT_BASE_CSS, modalOffersPrint, withPrintBaseStyles } from './record-print.js';
 
 test('print base styles set 12pt body text', () => {
   assert.match(PRINT_BASE_CSS, /^@media print\{html,body\{font-size:12pt!important/);
+});
+
+test('inspection damage-zone state remains visible when printing records', () => {
+  const styles = readFileSync(new URL('../../styles.css', import.meta.url), 'utf8');
+  assert.match(styles, /:is\(button:not\(\.damage-zone\),\.modal-actions/);
 });
 
 test('withPrintBaseStyles injects into the head and keeps the doctype first', () => {

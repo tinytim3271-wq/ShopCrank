@@ -54,7 +54,7 @@ test('invoice editor roundtrips date-only values without UTC drift', () => {
   assert.equal(dateValue('2024-02-29'), '2024-02-29');
 });
 
-test('archived vehicles stay in history but are hidden from operations and new-order pickers', () => {
+test('archived vehicles stay in history but are hidden from operations and new-record pickers', () => {
   const active = { id: 'vehicle-active', customer: 'Pat', year: 2020, make: 'Honda', model: 'Civic', vin: 'ACTIVEVIN' };
   const archived = { id: 'vehicle-archived', customer: 'Pat', year: 2010, make: 'Ford', model: 'Focus', vin: 'ARCHIVEDVIN', archivedAt: '2026-10-31T00:00:00.000Z' };
   const context = {
@@ -74,6 +74,7 @@ test('archived vehicles stay in history but are hidden from operations and new-o
   assert.doesNotMatch(register, /vehicle-archived|RO-HISTORICAL/);
   assert.match(picker, /vehicle-active/);
   assert.doesNotMatch(picker, /vehicle-archived|ARCHIVEDVIN/);
+  assert.match(functionSource('function openInspectionForm('), /state\.vehicles\.filter\(vehicle => !isArchived\(vehicle\) \|\| vehicle\.id === existing\?\.vehicleId\)/);
   assert.equal(context.state.vehicles.includes(archived), true);
 });
 
