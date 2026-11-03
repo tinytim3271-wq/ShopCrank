@@ -1,6 +1,8 @@
 {
   "version": 1,
-  "include": ["/api/*"],
+  "include": [
+    "/api/*"
+  ],
   "exclude": [
     "/",
     "/index.html",
@@ -28,6 +30,8 @@
     "/founding",
     "/founding/*",
     "/ambassador",
-    "/ambassador/*"
+    "/ambassador/*",
+    "/robots.txt",
+    "/sitemap.xml"
   ]
 }

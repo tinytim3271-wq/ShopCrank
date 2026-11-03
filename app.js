@@ -7114,6 +7114,33 @@ button{margin-top:12px;padding:8px 14px}
     }
   });
 
+  // src/modules/archived-records.js
+  function archivedRecordLabel(type, item = {}, money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`) {
+    if (type === "customers") return item.name || item.id;
+    if (type === "vehicles") return [item.year, item.make, item.model].filter(Boolean).join(" ") || item.vin || item.id;
+    if (type === "invoices") return `${item.number || item.id}${item.customer ? ` \xB7 ${item.customer}` : ""}${item.amount != null ? ` \xB7 ${money5(Number(item.amount || 0))}` : ""}`;
+    if (type === "payments") return `${money5(Number(item.amount || 0))}${item.invoiceNumber ? ` \xB7 ${item.invoiceNumber}` : ""}${item.customer ? ` \xB7 ${item.customer}` : ""}`;
+    return `${item.id}${item.customer ? ` \xB7 ${item.customer}` : ""}`;
+  }
+  function applyRemovalResult(collections, result) {
+    if (!result || result.action !== "archive") return false;
+    for (const bucket of [result.archived || {}, result.deleted || {}]) {
+      for (const [type, ids] of Object.entries(bucket)) {
+        if (!Array.isArray(collections[type])) continue;
+        const gone = new Set((ids || []).map(String));
+        collections[type] = collections[type].filter((item) => !gone.has(String(item?.id ?? "")) && !(item?.number != null && gone.has(String(item.number))));
+      }
+    }
+    return true;
+  }
+  var ARCHIVE_NOTE, ARCHIVE_TYPE_LABELS;
+  var init_archived_records = __esm({
+    "src/modules/archived-records.js"() {
+      ARCHIVE_NOTE = "Records with payments, signatures or a sent invoice are archived for your tax records and can be restored from Settings \u2192 Archived records. Everything else is permanently deleted.";
+      ARCHIVE_TYPE_LABELS = Object.freeze({ customers: "Customers", vehicles: "Vehicles", orders: "Work orders", invoices: "Invoices", payments: "Payments" });
+    }
+  });
+
   // src/modules/record-deletion.js
   function canDeleteRecords(role) {
     return RECORD_DELETE_ROLES.includes(String(role || ""));
@@ -7143,7 +7170,54 @@ button{margin-top:12px;padding:8px 14px}
   function hasLinkedRecords(counts = {}) {
     return CUSTOMER_LINKED_TYPES.some((type) => Number(Array.isArray(counts[type]) ? counts[type].length : counts[type] || 0) > 0);
   }
-  var RECORD_DELETE_ROLES, ADMIN_DELETE_TYPES, RECORD_DELETE_DENIED, CUSTOMER_LINKED_TYPES, LINK_LABELS;
+  function invoiceHasActivity(invoice = {}, { payments: payments2 = [], documentLinks = 0 } = {}) {
+    if (payments2.length > 0 || Number(documentLinks) > 0) return true;
+    if (Number(invoice.paid || invoice.amountPaid || 0) > 0) return true;
+    if (invoice.signature && (invoice.signature.signatureKey || invoice.signature.signedAt)) return true;
+    return PAID_STATUSES.has(String(invoice.status || "").toLowerCase());
+  }
+  function removalAction(type, record = {}, related = {}) {
+    const count = (key) => Array.isArray(related[key]) ? related[key].length : Number(related[key] || 0);
+    switch (type) {
+      case "payments":
+        return "archive";
+      case "invoices":
+        return invoiceHasActivity(record, { payments: related.payments || [], documentLinks: related.documentLinks || 0 }) ? "archive" : "delete";
+      case "orders":
+        return count("invoices") || count("payments") ? "archive" : "delete";
+      case "vehicles":
+        return count("invoices") ? "archive" : "delete";
+      case "customers":
+        return count("invoices") || count("payments") ? "archive" : "delete";
+      default:
+        return "delete";
+    }
+  }
+  function relatedForRemoval(type, record = {}, collections = {}) {
+    const list = (key) => Array.isArray(collections[key]) ? collections[key] : [];
+    const same = (a, b) => String(a ?? "").trim() !== "" && String(a).trim() === String(b ?? "").trim();
+    const realVin = (vin) => /^[A-HJ-NPR-Z0-9]{17}$/i.test(String(vin || "").trim());
+    if (type === "invoices") {
+      const number = record.number || record.id;
+      return { payments: list("payments").filter((p) => same(p.invoiceNumber, number)) };
+    }
+    if (type === "orders") {
+      return {
+        invoices: list("invoices").filter((i) => same(i.ro, record.id)),
+        payments: list("payments").filter((p) => same(p.workOrderId, record.id))
+      };
+    }
+    if (type === "vehicles") {
+      const orderIds = new Set(list("orders").filter((o) => same(o.vehicleId, record.id) || realVin(record.vin) && same(o.vin, record.vin)).map((o) => o.id));
+      return { invoices: list("invoices").filter((i) => orderIds.has(i.ro) || realVin(record.vin) && same(i.vin, record.vin)) };
+    }
+    if (type === "customers") {
+      const linked = customerLinkedRecords(record, collections);
+      return { invoices: linked.invoices, payments: linked.payments };
+    }
+    return {};
+  }
+  var RECORD_DELETE_ROLES, ADMIN_DELETE_TYPES, RECORD_DELETE_DENIED, CUSTOMER_LINKED_TYPES, LINK_LABELS, ARCHIVABLE_TYPES, ARCHIVE_FIELDS, PAID_STATUSES;
   var init_record_deletion = __esm({
     "src/modules/record-deletion.js"() {
       RECORD_DELETE_ROLES = Object.freeze(["owner", "admin", "super_admin"]);
@@ -7158,6 +7232,9 @@ button{margin-top:12px;padding:8px 14px}
         payments: ["payment", "payments"],
         appointments: ["appointment", "appointments"]
       };
+      ARCHIVABLE_TYPES = Object.freeze(/* @__PURE__ */ new Set(["customers", "vehicles", "orders", "invoices", "payments"]));
+      ARCHIVE_FIELDS = Object.freeze(["archivedAt", "archivedBy", "archiveReason", "archiveGroup"]);
+      PAID_STATUSES = /* @__PURE__ */ new Set(["paid", "partial", "partially_paid", "partially-paid"]);
     }
   });
 
@@ -12572,14 +12649,17 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         toast(RECORD_DELETE_DENIED);
         return;
       }
-      if (confirm(`Delete ${x.id}? This cannot be undone.`)) {
+      const archives = willArchive("orders", x);
+      if (confirm(archives ? `Archive ${x.id}? It has an invoice or payment, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${x.id}? This cannot be undone.`)) {
         state.orders = state.orders.filter((o) => o.id !== id);
-        state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== id);
-        state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== id);
+        if (!archives) {
+          state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== id);
+          state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== id);
+        }
         deleteOrderInApi(id);
         save();
         closeModal();
-        toast(`${id} deleted`);
+        toast(archives ? `${id} archived` : `${id} deleted`);
         render();
       }
     });
@@ -12741,13 +12821,15 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const vehicle = state.vehicles.find((item) => item.id === id);
     if (!vehicle) return;
     const history = linkedOrders(vehicle).length;
-    if (!confirm(`Delete ${vehicleLabel3(vehicle)}?${history ? ` Its ${history} work order${history === 1 ? "" : "s"} will be kept.` : ""} This cannot be undone.`)) return;
+    const archives = willArchive("vehicles", vehicle);
+    if (!confirm(archives ? `Archive ${vehicleLabel3(vehicle)}? It is on an invoiced work order, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${vehicleLabel3(vehicle)}?${history ? ` Its ${history} work order${history === 1 ? "" : "s"} will be kept.` : ""} This cannot be undone.`)) return;
     try {
-      await apiFetch(`/entities/vehicles/${encodeURIComponent(vehicle.id)}`, { method: "DELETE" });
+      const result = await apiFetch(`/entities/vehicles/${encodeURIComponent(vehicle.id)}`, { method: "DELETE" });
+      applyRemovalResult2(result);
       state.vehicles = state.vehicles.filter((item) => item !== vehicle);
       save();
       closeModal();
-      toast("Vehicle deleted");
+      toast(result?.action === "archive" ? "Vehicle archived" : "Vehicle deleted");
       render();
     } catch (error) {
       toast(error.message || "Vehicle could not be deleted");
@@ -13342,6 +13424,53 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     save();
     render();
   }
+  function removalCollections() {
+    return { ...customerDeletionCollections() };
+  }
+  function willArchive(type, record) {
+    return removalAction(type, record, relatedForRemoval(type, record, removalCollections())) === "archive";
+  }
+  function applyRemovalResult2(result) {
+    const archived = applyRemovalResult(state, result);
+    if (archived) save();
+    return archived;
+  }
+  function archivedRecordLabel2(type, item) {
+    return archivedRecordLabel(type, item, money4);
+  }
+  async function openArchivedRecords() {
+    if (!userCanDeleteRecords()) {
+      toast("Only the shop owner or an admin can view archived records");
+      return;
+    }
+    showModal(`<div class="modal" id="archived-records-modal"><div class="modal-head"><h2>Archived records</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><p class="form-help">${escapeHtml(ARCHIVE_NOTE)}</p><div id="archived-records-list">Loading\u2026</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`);
+    const host = document.querySelector("#archived-records-list");
+    const types = Object.keys(ARCHIVE_TYPE_LABELS);
+    const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}?archived=only`)));
+    if (!document.body.contains(host)) return;
+    const sections = types.map((type, index) => {
+      const result = results[index];
+      if (result.status !== "fulfilled") return `<h3>${ARCHIVE_TYPE_LABELS[type]}</h3><p>Could not load: ${escapeHtml(result.reason?.message || "error")}</p>`;
+      const rows = Array.isArray(result.value) ? result.value : result.value?.records || [];
+      if (!rows.length) return "";
+      return `<h3>${ARCHIVE_TYPE_LABELS[type]}</h3><ul class="archived-list">${rows.map((item) => `<li><div><b>${escapeHtml(archivedRecordLabel2(type, item))}</b><small>Archived ${escapeHtml(String(item.archivedAt || "").slice(0, 10))}${item.archivedBy ? ` by ${escapeHtml(item.archivedBy)}` : ""}${item.archiveReason ? ` \xB7 ${escapeHtml(item.archiveReason)}` : ""}</small></div><button type="button" class="mini-action" data-restore-type="${type}" data-restore-id="${encodeURIComponent(item.id)}">${icon("rotate-ccw", 14)} Restore</button></li>`).join("")}</ul>`;
+    }).join("");
+    host.innerHTML = sections || "<p>Nothing is archived.</p>";
+    lucide.createIcons();
+    host.querySelectorAll("[data-restore-type]").forEach((button) => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await apiFetch(`/entities/${button.dataset.restoreType}/${button.dataset.restoreId}/restore`, { method: "POST" });
+        await loadShopEntities();
+        toast("Restored, together with anything archived with it");
+        render();
+        openArchivedRecords();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Could not restore");
+      }
+    }));
+  }
   async function deleteCustomerRecord(key) {
     if (!userCanDeleteRecords()) {
       toast(RECORD_DELETE_DENIED);
@@ -13356,16 +13485,17 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
     if (!confirm(`Delete ${customer.name}? This cannot be undone.`)) return;
     try {
-      await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}`, { method: "DELETE" });
+      const result = await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}`, { method: "DELETE" });
+      applyRemovalResult2(result);
       removeCustomerFromState(customer);
-      toast("Customer deleted");
+      toast(result?.action === "archive" ? "Customer archived" : "Customer deleted");
     } catch (error) {
       toast(error.message || "Customer could not be deleted");
     }
   }
   function openCustomerCascadeDelete(customer, linked) {
-    const summary = describeLinkedCounts(linked);
-    showModal(`<form class="modal" id="customer-cascade-delete-form"><div class="modal-head"><h2>Delete ${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status blocked">${icon("triangle-alert", 17)}<div><strong>This permanently deletes the customer and their history</strong><span>${escapeHtml(customer.name)} has ${escapeHtml(summary)}. All of it will be deleted, including payment records. This cannot be undone.</span></div></div><label>Type <b>${escapeHtml(customer.name)}</b> to confirm<input name="confirmation" autocomplete="off" required/></label></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="danger" type="submit">${icon("trash-2", 14)} Delete customer and history</button></div></form>`);
+    const summary = describeLinkedCounts(linked), archives = willArchive("customers", customer);
+    showModal(`<form class="modal" id="customer-cascade-delete-form"><div class="modal-head"><h2>Delete ${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status blocked">${icon("triangle-alert", 17)}<div><strong>${archives ? "This archives the customer, their vehicles and work orders" : "This permanently deletes the customer and their history"}</strong><span>${escapeHtml(customer.name)} has ${escapeHtml(summary)}. ${archives ? "Because they have invoices or payments, the customer, vehicles and work orders are archived (hidden, kept for your tax records, restorable from Settings \u2192 Archived records). Invoices and payments stay in Invoices. Appointments are deleted." : "All of it will be deleted. This cannot be undone."}</span></div></div><label>Type <b>${escapeHtml(customer.name)}</b> to confirm<input name="confirmation" autocomplete="off" required/></label></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="danger" type="submit">${icon(archives ? "archive" : "trash-2", 14)} ${archives ? "Archive customer" : "Delete customer and history"}</button></div></form>`);
     const form = document.querySelector("#customer-cascade-delete-form");
     form.onsubmit = async (event) => {
       event.preventDefault();
@@ -13377,10 +13507,15 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const button = form.querySelector("button[type=submit]");
       button.disabled = true;
       try {
-        await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}?cascade=1`, { method: "DELETE" });
+        const result = await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}?cascade=1`, { method: "DELETE" });
         closeModal();
-        removeCustomerFromState(customer, linked);
-        toast(`${customer.name} and ${summary} deleted`);
+        if (applyRemovalResult2(result)) {
+          removeCustomerFromState(customer);
+          toast(`${customer.name} archived`);
+        } else {
+          removeCustomerFromState(customer, linked);
+          toast(`${customer.name} and ${summary} deleted`);
+        }
       } catch (error) {
         button.disabled = false;
         toast(error.message || "Customer could not be deleted");
@@ -13423,13 +13558,20 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
     if (!invoice) return;
     const payments2 = state.payments.filter((payment) => payment.invoiceNumber === invoice.number);
-    if (!confirm(`Delete ${invoice.number}${payments2.length || invoicePaid(invoice) > 0 ? " and its payment history" : ""}? This cannot be undone.`)) return;
+    const archives = willArchive("invoices", invoice);
+    if (!confirm(archives ? `Archive ${invoice.number}${payments2.length ? " and its payments" : ""}? It was sent, signed or paid, so it is kept for your tax records and can be restored from Settings \u2192 Archived records.` : `Delete ${invoice.number}? It is a draft with no payments, so it will be permanently deleted.`)) return;
     try {
-      await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE" });
-      state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
-      state.invoices = state.invoices.filter((item) => item !== invoice);
-      save();
-      toast(payments2.length ? "Invoice and its payments deleted" : "Invoice deleted");
+      const result = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE" });
+      if (applyRemovalResult2(result)) {
+        state.invoices = state.invoices.filter((item) => item !== invoice);
+        save();
+        toast(`${invoice.number} archived`);
+      } else {
+        state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
+        state.invoices = state.invoices.filter((item) => item !== invoice);
+        save();
+        toast("Invoice deleted");
+      }
       render();
     } catch (error) {
       toast(error.message || "Invoice could not be deleted");
@@ -17180,7 +17322,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsArchiveCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -17222,6 +17364,7 @@ ${line}`.trim();
       init_mileage();
       init_filing();
       init_customer_metrics();
+      init_archived_records();
       init_record_deletion();
       init_offline_desktop();
       init_catalog_inspection_ui();
@@ -17830,7 +17973,14 @@ ${line}`.trim();
       bindExpandedFeatures = function() {
         bindDataResetCore();
         document.querySelector("#open-full-reset")?.addEventListener("click", openFullReset);
+        document.querySelector("#open-archived-records")?.addEventListener("click", openArchivedRecords);
         bindPhoneUsagePanel();
+      };
+      settingsArchiveCore = settings;
+      settings = function() {
+        const page = settingsArchiveCore();
+        if (!userCanDeleteRecords() || isOfflineDesktop()) return page;
+        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml(ARCHIVE_NOTE)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon("archive", 14)} View archived records</button></div></section></main>`);
       };
       settingsAgentPhoneCore = settings;
       settings = function() {
@@ -18162,13 +18312,15 @@ ${line}`.trim();
             toast(RECORD_DELETE_DENIED);
             return;
           }
-          if (!confirm(`Delete ${order.id}? This cannot be undone.`)) return;
+          const archives = willArchive("orders", order);
+          if (!confirm(archives ? `Archive ${order.id}? It has an invoice or payment, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${order.id}? This cannot be undone.`)) return;
           try {
-            if (!isOfflineDesktop()) await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            const result = isOfflineDesktop() ? null : await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            applyRemovalResult2(result);
             state.orders = state.orders.filter((item) => item !== order);
             save();
             closeModal();
-            toast(`${order.id} deleted`);
+            toast(result?.action === "archive" ? `${order.id} archived` : `${order.id} deleted`);
             render();
           } catch (error) {
             toast(error.message || "Work order could not be deleted");
@@ -18448,7 +18600,8 @@ ${line}`.trim();
             return;
           }
           const keepsInvoice = invoice ? ` ${invoice.number} will be kept; delete it from Invoices if it should go too.` : "";
-          if (!confirm(`Delete ${order.id}?${keepsInvoice} This cannot be undone.`)) return;
+          const archives = willArchive("orders", order);
+          if (!confirm(archives ? `Archive ${order.id}? It has an invoice or payment, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${order.id}?${keepsInvoice} This cannot be undone.`)) return;
           const controls = [...document.querySelectorAll(".job-card-modal input, .job-card-modal textarea, .job-card-modal select, .job-card-modal button:not(#delete-job-card)")];
           const controlDisabledStates = controls.map((control) => control.disabled);
           jobCardDeleting = true;
@@ -18461,14 +18614,17 @@ ${line}`.trim();
           button.disabled = true;
           try {
             if (jobCardSavePromise) await jobCardSavePromise;
-            await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            const result = await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
             jobCardDirty = false;
+            const archived = applyRemovalResult2(result);
             state.orders = state.orders.filter((item) => item !== order);
-            state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== order.id);
-            state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== order.id);
+            if (!archived) {
+              state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== order.id);
+              state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== order.id);
+            }
             save();
             closeModal();
-            toast(`${order.id} deleted`);
+            toast(archived ? `${order.id} archived` : `${order.id} deleted`);
             render();
           } catch (error) {
             jobCardDeleting = false;

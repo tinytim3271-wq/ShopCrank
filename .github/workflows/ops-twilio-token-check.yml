@@ -1,0 +1,54 @@
+name: Ops - AI phone Twilio token check
+
+# Run by hand from the Actions tab. Lists every shop that has AI phone or Twilio
+# settings saved but no Twilio auth token of its own. Since the voice webhook
+# now fails closed, those shops' incoming calls are refused unless the platform
+# TWILIO_AUTH_TOKEN secret covers their Twilio account. Read-only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Find shops missing a Twilio auth token
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.YOUR_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
+            echo "::error::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets first."; exit 1
+          fi
+          SQL="SELECT shop_id, group_concat(secret_name) AS saved FROM integration_secrets
+               WHERE secret_name IN ('twilio-account-sid','twilio-from-number','twilio-messaging-service-sid','xai-api-key','twilio-auth-token')
+               GROUP BY shop_id
+               HAVING sum(secret_name = 'twilio-auth-token') = 0
+               ORDER BY shop_id"
+          npx wrangler d1 execute shopcrank --remote --json --command "$SQL" > result.json
+          COUNT="$(node -e "const r=require('./result.json');console.log((r[0]?.results||[]).length)")"
+          node -e "const r=require('./result.json');for(const row of r[0]?.results||[])console.log(row.shop_id+'  has: '+row.saved)"
+          {
+            echo "## AI phone Twilio token check"
+            echo ""
+            if [ "$COUNT" = "0" ]; then
+              echo "Every shop with phone settings has its own Twilio auth token saved."
+            else
+              echo "$COUNT shop(s) have phone settings but no Twilio auth token. Ask each owner to open Settings → Shop phone (Twilio) and save the auth token, or confirm the platform TWILIO_AUTH_TOKEN covers their account."
+              echo ""
+              echo '| Shop | Saved settings |'
+              echo '| --- | --- |'
+              node -e "const r=require('./result.json');for(const row of r[0]?.results||[])console.log('| '+row.shop_id+' | '+row.saved+' |')"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

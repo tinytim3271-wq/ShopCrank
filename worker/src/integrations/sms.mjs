@@ -1,5 +1,7 @@
 import { getOnboarding } from '../onboarding/store.mjs';
 
+import { providerBase } from '../provider-base.mjs';
+
 const TWILIO_API_BASE = 'https://api.twilio.com/2010-04-01';
 const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
 const OPT_OUT_KEYWORDS = new Set(['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT']);
@@ -194,7 +196,7 @@ export function createTwilioSmsProvider(env, { fetcher = globalThis.fetch, confi
       let response;
       try {
         response = await fetcher(
-          `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(config.accountSid)}/Messages.json`,
+          `${providerBase(env, 'TWILIO', TWILIO_API_BASE)}/Accounts/${encodeURIComponent(config.accountSid)}/Messages.json`,
           {
             method: 'POST',
             headers: {

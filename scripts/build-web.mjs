@@ -3,6 +3,7 @@ import * as esbuild from 'esbuild';
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stampAssets } from './stamp-assets.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const watch = process.argv.includes('--watch');
@@ -46,4 +47,6 @@ if (watch) {
   console.log('Watching src/ → app.js');
 } else {
   await esbuild.build(options);
+  const versions = stampAssets(root);
+  console.log(`Stamped index.html: ${Object.entries(versions).map(([asset, version]) => `${asset}?v=${version}`).join(', ')}`);
 }

@@ -48,7 +48,9 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
-import { buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities } from './routes/entities.mjs';
+import { archiveFieldsForSave, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
+import { ARCHIVABLE_TYPES } from '../../src/modules/record-deletion.js';
+import { providerBase } from './provider-base.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
 import {
   RECORD_DELETE_DENIED,
@@ -474,13 +476,16 @@ async function getEntity(env, shopId, type, id) {
   ).bind(shopId, type, id).first(), type);
 }
 
-async function listEntities(env, shopId, type, { limit = 0, cursor = '' } = {}) {
+async function listEntities(env, shopId, type, { limit = 0, cursor = '', archived = 'include' } = {}) {
   const boundedLimit = Number.isFinite(Number(limit)) && Number(limit) > 0
     ? Math.min(200, Math.floor(Number(limit)))
     : 0;
   const nextCursor = String(cursor || '').trim();
   const filters = ['shop_id = ?', 'entity_type = ?'];
   const bindValues = [shopId, type];
+  // Archived records stay in D1 for tax and accounting reports; list screens ask for them only on purpose.
+  if (archived === 'exclude') filters.push("json_extract(data_json, '$.archivedAt') IS NULL");
+  if (archived === 'only') filters.push("json_extract(data_json, '$.archivedAt') IS NOT NULL");
   if (nextCursor) {
     // Compound cursor avoids skipping rows that share an updated_at timestamp.
     const [cursorTs, cursorId] = nextCursor.split('|');
@@ -510,16 +515,17 @@ export async function putEntity(
   body,
   expectedUpdatedAt = null,
   createdBy = context.userId,
-  { requireUnlockedEstimate = false, expectedOrderSnapshot } = {},
+  { requireUnlockedEstimate = false, expectedOrderSnapshot, create = false } = {},
 ) {
   const now = new Date().toISOString();
   const existing = await env.DB.prepare(
-    'SELECT created_at, created_by, updated_at FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
   const record = {
+    ...archiveFieldsForSave(existing, body, context, { create, type, id }),
     ...body,
     id,
     shopId: context.shopId,
@@ -767,6 +773,7 @@ function listParams(request) {
     limit,
     cursor: String(url.searchParams.get('cursor') || '').trim(),
     conversationId: String(url.searchParams.get('conversationId') || '').trim(),
+    archived: ['only', 'include'].includes(url.searchParams.get('archived')) ? url.searchParams.get('archived') : 'exclude',
   };
 }
 
@@ -860,7 +867,11 @@ async function handleEntities(request, env, context, segments, analytics) {
       records = result.records;
       nextCursor = result.nextCursor;
     } else {
-      const result = await listEntities(env, context.shopId, type, params);
+      const archived = ARCHIVABLE_TYPES.has(type) ? params.archived : 'include';
+      if (archived !== 'exclude' && ARCHIVABLE_TYPES.has(type) && !canDeleteRecords(context.role)) {
+        throw new HttpError(403, 'Only the shop owner or an admin can view archived records');
+      }
+      const result = await listEntities(env, context.shopId, type, { ...params, archived });
       records = paginated ? result.records : result;
       nextCursor = paginated ? result.nextCursor : null;
     }
@@ -884,6 +895,11 @@ async function handleEntities(request, env, context, segments, analytics) {
       if (!conversation || !members(conversation).includes(context.email)) throw new HttpError(404, 'Not found');
     }
     return json(type === 'employees' ? redactEmployee(record, context.role) : record);
+  }
+  if (request.method === 'POST' && id && ARCHIVABLE_TYPES.has(type) && segments.at(-1) === 'restore') {
+    const result = await restoreShopRecord(env, context, type, decodeURIComponent(segments.slice(2, -1).join('/')));
+    captureForContext(analytics, context, 'entity_restored', { entity_type: type });
+    return json(result);
   }
   if (request.method === 'POST' && !id) {
     let body = normalizeEntityPayload(sourceType, await requestJson(request));
@@ -912,11 +928,12 @@ async function handleEntities(request, env, context, segments, analytics) {
     if (type === 'employees') await syncAccessUser(env, context, body);
     // Orders must not silently overwrite on POST — intake/new-RO id races
     // previously lost the first work order via ON CONFLICT DO UPDATE.
-    if (type === 'orders' && await getEntity(env, context.shopId, type, newId)) {
+    const existingOrder = type === 'orders' ? await getEntity(env, context.shopId, type, newId) : null;
+    if (existingOrder && !existingOrder.archivedAt) {
       throw new HttpError(409, `Work order ${newId} already exists`);
     }
     const saved = await putEntity(env, context, type, newId, body, null, context.userId,
-      type === 'orders' ? { expectedOrderSnapshot: null } : {});
+      type === 'orders' ? { expectedOrderSnapshot: null, create: true } : { create: true });
     captureForContext(analytics, context, 'entity_created', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_created', {
       entity_type: type,
@@ -980,6 +997,13 @@ async function handleEntities(request, env, context, segments, analytics) {
       throw new HttpError(403, 'Not permitted');
     }
     if (requiresAdminDelete(type) && !canDeleteRecords(context.role)) throw new HttpError(403, RECORD_DELETE_DENIED);
+    if (ARCHIVABLE_TYPES.has(type)) {
+      const result = await removeShopRecord(env, context, type, id, existing, new URL(request.url).searchParams.get('cascade') === '1');
+      const event = result.action === 'archive' ? 'entity_archived' : 'entity_deleted';
+      captureForContext(analytics, context, event, { entity_type: type });
+      capturePostHogEvent(env, context, event, { entity_type: type, actor_role: context.role });
+      return result.action === 'archive' ? json(result) : new Response(null, { status: 204 });
+    }
 
     let statements;
     if (type === 'customers') {
@@ -1964,7 +1988,7 @@ async function handleCheckout(request, env, context, analytics) {
     'metadata[shopId]': context.shopId,
     'metadata[invoiceNumber]': invoiceNumber,
   });
-  const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+  const response = await fetch(`${providerBase(env, 'STRIPE', 'https://api.stripe.com/v1')}/checkout/sessions`, {
     method: 'POST',
     headers: { Authorization: `Basic ${btoa(`${stripeKey}:`)}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params,
@@ -3467,7 +3491,7 @@ async function handleBilling(request, env, context, segments) {
           name: String(context.name || ''),
           'metadata[shopId]': context.shopId,
         });
-        const customerResponse = await fetch('https://api.stripe.com/v1/customers', {
+        const customerResponse = await fetch(`${providerBase(env, 'STRIPE', 'https://api.stripe.com/v1')}/customers`, {
           method: 'POST',
           headers: {
             Authorization: `Basic ${btoa(`${stripeKey}:`)}`,
@@ -3513,7 +3537,7 @@ async function handleBilling(request, env, context, segments) {
         params.set('metadata[ambassadorId]', checkoutCredit.ambassador.id);
         params.set('subscription_data[metadata][ambassadorId]', checkoutCredit.ambassador.id);
       }
-      const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      const response = await fetch(`${providerBase(env, 'STRIPE', 'https://api.stripe.com/v1')}/checkout/sessions`, {
         method: 'POST',
         headers: { Authorization: `Basic ${btoa(`${stripeKey}:`)}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params,

@@ -1,0 +1,9 @@
+# ShopCrank — https://www.shopcrank.com
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /app
+Disallow: /login/
+Disallow: /founding/
+
+Sitemap: https://www.shopcrank.com/sitemap.xml
