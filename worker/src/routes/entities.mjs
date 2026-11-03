@@ -95,12 +95,20 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
  */
 export function preservedArchiveFields(existingRow, body, context) {
   const previous = existingRow ? entityRecord(existingRow) : null;
-  if (!isArchived(previous)) return {};
+  if (!isArchived(previous)) {
+    if (isArchived(body) && !canDeleteRecords(context.role)) {
+      throw new HttpError(403, 'Only the shop owner or an admin can archive records');
+    }
+    return {};
+  }
   if (body.archivedAt === null) {
     if (!canDeleteRecords(context.role)) throw new HttpError(403, 'Only the shop owner or an admin can restore archived records');
     return {};
   }
-  if (body.archivedAt !== undefined) return {};
+  if (body.archivedAt !== undefined) {
+    if (!isArchived(body)) throw new HttpError(400, 'Use archivedAt: null to restore an archived record');
+    return {};
+  }
   return Object.fromEntries(ARCHIVE_FIELDS.filter(field => previous[field] !== undefined).map(field => [field, previous[field]]));
 }
 
