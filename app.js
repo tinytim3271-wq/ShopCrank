@@ -3851,9 +3851,9 @@
     return { ok: problems.length === 0, problems };
   }
   function field(name, label2, value2, { type = "text", required = false, full = false, aiFilled = false } = {}) {
-    const badge4 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    const badge5 = aiFilled ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
     const cls = [full ? "full" : "", aiFilled ? "is-ai-filled" : ""].filter(Boolean).join(" ");
-    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge4}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
+    return `<label class="${cls}">${escapeHtml3(label2)}${required ? " *" : ""}${badge5}<input name="${escapeAttr3(name)}" type="${type}" value="${escapeAttr3(value2 || "")}" ${required ? "required" : ""}/></label>`;
   }
   function aiAcceptBanner(draft, prefix) {
     const filledKeys = Object.keys(draft.aiFilledFields || {}).filter((key) => key.startsWith(prefix));
@@ -3899,8 +3899,8 @@
   function concernStep(draft) {
     const concern = draft.concern;
     const ai = draft.aiFilledFields || {};
-    const badge4 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
-    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge4}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
+    const badge5 = ai["concern.description"] ? ' <span class="ai-filled-badge">Filled by AI</span>' : "";
+    return `${aiAcceptBanner(draft, "concern.")}<label class="full ${ai["concern.description"] ? "is-ai-filled" : ""}">Describe concern *${badge5}<textarea name="description" required>${escapeHtml3(concern.description)}</textarea></label>
 <div class="form-grid">${field("began", "When did the problem begin?", concern.began)}${field("frequency", "How often does it occur?", concern.frequency)}${field("lights", "Warning lights?", concern.lights)}${field("recentRepairs", "Recent repairs?", concern.recentRepairs)}${field("accident", "Recent accident?", concern.accident)}${field("towed", "Vehicle towed in?", concern.towed)}${field("overheating", "Vehicle overheating?", concern.overheating, { full: true })}</div>`;
   }
   function diagnosisStep(draft) {
@@ -5601,6 +5601,120 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       STATUS_BADGE2 = { ok: "paid", degraded: "estimate", down: "overdue", not_configured: "", skipped: "" };
       STATUS_LABEL = { ok: "OK", degraded: "Degraded", down: "Down", not_configured: "Not configured", skipped: "Skipped" };
       STATUS_ORDER = { down: 0, degraded: 1, ok: 2, not_configured: 3, skipped: 4 };
+    }
+  });
+
+  // src/modules/ambassadors.js
+  function formatCents(cents) {
+    return `$${(Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  function saleSourceLabel(source) {
+    return SALE_SOURCES.find(([id]) => id === source)?.[1] || (source ? source : "Unattributed");
+  }
+  function tierLabel(tier) {
+    return TIERS.find(([id]) => id === tier)?.[1] || tier || "";
+  }
+  function salesQuery(filters = {}) {
+    const params = new URLSearchParams();
+    for (const key of ["ambassadorId", "source", "from", "to"]) if (filters[key]) params.set(key, filters[key]);
+    const query2 = params.toString();
+    return query2 ? `?${query2}` : "";
+  }
+  function lastMonth(now2 = /* @__PURE__ */ new Date()) {
+    const date = new Date(Date.UTC(now2.getUTCFullYear(), now2.getUTCMonth() - 1, 1));
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+  function badge3(status, escapeHtml4) {
+    return `<span class="badge ${STATUS_BADGE3[status] ?? ""}">${escapeHtml4(status || "")}</span>`;
+  }
+  function ambassadorOptions(ambassadors = [], selected = "", { escapeHtml: escapeHtml4, includeNone = true, noneLabel = "No ambassador" } = {}) {
+    const none = includeNone ? `<option value="">${escapeHtml4(noneLabel)}</option>` : "";
+    return none + ambassadors.filter((item) => item.status !== "suspended" || item.id === selected).map((item) => `<option value="${escapeHtml4(item.id)}"${item.id === selected ? " selected" : ""}>${escapeHtml4(`${item.ambassadorNumber} \xB7 ${item.name}`)}${item.status === "approved" ? "" : ` (${escapeHtml4(item.status)})`}</option>`).join("");
+  }
+  function sourceOptions(selected = "", { escapeHtml: escapeHtml4, includeAll = false } = {}) {
+    return (includeAll ? '<option value="">All sources</option>' : "") + SALE_SOURCES.map(([id, label2]) => `<option value="${id}"${id === selected ? " selected" : ""}>${escapeHtml4(label2)}</option>`).join("");
+  }
+  function ambassadorsTab(data, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    const rows = (data.ambassadors || []).map((item) => `<tr><td><b class="mono">${escapeHtml4(item.ambassadorNumber)}</b><small class="mono">${escapeHtml4(item.referralCode)}</small></td><td><b>${escapeHtml4(item.name)}</b><small>${escapeHtml4(item.email)}${item.phone ? ` \xB7 ${escapeHtml4(item.phone)}` : ""}</small></td><td>${badge3(item.status, escapeHtml4)}</td><td>${escapeHtml4(item.territory)}</td><td><b>${item.activeCount}</b><small>${item.salesCount} total</small></td><td><b>${formatCents(item.pendingCents)}</b><small>${formatCents(item.paidCents)} paid</small></td><td><div class="platform-row-actions"><button class="mini-action" type="button" data-amb-edit="${escapeHtml4(item.id)}">${icon2("pencil", 13)} Edit</button><button class="mini-action" type="button" data-amb-statement="${escapeHtml4(item.id)}">${icon2("file-text", 13)} Statement</button></div></td></tr>`).join("");
+    return `<div class="platform-action-buttons"><button class="primary" type="button" id="amb-new">${icon2("user-plus", 15)} New ambassador</button></div><div class="data-panel"><table><thead><tr><th>Ambassador</th><th>Contact</th><th>Status</th><th>Territory</th><th>Active sales</th><th>Pending</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="7">No ambassadors yet. Applications from /ambassador appear here as \u201Capplied\u201D.</td></tr>'}</tbody></table></div>`;
+  }
+  function salesTab(data, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    const filters = data.salesFilters || {};
+    const rows = (data.sales || []).map((sale) => `<tr><td><b>${escapeHtml4(sale.shopName)}</b><small class="mono">${escapeHtml4(sale.shopId)}</small></td><td>${escapeHtml4(tierLabel(sale.planId) || sale.planId)}</td><td>${badge3(sale.status, escapeHtml4)}${sale.suspended ? "<small>Account suspended</small>" : ""}</td><td>${sale.ambassadorNumber ? `<b class="mono">${escapeHtml4(sale.ambassadorNumber)}</b><small>${escapeHtml4(sale.ambassadorName)}</small>` : "<small>\u2014</small>"}</td><td>${escapeHtml4(saleSourceLabel(sale.saleSource))}<small>${escapeHtml4(sale.soldBy)}</small></td><td class="mono">${escapeHtml4(String(sale.soldAt || "").slice(0, 10))}</td><td><button class="mini-action" type="button" data-sale-credit="${escapeHtml4(sale.shopId)}">${icon2("user-check", 13)} Change credit</button></td></tr>`).join("");
+    return `<form class="platform-action-buttons" id="amb-sales-filters"><label>Ambassador<select name="ambassadorId"><option value="">All</option><option value="none"${filters.ambassadorId === "none" ? " selected" : ""}>No ambassador</option>${ambassadorOptions(data.ambassadors, filters.ambassadorId, { escapeHtml: escapeHtml4, includeNone: false })}</select></label><label>Source<select name="source">${sourceOptions(filters.source, { escapeHtml: escapeHtml4, includeAll: true })}</select></label><label>From<input type="date" name="from" value="${escapeHtml4(filters.from || "")}"/></label><label>To<input type="date" name="to" value="${escapeHtml4(filters.to || "")}"/></label><button class="secondary" type="submit">${icon2("filter", 14)} Filter</button></form><div class="data-panel"><table><thead><tr><th>Shop</th><th>Plan</th><th>Status</th><th>Credited ambassador</th><th>Source \xB7 sold by</th><th>Sold</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="7">No sales match these filters.</td></tr>'}</tbody></table></div>`;
+  }
+  function commissionsTab(data, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    const rates = (data.rates || []).map((rate) => `<label>${escapeHtml4(rate.planId)} <small>(${escapeHtml4(tierLabel(rate.tier))})</small><input type="number" min="0" step="0.01" name="rate:${escapeHtml4(rate.planId)}" data-tier="${escapeHtml4(rate.tier)}" value="${(rate.monthlyCents / 100).toFixed(2)}"/></label>`).join("");
+    const lines = (data.commissions?.lines || []).map((line) => `<tr><td class="mono">${escapeHtml4(line.period)}</td><td><b class="mono">${escapeHtml4(line.ambassadorNumber)}</b><small>${escapeHtml4(line.ambassadorName)}</small></td><td>${escapeHtml4(line.shopName)}</td><td>${escapeHtml4(tierLabel(line.tier))}</td><td>${escapeHtml4(saleSourceLabel(line.saleSource))}</td><td>${badge3(line.status, escapeHtml4)}${line.checkNumber ? `<small>Check ${escapeHtml4(line.checkNumber)}</small>` : ""}</td><td>${formatCents(line.amountCents)}</td></tr>`).join("");
+    const totals = data.commissions?.totals;
+    const pagination = data.commissions?.pagination;
+    const pageControls = pagination ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pageCount} \xB7 ${pagination.totalLines} lines</span><button class="secondary" type="button" data-ledger-page="${pagination.page - 1}"${pagination.page <= 1 ? " disabled" : ""}>Previous</button><button class="secondary" type="button" data-ledger-page="${pagination.page + 1}"${pagination.page >= pagination.pageCount ? " disabled" : ""}>Next</button></div>` : "";
+    return `<h2>Monthly commission rates</h2><form id="amb-rates-form"><div class="form-grid">${rates}</div><div class="platform-action-buttons"><button class="primary" type="submit">${icon2("save", 14)} Save rates</button></div></form><p class="ops-note">Paid monthly for each referred shop while its membership stays active and paid. Rate changes apply to new monthly lines; frozen payout reports never change.</p><h2>Commission ledger</h2><form class="platform-action-buttons" id="amb-ledger-form"><label>Month<input type="month" name="period" value="${escapeHtml4(data.ledgerPeriod || lastMonth())}"/></label><button class="secondary" type="submit">${icon2("search", 14)} Show</button><button class="secondary" type="button" id="amb-ledger-generate">${icon2("refresh-cw", 14)} Accrue month</button></form>${totals ? `<div class="platform-kpis"><article><span>Lines</span><strong>${totals.lines}</strong></article><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article></div>` : ""}<div class="data-panel"><table><thead><tr><th>Month</th><th>Ambassador</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${lines || '<tr><td colspan="7">No commission lines for this month.</td></tr>'}</tbody></table></div>${pageControls}`;
+  }
+  function reportsTab(data, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    const rows = (data.reports || []).map((report) => `<tr><td><b>${escapeHtml4(report.periodLabel)}</b><small class="mono">${escapeHtml4(report.period)}</small></td><td>${report.ambassadorCount}</td><td><b>${formatCents(report.grandTotalCents)}</b></td><td>${report.paidCount} of ${report.ambassadorCount} paid</td><td class="mono">${escapeHtml4(String(report.generatedAt || "").slice(0, 16).replace("T", " "))}<small>${escapeHtml4(report.generatedBy)}${report.emailStatus ? ` \xB7 ${escapeHtml4(report.emailStatus)}` : ""}</small></td><td><button class="mini-action" type="button" data-report-view="${escapeHtml4(report.period)}">${icon2("eye", 13)} View &amp; pay</button></td></tr>`).join("");
+    return `<div class="access-note platform-security">${icon2("calendar-clock", 15)} Generated automatically on the 1st of each month for the prior month (cron <span class="mono">${escapeHtml4(data.schedule || "0 9 1 * *")}</span> UTC) and emailed to the admin. Each report is a frozen snapshot; payouts are marked by hand with the check number.</div><form class="platform-action-buttons" id="amb-report-form"><label>Month<input type="month" name="period" value="${escapeHtml4(lastMonth())}"/></label><button class="primary" type="submit">${icon2("file-plus", 14)} Generate / open report</button></form><div class="data-panel"><table><thead><tr><th>Month</th><th>Ambassadors</th><th>Grand total</th><th>Payouts</th><th>Generated</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="6">No payout reports yet.</td></tr>'}</tbody></table></div>`;
+  }
+  function ambassadorsHtml(data, helpers) {
+    if (!data) return "<p>Loading ambassadors\u2026</p>";
+    const { escapeHtml: escapeHtml4, icon: icon2 } = helpers;
+    const tab = TABS.some(([id]) => id === data.tab) ? data.tab : "ambassadors";
+    const tabs = `<div class="platform-action-buttons" role="tablist">${TABS.map(([id, label2, iconName]) => `<button type="button" role="tab" class="${id === tab ? "primary" : "secondary"}" aria-selected="${id === tab}" data-amb-tab="${id}">${icon2(iconName, 14)} ${escapeHtml4(label2)}</button>`).join("")}</div>`;
+    const body = tab === "sales" ? salesTab(data, helpers) : tab === "commissions" ? commissionsTab(data, helpers) : tab === "reports" ? reportsTab(data, helpers) : ambassadorsTab(data, helpers);
+    return `${tabs}${data.loading ? '<p class="ops-note">Loading\u2026</p>' : ""}${body}`;
+  }
+  function ambassadorFormHtml(ambassador, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    const value2 = (key) => escapeHtml4(ambassador?.[key] || "");
+    const status = ambassador?.status || "approved";
+    return `<form class="modal wide" id="amb-form"><div class="modal-head"><h2>${ambassador ? `Edit ${value2("ambassadorNumber")}` : "New ambassador"}</h2><button type="button" class="close" data-close>${icon2("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Name *<input name="displayName" required value="${value2("name")}"/></label><label>Email *<input name="email" type="email" required value="${value2("email")}"/></label><label>Phone<input name="phone" value="${value2("phone")}"/></label><label>Status<select name="status">${["applied", "approved", "suspended"].map((item) => `<option value="${item}"${item === status ? " selected" : ""}>${item}</option>`).join("")}</select></label><label>Territory<input name="territory" value="${value2("territory")}"/></label><label>Referral code<input name="referralCode" value="${value2("referralCode")}" placeholder="Auto-generated"/></label><label>Mailing address (for checks)<textarea name="mailingAddress" rows="3">${value2("mailingAddress")}</textarea></label><label>Payout method<input name="payoutMethod" value="${escapeHtml4(ambassador?.payoutMethod || "check")}"/></label><label>Payout details (placeholder)<textarea name="payoutDetails" rows="2" placeholder="Payee name, notes. No bank numbers.">${value2("payoutDetails")}</textarea></label><label>Notes<textarea name="notes" rows="2">${value2("notes")}</textarea></label></div>${ambassador?.application ? `<div class="ledger-note">${icon2("clipboard-list", 15)} <b>Application</b><br>Experience: ${escapeHtml4(ambassador.application.experience)}<br>Why: ${escapeHtml4(ambassador.application.why)}<br>Social reach: ${escapeHtml4(ambassador.application.socialReach)}</div>` : ""}<p class="login-error" id="amb-form-error" hidden></p></div><div class="modal-actions">${ambassador ? `<button type="button" class="secondary" id="amb-delete" data-id="${value2("id")}">${icon2("trash-2", 14)} Delete</button>` : ""}<button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon2("save", 14)} Save</button></div></form>`;
+  }
+  function creditFormHtml(sale, ambassadors, log, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    const history = (log || []).map((entry) => `<tr><td class="mono">${escapeHtml4(String(entry.createdAt).slice(0, 16).replace("T", " "))}</td><td>${escapeHtml4(entry.previousAmbassadorNumber || "\u2014")} \u2192 ${escapeHtml4(entry.newAmbassadorNumber || "\u2014")}<small>${escapeHtml4(saleSourceLabel(entry.previousSource))} \u2192 ${escapeHtml4(saleSourceLabel(entry.newSource))}</small></td><td>${escapeHtml4(entry.changedBy)}<small>${escapeHtml4(entry.reason)}</small></td></tr>`).join("");
+    return `<form class="modal wide" id="amb-credit-form"><div class="modal-head"><h2>Sale credit \xB7 ${escapeHtml4(sale.shopName)}</h2><button type="button" class="close" data-close>${icon2("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Credited ambassador<select name="ambassadorId">${ambassadorOptions(ambassadors, sale.ambassadorId, { escapeHtml: escapeHtml4 })}</select></label><label>Sale source<select name="saleSource">${sourceOptions(sale.saleSource || "admin_manual", { escapeHtml: escapeHtml4 })}</select></label><label>Sold by (label)<input name="soldBy" value="${escapeHtml4(sale.soldBy)}" placeholder="Defaults to the ambassador"/></label><label>Reason *<input name="reason" required placeholder="Why the credit is changing"/></label></div><div class="ledger-note">${icon2("shield-check", 15)} Every change is recorded with who made it and when. Commissions already in a frozen payout report are not moved.</div><h2>Credit history</h2><div class="data-panel"><table><thead><tr><th>When</th><th>Change</th><th>By \xB7 reason</th></tr></thead><tbody>${history || '<tr><td colspan="3">No changes recorded.</td></tr>'}</tbody></table></div><p class="login-error" id="amb-credit-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon2("user-check", 14)} Save credit</button></div></form>`;
+  }
+  function statementHtml(statement, { escapeHtml: escapeHtml4, icon: icon2 }) {
+    const rows = (statement.lines || []).map((line) => `<tr><td class="mono">${escapeHtml4(line.period)}</td><td>${escapeHtml4(line.shopName)}</td><td>${escapeHtml4(tierLabel(line.tier))}</td><td>${escapeHtml4(saleSourceLabel(line.saleSource))}</td><td>${badge3(line.status, escapeHtml4)}${line.checkNumber ? `<small>Check ${escapeHtml4(line.checkNumber)}</small>` : ""}</td><td>${formatCents(line.amountCents)}</td></tr>`).join("");
+    const { ambassador, totals } = statement;
+    const pagination = statement.pagination;
+    const pageControls = pagination ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pageCount} \xB7 ${pagination.totalLines} lines</span><button class="secondary" type="button" data-statement-page="${pagination.page - 1}"${pagination.page <= 1 ? " disabled" : ""}>Previous</button><button class="secondary" type="button" data-statement-page="${pagination.page + 1}"${pagination.page >= pagination.pageCount ? " disabled" : ""}>Next</button></div>` : "";
+    return `<div class="modal wide"><div class="modal-head"><h2>Statement \xB7 ${escapeHtml4(ambassador.ambassadorNumber)} ${escapeHtml4(ambassador.name)}</h2><button type="button" class="close" data-close>${icon2("x")}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article></div><p class="ops-note">Ambassadors can see this at /ambassador with code <span class="mono">${escapeHtml4(ambassador.referralCode)}</span> and their email.</p><div class="data-panel"><table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No commissions yet.</td></tr>'}</tbody></table></div>${pageControls}</div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
+  }
+  function payoutTierRateLabel(item) {
+    const entries = item.rateBreakdown?.length ? item.rateBreakdown : item.count && Number.isFinite(Number(item.rateCents)) ? [{ rateCents: Number(item.rateCents) }] : [];
+    if (!entries.length) return "\u2014";
+    if (entries.length === 1) return formatCents(entries[0].rateCents);
+    return `Mixed (${entries.map((entry) => formatCents(entry.rateCents)).join(", ")})`;
+  }
+  function payoutReportDialogHtml(report, { escapeHtml: escapeHtml4, icon: icon2, today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) }) {
+    const tierHead = TIERS.map(([, label2]) => `<th>${escapeHtml4(label2)}</th>`).join("");
+    const rows = report.ambassadors.map((entry) => {
+      const tiers = TIERS.map(([tier]) => `<td>${entry.tiers[tier].count}<small>${formatCents(entry.tiers[tier].subtotalCents)} @ ${escapeHtml4(payoutTierRateLabel(entry.tiers[tier]))}</small></td>`).join("");
+      const sources = REPORT_SOURCES.map((source) => `${escapeHtml4(saleSourceLabel(source))}: ${entry.sources[source].count}`).join(" \xB7 ");
+      const pay = entry.payout ? `<span class="badge paid">Paid</span><small>Check ${escapeHtml4(entry.payout.checkNumber)} \xB7 ${escapeHtml4(entry.payout.paidOn)}</small>` : `<form class="amb-pay-form" data-ambassador="${escapeHtml4(entry.ambassadorId)}"><input name="checkNumber" placeholder="Check #" required size="8"/><input name="paidOn" type="date" value="${escapeHtml4(today)}" required/><button class="mini-action" type="submit">${icon2("badge-check", 13)} Mark paid</button></form>`;
+      return `<tr><td><b class="mono">${escapeHtml4(entry.ambassadorNumber)}</b><small class="mono">${escapeHtml4(entry.referralCode)}</small></td><td><b>${escapeHtml4(entry.name)}</b><small>${sources}</small></td>${tiers}<td><b>${formatCents(entry.totalCents)}</b></td><td>${pay}</td></tr>`;
+    }).join("");
+    const totals = TIERS.map(([tier]) => `<td><b>${report.totals.tiers[tier].count}</b><small>${formatCents(report.totals.tiers[tier].subtotalCents)} @ ${escapeHtml4(payoutTierRateLabel(report.totals.tiers[tier]))}</small></td>`).join("");
+    return `<div class="modal wide" id="amb-report-dialog" data-period="${escapeHtml4(report.period)}"><div class="modal-head"><h2>Ambassador Payout Report \xB7 ${escapeHtml4(report.periodLabel)}</h2><button type="button" class="close" data-close>${icon2("x")}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Grand total</span><strong>${formatCents(report.totals.grandTotalCents)}</strong></article><article><span>Ambassadors</span><strong>${report.totals.ambassadorCount}</strong></article><article><span>Paid so far</span><strong>${formatCents(report.paidCents)}</strong></article><article><span>By source</span><strong>${REPORT_SOURCES.map((source) => report.totals.sources[source].count).join(" / ")}</strong></article></div><div class="platform-action-buttons"><button class="secondary" type="button" id="amb-report-print">${icon2("printer", 14)} Print</button><button class="secondary" type="button" id="amb-report-pdf">${icon2("download", 14)} Download PDF</button></div><div class="data-panel"><table><thead><tr><th>Ambassador</th><th>Name \xB7 sources</th>${tierHead}<th>Total due</th><th>Payout</th></tr></thead><tbody>${rows || `<tr><td colspan="${TIERS.length + 4}">No ambassador commissions this month.</td></tr>`}</tbody><tfoot><tr><td colspan="2"><b>All ambassadors</b><small>Sources: ${REPORT_SOURCES.map((source) => `${escapeHtml4(saleSourceLabel(source))} ${formatCents(report.totals.sources[source].amountCents)}`).join(" \xB7 ")}</small></td>${totals}<td><b>${formatCents(report.totals.grandTotalCents)}</b></td><td></td></tr></tfoot></table></div><p class="ops-note">Snapshot generated ${escapeHtml4(String(report.generatedAt).slice(0, 16).replace("T", " "))} UTC by ${escapeHtml4(report.generatedBy)}. It will not change; marking a check paid is recorded alongside it.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
+  }
+  var SALE_SOURCES, REPORT_SOURCES, TIERS, TABS, STATUS_BADGE3;
+  var init_ambassadors = __esm({
+    "src/modules/ambassadors.js"() {
+      SALE_SOURCES = Object.freeze([
+        ["shopcrank_online", "ShopCrank online"],
+        ["ambassador_site", "Ambassador site"],
+        ["ambassador_referral", "Ambassador referral"],
+        ["admin_manual", "Admin manual"],
+        ["ai_agent", "AI agent"]
+      ]);
+      REPORT_SOURCES = Object.freeze(["shopcrank_online", "ambassador_site", "ambassador_referral"]);
+      TIERS = Object.freeze([["solo", "Solo"], ["shop", "Shop"], ["shop_pro", "Shop Pro"], ["enterprise", "Enterprise"]]);
+      TABS = Object.freeze([
+        ["ambassadors", "Ambassadors", "users"],
+        ["sales", "Sales", "receipt"],
+        ["commissions", "Commissions", "badge-dollar-sign"],
+        ["reports", "Payout reports", "file-text"]
+      ]);
+      STATUS_BADGE3 = { approved: "paid", applied: "estimate", suspended: "overdue", pending: "estimate", paid: "paid", void: "" };
     }
   });
 
@@ -10206,7 +10320,7 @@ button{margin-top:12px;padding:8px 14px}
   function label(status) {
     return { estimate: "Estimate", approved: "Approved", in_progress: "In progress", waiting_parts: "Waiting parts", completed: "Completed", invoiced: "Invoiced", paid: "Paid", sent: "Sent", overdue: "Overdue" }[status] || status;
   }
-  function badge3(status) {
+  function badge4(status) {
     return `<span class="badge ${status}">${label(status)}</span>`;
   }
   function toast(message) {
@@ -10293,7 +10407,7 @@ button{margin-top:12px;padding:8px 14px}
     return shell(`${heading(shopDayLabel(), "Dispatch board", "Live shop workload, technician assignments, and promise times.")}${stats()}${toolbar()}<div class="board">${lanes}</div>`);
   }
   function orders() {
-    const rows = filtered().map((x) => `<tr data-order="${x.id}"><td class="mono strong">${x.id}</td><td><b>${escapeHtml(x.customer)}</b><small>${escapeHtml(x.phone)}</small></td><td><b>${escapeHtml(x.vehicle)}</b><small class="mono">${escapeHtml(x.vin)}</small></td><td>${badge3(x.status)}</td><td>${escapeHtml(x.tech)}<small>${escapeHtml(x.bay)}</small></td><td>${escapeHtml(x.promise)}</td><td><b>${money4(x.total)}</b></td></tr>`).join("");
+    const rows = filtered().map((x) => `<tr data-order="${x.id}"><td class="mono strong">${x.id}</td><td><b>${escapeHtml(x.customer)}</b><small>${escapeHtml(x.phone)}</small></td><td><b>${escapeHtml(x.vehicle)}</b><small class="mono">${escapeHtml(x.vin)}</small></td><td>${badge4(x.status)}</td><td>${escapeHtml(x.tech)}<small>${escapeHtml(x.bay)}</small></td><td>${escapeHtml(x.promise)}</td><td><b>${money4(x.total)}</b></td></tr>`).join("");
     return shell(`${heading("Operations", "Work orders", "Every estimate, repair, and completed job in one searchable queue.")}${toolbar()}<div class="data-panel"><table><thead><tr><th>RO number</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Assignment</th><th>Promise</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("No matching work orders")}</div>`);
   }
   function schedule() {
@@ -10357,8 +10471,8 @@ button{margin-top:12px;padding:8px 14px}
   }
   function operationsInspections() {
     const rows = [...state.inspections].reverse().map((item) => {
-      const counts = (item.items || []).reduce((total, row) => (total[row.status] = (total[row.status] || 0) + 1, total), {}), results = item.catalogId ? `<span class="inspection-count fail">${counts.critical || 0} safety</span> <span class="inspection-count warn">${counts.soon || 0} soon</span> <span class="inspection-count good">${counts.ok || 0} ok</span>` : `<span class="inspection-count good">${counts.pass || 0} pass</span> <span class="inspection-count warn">${counts.attention || 0} attention</span> <span class="inspection-count fail">${counts.fail || 0} fail</span>`, badge4 = item.recordStatus === "closed" ? `<span class="badge paid">Closed</span>` : item.catalogId ? `<span class="badge estimate">Draft</span>` : item.approvalStatus === "approved" ? `<span class="badge paid">Approved</span>` : item.approvalStatus === "rejected" ? `<span class="badge overdue">Rejected</span>` : `<span class="badge estimate">Pending</span>`;
-      return `<tr><td><b>${escapeHtml(item.number)}</b><small>${escapeHtml(item.inspectionName || "Checklist")} \xB7 ${new Date(item.createdAt).toLocaleDateString()}</small></td><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.workOrderId || "Unlinked")}</td><td>${results}</td><td>${badge4}</td><td><button class="mini-action" data-edit-inspection="${item.id}">${icon("clipboard-check", 13)} Open</button><button class="mini-action" data-estimate-from-inspection="${item.id}">${icon("file-text", 13)} Estimate</button></td></tr>`;
+      const counts = (item.items || []).reduce((total, row) => (total[row.status] = (total[row.status] || 0) + 1, total), {}), results = item.catalogId ? `<span class="inspection-count fail">${counts.critical || 0} safety</span> <span class="inspection-count warn">${counts.soon || 0} soon</span> <span class="inspection-count good">${counts.ok || 0} ok</span>` : `<span class="inspection-count good">${counts.pass || 0} pass</span> <span class="inspection-count warn">${counts.attention || 0} attention</span> <span class="inspection-count fail">${counts.fail || 0} fail</span>`, badge5 = item.recordStatus === "closed" ? `<span class="badge paid">Closed</span>` : item.catalogId ? `<span class="badge estimate">Draft</span>` : item.approvalStatus === "approved" ? `<span class="badge paid">Approved</span>` : item.approvalStatus === "rejected" ? `<span class="badge overdue">Rejected</span>` : `<span class="badge estimate">Pending</span>`;
+      return `<tr><td><b>${escapeHtml(item.number)}</b><small>${escapeHtml(item.inspectionName || "Checklist")} \xB7 ${new Date(item.createdAt).toLocaleDateString()}</small></td><td>${escapeHtml(item.customer)}<small>${escapeHtml(item.vehicle)}</small></td><td>${escapeHtml(item.workOrderId || "Unlinked")}</td><td>${results}</td><td>${badge5}</td><td><button class="mini-action" data-edit-inspection="${item.id}">${icon("clipboard-check", 13)} Open</button><button class="mini-action" data-estimate-from-inspection="${item.id}">${icon("file-text", 13)} Estimate</button></td></tr>`;
     }).join("");
     return `<div class="ops-actions"><span class="ops-note">Lubbock flat rates. Repairs, parts, and disassembly are quoted separately.</span><button class="secondary" id="manage-templates">${icon("list-plus", 14)} Templates</button><button class="secondary" id="add-inspection">${icon("clipboard-check", 14)} Custom checklist</button></div><div class="inspection-catalog">${inspectionMenuHtml(escapeHtml)}</div><div class="data-panel"><table><thead><tr><th>Inspection</th><th>Customer & vehicle</th><th>Work order</th><th>Results</th><th>Status</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6">No inspections yet. Start one from the menu above.</td></tr>`}</tbody></table></div>`;
   }
@@ -11412,7 +11526,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
   function invoices() {
     const q = query.toLowerCase(), rows = state.invoices.filter((x) => !q || Object.values(x).join(" ").toLowerCase().includes(q)).map((x) => {
       const paid = invoicePaid(x), balance = invoiceBalance(x), bd = invoiceTaxBreakdown(x);
-      return `<tr><td class="mono"><b>${x.number}</b></td><td class="mono">${x.ro}</td><td><b>${x.customer}</b></td><td>${x.date}</td><td>${x.due}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(x.status)}</td><td><b>${money4(x.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments">${balance > 0 ? `<button class="mini-action" data-record-payment="${x.number}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${x.number}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${x.number}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${x.number}">${icon("message-square", 13)} Text to pay</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${x.number}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
+      return `<tr><td class="mono"><b>${x.number}</b></td><td class="mono">${x.ro}</td><td><b>${x.customer}</b></td><td>${x.date}</td><td>${x.due}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge4(x.status)}</td><td><b>${money4(x.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments">${balance > 0 ? `<button class="mini-action" data-record-payment="${x.number}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${x.number}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${x.number}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${x.number}">${icon("message-square", 13)} Text to pay</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${x.number}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
     }).join("");
     return shell(`${heading("Accounts receivable", "Invoices", "Track open balances, invoice tax, and record cash or processor payments.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   }
@@ -11521,7 +11635,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       event.preventDefault();
       const data = readFormValues(event.target), error = document.querySelector("#upgrade-plan-error");
       try {
-        const result = await platformApi("/billing/checkout", { method: "POST", body: JSON.stringify({ planId: data.planId, interval: data.interval, successUrl: `${location.origin}/?billing=success`, cancelUrl: `${location.origin}/?billing=cancelled` }) });
+        const result = await platformApi("/billing/checkout", { method: "POST", body: JSON.stringify({ planId: data.planId, interval: data.interval, successUrl: `${location.origin}/?billing=success`, cancelUrl: `${location.origin}/?billing=cancelled`, referralCode: window.ShopCrankReferral?.get()?.code || void 0, referralSource: window.ShopCrankReferral?.get()?.source || void 0 }) });
         toast("Opening secure subscription checkout");
         if (result.url && (String(result.url).startsWith("http") || String(result.url).startsWith("/"))) location.assign(result.url);
       } catch (requestError) {
@@ -11570,8 +11684,13 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
     return platformShell(`${heading("Platform control", "Customer shops", "Create customer shops, grant free tester accounts for any duration, convert them to paid, and share desktop/mobile downloads.", false)}<div class="platform-actions"><div class="platform-kpis"><article><span>Customer shops</span><strong>${accounts.length}</strong></article><article><span>Free / trial</span><strong>${trials}</strong></article><article><span>Paid shops</span><strong>${paid}</strong></article><article><span>Managed logins</span><strong>${users}</strong></article></div><div class="platform-action-buttons"><button class="primary" id="new-customer-account">${icon("building-2", 15)} Create shop</button><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 15)} App downloads</a></div></div><div class="access-note platform-security">${icon("shield-check", 15)} Platform admins create shops and free tester terms here. Shop owners sign in with their work email. Desktop and phone installs are on the downloads page.</div><div class="data-panel platform-table"><table><thead><tr><th>Shop</th><th>Owner</th><th>Plan</th><th>Logins</th><th>Credit</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="6">${platformAccountsLoading ? "Loading customer accounts..." : "No customer shops yet. Create one to invite an owner."}</td></tr>`}</tbody></table></div>`);
   }
   function openCustomerAccount() {
-    showModal(`<form class="modal wide" id="customer-account-form"><div class="modal-head"><h2>Create customer shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Shop name *<input name="shopName" required placeholder="High Plains Auto"/></label><label>Shop ID *<input name="shopId" required pattern="[a-z0-9][a-z0-9-]{2,63}" placeholder="high-plains-auto"/></label><label>Owner name *<input name="ownerName" required/></label><label>Owner email *<input name="email" type="email" required/></label><label>Account type *<select name="accountMode"><option value="trialing">Free / tester</option><option value="comped">Comped (no expiry)</option><option value="active">Paid</option></select></label><label>Free term (days)<input name="trialDays" type="number" min="0" max="3650" value="30" placeholder="30"/><small>Use 0 or leave blank with Comped for no end date. Paid ignores this.</small></label><label>Plan<select name="planId"><option value="solo">Solo \xB7 $69/mo</option><option value="shop">Shop \xB7 $139/mo</option><option value="shop_pro">Shop Pro \xB7 $279/mo</option><option value="enterprise">Enterprise \xB7 $559/mo</option><option value="founding_solo">Founding Solo \xB7 $49/mo</option><option value="founding_shop">Founding Shop \xB7 $99/mo</option><option value="founding_pro">Founding Pro \xB7 $199/mo</option></select></label></div><div class="ledger-note">${icon("mail", 15)} The owner signs in with this work email. You can convert free shops to paid later from this console.</div><p class="login-error" id="customer-account-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("user-plus", 14)} Create shop</button></div></form>`);
+    showModal(`<form class="modal wide" id="customer-account-form"><div class="modal-head"><h2>Create customer shop</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Shop name *<input name="shopName" required placeholder="High Plains Auto"/></label><label>Shop ID *<input name="shopId" required pattern="[a-z0-9][a-z0-9-]{2,63}" placeholder="high-plains-auto"/></label><label>Owner name *<input name="ownerName" required/></label><label>Owner email *<input name="email" type="email" required/></label><label>Account type *<select name="accountMode"><option value="trialing">Free / tester</option><option value="comped">Comped (no expiry)</option><option value="active">Paid</option></select></label><label>Free term (days)<input name="trialDays" type="number" min="0" max="3650" value="30" placeholder="30"/><small>Use 0 or leave blank with Comped for no end date. Paid ignores this.</small></label><label>Plan<select name="planId"><option value="solo">Solo \xB7 $69/mo</option><option value="shop">Shop \xB7 $139/mo</option><option value="shop_pro">Shop Pro \xB7 $279/mo</option><option value="enterprise">Enterprise \xB7 $559/mo</option><option value="founding_solo">Founding Solo \xB7 $49/mo</option><option value="founding_shop">Founding Shop \xB7 $99/mo</option><option value="founding_pro">Founding Pro \xB7 $199/mo</option></select></label><label>Sold by ambassador<select name="soldByAmbassadorId" id="customer-account-ambassador"><option value="">No ambassador</option></select></label><label>Sale source<select name="saleSource">${sourceOptions("admin_manual", { escapeHtml })}</select></label></div><div class="ledger-note">${icon("mail", 15)} The owner signs in with this work email. You can convert free shops to paid later from this console.</div><p class="login-error" id="customer-account-error" hidden></p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="primary" type="submit">${icon("user-plus", 14)} Create shop</button></div></form>`);
     const form = document.querySelector("#customer-account-form"), mode = form.elements.accountMode, days = form.elements.trialDays;
+    void platformApi("/admin/ambassadors").then((result) => {
+      const select = form.querySelector("#customer-account-ambassador");
+      if (select) select.innerHTML = safeHtml(ambassadorOptions(result.ambassadors, "", { escapeHtml }));
+    }).catch(() => {
+    });
     const syncMode = () => {
       days.disabled = mode.value === "active";
       if (mode.value === "comped") days.value = "0";
@@ -11585,7 +11704,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
       button.disabled = true;
       error.hidden = true;
       try {
-        await platformApi("/admin/accounts", { method: "POST", body: JSON.stringify({ shopName: data.shopName, shopId: data.shopId, ownerName: data.ownerName, email: data.email, accountMode: data.accountMode, trialDays: data.trialDays, planId: data.planId }) });
+        await platformApi("/admin/accounts", { method: "POST", body: JSON.stringify({ shopName: data.shopName, shopId: data.shopId, ownerName: data.ownerName, email: data.email, accountMode: data.accountMode, trialDays: data.trialDays, planId: data.planId, soldByAmbassadorId: data.soldByAmbassadorId || void 0, saleSource: data.saleSource || void 0 }) });
         closeModal();
         platformAccounts = null;
         toast("Customer shop created");
@@ -12409,7 +12528,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const item = state.inventory.find((record) => record.id === line.inventoryId || line.inventorySku && record.sku === line.inventorySku);
       return `<p><b>${escapeHtml(item?.sku || line.inventorySku || "Unknown SKU")}</b> \xB7 ${escapeHtml(item?.name || line.service)} \xB7 ${Number(line.committedQuantity || 0)} committed</p>`;
     }).join("")}${x.inventoryDeducted ? `<small>Deducted ${new Date(x.inventoryCommittedAt).toLocaleString()}</small>` : ""}</section>` : "", assignment = canManage ? `<label>Assigned technician<select id="detail-tech"><option>Unassigned</option>${technicians.map((t) => `<option ${t === x.tech ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select></label><label>Labor hours<select id="detail-hours">${[0, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8].map((h) => `<option value="${h}" ${Number(x.laborHours ?? 0) === h ? "selected" : ""}>${h === 0 ? "Not set" : h.toFixed(2) + " hours"}</option>`).join("")}</select></label>` : `<section><h3>Assignment</h3><p>${escapeHtml(x.tech)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} labor hours</p></section>`;
-    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge3(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `${userCanDeleteRecords() ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button>` : ""}<button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
+    showModal(`<div class="modal wide"><div class="modal-head"><div><span class="mono">${x.id}</span><h2>Work order details</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="detail-hero"><div>${badge4(x.status)}<h2>${escapeHtml(x.customer)}</h2><p>${escapeHtml(x.vehicle)} \xB7 <span class="mono">${escapeHtml(x.vin)}</span></p></div><div><div class="amount">${money4(x.total)}</div><p>${escapeHtml(x.tech)} \xB7 ${escapeHtml(x.bay)}</p></div></div><div class="detail-grid"><div><label class="full">Customer complaint<textarea id="detail-complaint" rows="3">${escapeHtml(x.complaint || "")}</textarea></label><label class="full">Technician notes<textarea id="detail-notes" rows="3">${escapeHtml(x.notes || "")}</textarea></label><section><h3>Estimate breakdown</h3><p>Labor: ${money4(x.labor)} \xB7 ${Number(x.laborHours ?? 0).toFixed(2)} hours<br>Parts & supplies: ${money4(x.parts)}<br>Tax: ${money4(x.tax)}</p></section>${inventoryMarkup}</div><aside><label>Work status<select id="detail-status" ${canManage ? "" : "disabled"}>${["estimate", "approved", "in_progress", "waiting_parts", "completed", "invoiced"].map((s) => `<option value="${s}" ${s === x.status ? "selected" : ""}>${label(s)}</option>`).join("")}</select></label>${assignment}<label>Promise time<input id="detail-promise" value="${escapeHtml(x.promise || "")}"/></label><label>Bay / assignment<select id="detail-bay"><option>Unassigned</option><option>Bay 1</option><option>Bay 2</option><option>Bay 3</option><option>Bay 4</option><option>Mobile</option></select></label>${jobClockControl}${mileagePanelMarkup({ jobAddress: x.jobAddress || "", oneWayMiles: x.tripMilesOneWay || "", roundTrip: x.tripMiles || roundTripMiles(x.tripMilesOneWay), rate: shopMileageRate(), charge: x.mileageCharge || mileageCharge(x.tripMiles || roundTripMiles(x.tripMilesOneWay), shopMileageRate()), shopAddress: shopProfile().address, canEdit: canManage })}<section><h3>Activity</h3><p>Opened in shop queue<br>Customer authorization recorded<br>${escapeHtml(x.promise)}</p></section></aside></div></div><div class="modal-actions">${canManage ? `${userCanDeleteRecords() ? `<button class="secondary danger" id="delete-order">${icon("trash-2", 14)} Delete</button>` : ""}<button class="primary" id="save-order">${icon("save", 14)} Save changes</button>` : `<button class="primary" data-close>Close</button>`}</div></div>`);
     bindWorkOrderMileage(".modal");
     if (canManage) {
       const baySelect = document.querySelector("#detail-bay");
@@ -12568,7 +12687,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const customer = state.customers.find((c) => c.name === name);
     if (!customer) return;
     const vehicles = state.vehicles.filter((v) => v.customer === name), orders2 = state.orders.filter((o) => o.customer === name), invs = state.invoices.filter((i) => i.customer === name), payments2 = state.payments.filter((p) => p.customer === name), balance = customerBalance(name);
-    showModal(`<div class="modal wide" id="customer-detail"><div class="modal-head"><h2>${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="customer-detail-top"><div class="avatar">${initials(customer.name)}</div><div><p>${escapeHtml(customer.phone || "")} \xB7 ${escapeHtml(customer.email || "")}</p><p class="customer-balance ${balance > 0 ? "has-balance" : ""}">Account balance: <b>${money4(balance)}</b></p></div><div class="customer-detail-actions"><button class="secondary" id="cd-message">${icon("send", 14)} Message</button><button class="secondary" id="cd-statement">${icon("printer", 14)} Statement</button></div></div><div class="form-grid"><label>Billing address<textarea name="billingAddress" rows="2">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes" rows="2">${escapeHtml(customer.billingNotes || "")}</textarea></label><div class="full"><button class="mini-action" id="cd-save-billing">${icon("save", 13)} Save billing</button></div></div><h3>Vehicles (${vehicles.length})</h3><table class="mini-table"><thead><tr><th>Vehicle</th><th>VIN</th><th>Mileage</th></tr></thead><tbody>${vehicles.map((v) => `<tr class="clickable-row" data-cd-vehicle="${v.id}"><td><b>${escapeHtml(vehicleLabel3(v))}</b></td><td class="mono">${escapeHtml(v.vin || "")}</td><td>${v.mileage || ""}</td></tr>`).join("") || `<tr><td colspan="3">No vehicles linked</td></tr>`}</tbody></table><h3>Work Orders (${orders2.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Total</th></tr></thead><tbody>${orders2.slice(0, 10).map((o) => `<tr><td class="mono">${o.id}</td><td>${badge3(o.status)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="3">No work orders</td></tr>`}</tbody></table><h3>Invoices (${invs.length})</h3><table class="mini-table"><thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invs.map((i) => `<tr><td class="mono">${i.number}</td><td>${badge3(i.status)}</td><td>${money4(i.amount)}</td><td>${money4(invoiceBalance(i))}</td></tr>`).join("") || `<tr><td colspan="4">No invoices</td></tr>`}</tbody></table><h3>Payments (${payments2.length})</h3><table class="mini-table"><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${payments2.slice(0, 10).map((p) => `<tr><td>${p.receivedAt || ""}</td><td>${p.method || ""}</td><td>${money4(p.amount)}</td><td class="mono">${p.invoiceNumber || ""}</td></tr>`).join("") || `<tr><td colspan="4">No payments</td></tr>`}</tbody></table></div></div>`);
+    showModal(`<div class="modal wide" id="customer-detail"><div class="modal-head"><h2>${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="customer-detail-top"><div class="avatar">${initials(customer.name)}</div><div><p>${escapeHtml(customer.phone || "")} \xB7 ${escapeHtml(customer.email || "")}</p><p class="customer-balance ${balance > 0 ? "has-balance" : ""}">Account balance: <b>${money4(balance)}</b></p></div><div class="customer-detail-actions"><button class="secondary" id="cd-message">${icon("send", 14)} Message</button><button class="secondary" id="cd-statement">${icon("printer", 14)} Statement</button></div></div><div class="form-grid"><label>Billing address<textarea name="billingAddress" rows="2">${escapeHtml(customer.billingAddress || "")}</textarea></label><label>Billing notes<textarea name="billingNotes" rows="2">${escapeHtml(customer.billingNotes || "")}</textarea></label><div class="full"><button class="mini-action" id="cd-save-billing">${icon("save", 13)} Save billing</button></div></div><h3>Vehicles (${vehicles.length})</h3><table class="mini-table"><thead><tr><th>Vehicle</th><th>VIN</th><th>Mileage</th></tr></thead><tbody>${vehicles.map((v) => `<tr class="clickable-row" data-cd-vehicle="${v.id}"><td><b>${escapeHtml(vehicleLabel3(v))}</b></td><td class="mono">${escapeHtml(v.vin || "")}</td><td>${v.mileage || ""}</td></tr>`).join("") || `<tr><td colspan="3">No vehicles linked</td></tr>`}</tbody></table><h3>Work Orders (${orders2.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Total</th></tr></thead><tbody>${orders2.slice(0, 10).map((o) => `<tr><td class="mono">${o.id}</td><td>${badge4(o.status)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="3">No work orders</td></tr>`}</tbody></table><h3>Invoices (${invs.length})</h3><table class="mini-table"><thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${invs.map((i) => `<tr><td class="mono">${i.number}</td><td>${badge4(i.status)}</td><td>${money4(i.amount)}</td><td>${money4(invoiceBalance(i))}</td></tr>`).join("") || `<tr><td colspan="4">No invoices</td></tr>`}</tbody></table><h3>Payments (${payments2.length})</h3><table class="mini-table"><thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Invoice</th></tr></thead><tbody>${payments2.slice(0, 10).map((p) => `<tr><td>${p.receivedAt || ""}</td><td>${p.method || ""}</td><td>${money4(p.amount)}</td><td class="mono">${p.invoiceNumber || ""}</td></tr>`).join("") || `<tr><td colspan="4">No payments</td></tr>`}</tbody></table></div></div>`);
     document.querySelector("#cd-message")?.addEventListener("click", () => {
       closeModal();
       openCustomerMessage(customer.name, customer.phone, customer.email);
@@ -12600,7 +12719,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const vehicle = state.vehicles.find((v) => v.id === id);
     if (!vehicle) return;
     const history = linkedOrders(vehicle), photos = vehicle.photoKeys || [];
-    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge3(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions">${userCanDeleteRecords() ? `<button class="secondary danger" id="vd-delete">${icon("trash-2", 14)} Delete vehicle</button>` : ""}<button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
+    showModal(`<div class="modal wide" id="vehicle-detail"><div class="modal-head"><h2>${escapeHtml(vehicleLabel3(vehicle))}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="form-grid"><label>Owner<input value="${escapeHtml(vehicle.customer)}" disabled/></label><label>VIN<input value="${escapeHtml(vehicle.vin || "")}" disabled/></label><label>Plate<input value="${escapeHtml(vehicle.plate || "")}" disabled/></label><label>Mileage<input value="${vehicle.mileage || ""}" disabled/></label><label>Next service<input value="${vehicle.nextServiceDate || ""}" disabled/></label><label>Notes<input value="${escapeHtml(vehicle.notes || "")}" disabled/></label></div>${photos.length ? `<h3>Photos</h3><div class="vehicle-photo-thumbs">${photos.map((key) => `<img src="${cloudflareConfig2.apiUrl}/files/${encodeURIComponent(key)}" alt="Vehicle photo" class="vehicle-thumb"/>`).join("")}</div>` : ""}<h3>Service History (${history.length})</h3><table class="mini-table"><thead><tr><th>RO</th><th>Status</th><th>Vehicle</th><th>Total</th></tr></thead><tbody>${history.map((o) => `<tr><td class="mono">${o.id}</td><td>${badge4(o.status)}</td><td>${escapeHtml(o.vehicle)}</td><td>${money4(o.total)}</td></tr>`).join("") || `<tr><td colspan="4">No service history</td></tr>`}</tbody></table><div class="modal-actions">${userCanDeleteRecords() ? `<button class="secondary danger" id="vd-delete">${icon("trash-2", 14)} Delete vehicle</button>` : ""}<button class="secondary" id="vd-edit">${icon("pencil", 14)} Edit vehicle</button></div></div></div>`);
     document.querySelector("#vd-edit")?.addEventListener("click", () => {
       closeModal();
       openVehicleForm(vehicle);
@@ -12942,7 +13061,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return `<div class="finance-kpis"><article><span>Cash received</span><strong>${money4(data.income)}</strong><small>Paid invoices and posted income</small></article><article><span>Operating expenses</span><strong>${money4(data.expenses)}</strong><small>${state.expenses.length} recorded expenses</small></article><article class="${data.net >= 0 ? "positive" : "negative"}"><span>Net income</span><strong>${money4(data.net)}</strong><small>Cash-basis operating result</small></article><article><span>Accounts receivable</span><strong>${money4(data.receivable)}</strong><small>${money4(data.overdue)} overdue</small></article><article><span>Sales tax payable</span><strong>${money4(data.tax)}</strong><small>From paid work orders</small></article></div><div class="accounting-grid"><section class="statement"><div class="statement-head"><div><div class="eyebrow">Profit & loss</div><h2>Current activity</h2></div><span class="badge paid">Cash basis</span></div><div class="statement-line"><span>Service revenue</span><b>${money4(data.income)}</b></div><div class="statement-line"><span>Operating expenses</span><b>(${money4(data.expenses)})</b></div><div class="statement-line total"><span>Net income</span><b>${money4(data.net)}</b></div></section><section class="statement"><div class="statement-head"><div><div class="eyebrow">Controls</div><h2>Month-end checklist</h2></div>${icon("list-checks", 18)}</div><p>Review overdue receivables, reconcile the operating account, and set aside sales tax before filing.</p><small>Financial reporting is generated from records stored in this application.</small></section></div>`;
   }
   function arView(data) {
-    const rows = data.open.map((x) => `<tr><td class="mono"><b>${x.number}</b></td><td>${x.customer}</td><td>${x.due}</td><td>${badge3(x.status)}</td><td><b>${money4(x.amount)}</b></td></tr>`).join("");
+    const rows = data.open.map((x) => `<tr><td class="mono"><b>${x.number}</b></td><td>${x.customer}</td><td>${x.due}</td><td>${badge4(x.status)}</td><td><b>${money4(x.amount)}</b></td></tr>`).join("");
     return `<div class="accounting-summary"><span>${data.open.length} open invoices</span><strong>${money4(data.receivable)} outstanding</strong></div><div class="data-panel"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Due</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No open receivables.</td></tr>`}</tbody></table></div>`;
   }
   function expenseView() {
@@ -13352,7 +13471,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const detail = item.type === "overdue" ? `${item.detail.split(" \xB7 ")[0]} \xB7 ${money4(item.amount || 0)}` : item.detail;
       return `<button class="home-row ${tone}" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : `data-route="invoices"`}><span class="home-row-icon">${icon(item.type === "overdue" ? "clock-alert" : item.type === "parts" ? "package" : "user-plus", 16)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail)}</small></span>${icon("chevron-right", 14)}</button>`;
     }).join("");
-    const todayJobs = model.todayJobs.map((order) => `<button class="home-job" type="button" data-order="${escapeHtml(order.id)}"><div><span class="mono">${escapeHtml(order.id)}</span>${badge3(order.status)}</div><strong>${escapeHtml(order.customer)}</strong><small>${escapeHtml(order.vehicle)}</small><span class="home-job-meta">${icon("clock-3", 12)}${escapeHtml(order.promise || "Unscheduled")} \xB7 ${escapeHtml(order.tech || "Unassigned")}</span></button>`).join("");
+    const todayJobs = model.todayJobs.map((order) => `<button class="home-job" type="button" data-order="${escapeHtml(order.id)}"><div><span class="mono">${escapeHtml(order.id)}</span>${badge4(order.status)}</div><strong>${escapeHtml(order.customer)}</strong><small>${escapeHtml(order.vehicle)}</small><span class="home-job-meta">${icon("clock-3", 12)}${escapeHtml(order.promise || "Unscheduled")} \xB7 ${escapeHtml(order.tech || "Unassigned")}</span></button>`).join("");
     const appointments = model.todaysAppointments.map((item) => `<article class="home-appointment"><strong>${escapeHtml(item.time)} \xB7 ${escapeHtml(item.customer)}</strong><small>${escapeHtml(item.service)} \xB7 ${escapeHtml(item.bay || "Unassigned")}</small></article>`).join("");
     const activity = model.activity.map((item) => `<button class="home-row" type="button" ${item.orderId ? `data-order="${escapeHtml(item.orderId)}"` : 'data-route="invoices"'}><span class="home-row-icon muted">${icon("activity", 15)}</span><span><strong>${escapeHtml(item.title)} \xB7 ${escapeHtml(item.customer || "")}</strong><small>${escapeHtml(item.vehicle || item.meta || "")} \xB7 ${escapeHtml(label(item.status))}</small></span></button>`).join("");
     const start = model.isEmpty ? `<section class="home-start"><div><div class="eyebrow">Get started</div><h2>Your shop dashboard is ready</h2><p>Create a work order, book a visit, or open the dispatch board. Metrics, today's jobs, and recent activity fill in as soon as records land.</p></div><div class="home-start-actions"><button class="primary" type="button" data-open-new>${icon("plus", 15)} New work order</button>${canAccess("dispatch") ? `<button class="secondary" type="button" data-route="dispatch">${icon("layout-dashboard", 15)} Open dispatch</button>` : ""}</div></section>` : "";
@@ -16401,6 +16520,208 @@ ${line}`.trim();
       }
     }));
   }
+  async function loadAmbassadorData(patch = {}) {
+    const loadId = ++ambassadorLoadId;
+    const next = { tab: "ambassadors", salesFilters: {}, ledgerPeriod: lastMonth(), ...ambassadorData || {}, ...patch, loading: false };
+    try {
+      const { ambassadors } = await platformApi("/admin/ambassadors");
+      if (loadId !== ambassadorLoadId) return;
+      next.ambassadors = ambassadors;
+      if (next.tab === "sales") {
+        next.sales = (await platformApi(`/admin/ambassador-sales${salesQuery(next.salesFilters)}`)).sales;
+        if (loadId !== ambassadorLoadId) return;
+      }
+      if (next.tab === "commissions") {
+        next.rates = (await platformApi("/admin/ambassador-commission-rates")).rates;
+        if (loadId !== ambassadorLoadId) return;
+        next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}&page=${encodeURIComponent(next.ledgerPage || 1)}`);
+        if (loadId !== ambassadorLoadId) return;
+      }
+      if (next.tab === "reports") Object.assign(next, await platformApi("/admin/ambassador-payout-reports"));
+    } catch (error) {
+      if (loadId !== ambassadorLoadId) return;
+      next.ambassadors || (next.ambassadors = []);
+      toast(error.message || "Could not load ambassadors");
+    }
+    if (loadId !== ambassadorLoadId) return;
+    ambassadorData = next;
+    if (state.route === "ambassadors") render();
+  }
+  function ambassadorsView() {
+    if (ambassadorData === null) void loadAmbassadorData();
+    return platformShell(`${heading("Platform control", "Ambassadors", "Ambassador numbers and referral codes, who sold each membership, recurring monthly commissions, and the monthly payout report.", false)}${ambassadorsHtml(ambassadorData, { escapeHtml, icon })}`);
+  }
+  function openAmbassadorForm(ambassador = null) {
+    showModal(ambassadorFormHtml(ambassador, { escapeHtml, icon }));
+    const form = document.querySelector("#amb-form");
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const error = document.querySelector("#amb-form-error"), button = form.querySelector("button[type=submit]"), data = readFormValues(form);
+      button.disabled = true;
+      error.hidden = true;
+      try {
+        await platformApi(ambassador ? `/admin/ambassadors/${encodeURIComponent(ambassador.id)}` : "/admin/ambassadors", { method: ambassador ? "PUT" : "POST", body: JSON.stringify(data) });
+        closeModal();
+        toast(ambassador ? "Ambassador updated" : "Ambassador added");
+        void loadAmbassadorData();
+      } catch (requestError) {
+        error.textContent = requestError.message;
+        error.hidden = false;
+        button.disabled = false;
+      }
+    };
+    document.querySelector("#amb-delete")?.addEventListener("click", async () => {
+      if (!confirm(`Delete ${ambassador.ambassadorNumber}? Ambassadors with sales must be suspended instead.`)) return;
+      try {
+        await platformApi(`/admin/ambassadors/${encodeURIComponent(ambassador.id)}`, { method: "DELETE" });
+        closeModal();
+        toast("Ambassador deleted");
+        void loadAmbassadorData();
+      } catch (requestError) {
+        toast(requestError.message);
+      }
+    });
+  }
+  async function openSaleCredit(shopId) {
+    const sale = (ambassadorData?.sales || []).find((item) => item.shopId === shopId);
+    if (!sale) return;
+    const { log } = await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/log`).catch(() => ({ log: [] }));
+    showModal(creditFormHtml(sale, ambassadorData.ambassadors, log, { escapeHtml, icon }));
+    const form = document.querySelector("#amb-credit-form");
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const error = document.querySelector("#amb-credit-error"), data = readFormValues(form);
+      error.hidden = true;
+      try {
+        if ((data.ambassadorId || "") !== (sale.ambassadorId || "") && data.soldBy === sale.soldBy) data.soldBy = "";
+        await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/attribution`, { method: "POST", body: JSON.stringify({ ambassadorId: data.ambassadorId || null, saleSource: data.saleSource, soldBy: data.soldBy, reason: data.reason }) });
+        closeModal();
+        toast("Sale credit updated");
+        void loadAmbassadorData();
+      } catch (requestError) {
+        error.textContent = requestError.message;
+        error.hidden = false;
+      }
+    };
+  }
+  async function downloadAmbassadorFile(path, name, type) {
+    const response = await authorizedApiRequest(path);
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Download failed");
+    const url = URL.createObjectURL(new Blob([await response.arrayBuffer()], { type }));
+    return { url, name };
+  }
+  async function openPayoutReport(period, { generate = false } = {}) {
+    try {
+      const report = generate ? (await platformApi("/admin/ambassador-payout-reports", { method: "POST", body: JSON.stringify({ period }) })).report : await platformApi(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}`);
+      showModal(payoutReportDialogHtml(report, { escapeHtml, icon }));
+      document.querySelector("#amb-report-print")?.addEventListener("click", async () => {
+        const win = window.open("", "_blank");
+        try {
+          const { url } = await downloadAmbassadorFile(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}/print?print=1`, "", "text/html");
+          if (win) win.location.href = url;
+          else window.open(url, "_blank");
+        } catch (error) {
+          win?.close();
+          toast(error.message);
+        }
+      });
+      document.querySelector("#amb-report-pdf")?.addEventListener("click", async () => {
+        try {
+          const { url } = await downloadAmbassadorFile(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}/pdf`, "", "application/pdf");
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `shopcrank-ambassador-payouts-${period}.pdf`;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 3e4);
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      document.querySelectorAll(".amb-pay-form").forEach((form) => form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const data = readFormValues(form);
+        try {
+          await platformApi(`/admin/ambassador-payout-reports/${encodeURIComponent(period)}/payouts/${encodeURIComponent(form.dataset.ambassador)}`, { method: "POST", body: JSON.stringify(data) });
+          toast(`Check ${data.checkNumber} recorded`);
+          await openPayoutReport(period);
+          if (ambassadorData?.tab === "reports") void loadAmbassadorData();
+        } catch (error) {
+          toast(error.message);
+        }
+      }));
+    } catch (error) {
+      if (!generate && /No payout report/.test(error.message) && confirm(`No report exists for ${period}. Generate it now? It will be frozen once created.`)) return openPayoutReport(period, { generate: true });
+      toast(error.message);
+    }
+  }
+  function bindAmbassadors() {
+    document.querySelector("#refresh-platform")?.addEventListener("click", () => {
+      void loadAmbassadorData();
+    });
+    document.querySelectorAll("[data-amb-tab]").forEach((button) => button.addEventListener("click", () => {
+      ambassadorData = { ...ambassadorData, tab: button.dataset.ambTab, loading: true };
+      render();
+      void loadAmbassadorData({ tab: button.dataset.ambTab });
+    }));
+    document.querySelector("#amb-new")?.addEventListener("click", () => openAmbassadorForm());
+    document.querySelectorAll("[data-amb-edit]").forEach((button) => button.addEventListener("click", () => openAmbassadorForm(ambassadorData.ambassadors.find((item) => item.id === button.dataset.ambEdit))));
+    const openAmbassadorStatement = async (id, page = 1) => {
+      const statement = await platformApi(`/admin/ambassadors/${encodeURIComponent(id)}/statement?page=${encodeURIComponent(page)}`);
+      showModal(statementHtml(statement, { escapeHtml, icon }));
+      document.querySelectorAll("[data-statement-page]").forEach((button) => button.addEventListener("click", () => {
+        void openAmbassadorStatement(id, Number(button.dataset.statementPage));
+      }));
+    };
+    document.querySelectorAll("[data-amb-statement]").forEach((button) => button.addEventListener("click", async () => {
+      try {
+        await openAmbassadorStatement(button.dataset.ambStatement);
+      } catch (error) {
+        toast(error.message);
+      }
+    }));
+    document.querySelector("#amb-sales-filters")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void loadAmbassadorData({ salesFilters: readFormValues(event.target) });
+    });
+    document.querySelectorAll("[data-sale-credit]").forEach((button) => button.addEventListener("click", () => {
+      void openSaleCredit(button.dataset.saleCredit);
+    }));
+    document.querySelector("#amb-rates-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const rates = [...event.target.querySelectorAll("input[name^='rate:']")].map((input) => ({ planId: input.name.slice(5), tier: input.dataset.tier, monthlyCents: Math.round(Number(input.value) * 100) }));
+      try {
+        await platformApi("/admin/ambassador-commission-rates", { method: "PUT", body: JSON.stringify({ rates }) });
+        toast("Commission rates saved");
+        void loadAmbassadorData();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    document.querySelector("#amb-ledger-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void loadAmbassadorData({ ledgerPeriod: readFormValues(event.target).period, ledgerPage: 1 });
+    });
+    document.querySelectorAll("[data-ledger-page]").forEach((button) => button.addEventListener("click", () => {
+      void loadAmbassadorData({ ledgerPage: Number(button.dataset.ledgerPage) });
+    }));
+    document.querySelector("#amb-ledger-generate")?.addEventListener("click", async () => {
+      const period = document.querySelector("#amb-ledger-form")?.elements.period.value;
+      try {
+        const result = await platformApi("/admin/ambassador-commissions/generate", { method: "POST", body: JSON.stringify({ period }) });
+        toast(result.frozen ? "That month is frozen in a payout report" : `${result.created} commission line${result.created === 1 ? "" : "s"} added`);
+        void loadAmbassadorData({ ledgerPeriod: period, ledgerPage: 1 });
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    document.querySelector("#amb-report-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void openPayoutReport(readFormValues(event.target).period);
+    });
+    document.querySelectorAll("[data-report-view]").forEach((button) => button.addEventListener("click", () => {
+      void openPayoutReport(button.dataset.reportView);
+    }));
+  }
   function smsReadMarks() {
     try {
       return JSON.parse(localStorage.getItem(SMS_READ_MARKS) || "{}") || {};
@@ -16854,7 +17175,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -16883,6 +17204,7 @@ ${line}`.trim();
       init_vehicle_key_license();
       init_assistant_media();
       init_health_check();
+      init_ambassadors();
       init_sms_inbox();
       init_inspection_ratings();
       init_call_log();
@@ -17342,7 +17664,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${escapeHtml(invoice.number)}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge4(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}${paid === 0 ? `<button class="mini-action" data-edit-tax="${escapeHtml(invoice.number)}">${icon("percent", 13)} Edit tax</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Track open balances, invoice tax, payments, and branded print copies.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows}</tbody></table></div>`);
       };
@@ -17429,7 +17751,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice), key = escapeHtml(invoiceRecordKey(invoice));
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button>${userCanDeleteRecords() ? `<button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>` : ""}${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.due || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge4(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)} (${bd.taxRate}%)</small><small>Paid ${money4(paid)} \xB7 Balance ${money4(balance)}</small><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeHtml(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-edit-invoice="${key}">${icon("pencil", 13)} Edit</button>${userCanDeleteRecords() ? `<button class="mini-action danger" data-delete-invoice="${key}">${icon("trash-2", 13)} Delete</button>` : ""}${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action" data-record-payment="${escapeHtml(invoice.number)}" data-method="processor">${icon("credit-card", 13)} Card receipt</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeHtml(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Edit invoice details and safely remove invoices without payment history.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th>Invoice & payments</th></tr></thead><tbody>${rows || `<tr><td colspan="7">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
@@ -17770,7 +18092,7 @@ ${line}`.trim();
         };
       };
       orders = function() {
-        const rows = filtered().map((order) => `<tr data-order="${escapeAttr(order.id)}"><td class="mono strong">${escapeHtml(order.id)}</td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "")}</small></td><td><b>${escapeHtml(order.vehicle)}</b><small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${badge3(order.status)}</td><td>${escapeHtml(assignmentSummary(order, state.users))}<small>${escapeHtml(order.bay || "Unassigned")}</small></td><td>${escapeHtml(order.promise || "Unscheduled")}</td><td><b>${money4(order.total)}</b></td><td><button class="mini-action" type="button" data-edit-order="${escapeAttr(order.id)}">${icon("pencil", 13)} Edit</button></td></tr>`).join("");
+        const rows = filtered().map((order) => `<tr data-order="${escapeAttr(order.id)}"><td class="mono strong">${escapeHtml(order.id)}</td><td><b>${escapeHtml(order.customer)}</b><small>${escapeHtml(order.phone || "")}</small></td><td><b>${escapeHtml(order.vehicle)}</b><small class="mono">${escapeHtml(order.vin || "")}</small></td><td>${badge4(order.status)}</td><td>${escapeHtml(assignmentSummary(order, state.users))}<small>${escapeHtml(order.bay || "Unassigned")}</small></td><td>${escapeHtml(order.promise || "Unscheduled")}</td><td><b>${money4(order.total)}</b></td><td><button class="mini-action" type="button" data-edit-order="${escapeAttr(order.id)}">${icon("pencil", 13)} Edit</button></td></tr>`).join("");
         return shell(`${heading("Operations", "Work orders", "Open and edit customer, vehicle, assignment, status, and service details.")}${toolbar()}<div class="data-panel"><table><thead><tr><th>RO number</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Assignment</th><th>Promise</th><th>Total</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("No matching work orders")}</div>`);
       };
       updateOrderInApi = async function(record) {
@@ -17919,7 +18241,7 @@ ${line}`.trim();
         const editor = canEditEstimate && !paidInvoice ? `<section class="job-editor"><div class="job-section-head"><div><h3>Edit line items</h3><p>${terminalOrder ? "After-midnight fee changes are locked after completion or invoicing. Reopen the work order before adding or replacing that fee." : editNotice}</p></div><div><button class="secondary" id="job-add-after-midnight-fee" type="button" ${terminalOrder ? `disabled title="Reopen this work order before adding the after-midnight fee"` : ""}>${icon("moon-star", 14)} Add after-midnight fee</button><button class="secondary" id="job-add-labor" type="button">${icon("wrench", 14)} Add labor</button><button class="secondary" id="job-add-part" type="button">${icon("package-plus", 14)} Add part</button></div></div><div id="job-estimate-editor" data-shop-supplies="${Number(estimate.fees?.find((fee) => /shop supplies/i.test(fee.description))?.amount ?? "")}" data-discount-percent="${Number(estimate.discountPercent || 0)}" data-discount-reason="${escapeAttr(estimate.discountReason || "")}" data-exclusions="${escapeAttr(JSON.stringify(estimate.exclusions || []))}" data-insurance="${escapeAttr(JSON.stringify(estimate.insurance || {}))}">${estimate.lines.map((line, index) => estimateEditorLine(line, index)).join("")}</div><div class="job-estimate-summary"></div><button class="primary" id="save-job-lines" type="button">${icon("save", 14)} Save line items</button></section>` : "";
         const approvalActions = (order.status === "estimate" || order.estimateRevisionPending) && canManage && !["completed", "invoiced"].includes(order.status) ? `<div class="job-actions"><button class="secondary" data-send-job-estimate="email">${icon("mail", 14)} Email link</button><button class="secondary" data-send-job-estimate="sms">${icon("message-square", 14)} Text link</button>${canApprove ? `<button class="primary" id="sign-job-estimate">${icon("circle-check", 14)} Record approval</button>` : ""}</div>` : "";
         const workActions = canManage && order.status === "approved" ? `<div class="job-actions"><button class="primary" id="start-job-work">${icon("play", 14)} Start work</button></div>` : canManage && ["in_progress", "waiting_parts"].includes(order.status) ? `<div class="job-actions"><button class="primary" id="complete-job-card">${icon("circle-check", 14)} Complete job & generate invoice</button></div>` : "";
-        const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge3(invoice.status)} \xB7 ${money4(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
+        const invoiceCard = invoice ? `<section class="job-invoice-card"><div><span>Invoice</span><h3>${escapeHtml(invoice.number)}</h3><p>${badge4(invoice.status)} \xB7 ${money4(invoice.amount)}</p></div><div><button class="secondary" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 14)} Print</button><button class="primary" id="sign-job-invoice">${icon("signature", 14)} ${invoice.signature ? "Signed" : "Sign invoice"}</button></div></section>` : "";
         const assignments = canManage ? laborAssignmentPanel(order, estimate) : "";
         showModal(`<div class="modal wide job-card-modal"><div class="modal-head"><div><span class="mono">${escapeHtml(order.id)}</span><h2>Job card</h2></div><button class="close" data-close>${icon("x")}</button></div><div class="modal-body">${jobWorkflowSteps(order, invoice)}${detailsEditor}${estimatePresentation(order, estimate, { locked: false })}${assignments}${editor}${approvalActions}${workActions}${invoiceCard}</div><div class="modal-actions">${userCanDeleteRecords() ? `<button class="secondary danger" type="button" id="delete-job-card">${icon("trash-2", 14)} Delete work order</button>` : ""}<button class="secondary" type="button" id="print-job-card">${icon("printer", 14)} Print job card</button><button class="secondary" data-close>Close</button></div></div>`);
         const editorRoot = document.querySelector("#job-estimate-editor");
@@ -18179,7 +18501,7 @@ ${line}`.trim();
       invoices = function() {
         const q = query.toLowerCase(), rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const paid = invoicePaid(invoice), balance = invoiceBalance(invoice), bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge3(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Balance ${money4(balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${balance === 0 ? `<span class="badge paid">Paid</span>` : badge4(invoice.status)}</td><td><b>${money4(invoice.amount)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Balance ${money4(balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("banknote", 13)} Cash</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button>` : ""}</div></td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Review the completed job, capture a mobile signature, and collect payment.", false)}${stats()}<div class="data-panel"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`);
       };
@@ -18375,7 +18697,7 @@ ${line}`.trim();
         openNewWithDraft();
       };
       savedEstimates = function() {
-        const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge3(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
+        const rows = [...state.estimates].reverse().map((estimate) => `<tr><td class="mono"><b>${escapeHtml(estimate.number || "Draft")}</b></td><td>${escapeHtml(typeof estimate.customer === "object" ? estimate.customer.name : estimate.customer)}<small>${escapeHtml(typeof estimate.vehicle === "object" ? estimate.vehicle.description : estimate.vehicle)}</small></td><td>${badge4(estimate.status || "estimate")}</td><td><b>${money4(estimate.total)}</b></td><td><div class="estimate-actions"><button class="mini-action" data-preview-estimate="${escapeAttr(estimate.id)}">${icon("file-text", 13)} View</button><button class="mini-action" data-fill-estimate="${escapeAttr(estimate.id)}">${icon("clipboard-plus", 13)} Fill work order</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="email">${icon("mail", 13)} Email</button><button class="mini-action" data-send-estimate="${escapeAttr(estimate.id)}" data-channel="sms">${icon("message-square", 13)} Text</button>${estimate.status !== "approved" ? `<button class="mini-action" data-sign-estimate="${escapeAttr(estimate.id)}">${icon("signature", 13)} Sign</button>` : ""}</div></td></tr>`).join("");
         return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
       };
       liveAssistant = function() {
@@ -18502,7 +18824,7 @@ ${line}`.trim();
         const rows = state.invoices.filter((invoice) => !q || Object.values(invoice).join(" ").toLowerCase().includes(q)).map((invoice) => {
           const summary = invoicePaymentSummary(invoice);
           const bd = invoiceTaxBreakdown(invoice);
-          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge3(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
+          return `<tr><td class="mono"><b>${escapeHtml(invoice.number)}</b><small>${invoice.signature ? `Signed by ${escapeHtml(invoice.signature.authorizationName)}` : "Signature pending"}</small></td><td class="mono">${escapeHtml(invoice.ro || "")}</td><td><b>${escapeHtml(invoice.customer)}</b></td><td>${escapeHtml(invoice.date || "")}</td><td>${escapeHtml(invoice.closedAt ? new Date(invoice.closedAt).toLocaleDateString() : "")}</td><td>${badge4(summary.status)}</td><td><b>${money4(summary.total)}</b><small>Subtotal ${money4(bd.subtotal)} \xB7 Tax ${money4(bd.tax)}</small><small>Paid ${money4(summary.paid)} \xB7 Remaining ${money4(summary.balance)}</small></td><td><div class="invoice-payments"><button class="mini-action" data-print-invoice="${escapeAttr(invoice.number)}">${icon("printer", 13)} Print</button><button class="mini-action" data-sign-invoice="${escapeAttr(invoice.number)}" ${invoice.signature ? "disabled" : ""}>${icon("signature", 13)} ${invoice.signature ? "Signed" : "Sign"}</button>${summary.balance > 0 ? `<button class="mini-action" data-record-payment="${escapeAttr(invoice.number)}" data-method="cash">${icon("badge-dollar-sign", 13)} Record payment</button><button class="mini-action invoice-pay" data-pay-invoice="${escapeAttr(invoice.number)}">${icon("external-link", 13)} Pay online</button><button class="mini-action" data-text-pay="${escapeAttr(invoice.number)}">${icon("message-square", 13)} Text to pay</button>` : ""}</div>${paymentHistoryMarkup(summary)}</td></tr>`;
         }).join("");
         return shell(`${heading("Accounts receivable", "Invoices", "Record partial or full payments, monitor remaining balances, and review collection history.", false)}${receivableStats()}<div class="data-panel invoice-register"><table><thead><tr><th>Invoice</th><th>Work order</th><th>Customer</th><th>Issued</th><th>Closeout</th><th>Status</th><th>Total</th><th>Payments</th></tr></thead><tbody>${rows || `<tr><td colspan="8">No invoices yet.</td></tr>`}</tbody></table></div>`);
       };
@@ -18527,7 +18849,7 @@ ${line}`.trim();
         });
         document.querySelector("#edit-assignments")?.addEventListener("click", () => openAssignmentEditor(order));
         const summary = workOrderPaymentSummary(order);
-        modalBody.insertAdjacentHTML("beforeend", `<section class="work-order-payments"><div class="job-section-head"><div><h3>Payments</h3><p>Record deposits or partial collections against this work order.</p></div>${summary.balance > 0 ? `<button class="primary" type="button" id="record-work-order-payment">${icon("badge-dollar-sign", 14)} Record payment</button>` : ""}</div><div class="payment-balance-grid"><div><span>Total</span><b>${money4(summary.total)}</b></div><div><span>Paid</span><b>${money4(summary.paid)}</b></div><div><span>Remaining</span><b>${money4(summary.balance)}</b></div><div><span>Status</span>${badge3(summary.status)}</div></div>${paymentHistoryMarkup(summary)}</section>`);
+        modalBody.insertAdjacentHTML("beforeend", `<section class="work-order-payments"><div class="job-section-head"><div><h3>Payments</h3><p>Record deposits or partial collections against this work order.</p></div>${summary.balance > 0 ? `<button class="primary" type="button" id="record-work-order-payment">${icon("badge-dollar-sign", 14)} Record payment</button>` : ""}</div><div class="payment-balance-grid"><div><span>Total</span><b>${money4(summary.total)}</b></div><div><span>Paid</span><b>${money4(summary.paid)}</b></div><div><span>Remaining</span><b>${money4(summary.balance)}</b></div><div><span>Status</span>${badge4(summary.status)}</div></div>${paymentHistoryMarkup(summary)}</section>`);
         document.querySelector("#record-work-order-payment")?.addEventListener("click", () => recordTargetPayment("work_order", order.id));
         lucide.createIcons();
       };
@@ -19120,6 +19442,30 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
           return;
         }
         renderHealthCheckCore();
+      };
+      if (!roleRoutes.super_admin.includes("ambassadors")) roleRoutes.super_admin.push("ambassadors");
+      ambassadorData = null;
+      ambassadorLoadId = 0;
+      platformShellAmbassadorCore = platformShell;
+      platformShell = function(content) {
+        const healthNav = nav("health", "activity", "System health");
+        return platformShellAmbassadorCore(content).replace(healthNav, `${healthNav}${nav("ambassadors", "handshake", "Ambassadors")}`);
+      };
+      bindAmbassadorsCore = bind;
+      bind = function() {
+        bindAmbassadorsCore();
+        if (state.route === "ambassadors" && currentUser()?.role === "super_admin") bindAmbassadors();
+      };
+      renderAmbassadorsCore = render;
+      render = function() {
+        if (currentUser()?.role === "super_admin" && state.route === "ambassadors") {
+          const root = document.querySelector("#root");
+          root.innerHTML = safeHtml(ambassadorsView());
+          lucide.createIcons();
+          bind();
+          return;
+        }
+        renderAmbassadorsCore();
       };
       SMS_READ_MARKS = "shopcrank-sms-read-v1";
       smsInbox = { loaded: false, loading: false, enabled: false, messages: [], selectedKey: "", error: "" };
