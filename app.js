@@ -10436,7 +10436,7 @@ button{margin-top:12px;padding:8px 14px}
     return byVin.length && byLabel.length ? [.../* @__PURE__ */ new Set([...byVin, ...byLabel])] : byVin.length ? byVin : byLabel;
   }
   function operationsVehicles() {
-    const rows = state.vehicles.map((vehicle) => {
+    const rows = state.vehicles.filter((vehicle) => !isArchived(vehicle)).map((vehicle) => {
       const history = linkedOrders(vehicle);
       return `<tr data-edit-vehicle="${vehicle.id}" class="clickable-row"><td><b>${escapeHtml(vehicleLabel3(vehicle))}</b><small>${escapeHtml(vehicle.plate || "No plate")} \xB7 ${escapeHtml(vehicle.mileage || "Mileage pending")}</small></td><td>${escapeHtml(vehicle.customer)}</td><td class="mono">${escapeHtml(vehicle.vin || "VIN pending")}</td><td>${history.length}<small>${history.at(-1)?.id || "No service yet"}</small></td><td>${vehicle.nextServiceDate || "Not set"}</td></tr>`;
     }).join("");
@@ -12380,7 +12380,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     return [...new Set(names)].map((name) => `<option ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
   }
   function vehicleOptionsForCustomer(customerName, selectedVin = "") {
-    const vehicles = state.vehicles.filter((vehicle) => !customerName || vehicle.customer === customerName);
+    const vehicles = state.vehicles.filter((vehicle) => !isArchived(vehicle) && (!customerName || vehicle.customer === customerName));
     return `<option value="">Enter vehicle manually</option>${vehicles.map((vehicle) => `<option value="${escapeHtml(vehicle.id)}" data-vin="${escapeHtml(vehicle.vin || "")}" data-label="${escapeHtml(vehicleLabel3(vehicle))}" ${vehicle.vin && vehicle.vin === selectedVin ? "selected" : ""}>${escapeHtml(vehicleLabel3(vehicle))}${vehicle.vin ? ` \xB7 ${escapeHtml(vehicle.vin)}` : ""}</option>`).join("")}`;
   }
   function bindNewOrderCustomerPickers() {

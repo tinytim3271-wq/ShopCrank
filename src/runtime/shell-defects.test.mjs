@@ -54,6 +54,29 @@ test('invoice editor roundtrips date-only values without UTC drift', () => {
   assert.equal(dateValue('2024-02-29'), '2024-02-29');
 });
 
+test('archived vehicles stay in history but are hidden from operations and new-order pickers', () => {
+  const active = { id: 'vehicle-active', customer: 'Pat', year: 2020, make: 'Honda', model: 'Civic', vin: 'ACTIVEVIN' };
+  const archived = { id: 'vehicle-archived', customer: 'Pat', year: 2010, make: 'Ford', model: 'Focus', vin: 'ARCHIVEDVIN', archivedAt: '2026-10-31T00:00:00.000Z' };
+  const context = {
+    state: { vehicles: [active, archived] },
+    isArchived: record => Boolean(record.archivedAt),
+    linkedOrders: vehicle => vehicle.id === archived.id ? [{ id: 'RO-HISTORICAL' }] : [],
+    vehicleLabel: vehicle => [vehicle.year, vehicle.make, vehicle.model].join(' '),
+    escapeHtml,
+    icon: () => '',
+  };
+  vm.createContext(context);
+  vm.runInContext(functionSource('function operationsVehicles('), context);
+  vm.runInContext(functionSource('function vehicleOptionsForCustomer('), context);
+  const register = context.operationsVehicles();
+  const picker = context.vehicleOptionsForCustomer('Pat');
+  assert.match(register, /vehicle-active/);
+  assert.doesNotMatch(register, /vehicle-archived|RO-HISTORICAL/);
+  assert.match(picker, /vehicle-active/);
+  assert.doesNotMatch(picker, /vehicle-archived|ARCHIVEDVIN/);
+  assert.equal(context.state.vehicles.includes(archived), true);
+});
+
 test('Texas filing mismatches block generation, exports, and printing but not other states', async () => {
   const state = { taxSettings: { state: 'TX', rate: 8.25, jurisdictions: null } };
   const context = {
