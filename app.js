@@ -7456,7 +7456,11 @@ button{margin-top:12px;padding:8px 14px}
       const pathId = path.startsWith(`${basePath}/`) ? decodeURIComponent(path.slice(basePath.length + 1)) : "";
       const id = String(body?.id || pathId || "");
       if (!id) continue;
-      if (method === "DELETE") records.delete(id);
+      if (method === "DELETE") {
+        const archivedRecord = mutation.archivedRecord;
+        if (archivedRecord && String(archivedRecord.id) === id) records.set(id, archivedRecord);
+        else records.delete(id);
+      }
       if (method === "POST" || method === "PUT") records.set(id, body);
     }
     return [...records.values()];
@@ -8421,6 +8425,7 @@ button{margin-top:12px;padding:8px 14px}
         vehicles: [
           { type: "orders", field: "vehicleId", key: "id" },
           { type: "orders", field: "vin", key: "vin" },
+          { type: "invoices", field: "vehicleId", key: "id" },
           { type: "invoices", field: "vin", key: "vin" }
         ],
         employees: [
@@ -9856,14 +9861,14 @@ button{margin-top:12px;padding:8px 14px}
   function prepareMutation(path, options) {
     return prepareEntityMutation(path, options, mutationId);
   }
-  function queueEntityMutation(mutation, conflict = false) {
+  function queueEntityMutation(mutation, conflict = false, archivedRecord = null) {
     const queue = readMutationQueue(), existingIndex = queue.findIndex((item2) => item2.key === mutation.key);
     if (mutation.options.method === "DELETE" && existingIndex >= 0 && queue[existingIndex].method === "POST") {
       queue.splice(existingIndex, 1);
       writeMutationQueue(queue);
       return;
     }
-    const item = { id: mutationId(), key: mutation.key, path: mutation.path, method: mutation.options.method, body: mutation.options.body, expectedUpdatedAt: mutation.expectedUpdatedAt || null, queuedAt: (/* @__PURE__ */ new Date()).toISOString(), conflict };
+    const item = { id: mutationId(), key: mutation.key, path: mutation.path, method: mutation.options.method, body: mutation.options.body, expectedUpdatedAt: mutation.expectedUpdatedAt || null, queuedAt: (/* @__PURE__ */ new Date()).toISOString(), conflict, ...archivedRecord ? { archivedRecord } : {} };
     if (existingIndex >= 0) queue.splice(existingIndex, 1, item);
     else queue.push(item);
     writeMutationQueue(queue);
@@ -9943,7 +9948,8 @@ button{margin-top:12px;padding:8px 14px}
       return { queued: true };
     }
     if (readMutationQueue().some((item) => !item.conflict) && navigator.onLine && !flushingMutationQueue) void flushMutationQueue();
-    const mutation = prepareMutation(path, options);
+    const { queuedArchiveRecord, ...requestOptions } = options;
+    const mutation = prepareMutation(path, requestOptions);
     try {
       const response = await authorizedApiRequest(path, withOptimisticConcurrencyHeaders(mutation.options, mutation.expectedUpdatedAt));
       if (!response.ok) {
@@ -9955,7 +9961,7 @@ button{margin-top:12px;padding:8px 14px}
       return response.status === 204 ? null : response.json();
     } catch (error) {
       if (mutation.queueable && (error.retryable || !navigator.onLine || error instanceof TypeError)) {
-        queueEntityMutation(mutation);
+        queueEntityMutation(mutation, false, queuedArchiveRecord);
         if (!options.silent) toast("Saved offline. ShopCrank will sync when the connection returns.");
         return { queued: true };
       }
@@ -13355,8 +13361,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const button = event.target.querySelector("button[type=submit]");
       button.disabled = true;
       try {
-        const result = await apiFetch(`/entities/${type}/${encodeURIComponent(spec.id(record))}`, { method: "DELETE" });
-        const outcome = result?.queued ? archive ? { archived: true, record: { ...record, archivedAt: now(), archivedBy: currentUser()?.email || "", archiveReasons: plan.reasons } } : { archived: false } : result?.archived ? { archived: true, record: result.record } : { archived: false };
+        const archivedRecord = archive ? { ...record, archivedAt: now(), archivedBy: currentUser()?.email || "", archiveReasons: plan.reasons } : null;
+        const result = await apiFetch(`/entities/${type}/${encodeURIComponent(spec.id(record))}`, { method: "DELETE", queuedArchiveRecord: archivedRecord });
+        const outcome = result?.queued ? archive ? { archived: true, record: archivedRecord } : { archived: false } : result?.archived ? { archived: true, record: result.record } : { archived: false };
         applyRecordRemoval(type, record, outcome);
         closeModal();
         toast(outcome.archived ? `${title} archived` : `${title} deleted`);

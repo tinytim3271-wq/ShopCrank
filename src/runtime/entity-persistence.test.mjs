@@ -55,6 +55,23 @@ test('queued deletes hide records while waiting to sync', () => {
   );
 });
 
+test('queued archives retain archived records over remote lists', () => {
+  const archivedRecord = { id: 'customer-1', name: 'Existing', archivedAt: '2026-10-31T12:00:00.000Z' };
+  const queue = [{
+    path: '/entities/customers/customer-1',
+    method: 'DELETE',
+    archivedRecord,
+  }];
+  assert.deepEqual(
+    applyQueuedEntityMutations('customers', [{ id: 'customer-1', name: 'Existing' }], queue),
+    [archivedRecord],
+  );
+  assert.deepEqual(
+    applyQueuedEntityMutations('customers', [], queue),
+    [archivedRecord],
+  );
+});
+
 test('API entity types overlay even when UI state keys differ', () => {
   const queue = [{
     path: '/entities/inspectiontemplates/tpl-1',
