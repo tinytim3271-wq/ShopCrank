@@ -668,6 +668,41 @@ test('statements: admin view and ambassador self-service by code and email', asy
   assert.equal((await call('POST', '/ambassadors/statement', { code: amb.referralCode, email: 'someone@else.test' }, { email: null })).status, 404);
 });
 
+test('commission totals include all matching rows while ledger results are paginated', async () => {
+  const { call, DB } = setup();
+  const amb = await createAmbassador(call, { email: 'pages@amb.test' });
+  const insert = DB.sqlite.prepare(`
+    INSERT INTO ambassador_commissions
+      (id, ambassador_id, shop_id, period, plan_id, tier, amount_cents, status, accrued_via, created_at)
+    VALUES (?, ?, ?, ?, 'shop', 'shop', 100, ?, 'manual', ?)
+  `);
+  const now = new Date().toISOString();
+  for (let index = 0; index < 2001; index += 1) {
+    insert.run(`commission-${index}`, amb.id, `commission-shop-${String(index).padStart(4, '0')}`, LAST_MONTH, index === 2000 ? 'paid' : 'pending', now);
+  }
+
+  const firstPage = await call('GET', `/admin/ambassador-commissions?period=${LAST_MONTH}&ambassadorId=${amb.id}`);
+  assert.equal(firstPage.body.lines.length, 200);
+  assert.deepEqual(firstPage.body.pagination, { page: 1, pageSize: 200, totalLines: 2001, pageCount: 11 });
+  assert.deepEqual(firstPage.body.totals, { earnedCents: 200100, paidCents: 100, pendingCents: 200000, lines: 2001 });
+
+  const lastPage = await call('GET', `/admin/ambassador-commissions?period=${LAST_MONTH}&ambassadorId=${amb.id}&page=11`);
+  assert.equal(lastPage.body.lines.length, 1);
+  assert.equal(lastPage.body.lines[0].status, 'paid');
+  assert.equal(lastPage.body.totals.earnedCents, 200100);
+
+  const statement = await call('GET', `/admin/ambassadors/${amb.id}/statement?page=11`);
+  assert.equal(statement.body.lines.length, 1);
+  assert.equal(statement.body.pagination.totalLines, 2001);
+  assert.equal(statement.body.totals.lines, 2001);
+  assert.equal(statement.body.totals.earnedCents, 200100);
+
+  const self = await call('POST', '/ambassadors/statement', { code: amb.referralCode, email: amb.email, page: 11 }, { email: null });
+  assert.equal(self.body.lines.length, 1);
+  assert.equal(self.body.pagination.page, 11);
+  assert.equal(self.body.totals.earnedCents, 200100);
+});
+
 test('report assembly and PDF writer handle empty months and long statements', () => {
   const empty = assembleReport({ period: '2026-01', lines: [], ambassadors: new Map(), generatedAt: '2026-02-01T09:00:00.000Z', generatedBy: 'cron' });
   assert.equal(empty.totals.grandTotalCents, 0);

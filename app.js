@@ -5646,7 +5646,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const rates = (data.rates || []).map((rate) => `<label>${escapeHtml4(rate.planId)} <small>(${escapeHtml4(tierLabel(rate.tier))})</small><input type="number" min="0" step="0.01" name="rate:${escapeHtml4(rate.planId)}" data-tier="${escapeHtml4(rate.tier)}" value="${(rate.monthlyCents / 100).toFixed(2)}"/></label>`).join("");
     const lines = (data.commissions?.lines || []).map((line) => `<tr><td class="mono">${escapeHtml4(line.period)}</td><td><b class="mono">${escapeHtml4(line.ambassadorNumber)}</b><small>${escapeHtml4(line.ambassadorName)}</small></td><td>${escapeHtml4(line.shopName)}</td><td>${escapeHtml4(tierLabel(line.tier))}</td><td>${escapeHtml4(saleSourceLabel(line.saleSource))}</td><td>${badge3(line.status, escapeHtml4)}${line.checkNumber ? `<small>Check ${escapeHtml4(line.checkNumber)}</small>` : ""}</td><td>${formatCents(line.amountCents)}</td></tr>`).join("");
     const totals = data.commissions?.totals;
-    return `<h2>Monthly commission rates</h2><form id="amb-rates-form"><div class="form-grid">${rates}</div><div class="platform-action-buttons"><button class="primary" type="submit">${icon2("save", 14)} Save rates</button></div></form><p class="ops-note">Paid monthly for each referred shop while its membership stays active and paid. Rate changes apply to new monthly lines; frozen payout reports never change.</p><h2>Commission ledger</h2><form class="platform-action-buttons" id="amb-ledger-form"><label>Month<input type="month" name="period" value="${escapeHtml4(data.ledgerPeriod || lastMonth())}"/></label><button class="secondary" type="submit">${icon2("search", 14)} Show</button><button class="secondary" type="button" id="amb-ledger-generate">${icon2("refresh-cw", 14)} Accrue month</button></form>${totals ? `<div class="platform-kpis"><article><span>Lines</span><strong>${totals.lines}</strong></article><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article></div>` : ""}<div class="data-panel"><table><thead><tr><th>Month</th><th>Ambassador</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${lines || '<tr><td colspan="7">No commission lines for this month.</td></tr>'}</tbody></table></div>`;
+    const pagination = data.commissions?.pagination;
+    const pageControls = pagination ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pageCount} \xB7 ${pagination.totalLines} lines</span><button class="secondary" type="button" data-ledger-page="${pagination.page - 1}"${pagination.page <= 1 ? " disabled" : ""}>Previous</button><button class="secondary" type="button" data-ledger-page="${pagination.page + 1}"${pagination.page >= pagination.pageCount ? " disabled" : ""}>Next</button></div>` : "";
+    return `<h2>Monthly commission rates</h2><form id="amb-rates-form"><div class="form-grid">${rates}</div><div class="platform-action-buttons"><button class="primary" type="submit">${icon2("save", 14)} Save rates</button></div></form><p class="ops-note">Paid monthly for each referred shop while its membership stays active and paid. Rate changes apply to new monthly lines; frozen payout reports never change.</p><h2>Commission ledger</h2><form class="platform-action-buttons" id="amb-ledger-form"><label>Month<input type="month" name="period" value="${escapeHtml4(data.ledgerPeriod || lastMonth())}"/></label><button class="secondary" type="submit">${icon2("search", 14)} Show</button><button class="secondary" type="button" id="amb-ledger-generate">${icon2("refresh-cw", 14)} Accrue month</button></form>${totals ? `<div class="platform-kpis"><article><span>Lines</span><strong>${totals.lines}</strong></article><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article></div>` : ""}<div class="data-panel"><table><thead><tr><th>Month</th><th>Ambassador</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${lines || '<tr><td colspan="7">No commission lines for this month.</td></tr>'}</tbody></table></div>${pageControls}`;
   }
   function reportsTab(data, { escapeHtml: escapeHtml4, icon: icon2 }) {
     const rows = (data.reports || []).map((report) => `<tr><td><b>${escapeHtml4(report.periodLabel)}</b><small class="mono">${escapeHtml4(report.period)}</small></td><td>${report.ambassadorCount}</td><td><b>${formatCents(report.grandTotalCents)}</b></td><td>${report.paidCount} of ${report.ambassadorCount} paid</td><td class="mono">${escapeHtml4(String(report.generatedAt || "").slice(0, 16).replace("T", " "))}<small>${escapeHtml4(report.generatedBy)}${report.emailStatus ? ` \xB7 ${escapeHtml4(report.emailStatus)}` : ""}</small></td><td><button class="mini-action" type="button" data-report-view="${escapeHtml4(report.period)}">${icon2("eye", 13)} View &amp; pay</button></td></tr>`).join("");
@@ -5672,7 +5674,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function statementHtml(statement, { escapeHtml: escapeHtml4, icon: icon2 }) {
     const rows = (statement.lines || []).map((line) => `<tr><td class="mono">${escapeHtml4(line.period)}</td><td>${escapeHtml4(line.shopName)}</td><td>${escapeHtml4(tierLabel(line.tier))}</td><td>${escapeHtml4(saleSourceLabel(line.saleSource))}</td><td>${badge3(line.status, escapeHtml4)}${line.checkNumber ? `<small>Check ${escapeHtml4(line.checkNumber)}</small>` : ""}</td><td>${formatCents(line.amountCents)}</td></tr>`).join("");
     const { ambassador, totals } = statement;
-    return `<div class="modal wide"><div class="modal-head"><h2>Statement \xB7 ${escapeHtml4(ambassador.ambassadorNumber)} ${escapeHtml4(ambassador.name)}</h2><button type="button" class="close" data-close>${icon2("x")}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article></div><p class="ops-note">Ambassadors can see this at /ambassador with code <span class="mono">${escapeHtml4(ambassador.referralCode)}</span> and their email.</p><div class="data-panel"><table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No commissions yet.</td></tr>'}</tbody></table></div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
+    const pagination = statement.pagination;
+    const pageControls = pagination ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pageCount} \xB7 ${pagination.totalLines} lines</span><button class="secondary" type="button" data-statement-page="${pagination.page - 1}"${pagination.page <= 1 ? " disabled" : ""}>Previous</button><button class="secondary" type="button" data-statement-page="${pagination.page + 1}"${pagination.page >= pagination.pageCount ? " disabled" : ""}>Next</button></div>` : "";
+    return `<div class="modal wide"><div class="modal-head"><h2>Statement \xB7 ${escapeHtml4(ambassador.ambassadorNumber)} ${escapeHtml4(ambassador.name)}</h2><button type="button" class="close" data-close>${icon2("x")}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article></div><p class="ops-note">Ambassadors can see this at /ambassador with code <span class="mono">${escapeHtml4(ambassador.referralCode)}</span> and their email.</p><div class="data-panel"><table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No commissions yet.</td></tr>'}</tbody></table></div>${pageControls}</div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
   }
   function payoutTierRateLabel(item) {
     const entries = item.rateBreakdown?.length ? item.rateBreakdown : item.count && Number.isFinite(Number(item.rateCents)) ? [{ rateCents: Number(item.rateCents) }] : [];
@@ -16409,7 +16413,7 @@ ${line}`.trim();
       if (next.tab === "commissions") {
         next.rates = (await platformApi("/admin/ambassador-commission-rates")).rates;
         if (loadId !== ambassadorLoadId) return;
-        next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}`);
+        next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}&page=${encodeURIComponent(next.ledgerPage || 1)}`);
         if (loadId !== ambassadorLoadId) return;
       }
       if (next.tab === "reports") Object.assign(next, await platformApi("/admin/ambassador-payout-reports"));
@@ -16468,6 +16472,7 @@ ${line}`.trim();
       const error = document.querySelector("#amb-credit-error"), data = readFormValues(form);
       error.hidden = true;
       try {
+        if ((data.ambassadorId || "") !== (sale.ambassadorId || "") && data.soldBy === sale.soldBy) data.soldBy = "";
         await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/attribution`, { method: "POST", body: JSON.stringify({ ambassadorId: data.ambassadorId || null, saleSource: data.saleSource, soldBy: data.soldBy, reason: data.reason }) });
         closeModal();
         toast("Sale credit updated");
@@ -16539,9 +16544,16 @@ ${line}`.trim();
     }));
     document.querySelector("#amb-new")?.addEventListener("click", () => openAmbassadorForm());
     document.querySelectorAll("[data-amb-edit]").forEach((button) => button.addEventListener("click", () => openAmbassadorForm(ambassadorData.ambassadors.find((item) => item.id === button.dataset.ambEdit))));
+    const openAmbassadorStatement = async (id, page = 1) => {
+      const statement = await platformApi(`/admin/ambassadors/${encodeURIComponent(id)}/statement?page=${encodeURIComponent(page)}`);
+      showModal(statementHtml(statement, { escapeHtml, icon }));
+      document.querySelectorAll("[data-statement-page]").forEach((button) => button.addEventListener("click", () => {
+        void openAmbassadorStatement(id, Number(button.dataset.statementPage));
+      }));
+    };
     document.querySelectorAll("[data-amb-statement]").forEach((button) => button.addEventListener("click", async () => {
       try {
-        showModal(statementHtml(await platformApi(`/admin/ambassadors/${encodeURIComponent(button.dataset.ambStatement)}/statement`), { escapeHtml, icon }));
+        await openAmbassadorStatement(button.dataset.ambStatement);
       } catch (error) {
         toast(error.message);
       }
@@ -16566,14 +16578,17 @@ ${line}`.trim();
     });
     document.querySelector("#amb-ledger-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      void loadAmbassadorData({ ledgerPeriod: readFormValues(event.target).period });
+      void loadAmbassadorData({ ledgerPeriod: readFormValues(event.target).period, ledgerPage: 1 });
     });
+    document.querySelectorAll("[data-ledger-page]").forEach((button) => button.addEventListener("click", () => {
+      void loadAmbassadorData({ ledgerPage: Number(button.dataset.ledgerPage) });
+    }));
     document.querySelector("#amb-ledger-generate")?.addEventListener("click", async () => {
       const period = document.querySelector("#amb-ledger-form")?.elements.period.value;
       try {
         const result = await platformApi("/admin/ambassador-commissions/generate", { method: "POST", body: JSON.stringify({ period }) });
         toast(result.frozen ? "That month is frozen in a payout report" : `${result.created} commission line${result.created === 1 ? "" : "s"} added`);
-        void loadAmbassadorData({ ledgerPeriod: period });
+        void loadAmbassadorData({ ledgerPeriod: period, ledgerPage: 1 });
       } catch (error) {
         toast(error.message);
       }

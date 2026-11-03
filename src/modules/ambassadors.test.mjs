@@ -65,10 +65,12 @@ test('tabs render ambassadors, sales filters, commission rates, and reports', ()
   const commissions = ambassadorsHtml({
     tab: 'commissions', ledgerPeriod: '2026-10',
     rates: [{ planId: 'shop', tier: 'shop', monthlyCents: 2000 }],
-    commissions: { lines: [{ period: '2026-10', ambassadorNumber: 'AMB-0001', ambassadorName: 'Jane', shopName: 'High Plains', tier: 'shop', saleSource: 'ambassador_referral', status: 'paid', checkNumber: '1001', amountCents: 2000 }], totals: { lines: 1, earnedCents: 2000, pendingCents: 0, paidCents: 2000 } },
+    commissions: { lines: [{ period: '2026-10', ambassadorNumber: 'AMB-0001', ambassadorName: 'Jane', shopName: 'High Plains', tier: 'shop', saleSource: 'ambassador_referral', status: 'paid', checkNumber: '1001', amountCents: 2000 }], totals: { lines: 1, earnedCents: 2000, pendingCents: 0, paidCents: 2000 }, pagination: { page: 2, pageCount: 3, totalLines: 401 } },
   }, helpers);
   assert.match(commissions, /name="rate:shop" data-tier="shop" value="20\.00"/);
   assert.match(commissions, /Check 1001/);
+  assert.match(commissions, /Page 2 of 3 · 401 lines/);
+  assert.match(commissions, /data-ledger-page="1"/);
 
   const reports = ambassadorsHtml({ tab: 'reports', schedule: '0 9 1 * *', reports: [{ period: '2026-10', periodLabel: 'October 2026', ambassadorCount: 2, grandTotalCents: 21000, paidCount: 1, generatedAt: '2026-11-01T09:00:00Z', generatedBy: 'cron', emailStatus: 'sent:admin@shopcrank.com' }] }, helpers);
   assert.match(reports, /data-report-view="2026-10"/);
@@ -119,8 +121,10 @@ test('credit dialog and statement escape content and show the audit trail', () =
     ambassador: { ambassadorNumber: 'AMB-0001', name: 'Jane', referralCode: 'TX4K9P' },
     totals: { earnedCents: 3000, paidCents: 1000, pendingCents: 2000 },
     lines: [{ period: '2026-10', shopName: 'High Plains', tier: 'enterprise', saleSource: 'ai_agent', status: 'pending', amountCents: 10000 }],
+    pagination: { page: 1, pageCount: 2, totalLines: 201 },
   }, helpers);
   assert.match(statement, /Enterprise/);
   assert.match(statement, /AI agent/);
   assert.match(statement, /\$20\.00/);
+  assert.match(statement, /data-statement-page="2"/);
 });

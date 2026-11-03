@@ -9,6 +9,7 @@ import { HttpError } from '../http.mjs';
 export const COMMISSION_TIERS = Object.freeze(['solo', 'shop', 'shop_pro', 'enterprise']);
 export const TIER_LABELS = Object.freeze({ solo: 'Solo', shop: 'Shop', shop_pro: 'Shop Pro', enterprise: 'Enterprise' });
 const PERIOD_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
+export const COMMISSION_PAGE_SIZE = 200;
 
 export function isPeriod(value) {
   return PERIOD_PATTERN.test(String(value || ''));
@@ -226,7 +227,8 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
   throw new Error('Unable to find an open commission period');
 }
 
-export async function listCommissions(env, { period = '', ambassadorId = '', from = '', to = '', status = '' } = {}) {
+function commissionQuery(filters = {}) {
+  const { period = '', ambassadorId = '', from = '', to = '', status = '' } = filters;
   const where = [];
   const args = [];
   if (period) { where.push('c.period = ?'); args.push(requirePeriod(period)); }
@@ -234,6 +236,17 @@ export async function listCommissions(env, { period = '', ambassadorId = '', fro
   if (to) { where.push('c.period <= ?'); args.push(requirePeriod(to)); }
   if (ambassadorId) { where.push('c.ambassador_id = ?'); args.push(String(ambassadorId)); }
   if (status) { where.push('c.status = ?'); args.push(String(status)); }
+  return { where, args };
+}
+
+function commissionPage(page) {
+  const value = Number(page);
+  return Number.isSafeInteger(value) && value > 0 ? Math.min(value, 1_000_000) : 1;
+}
+
+export async function listCommissions(env, filters = {}) {
+  const { where, args } = commissionQuery(filters);
+  const page = commissionPage(filters.page);
   const rows = await env.DB.prepare(`
     SELECT c.*, acct.shop_name, a.name AS ambassador_name, a.ambassador_number, a.referral_code
     FROM ambassador_commissions c
@@ -241,9 +254,41 @@ export async function listCommissions(env, { period = '', ambassadorId = '', fro
     LEFT JOIN ambassadors a ON a.id = c.ambassador_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY c.period DESC, a.ambassador_number, acct.shop_name
-    LIMIT 2000
-  `).bind(...args).all();
+    LIMIT ? OFFSET ?
+  `).bind(...args, COMMISSION_PAGE_SIZE, (page - 1) * COMMISSION_PAGE_SIZE).all();
   return (rows.results || []).map(commissionView);
+}
+
+export async function commissionSummary(env, filters = {}) {
+  const { where, args } = commissionQuery(filters);
+  const row = await env.DB.prepare(`
+    SELECT COUNT(*) AS total_lines,
+      COALESCE(SUM(CASE WHEN c.status != 'void' THEN 1 ELSE 0 END), 0) AS lines,
+      COALESCE(SUM(CASE WHEN c.status != 'void' THEN c.amount_cents ELSE 0 END), 0) AS earned_cents,
+      COALESCE(SUM(CASE WHEN c.status = 'paid' THEN c.amount_cents ELSE 0 END), 0) AS paid_cents,
+      COALESCE(SUM(CASE WHEN c.status NOT IN ('void', 'paid') THEN c.amount_cents ELSE 0 END), 0) AS pending_cents
+    FROM ambassador_commissions c
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+  `).bind(...args).first();
+  return {
+    totalLines: Number(row?.total_lines || 0),
+    totals: {
+      earnedCents: Number(row?.earned_cents || 0),
+      paidCents: Number(row?.paid_cents || 0),
+      pendingCents: Number(row?.pending_cents || 0),
+      lines: Number(row?.lines || 0),
+    },
+  };
+}
+
+export function commissionPagination(totalLines, page = 1) {
+  const normalizedPage = commissionPage(page);
+  return {
+    page: normalizedPage,
+    pageSize: COMMISSION_PAGE_SIZE,
+    totalLines,
+    pageCount: Math.max(1, Math.ceil(totalLines / COMMISSION_PAGE_SIZE)),
+  };
 }
 
 export function commissionView(row) {

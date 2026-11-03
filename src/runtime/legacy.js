@@ -6141,7 +6141,7 @@ async function loadAmbassadorData(patch = {}) {
     if (next.tab === "commissions") {
       next.rates = (await platformApi("/admin/ambassador-commission-rates")).rates;
       if (loadId !== ambassadorLoadId) return;
-      next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}`);
+      next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}&page=${encodeURIComponent(next.ledgerPage || 1)}`);
       if (loadId !== ambassadorLoadId) return;
     }
     if (next.tab === "reports") Object.assign(next, await platformApi("/admin/ambassador-payout-reports"));
@@ -6254,8 +6254,15 @@ function bindAmbassadors() {
   document.querySelectorAll("[data-amb-tab]").forEach(button => button.addEventListener("click", () => { ambassadorData = { ...ambassadorData, tab: button.dataset.ambTab, loading: true }; render(); void loadAmbassadorData({ tab: button.dataset.ambTab }) }));
   document.querySelector("#amb-new")?.addEventListener("click", () => openAmbassadorForm());
   document.querySelectorAll("[data-amb-edit]").forEach(button => button.addEventListener("click", () => openAmbassadorForm(ambassadorData.ambassadors.find(item => item.id === button.dataset.ambEdit))));
+  const openAmbassadorStatement = async (id, page = 1) => {
+    const statement = await platformApi(`/admin/ambassadors/${encodeURIComponent(id)}/statement?page=${encodeURIComponent(page)}`);
+    showModal(Ambassadors.statementHtml(statement, { escapeHtml, icon }));
+    document.querySelectorAll("[data-statement-page]").forEach(button => button.addEventListener("click", () => {
+      void openAmbassadorStatement(id, Number(button.dataset.statementPage));
+    }));
+  };
   document.querySelectorAll("[data-amb-statement]").forEach(button => button.addEventListener("click", async () => {
-    try { showModal(Ambassadors.statementHtml(await platformApi(`/admin/ambassadors/${encodeURIComponent(button.dataset.ambStatement)}/statement`), { escapeHtml, icon })) } catch (error) { toast(error.message) }
+    try { await openAmbassadorStatement(button.dataset.ambStatement) } catch (error) { toast(error.message) }
   }));
   document.querySelector("#amb-sales-filters")?.addEventListener("submit", event => { event.preventDefault(); void loadAmbassadorData({ salesFilters: readFormValues(event.target) }) });
   document.querySelectorAll("[data-sale-credit]").forEach(button => button.addEventListener("click", () => { void openSaleCredit(button.dataset.saleCredit) }));
@@ -6264,10 +6271,11 @@ function bindAmbassadors() {
     const rates = [...event.target.querySelectorAll("input[name^='rate:']")].map(input => ({ planId: input.name.slice(5), tier: input.dataset.tier, monthlyCents: Math.round(Number(input.value) * 100) }));
     try { await platformApi("/admin/ambassador-commission-rates", { method: "PUT", body: JSON.stringify({ rates }) }); toast("Commission rates saved"); void loadAmbassadorData() } catch (error) { toast(error.message) }
   });
-  document.querySelector("#amb-ledger-form")?.addEventListener("submit", event => { event.preventDefault(); void loadAmbassadorData({ ledgerPeriod: readFormValues(event.target).period }) });
+  document.querySelector("#amb-ledger-form")?.addEventListener("submit", event => { event.preventDefault(); void loadAmbassadorData({ ledgerPeriod: readFormValues(event.target).period, ledgerPage: 1 }) });
+  document.querySelectorAll("[data-ledger-page]").forEach(button => button.addEventListener("click", () => { void loadAmbassadorData({ ledgerPage: Number(button.dataset.ledgerPage) }) }));
   document.querySelector("#amb-ledger-generate")?.addEventListener("click", async () => {
     const period = document.querySelector("#amb-ledger-form")?.elements.period.value;
-    try { const result = await platformApi("/admin/ambassador-commissions/generate", { method: "POST", body: JSON.stringify({ period }) }); toast(result.frozen ? "That month is frozen in a payout report" : `${result.created} commission line${result.created === 1 ? "" : "s"} added`); void loadAmbassadorData({ ledgerPeriod: period }) } catch (error) { toast(error.message) }
+    try { const result = await platformApi("/admin/ambassador-commissions/generate", { method: "POST", body: JSON.stringify({ period }) }); toast(result.frozen ? "That month is frozen in a payout report" : `${result.created} commission line${result.created === 1 ? "" : "s"} added`); void loadAmbassadorData({ ledgerPeriod: period, ledgerPage: 1 }) } catch (error) { toast(error.message) }
   });
   document.querySelector("#amb-report-form")?.addEventListener("submit", event => { event.preventDefault(); void openPayoutReport(readFormValues(event.target).period) });
   document.querySelectorAll("[data-report-view]").forEach(button => button.addEventListener("click", () => { void openPayoutReport(button.dataset.reportView) }));

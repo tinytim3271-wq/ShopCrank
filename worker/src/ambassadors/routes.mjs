@@ -30,11 +30,12 @@ import {
 } from './store.mjs';
 import {
   generateCommissionLedger,
+  commissionPagination,
+  commissionSummary,
   listCommissionRates,
   listCommissions,
   periodHasEnded,
   requirePeriod,
-  summarizeCommissions,
   updateCommissionRates,
 } from './commissions.mjs';
 import {
@@ -150,9 +151,13 @@ async function ambassadorList(env) {
   }));
 }
 
-async function statementFor(env, ambassadorId, { from = '', to = '' } = {}) {
-  const lines = await listCommissions(env, { ambassadorId, from, to });
-  return { lines, totals: summarizeCommissions(lines) };
+async function statementFor(env, ambassadorId, { from = '', to = '', page = 1 } = {}) {
+  const filters = { ambassadorId, from, to };
+  const [lines, summary] = await Promise.all([
+    listCommissions(env, { ...filters, page }),
+    commissionSummary(env, filters),
+  ]);
+  return { lines, totals: summary.totals, pagination: commissionPagination(summary.totalLines, page) };
 }
 
 function downloadName(period, extension) {
@@ -225,7 +230,11 @@ export async function handleAmbassadorAdmin(request, env, context, segments) {
     if (view === 'statement' && request.method === 'GET') {
       return json({
         ambassador: publicAmbassador(ambassador),
-        ...(await statementFor(env, ambassador.id, { from: url.searchParams.get('from') || '', to: url.searchParams.get('to') || '' })),
+        ...(await statementFor(env, ambassador.id, {
+          from: url.searchParams.get('from') || '',
+          to: url.searchParams.get('to') || '',
+          page: url.searchParams.get('page') || 1,
+        })),
       });
     }
     if (view) throw new HttpError(404, 'Not found');
@@ -290,8 +299,12 @@ export async function handleAmbassadorAdmin(request, env, context, segments) {
   if (section === 'ambassador-commissions') {
     if (!rest[0] && request.method === 'GET') {
       const filters = Object.fromEntries(['period', 'ambassadorId', 'status', 'from', 'to'].map(key => [key, url.searchParams.get(key) || '']));
-      const lines = await listCommissions(env, filters);
-      return json({ lines, totals: summarizeCommissions(lines) });
+      const page = url.searchParams.get('page') || 1;
+      const [lines, summary] = await Promise.all([
+        listCommissions(env, { ...filters, page }),
+        commissionSummary(env, filters),
+      ]);
+      return json({ lines, totals: summary.totals, pagination: commissionPagination(summary.totalLines, page) });
     }
     if (rest[0] === 'generate' && request.method === 'POST') {
       const body = await requestJson(request);
@@ -377,7 +390,7 @@ export async function handleAmbassadorPublic(request, env, segments, { verifyTur
     if (!ambassador || !email || String(ambassador.email).toLowerCase() !== email) {
       throw new HttpError(404, 'No ambassador matches that code and email');
     }
-    const { lines, totals } = await statementFor(env, ambassador.id);
+    const { lines, totals, pagination } = await statementFor(env, ambassador.id, { page: body.page || 1 });
     return json({
       ambassador: {
         ambassadorNumber: ambassador.ambassador_number,
@@ -386,6 +399,7 @@ export async function handleAmbassadorPublic(request, env, segments, { verifyTur
         status: ambassador.status,
       },
       totals,
+      pagination,
       lines: lines.map(line => ({
         period: line.period,
         shopName: line.shopName,
@@ -399,4 +413,3 @@ export async function handleAmbassadorPublic(request, env, segments, { verifyTur
   }
   throw new HttpError(404, 'Not found');
 }
-
