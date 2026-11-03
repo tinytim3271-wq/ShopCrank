@@ -63,6 +63,16 @@ test('vehicles archive when a work order references them by id or VIN', () => {
   assert.equal(deletionPlan('vehicles', { id: 'veh-2', vin: '' }, countLinksInCollections('vehicles', { id: 'veh-2', vin: '' }, { orders: [{ vin: '' }] })).action, 'delete');
 });
 
+test('vehicles archive when an invoice references only their id', () => {
+  const vehicle = { id: 'veh-1', vin: 'VIN123' };
+  const counts = countLinksInCollections('vehicles', vehicle, {
+    invoices: [{ vehicleId: 'veh-1' }],
+  });
+  const plan = deletionPlan('vehicles', vehicle, counts);
+  assert.equal(plan.action, 'archive');
+  assert.deepEqual(plan.reasons, ['linked to 1 invoice']);
+});
+
 test('signed or approved estimates archive', () => {
   assert.equal(deletionPlan('estimates', { id: 'E1', status: 'draft' }).action, 'delete');
   assert.equal(deletionPlan('estimates', { id: 'E1', status: 'approved' }).action, 'archive');
