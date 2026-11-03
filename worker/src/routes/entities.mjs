@@ -135,13 +135,22 @@ async function archiveEntity(env, context, type, id, existing, reasons) {
     updatedAt,
     ...('active' in existing ? { active: false } : {}),
   };
-  await env.DB.prepare(`
+  const archiveStatement = env.DB.prepare(`
     UPDATE entities SET data_json = json_patch(data_json, ?), updated_at = ?
     WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
-  `).bind(JSON.stringify(patch), updatedAt, context.shopId, type, id).run();
+  `).bind(JSON.stringify(patch), updatedAt, context.shopId, type, id);
+  const accessDelete = employeeAccessDeleteStatement(env, context, type, existing);
+  if (accessDelete) await env.DB.batch([archiveStatement, accessDelete]);
+  else await archiveStatement.run();
   const updated = await getEntity(env, context.shopId, type, id);
   if (!updated) throw new HttpError(404, 'Not found');
   return updated;
+}
+
+function employeeAccessDeleteStatement(env, context, type, existing) {
+  if (type !== 'employees' || !existing.email) return null;
+  return env.DB.prepare('DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?')
+    .bind(existing.email, context.shopId);
 }
 
 export async function linkCountsForRecord(env, shopId, type, record) {
@@ -171,14 +180,15 @@ export async function removeEntity(env, context, type, id) {
     return { status: 204, action: 'delete' };
   }
   if (!canDeleteRecords(context.role)) throw new HttpError(403, 'Only the shop owner or an admin can delete records');
-  if (isArchived(existing)) return { status: 200, action: 'archive', body: { archived: true, record: existing, reasons: existing.archiveReasons || [] } };
+  if (isArchived(existing)) {
+    const accessDelete = employeeAccessDeleteStatement(env, context, type, existing);
+    if (accessDelete) await env.DB.batch([accessDelete]);
+    return { status: 200, action: 'archive', body: { archived: true, record: existing, reasons: existing.archiveReasons || [] } };
+  }
   const plan = deletionPlan(type, existing, await linkCountsForRecord(env, context.shopId, type, existing));
   if (plan.action === 'blocked') throw new HttpError(409, plan.message);
   if (plan.action === 'archive') {
     const record = await archiveEntity(env, context, type, id, existing, plan.reasons);
-    if (type === 'employees' && existing.email) {
-      await env.DB.prepare('DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?').bind(existing.email, context.shopId).run();
-    }
     return { status: 200, action: 'archive', body: { archived: true, record, reasons: plan.reasons } };
   }
   await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing));

@@ -193,6 +193,25 @@ test('employees with payroll are archived and lose access', async () => {
   assert.equal(restoredAccess.enabled, 1);
 });
 
+test('employee archive and Access removal roll back together', async () => {
+  const { DB, seed, stored } = await setup();
+  await seed('employees', 'emp-rollback', { email: people.tech, name: 'Tech', active: true, role: 'technician' });
+  await seed('payrollentries', 'pay-rollback', { employeeId: 'emp-rollback', amount: 80 });
+  DB.sqlite.exec(`
+    CREATE TRIGGER reject_user_delete BEFORE DELETE ON users
+    BEGIN SELECT RAISE(ABORT, 'revoke failed'); END;
+  `);
+
+  await assert.rejects(removeEntity(
+    { DB },
+    { shopId, email: people.admin, userId: 'admin-user', role: 'admin' },
+    'employees',
+    'emp-rollback',
+  ), /revoke failed/);
+  assert.equal((await stored('employees', 'emp-rollback')).archivedAt, undefined);
+  assert.ok(await DB.prepare('SELECT 1 AS found FROM users WHERE email = ?').bind(people.tech).first());
+});
+
 for (const modular of [false, true]) {
   test(`employee access follows archive state (${modular ? 'module' : 'deployed'} handler)`, async () => {
     const { DB, seed, call, stored } = await setup(modular);
@@ -235,6 +254,19 @@ for (const modular of [false, true]) {
     assert.equal((await stored('employees', stale.id)).archivedAt, null);
     assert.equal((await stored('employees', stale.id)).active, true);
     assert.equal((await access()).enabled, 1);
+  });
+}
+
+for (const modular of [false, true]) {
+  test(`deleting an already-archived employee revokes Access (${modular ? 'module' : 'deployed'} handler)`, async () => {
+    const { DB, seed, call } = await setup(modular);
+    await seed('employees', 'emp-archived', {
+      email: people.tech, name: 'Tech', active: false, role: 'technician', archivedAt: stamp,
+    });
+
+    const response = await call('owner', 'DELETE', 'employees/emp-archived');
+    assert.equal(response.status, 200);
+    assert.equal(await DB.prepare('SELECT 1 AS found FROM users WHERE email = ?').bind(people.tech).first(), null);
   });
 }
 
