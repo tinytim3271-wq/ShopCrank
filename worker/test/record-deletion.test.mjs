@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleEntities } from '../src/routes/entities.mjs';
-import { HttpError } from '../src/http.mjs';
+import worker from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
+
+const ORIGIN = 'https://shopcrank.test';
 
 function seed(DB, shopId, type, id, data) {
   return DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -14,17 +15,19 @@ async function ids(DB, shopId, type) {
   return result.results.map(row => row.entity_id);
 }
 
-function context(role) {
-  return { shopId: 'shop-1', role, email: `${role}@shop.test`, userId: `user-${role}` };
-}
-
 function remove(env, role, type, id, query = '') {
-  const request = new Request(`https://shopcrank.test/api/entities/${type}/${encodeURIComponent(id)}${query}`, { method: 'DELETE' });
-  return handleEntities(request, env, context(role), ['entities', type, encodeURIComponent(id)]);
+  return worker.fetch(new Request(`${ORIGIN}/api/entities/${type}/${encodeURIComponent(id)}${query}`, {
+    method: 'DELETE',
+    headers: { 'X-ShopCrank-Dev-Email': `${role}@shop.test` },
+  }), env);
 }
 
 async function shopWithHistory() {
   const DB = createD1();
+  for (const role of ['admin', 'office', 'service_writer', 'technician']) {
+    await DB.prepare('INSERT INTO users (email, shop_id, role, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(`${role}@shop.test`, 'shop-1', role, role, 'now', 'now').run();
+  }
   await seed(DB, 'shop-1', 'customers', 'c1', { name: 'Dana Ruiz' });
   await seed(DB, 'shop-1', 'customers', 'c2', { name: 'Lone Customer' });
   await seed(DB, 'shop-1', 'customers', 'c3', { name: 'Other Customer' });
@@ -38,14 +41,14 @@ async function shopWithHistory() {
   await seed(DB, 'shop-1', 'estimates', 'EST-1', { customer: 'Dana Ruiz' });
   await seed(DB, 'shop-1', 'appointments', 'appt-1', { customer: 'Dana Ruiz' });
   await seed(DB, 'shop-2', 'vehicles', 'v1-other-shop', { customer: 'Dana Ruiz' });
-  return { DB };
+  return { DB, DEV_AUTH_BYPASS: '1' };
 }
 
 for (const role of ['office', 'service_writer', 'technician']) {
   test(`${role} cannot delete customers, vehicles, work orders, invoices or payments`, async () => {
     const env = await shopWithHistory();
     for (const [type, id] of [['customers', 'c2'], ['vehicles', 'v3'], ['orders', 'RO-3'], ['invoices', 'INV-1'], ['payments', 'pay-3']]) {
-      await assert.rejects(remove(env, role, type, id), error => error instanceof HttpError && error.status === 403, `${role} ${type}`);
+      assert.equal((await remove(env, role, type, id)).status, 403, `${role} ${type}`);
     }
     assert.deepEqual(await ids(env.DB, 'shop-1', 'customers'), ['c1', 'c2', 'c3']);
     assert.deepEqual(await ids(env.DB, 'shop-1', 'invoices'), ['INV-1']);
@@ -55,7 +58,7 @@ for (const role of ['office', 'service_writer', 'technician']) {
 test('admin deletes a vehicle, a work order, and an invoice with its payments', async () => {
   const env = await shopWithHistory();
   assert.equal((await remove(env, 'admin', 'vehicles', 'v3')).status, 204);
-  assert.equal((await remove(env, 'owner', 'orders', 'RO-3')).status, 204);
+  assert.equal((await remove(env, 'admin', 'orders', 'RO-3')).status, 204);
   assert.equal((await remove(env, 'admin', 'invoices', 'INV-1')).status, 204);
   assert.deepEqual(await ids(env.DB, 'shop-1', 'vehicles'), ['v1']);
   assert.deepEqual(await ids(env.DB, 'shop-1', 'orders'), ['RO-1']);
@@ -71,9 +74,9 @@ test('admin deletes a customer with no history', async () => {
 
 test('deleting a customer with history needs cascade and names what is linked', async () => {
   const env = await shopWithHistory();
-  await assert.rejects(remove(env, 'admin', 'customers', 'c1'), error => error instanceof HttpError
-    && error.status === 409
-    && /1 vehicle, 1 work order, 1 invoice, 1 estimate, 1 payment and 1 appointment/.test(error.message));
+  const response = await remove(env, 'admin', 'customers', 'c1');
+  assert.equal(response.status, 409);
+  assert.match(await response.text(), /1 vehicle, 1 work order, 1 invoice, 1 estimate, 1 payment and 1 appointment/);
   assert.deepEqual(await ids(env.DB, 'shop-1', 'customers'), ['c1', 'c2', 'c3']);
 });
 
@@ -92,7 +95,7 @@ test('cascade deletes the customer and only their linked records, in this shop o
 
 test('cascade is still admin-only', async () => {
   const env = await shopWithHistory();
-  await assert.rejects(remove(env, 'office', 'customers', 'c1', '?cascade=1'), error => error.status === 403);
+  assert.equal((await remove(env, 'office', 'customers', 'c1', '?cascade=1')).status, 403);
   assert.deepEqual(await ids(env.DB, 'shop-1', 'vehicles'), ['v1', 'v3']);
 });
 
