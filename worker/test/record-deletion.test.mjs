@@ -109,6 +109,35 @@ test('employees with payroll are archived and lose access', async () => {
   assert.ok(await stored('payrollentries', 'pay-row'));
   const access = await DB.prepare('SELECT 1 AS found FROM users WHERE email = ?').bind(people.tech).first();
   assert.equal(access, null);
+
+  const staleSave = await call('owner', 'PUT', 'employees/emp-tech', {
+    id: 'emp-tech',
+    email: people.tech,
+    name: 'Tech',
+    active: true,
+    role: 'technician',
+  });
+  assert.equal(staleSave.status, 200);
+  const staleEmployee = await stored('employees', 'emp-tech');
+  assert.ok(staleEmployee.archivedAt);
+  assert.equal(staleEmployee.active, false);
+  const disabledAccess = await DB.prepare('SELECT enabled FROM users WHERE email = ?').bind(people.tech).first();
+  assert.equal(disabledAccess.enabled, 0);
+
+  const restore = await call('owner', 'PUT', 'employees/emp-tech', {
+    id: 'emp-tech',
+    email: people.tech,
+    name: 'Tech',
+    active: true,
+    role: 'technician',
+    archivedAt: null,
+  });
+  assert.equal(restore.status, 200);
+  const restoredEmployee = await stored('employees', 'emp-tech');
+  assert.equal(restoredEmployee.archivedAt, null);
+  assert.equal(restoredEmployee.active, true);
+  const restoredAccess = await DB.prepare('SELECT enabled FROM users WHERE email = ?').bind(people.tech).first();
+  assert.equal(restoredAccess.enabled, 1);
 });
 
 test('stale saves keep the archive flag; only owners/admins restore', async () => {

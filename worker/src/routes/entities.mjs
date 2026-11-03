@@ -79,6 +79,7 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     createdAt: body.createdAt || existing?.created_at || now,
     updatedAt: now,
   };
+  if (type === 'employees' && isArchived(record)) record.active = false;
   await env.DB.prepare(`
     INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -351,8 +352,8 @@ export async function handleEntities(request, env, context, segments) {
       }
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
-    if (type === 'employees') await syncAccessUser(env, context, body);
     const saved = await putEntity(env, context, type, id, body, request.headers.get('If-Match'));
+    if (type === 'employees') await syncAccessUser(env, context, saved);
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {

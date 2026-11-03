@@ -50,6 +50,7 @@ import {
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
 import { preservedArchiveFields, removeEntity } from './routes/entities.mjs';
+import { isArchived } from '../../src/modules/record-retention.js';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
@@ -514,6 +515,7 @@ export async function putEntity(
     createdAt: body.createdAt || existing?.created_at || now,
     updatedAt: now,
   };
+  if (type === 'employees' && isArchived(record)) record.active = false;
   if (requireUnlockedEstimate) {
     // CAS on updated_at inside the same UPDATE as the unlock guard. The early
     // If-Match check above is not atomic with this write, so a concurrent staff
@@ -941,7 +943,6 @@ async function handleEntities(request, env, context, segments, analytics) {
       if (!memberEmails.includes(context.email) || memberEmails.length < 2) throw new HttpError(400, 'Group requires the owner and at least one other member');
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
-    if (type === 'employees') await syncAccessUser(env, context, body);
     const saved = await putEntity(
       env,
       context,
@@ -952,6 +953,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       context.userId,
       { requireUnlockedEstimate, expectedOrderSnapshot },
     );
+    if (type === 'employees') await syncAccessUser(env, context, saved);
     captureForContext(analytics, context, 'entity_updated', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_updated', {
       entity_type: type,
