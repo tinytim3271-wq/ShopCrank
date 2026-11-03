@@ -140,6 +140,10 @@ function snapshotFromRow(row) {
   return row ? { ...JSON.parse(row.report_json), emailStatus: row.email_status || '' } : null;
 }
 
+function payoutReportEmailSent(report) {
+  return String(report?.emailStatus || '').startsWith('sent:');
+}
+
 export async function getPayoutReport(env, period) {
   const row = await env.DB.prepare('SELECT * FROM ambassador_payout_reports WHERE period = ?').bind(requirePeriod(period)).first();
   return snapshotFromRow(row);
@@ -428,6 +432,6 @@ export async function notifyPayoutReport(env, report) {
 export async function runScheduledAmbassadorPayouts(env, { now = new Date() } = {}) {
   const period = previousPeriod(now);
   const { report, created } = await generatePayoutReport(env, period, { generatedBy: 'cron', now });
-  const email = created ? await notifyPayoutReport(env, report) : 'skipped_existing';
+  const email = payoutReportEmailSent(report) ? 'skipped_existing' : await notifyPayoutReport(env, report);
   return { period, created, grandTotalCents: report.totals.grandTotalCents, ambassadors: report.totals.ambassadorCount, email };
 }

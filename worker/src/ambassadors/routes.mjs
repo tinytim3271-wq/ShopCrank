@@ -166,7 +166,9 @@ async function handlePayoutReports(request, env, context, rest) {
     if (request.method === 'POST') {
       const body = await requestJson(request);
       const { report, created } = await generatePayoutReport(env, requirePeriod(body.period), { generatedBy: context.email || context.userId });
-      const email = created && body.notify === true ? await notifyPayoutReport(env, report) : null;
+      const email = body.notify === true && !String(report.emailStatus || '').startsWith('sent:')
+        ? await notifyPayoutReport(env, report)
+        : null;
       return json({ created, email, report: await reportWithPayouts(env, report.period) }, created ? 201 : 200);
     }
     throw new HttpError(405, 'Method not allowed');

@@ -546,10 +546,18 @@ test('the monthly cron freezes last month and emails the admin once', async () =
   const amb = await createAmbassador(call);
   await createShop(call, 'cron-shop', { planId: 'shop', soldByAmbassadorId: amb.id });
   backdateSale(DB, 'cron-shop');
+  const send = env.EMAIL.send;
+  env.EMAIL.send = async () => { throw new Error('temporary email outage'); };
   await worker.scheduled({ cron: AMBASSADOR_PAYOUT_CRON }, env, {});
-  const row = DB.sqlite.prepare('SELECT * FROM ambassador_payout_reports WHERE period = ?').get(LAST_MONTH);
+  let row = DB.sqlite.prepare('SELECT * FROM ambassador_payout_reports WHERE period = ?').get(LAST_MONTH);
   assert.equal(row.grand_total_cents, 2000);
   assert.equal(row.generated_by, 'cron');
+  assert.match(row.email_status, /^send_failed:/);
+  assert.equal(sent.length, 0);
+
+  env.EMAIL.send = send;
+  await worker.scheduled({ cron: AMBASSADOR_PAYOUT_CRON }, env, {});
+  row = DB.sqlite.prepare('SELECT * FROM ambassador_payout_reports WHERE period = ?').get(LAST_MONTH);
   assert.equal(row.email_status, 'sent:support@shopcrank.com');
   assert.equal(sent.length, 1);
   assert.match(sent[0].subject, /\$20\.00/);
@@ -560,6 +568,34 @@ test('the monthly cron freezes last month and emails the admin once', async () =
   const noEmail = setup({ EMAIL: undefined });
   await worker.scheduled({ cron: AMBASSADOR_PAYOUT_CRON }, noEmail.env, {});
   assert.equal(noEmail.DB.sqlite.prepare('SELECT email_status FROM ambassador_payout_reports').get().email_status, 'email_not_configured');
+});
+
+test('admin can retry a payout report notification without recreating the snapshot', async () => {
+  const { call, env, sent } = setup();
+  let fail = true;
+  let attempts = 0;
+  env.EMAIL.send = async message => {
+    attempts += 1;
+    if (fail) throw new Error('temporary email outage');
+    sent.push(message);
+  };
+
+  const first = await call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH, notify: true });
+  assert.equal(first.status, 201);
+  assert.match(first.body.email, /^send_failed:/);
+
+  fail = false;
+  const retry = await call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH, notify: true });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.created, false);
+  assert.equal(retry.body.email, 'sent:support@shopcrank.com');
+  assert.equal(retry.body.report.emailStatus, 'sent:support@shopcrank.com');
+
+  const alreadySent = await call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH, notify: true });
+  assert.equal(alreadySent.status, 200);
+  assert.equal(alreadySent.body.email, null);
+  assert.equal(attempts, 2);
+  assert.equal(sent.length, 1);
 });
 
 test('statements: admin view and ambassador self-service by code and email', async () => {
