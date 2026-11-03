@@ -12,9 +12,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 
 const LEGACY = new URL('./legacy.js', import.meta.url);
-const MAX_OVERRIDES = 129;
-const MAX_BYTES = 816_000;
-const MAX_OVERRIDES_PER_NAME = { bind: 17, settings: 10, render: 8, bindEstimateActions: 6, bindExpandedFeatures: 5 };
+const MAX_OVERRIDES = 126;
+const MAX_BYTES = 811_000;
+const MAX_OVERRIDES_PER_NAME = { bind: 17, settings: 7, render: 8, bindEstimateActions: 6, bindExpandedFeatures: 5 };
 
 const source = readFileSync(LEGACY, 'utf8');
 const overrides = [...source.matchAll(/^([A-Za-z_$][\w$]*) = (?:async )?function\b/gm)].map(match => match[1]);

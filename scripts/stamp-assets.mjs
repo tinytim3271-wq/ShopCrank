@@ -13,7 +13,9 @@ import { fileURLToPath } from 'node:url';
 export const STAMPED_ASSETS = Object.freeze(['app.js', 'styles.css', 'theme.css', 'diagnostics-ui.js']);
 
 export function contentVersion(content) {
-  return createHash('sha256').update(content).digest('hex').slice(0, 10);
+  // Hash with LF line endings so a Windows checkout (CRLF) stamps the same version as CI.
+  const text = Buffer.isBuffer(content) ? content.toString('utf8') : String(content);
+  return createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 10);
 }
 
 /** Rewrite `./<asset>` or `./<asset>?v=…` references in index.html markup. */

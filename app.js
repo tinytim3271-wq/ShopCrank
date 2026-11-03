@@ -7114,6 +7114,38 @@ button{margin-top:12px;padding:8px 14px}
     }
   });
 
+  // src/modules/settings-panels.js
+  function dangerZonePanel({ icon: icon2 }) {
+    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon2("trash-2", 14)} Remove all shop data</button></div></section>`;
+  }
+  function archivedRecordsPanel({ icon: icon2, escapeHtml: escapeHtml4, archiveNote }) {
+    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml4(archiveNote)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon2("archive", 14)} View archived records</button></div></section>`;
+  }
+  function agentPhonePanel({ icon: icon2, escapeHtml: escapeHtml4, apiUrl, shopId }) {
+    return `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above \u2014 not here.</p></div>${icon2("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${apiUrl}/agentphone/webhook/${escapeHtml4(shopId)}</code></div><div class="full"><button class="primary" type="submit">${icon2("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>`;
+  }
+  function appsBillingPanel({ icon: icon2 }) {
+    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon2("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon2("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon2("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon2("sparkles", 14)} Upgrade to paid</button></div></section>`;
+  }
+  function settingsExtraPanels(viewer, deps) {
+    const role = String(viewer?.role || "");
+    const isAdmin = role === "admin";
+    const panels = [];
+    if (isAdmin) panels.push(dangerZonePanel(deps));
+    if (viewer?.canDeleteRecords && !viewer?.offline) panels.push(archivedRecordsPanel(deps));
+    panels.push(deps.phoneUsagePanel());
+    if (deps.twilioPanel || isAdmin) {
+      panels.push(deps.twilioPanel || "");
+      if (isAdmin) panels.push(agentPhonePanel(deps));
+    }
+    if (["admin", "super_admin"].includes(role)) panels.push(appsBillingPanel(deps));
+    return panels.join("");
+  }
+  var init_settings_panels = __esm({
+    "src/modules/settings-panels.js"() {
+    }
+  });
+
   // src/modules/archived-records.js
   function archivedRecordLabel(type, item = {}, money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`) {
     if (type === "customers") return item.name || item.id;
@@ -17372,7 +17404,7 @@ ${line}`.trim();
       }
     };
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, ENTITY_LIST_QUERY, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsArchiveCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, SERVICE_REFUSED, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok, renderKeepingFocusCore;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, ENTITY_LIST_QUERY, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, bindDataResetCore, settingsExtraPanelsCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, SERVICE_REFUSED, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok, renderKeepingFocusCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -17414,6 +17446,7 @@ ${line}`.trim();
       init_mileage();
       init_filing();
       init_customer_metrics();
+      init_settings_panels();
       init_archived_records();
       init_record_deletion();
       init_offline_desktop();
@@ -18014,12 +18047,6 @@ ${line}`.trim();
         document.querySelector("#add-vendor-register")?.addEventListener("click", () => addVendor());
         document.querySelectorAll("[data-edit-vendor]").forEach((button) => button.onclick = () => addVendor(state.vendors.find((vendor) => vendor.id === button.dataset.editVendor)));
       };
-      settingsDataResetCore = settings;
-      settings = function() {
-        const page = settingsDataResetCore();
-        if (currentUser()?.role !== "admin") return page;
-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon("trash-2", 14)} Remove all shop data</button></div></section></main>`);
-      };
       bindDataResetCore = bindExpandedFeatures;
       bindExpandedFeatures = function() {
         bindDataResetCore();
@@ -18027,26 +18054,19 @@ ${line}`.trim();
         document.querySelector("#open-archived-records")?.addEventListener("click", openArchivedRecords);
         bindPhoneUsagePanel();
       };
-      settingsArchiveCore = settings;
+      settingsExtraPanelsCore = settings;
       settings = function() {
-        const page = settingsArchiveCore();
-        if (!userCanDeleteRecords() || isOfflineDesktop()) return page;
-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml(ARCHIVE_NOTE)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon("archive", 14)} View archived records</button></div></section></main>`);
-      };
-      settingsAgentPhoneCore = settings;
-      settings = function() {
-        const page = settingsAgentPhoneCore();
-        const twilioPanel = twilioInlineSettingsPanelHtml();
-        const isAdmin = currentUser()?.role === "admin";
-        if (!twilioPanel && !isAdmin) return page.replace("</main>", `${phoneUsagePanel()}</main>`);
-        const agentPhonePanel = isAdmin ? `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above \u2014 not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>` : "";
-        return page.replace("</main>", `${phoneUsagePanel()}${twilioPanel}${agentPhonePanel}</main>`);
-      };
-      settingsAppsBillingCore = settings;
-      settings = function() {
-        const page = settingsAppsBillingCore();
-        if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page;
-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`);
+        const user = currentUser();
+        const panels = settingsExtraPanels({ role: user?.role, canDeleteRecords: userCanDeleteRecords(), offline: isOfflineDesktop() }, {
+          icon,
+          escapeHtml,
+          archiveNote: ARCHIVE_NOTE,
+          phoneUsagePanel,
+          twilioPanel: twilioInlineSettingsPanelHtml(),
+          apiUrl: cloudflareConfig2.apiUrl,
+          shopId: sessionClaimShopId(authSession()?.claims)
+        });
+        return settingsExtraPanelsCore().replace("</main>", `${panels}</main>`);
       };
       bindAgentPhoneSettingsCore = bindExpandedFeatures;
       bindExpandedFeatures = function() {

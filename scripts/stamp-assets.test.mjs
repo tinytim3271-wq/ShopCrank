@@ -18,6 +18,7 @@ test('a content change gives a new version; the same content keeps it', () => {
   assert.equal(contentVersion('body{}'), contentVersion('body{}'));
   assert.notEqual(contentVersion('body{}'), contentVersion('body{color:red}'));
   assert.match(contentVersion('x'), /^[0-9a-f]{10}$/);
+  assert.equal(contentVersion('a\r\nb\r\n'), contentVersion('a\nb\n'), 'Windows line endings stamp the same version');
 });
 
 test('stampAssets rewrites index.html from the files on disk', () => {

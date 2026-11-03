@@ -64,7 +64,8 @@ test('download route rejects writes and paths outside the allowlist', async () =
 test('Windows download links use the Worker route and the version the Windows workflow publishes', () => {
   const sources = {
     'downloads/index.html': readFileSync(new URL('../../downloads/index.html', import.meta.url), 'utf8'),
-    'src/runtime/legacy.js': readFileSync(new URL('../../src/runtime/legacy.js', import.meta.url), 'utf8'),
+    // The Settings "Apps and subscription" panel (moved out of legacy.js).
+    'src/modules/settings-panels.js': readFileSync(new URL('../../src/modules/settings-panels.js', import.meta.url), 'utf8'),
   };
   for (const [file, source] of Object.entries(sources)) {
     const links = [...source.matchAll(/href="([^"]*ShopCrank-(?:Offline-)?Setup-[^"]+)"/g)].map((match) => match[1]);
