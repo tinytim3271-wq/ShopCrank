@@ -114,6 +114,18 @@ export async function openPeriodFor(env, period) {
   return candidate;
 }
 
+export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, { source = 'stripe' } = {}) {
+  const start = startsAt instanceof Date ? startsAt.toISOString() : new Date(startsAt).toISOString();
+  const end = endsAt ? (endsAt instanceof Date ? endsAt.toISOString() : new Date(endsAt).toISOString()) : null;
+  return env.DB.prepare(`
+    INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(shop_id, starts_at) DO UPDATE SET
+      ends_at = COALESCE(excluded.ends_at, ambassador_paid_coverage.ends_at),
+      source = excluded.source
+  `).bind(shopId, start, end, source, new Date().toISOString()).run();
+}
+
 const ELIGIBLE_SQL = `
   SELECT s.shop_id, s.plan_id, s.sale_source, s.sold_by_ambassador_id AS ambassador_id,
          r.tier, r.monthly_cents
@@ -125,6 +137,12 @@ const ELIGIBLE_SQL = `
     AND COALESCE(acct.suspended, 0) = 0
     AND (s.current_period_end IS NULL OR s.current_period_end >= ?)
     AND (s.attributed_at IS NULL OR s.attributed_at < ?)
+    AND EXISTS (
+      SELECT 1 FROM ambassador_paid_coverage paid
+      WHERE paid.shop_id = s.shop_id
+        AND paid.starts_at < ?
+        AND (paid.ends_at IS NULL OR paid.ends_at > ?)
+    )
 `;
 
 /**
@@ -136,7 +154,7 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   if (!allowClosingPeriod && await periodClosed(env, period)) return { period, created: 0, eligible: 0, frozen: true };
   if (allowClosingPeriod && await reportExists(env, period)) return { period, created: 0, eligible: 0, frozen: true };
   const { start, end } = periodBounds(period);
-  const eligible = await env.DB.prepare(`${ELIGIBLE_SQL}`).bind(start, end).all();
+  const eligible = await env.DB.prepare(`${ELIGIBLE_SQL}`).bind(start, end, end, start).all();
   const now = new Date().toISOString();
   const rows = eligible.results || [];
   if (!rows.length) return { period, created: 0, eligible: 0, frozen: await periodClosed(env, period) };
@@ -160,7 +178,7 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   return { period, created, eligible: rows.length, frozen: await periodClosed(env, period) };
 }
 
-function invoicePeriodStart(invoice) {
+function invoiceServicePeriod(invoice) {
   const lines = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : [];
   const recurringLine = lines.find(line =>
     line?.type === 'subscription'
@@ -168,8 +186,12 @@ function invoicePeriodStart(invoice) {
     || line?.parent?.type === 'subscription_item_details'
     || Boolean(line?.plan?.interval),
   );
-  const seconds = Number(recurringLine?.period?.start || invoice?.period_start || lines[0]?.period?.start || invoice?.created || 0);
-  return seconds > 0 ? new Date(seconds * 1000) : new Date();
+  const startSeconds = Number(recurringLine?.period?.start || invoice?.period_start || lines[0]?.period?.start || invoice?.created || 0);
+  const endSeconds = Number(recurringLine?.period?.end || invoice?.period_end || lines[0]?.period?.end || 0);
+  return {
+    start: startSeconds > 0 ? new Date(startSeconds * 1000) : new Date(),
+    end: endSeconds > 0 ? new Date(endSeconds * 1000) : null,
+  };
 }
 
 async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
@@ -210,7 +232,9 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };
-  const earningPeriod = periodOf(invoicePeriodStart(invoice));
+  const servicePeriod = invoiceServicePeriod(invoice);
+  const earningPeriod = periodOf(servicePeriod.start);
+  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { source: 'stripe_invoice' });
   let period = await openPeriodFor(env, earningPeriod);
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const result = await env.DB.prepare(`

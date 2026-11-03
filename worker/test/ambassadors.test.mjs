@@ -85,6 +85,11 @@ function subscription(DB, shopId) {
 
 function backdateSale(DB, shopId, when = IN_LAST_MONTH) {
   DB.sqlite.prepare('UPDATE subscriptions SET attributed_at = ? WHERE shop_id = ?').run(when, shopId);
+  const { start, end } = periodBounds(periodOf(when));
+  DB.sqlite.prepare(`
+    INSERT OR REPLACE INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
+    VALUES (?, ?, ?, 'test', ?)
+  `).run(shopId, start, end, new Date().toISOString());
 }
 
 async function magicLinkSignup(call, body, headers = {}) {
@@ -430,6 +435,40 @@ test('monthly ledger pays only active, paid memberships of approved ambassadors'
 
   const open = await call('POST', '/admin/ambassador-commissions/generate', { period: periodOf(new Date()) });
   assert.equal(open.status, 400, 'the current month is still open');
+});
+
+test('a late trial-to-paid conversion does not earn for an unpaid month', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'late-conversion', { accountMode: 'trialing', soldByAmbassadorId: amb.id });
+  await createShop(call, 'stripe-late-conversion', { accountMode: 'trialing', soldByAmbassadorId: amb.id });
+  DB.sqlite.prepare('UPDATE subscriptions SET attributed_at = ? WHERE shop_id = ?').run(IN_LAST_MONTH, 'late-conversion');
+  DB.sqlite.prepare('UPDATE subscriptions SET attributed_at = ? WHERE shop_id = ?').run(IN_LAST_MONTH, 'stripe-late-conversion');
+
+  const activated = await call('POST', '/admin/accounts/late-conversion/subscription', { mode: 'active' });
+  assert.equal(activated.status, 200);
+  const coverage = DB.sqlite.prepare('SELECT starts_at FROM ambassador_paid_coverage WHERE shop_id = ?').get('late-conversion');
+  assert.ok(coverage.starts_at >= periodBounds(LAST_MONTH).end);
+
+  const paidEffectiveAt = Math.floor(Date.parse(periodBounds(shiftPeriod(LAST_MONTH, 1)).start) / 1000);
+  const periodStart = Math.floor(Date.parse(periodBounds(LAST_MONTH).start) / 1000);
+  const periodEnd = Math.floor(Date.parse(periodBounds(shiftPeriod(shiftPeriod(LAST_MONTH, 1), 1)).start) / 1000);
+  await signedWebhook(env, {
+    id: 'evt_trial_paid_effective',
+    type: 'customer.subscription.updated',
+    data: { object: {
+      id: 'sub-stripe-late',
+      status: 'active',
+      current_period_start: periodStart,
+      current_period_end: periodEnd,
+      trial_end: paidEffectiveAt,
+      metadata: { shopId: 'stripe-late-conversion', planId: 'shop' },
+    } },
+  });
+  const stripeCoverage = DB.sqlite.prepare('SELECT starts_at FROM ambassador_paid_coverage WHERE shop_id = ?').get('stripe-late-conversion');
+  assert.equal(stripeCoverage.starts_at, periodBounds(shiftPeriod(LAST_MONTH, 1)).start);
+  assert.equal((await generateCommissionLedger(env, LAST_MONTH)).created, 0);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_commissions WHERE shop_id IN ('late-conversion', 'stripe-late-conversion')").get().n, 0);
 });
 
 test('commission rates are configurable and drive new accruals', async () => {
