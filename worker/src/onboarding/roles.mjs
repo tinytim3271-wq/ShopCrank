@@ -4,6 +4,7 @@
 // intake, and technicians are blocked from accounting by assistant/rbac.mjs.
 
 import { syncAccessUser } from '../access-users.mjs';
+import { applyAttribution, resolveAttribution } from '../ambassadors/store.mjs';
 
 export function planShopRoles(intake) {
   const owner = { name: `${intake.contact.firstName} ${intake.contact.lastName}`.trim(), email: intake.contact.email, role: 'admin' };
@@ -17,6 +18,13 @@ export async function provisionShopRoles(env, intake, { actor = 'onboarding' } =
   const [owner] = plan.users;
   const account = await env.DB.prepare('SELECT shop_id FROM accounts WHERE shop_id = ?').bind(plan.shopId).first();
   if (!account) {
+    const credit = await resolveAttribution(env, {
+      ambassadorId: intake.soldByAmbassadorId,
+      referralCode: intake.referralCode,
+      saleSource: intake.saleSource,
+      defaultSource: 'ai_agent',
+      trusted: true,
+    });
     await env.DB.batch([
       env.DB.prepare(`
         INSERT INTO accounts (shop_id, shop_name, owner_email, owner_name, subscription_status, subscription_expires_at, created_at, updated_at, created_by)
@@ -32,6 +40,13 @@ export async function provisionShopRoles(env, intake, { actor = 'onboarding' } =
         ON CONFLICT(shop_id) DO NOTHING
       `).bind(plan.shopId, plan.planId || 'shop', now),
     ]);
+    await applyAttribution(env, plan.shopId, {
+      ambassador: credit.ambassador,
+      saleSource: credit.saleSource,
+      referralCode: intake.referralCode,
+      changedBy: actor,
+      reason: 'Created by onboarding agent',
+    });
   }
   const results = [];
   for (const member of plan.users) {

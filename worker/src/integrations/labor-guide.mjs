@@ -3,7 +3,9 @@ import {
   createManualLaborEntry,
   isBookLaborProvider,
   laborGuideConnectionStatus,
+  OPEN_LABOR_LABEL,
   mapMotorLaborOperationToEstimateLine,
+  mapOpenLaborToEstimateLine,
 } from '../../../src/modules/labor-guide.js';
 import { PARTSTECH_SECRET_NAME } from '../../../src/modules/partstech.js';
 import { HttpError, json, requestJson } from '../http.mjs';
@@ -11,6 +13,7 @@ import { partstechFetch } from './partstech.mjs';
 import { searchLaborWeb, webEstimateResponsePayload } from './labor-web-estimate.mjs';
 import { getLaborProviderStatus, searchLicensedLabor } from './labor.mjs';
 import { motorPlatformConfig, motorShopConfig, searchMotorLabor } from './motor-direct.mjs';
+import { openLaborConfigured, searchOpenLabor } from './open-labor.mjs';
 
 const ADMIN_ROLES = ['owner', 'admin', 'super_admin'];
 const USE_ROLES = ['owner', 'admin', 'service_writer', 'technician'];
@@ -26,7 +29,7 @@ const PROVIDER_NAMES = { motor: 'MOTOR', alldata: 'ALLDATA', shopkey: 'ShopKey' 
 /** Book-time sources ShopCrank itself is licensed for (Worker env), offered to every shop. */
 export function platformLaborStatus(env = {}) {
   const alldata = Boolean(getLaborProviderStatus(env).alldata?.configured);
-  return { motor: motorPlatformConfig(env).configured, alldata };
+  return { motor: motorPlatformConfig(env).configured, alldata, openLabor: openLaborConfigured(env) };
 }
 
 export function createLaborGuideHandlers({
@@ -203,6 +206,25 @@ export function createLaborGuideHandlers({
       if (!status.connected && platformLaborStatus(env).alldata && (vin || keyword)) {
         const found = await alldataSearch();
         if (found) return found;
+      }
+
+      // No book time: Open Labor Project reference times, labeled with their confidence.
+      if (openLaborConfigured(env) && keyword) {
+        let reference = [];
+        let referenceError = null;
+        try {
+          reference = await searchOpenLabor(env, { vin, year: body.year, make: body.make, model: body.model, engine: body.engine, query: keyword }, { fetcher });
+        } catch (error) {
+          referenceError = error.code || 'error';
+        }
+        await recordAudit?.(env, context, { kind: 'integrations.labor_guide.open_labor', count: reference.length, error: referenceError });
+        if (reference.length) {
+          const lines = reference.map((result, index) => mapOpenLaborToEstimateLine(result, { laborRate }, index));
+          return json({
+            connected: false, provider: 'open_labor', bookTime: false, notBookTime: true, found: true,
+            label: OPEN_LABOR_LABEL, groups: [], operations: reference, lines,
+          });
+        }
       }
 
       // No book provider connected → automatic web fallback (clearly labeled, never as book time).

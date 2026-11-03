@@ -26,6 +26,8 @@
     "/privacy",
     "/privacy/*",
     "/founding",
-    "/founding/*"
+    "/founding/*",
+    "/ambassador",
+    "/ambassador/*"
   ]
 }

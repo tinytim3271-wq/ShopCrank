@@ -1,4 +1,6 @@
 const OFFLINE_QUEUE_BLOCKED = /\/entities\/(employees|payrollentries|shopsettings|invoices|payments|expenses)(\/|$)/i;
+/** Cascade deletes remove linked records chosen at confirm time; replaying one later could remove newer records. */
+const CASCADE_DELETE = /[?&]cascade=/i;
 
 function defaultMutationId() {
   return globalThis.crypto?.randomUUID?.() || `mutation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -20,7 +22,7 @@ export function prepareEntityMutation(path, options, createMutationId = defaultM
   const method = String(options.method || 'GET').toUpperCase();
   const isEntityMutation = path.startsWith('/entities/') && ['POST', 'PUT', 'DELETE'].includes(method);
   const containsSensitiveEndpoint = path === '/agentphone/configure' || path === '/voice/grok/configure';
-  const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !containsSensitiveEndpoint;
+  const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !CASCADE_DELETE.test(path) && !containsSensitiveEndpoint;
   if (!queueable) return { path, options, queueable: false };
   let body = null;
   if (options.body) {

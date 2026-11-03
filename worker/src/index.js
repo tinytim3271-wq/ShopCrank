@@ -48,7 +48,15 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
+import { buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities } from './routes/entities.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
+import {
+  RECORD_DELETE_DENIED,
+  canDeleteRecords,
+  describeLinkedCounts,
+  hasLinkedRecords,
+  requiresAdminDelete,
+} from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
 import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
@@ -128,6 +136,10 @@ import {
 } from '../../src/modules/estimate-workflow.js';
 import { redactSensitive } from './redact.mjs';
 import { HEALTH_CHECK_CRON, handleHealthCheckAdmin, runScheduledHealthCheck } from './health/health-check.mjs';
+import { applyAttribution, attributeMembership, normalizeReferralCode, resolveAttribution } from './ambassadors/store.mjs';
+import { recordInvoiceCommission } from './ambassadors/commissions.mjs';
+import { AMBASSADOR_PAYOUT_CRON, runScheduledAmbassadorPayouts } from './ambassadors/payout-report.mjs';
+import { handleAmbassadorAdmin, handleAmbassadorPublic } from './ambassadors/routes.mjs';
 
 export { AiChatSession, AiVoiceSession };
 
@@ -138,6 +150,9 @@ const GOOGLE_VERIFIER_COOKIE = '__Host-shopcrank_google_verifier';
 const GOOGLE_RETURN_COOKIE = '__Host-shopcrank_google_return';
 const GOOGLE_DESKTOP_COOKIE = '__Host-shopcrank_google_desktop';
 const GOOGLE_ORIGIN_COOKIE = '__Host-shopcrank_google_origin';
+// Set by /assets/ambassador-ref.js when a visitor lands with ?ref=CODE.
+const REFERRAL_COOKIE = 'sc_ref';
+const REFERRAL_SOURCE_COOKIE = 'sc_ref_src';
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
@@ -820,12 +835,6 @@ async function listChatMessagesForConversations(env, shopId, email, { limit = 0,
   };
 }
 
-async function hasLinkedCustomerEntity(env, shopId, type, customerName) {
-  return Boolean(await env.DB.prepare(
-    "SELECT 1 AS found FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, '$.customer') = ? LIMIT 1",
-  ).bind(shopId, type, customerName).first());
-}
-
 async function listPaymentsByInvoice(env, shopId, invoiceNumber) {
   const result = await env.DB.prepare(
     "SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = 'payments' AND json_extract(data_json, '$.invoiceNumber') = ?",
@@ -970,28 +979,24 @@ async function handleEntities(request, env, context, segments, analytics) {
       && (!members(existing).includes(context.email) || (context.role !== 'admin' && existing.createdBy !== context.userId))) {
       throw new HttpError(403, 'Not permitted');
     }
+    if (requiresAdminDelete(type) && !canDeleteRecords(context.role)) throw new HttpError(403, RECORD_DELETE_DENIED);
+
+    let statements;
     if (type === 'customers') {
-      const linkedTypes = ['vehicles', 'orders', 'invoices'];
-      const links = await Promise.all(linkedTypes.map(linkedType => hasLinkedCustomerEntity(env, context.shopId, linkedType, existing.name)));
-      if (links.some(Boolean)) {
-        throw new HttpError(409, "Delete this customer's vehicles, work orders, and invoices first");
+      const linked = await customerLinkedEntities(env, context.shopId, existing.name);
+      if (hasLinkedRecords(linked)) {
+        const cascade = new URL(request.url).searchParams.get('cascade') === '1';
+        if (!cascade) {
+          throw new HttpError(409, `${existing.name || 'This customer'} has ${describeLinkedCounts(linked)}. Delete them too, or delete those records first.`);
+        }
+        statements = buildCustomerCascadeStatements(env, context, id, linked);
       }
     }
-    const statements = [env.DB.prepare(
-      'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-    ).bind(context.shopId, type, id)];
-    if (type === 'invoices') {
-      const payments = await listPaymentsByInvoice(env, context.shopId, existing.number || existing.id);
-      for (const payment of payments.filter(record => record.invoiceNumber === (existing.number || existing.id))) {
-        statements.push(env.DB.prepare(
-          'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-        ).bind(context.shopId, 'payments', payment.id));
-      }
-    }
-    if (type === 'employees' && existing.email) {
-      statements.push(env.DB.prepare(
-        'DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?',
-      ).bind(existing.email, context.shopId));
+    if (!statements) {
+      const relatedPayments = type === 'invoices'
+        ? await listPaymentsByInvoice(env, context.shopId, existing.number || existing.id)
+        : [];
+      statements = buildEntityDeleteStatements(env, context, type, id, existing, relatedPayments);
     }
     await env.DB.batch(statements);
     captureForContext(analytics, context, 'entity_deleted', { entity_type: type });
@@ -2364,6 +2369,13 @@ async function handleAdmin(request, env, context, segments, analytics) {
       'SELECT shop_id FROM accounts WHERE shop_id = ? UNION ALL SELECT shop_id FROM users WHERE email = ? COLLATE NOCASE LIMIT 1',
     ).bind(shopId, email).first();
     if (existing) throw new HttpError(409, 'An account already uses this shop ID or owner email');
+    const attribution = await resolveAttribution(env, {
+      ambassadorId: String(body.soldByAmbassadorId || '').trim(),
+      referralCode: body.referralCode,
+      saleSource: body.saleSource,
+      defaultSource: 'admin_manual',
+      trusted: true,
+    });
     const now = new Date();
     const nowIso = now.toISOString();
     const subscriptionStatus = accountMode === 'active' ? 'active' : 'trialing';
@@ -2403,9 +2415,18 @@ async function handleAdmin(request, env, context, segments, analytics) {
           current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
       `).bind(shopId, planId, subscriptionStatus, subscriptionExpiresAt, nowIso),
     ]);
+    const credit = await applyAttribution(env, shopId, {
+      ambassador: attribution.ambassador,
+      saleSource: attribution.saleSource,
+      soldBy: body.soldBy,
+      referralCode: body.referralCode,
+      changedBy: context.email || context.userId,
+      reason: 'Admin created shop',
+    });
     return json({
       id: shopId, shopId, shopName, ownerEmail: email, ownerName, creditBalance: 0,
       subscriptionStatus, subscriptionExpiresAt, planId, accountMode, trialDays,
+      soldByAmbassadorId: attribution.ambassador?.id || null, saleSource: attribution.saleSource, soldBy: credit.soldBy || '',
       createdAt: nowIso, updatedAt: nowIso,
     }, 201);
   }
@@ -2481,6 +2502,16 @@ async function handleAdmin(request, env, context, segments, analytics) {
     }
     const account = await env.DB.prepare('SELECT * FROM accounts WHERE shop_id = ?').bind(target).first();
     if (!account) throw new HttpError(404, 'Customer account not found');
+    let attribution = null;
+    if (body.saleSource || body.soldByAmbassadorId || body.referralCode) {
+      attribution = await resolveAttribution(env, {
+        ambassadorId: String(body.soldByAmbassadorId || '').trim(),
+        referralCode: body.referralCode,
+        saleSource: body.saleSource,
+        defaultSource: 'admin_manual',
+        trusted: true,
+      });
+    }
     const now = new Date();
     const nowIso = now.toISOString();
     let subscriptionStatus = String(account.subscription_status || 'trialing');
@@ -2511,12 +2542,24 @@ async function handleAdmin(request, env, context, segments, analytics) {
       ON CONFLICT(shop_id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status,
         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
     `).bind(target, planId, subscriptionStatus, subscriptionExpiresAt, nowIso, nowIso).run();
+    let credit = null;
+    if (attribution) {
+      credit = await applyAttribution(env, target, {
+        ambassador: attribution.ambassador,
+        saleSource: attribution.saleSource,
+        soldBy: body.soldBy,
+        referralCode: body.referralCode,
+        changedBy: context.email || context.userId,
+        reason: String(body.reason || '').trim() || `Admin set membership to ${mode}`,
+      });
+    }
     return json({
       shopId: target,
       subscriptionStatus,
       subscriptionExpiresAt,
       planId,
       mode,
+      attribution: credit,
     });
   }
   throw new HttpError(405, 'Method not allowed');
@@ -2532,7 +2575,7 @@ function normalizeSignupIntent({ planId, shopName, ownerName, email, name } = {}
 }
 
 /** Pack public signup fields into return_to so magic-link works before D1 columns exist. */
-function embedSignupIntent(returnTo, { planId, shopName, ownerName, desktop, handoff } = {}) {
+function embedSignupIntent(returnTo, { planId, shopName, ownerName, desktop, handoff, referralCode, referralSource } = {}) {
   const path = safeReturnPath(returnTo);
   try {
     const parsed = new URL(path, 'https://shopcrank.invalid');
@@ -2541,6 +2584,9 @@ function embedSignupIntent(returnTo, { planId, shopName, ownerName, desktop, han
     if (planId && isPublicPlan(planId)) parsed.searchParams.set('trialPlan', planId);
     if (shopName) parsed.searchParams.set('trialShop', shopName);
     if (ownerName) parsed.searchParams.set('trialOwner', ownerName);
+    const ref = normalizeReferralCode(referralCode);
+    if (ref) parsed.searchParams.set('trialRef', ref);
+    if (ref && ['ambassador_site', 'ambassador_referral'].includes(referralSource)) parsed.searchParams.set('trialRefSrc', referralSource);
     // Sign-in started in the desktop app: finish it there, not in the browser.
     if (desktop) parsed.searchParams.set('desktopApp', '1');
     // One-time token handed to the desktop app through shopcrank://auth.
@@ -2558,6 +2604,8 @@ function extractSignupIntent(returnTo, fallback = {}) {
     ownerName: fallback.ownerName || null,
     desktop: false,
     handoff: false,
+    referralCode: fallback.referralCode || null,
+    referralSource: fallback.referralSource || null,
   };
   let cleanPath = safeReturnPath(returnTo);
   try {
@@ -2570,6 +2618,11 @@ function extractSignupIntent(returnTo, fallback = {}) {
     if (ownerName) intent.ownerName = ownerName;
     intent.desktop = parsed.searchParams.get('desktopApp') === '1';
     intent.handoff = parsed.searchParams.get('desktopHandoff') === '1';
+    const ref = normalizeReferralCode(parsed.searchParams.get('trialRef'));
+    if (ref) intent.referralCode = ref;
+    if (ref && parsed.searchParams.get('trialRefSrc')) intent.referralSource = parsed.searchParams.get('trialRefSrc');
+    parsed.searchParams.delete('trialRef');
+    parsed.searchParams.delete('trialRefSrc');
     parsed.searchParams.delete('trialPlan');
     parsed.searchParams.delete('trialShop');
     parsed.searchParams.delete('trialOwner');
@@ -2617,6 +2670,24 @@ async function createPublicTrialSubscription(env, { shopId, email, ownerName, sh
   return { planId: plan, trialEnds };
 }
 
+async function retryPendingSignupAttribution(env, shopId) {
+  const pending = await env.DB.prepare(`
+    SELECT referral_code, sale_source, changed_by, reason
+    FROM pending_membership_attributions WHERE shop_id = ?
+  `).bind(shopId).first();
+  if (!pending) return false;
+  await attributeMembership(env, shopId, {
+    referralCode: pending.referral_code,
+    saleSource: pending.sale_source,
+    defaultSource: 'shopcrank_online',
+    changedBy: pending.changed_by,
+    reason: pending.reason,
+    onlyIfUncredited: true,
+  });
+  await env.DB.prepare('DELETE FROM pending_membership_attributions WHERE shop_id = ?').bind(shopId).run();
+  return true;
+}
+
 async function ensureSaasUser(env, email, name, signup = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) throw new HttpError(400, 'A valid email is required');
@@ -2631,6 +2702,13 @@ async function ensureSaasUser(env, email, name, signup = {}) {
         .bind(userId, now, normalized).run();
       existing.id = userId;
     }
+    if (existing.shop_id) {
+      try {
+        await retryPendingSignupAttribution(env, existing.shop_id);
+      } catch (error) {
+        console.error(JSON.stringify({ message: 'signup attribution retry failed', shopId: existing.shop_id, error: String(error?.message || error) }));
+      }
+    }
     // Do not attach founding plans to existing shops on login. Claim emails are
     // unverified, so applying here would let a stolen invite rewrite a live plan.
     return existing;
@@ -2643,6 +2721,7 @@ async function ensureSaasUser(env, email, name, signup = {}) {
   const userId = crypto.randomUUID();
   const now = new Date().toISOString();
   const shopId = `shop-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const referralCode = normalizeReferralCode(signup.referralCode);
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO shops (id, name, slug, timezone, billing_status, created_at, updated_at)
@@ -2670,6 +2749,15 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       createdAt: now,
       updatedAt: now,
     }), userId, now, now),
+    ...(referralCode ? [env.DB.prepare(`
+      INSERT INTO pending_membership_attributions (
+        shop_id, referral_code, sale_source, changed_by, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(shop_id) DO NOTHING
+    `).bind(
+      shopId, referralCode, signup.referralSource || null, `signup:${normalized}`,
+      `Self-signup with referral code ${referralCode}`, now,
+    )] : []),
   ]);
   const founding = await applyPendingFoundingClaim(env, {
     email: normalized,
@@ -2685,6 +2773,25 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       shopName: intent.shopName,
       planId: intent.planId,
     });
+  }
+  if (referralCode) {
+    try {
+      await retryPendingSignupAttribution(env, shopId);
+    } catch (error) {
+      console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+    }
+  } else {
+    try {
+      await attributeMembership(env, shopId, {
+        saleSource: signup.referralSource,
+        defaultSource: 'shopcrank_online',
+        changedBy: `signup:${normalized}`,
+        reason: 'Self-signup',
+      });
+    } catch (error) {
+      // Attribution must never block a new shop from signing in.
+      console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+    }
   }
   return { id: userId, email: normalized, shop_id: shopId, role: 'admin', name: intent.ownerName, enabled: 1 };
 }
@@ -2897,7 +3004,10 @@ async function handleGoogleCallback(request, env) {
     throw new HttpError(401, 'Google could not verify this sign-in');
   }
   const email = String(claims.email || '').trim().toLowerCase();
-  const user = await ensureSaasUser(env, email, String(claims.name || email.split('@')[0]));
+  const user = await ensureSaasUser(env, email, String(claims.name || email.split('@')[0]), {
+    referralCode: getCookieValue(request, REFERRAL_COOKIE),
+    referralSource: getCookieValue(request, REFERRAL_SOURCE_COOKIE),
+  });
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
   }
@@ -3067,11 +3177,15 @@ async function handleMagicLink(request, env) {
   const signupShopName = String(body.shopName || body.shop_name || '').trim().slice(0, 120) || null;
   const signupOwnerName = String(body.ownerName || body.owner_name || '').trim().slice(0, 120) || null;
   const desktop = body.desktop === true || body.desktop === '1' || body.desktop === 'true';
+  const referralCode = normalizeReferralCode(body.referralCode || body.ref) || normalizeReferralCode(getCookieValue(request, REFERRAL_COOKIE));
+  const referralSource = String(body.referralSource || getCookieValue(request, REFERRAL_SOURCE_COOKIE) || '').trim();
   const storedReturnTo = embedSignupIntent(returnTo, {
     planId: signupPlanId,
     shopName: signupShopName,
     ownerName: signupOwnerName,
     desktop,
+    referralCode,
+    referralSource,
   });
   const exposeLoginLink = env.AUTH_EXPOSE_LOGIN_LINK === '1';
   const sendDirectly = canSendLoginEmail(env);
@@ -3184,6 +3298,8 @@ async function handleAuthCallback(request, env) {
     planId: signup.planId,
     shopName: signup.shopName,
     ownerName: signup.ownerName,
+    referralCode: signup.referralCode,
+    referralSource: signup.referralSource,
   });
   if (Number(user.enabled) !== 1) {
     throw new HttpError(403, 'This account has been disabled. Contact your shop administrator.');
@@ -3198,6 +3314,8 @@ async function handleAuthCallback(request, env) {
       shopName: signup.shopName,
       ownerName: signup.ownerName,
       handoff: true,
+      referralCode: signup.referralCode,
+      referralSource: signup.referralSource,
     });
     const now = new Date().toISOString();
     const updated = await env.DB.prepare(`
@@ -3225,17 +3343,21 @@ async function handleAuthCallback(request, env) {
       },
     });
   }
+  // Claim the link before creating a session: two simultaneous redemptions of one
+  // link must not both sign in.
+  const claimedAt = new Date().toISOString();
+  const claimed = await env.DB.prepare(
+    'UPDATE login_tokens SET used_at = ? WHERE id = ? AND token_hash = ? AND used_at IS NULL AND expires_at > ?',
+  ).bind(claimedAt, loginToken.id, tokenHash, claimedAt).run();
+  if (Number(claimed?.meta?.changes) !== 1) throw new HttpError(401, 'The sign-in link has expired');
   const sessionToken = crypto.randomUUID().replaceAll('-', '');
   const sessionId = crypto.randomUUID();
   const sessionHash = await hashValue(sessionToken);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
-  await env.DB.batch([
-    env.DB.prepare(`
-      INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(sessionId, user.id, sessionHash, expiresAt, new Date().toISOString()),
-    env.DB.prepare('UPDATE login_tokens SET used_at = ? WHERE id = ?').bind(new Date().toISOString(), loginToken.id),
-  ]);
+  await env.DB.prepare(`
+    INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(sessionId, user.id, sessionHash, expiresAt, claimedAt).run();
   const posthog = getPostHog(env);
   posthog?.identify({
     distinctId: String(user.id),
@@ -3362,6 +3484,15 @@ async function handleBilling(request, env, context, segments) {
         `).bind(context.shopId, created.id, new Date().toISOString()).run();
         customer = { stripe_customer_id: created.id };
       }
+      const credited = await env.DB.prepare(
+        'SELECT sold_by_ambassador_id, sale_source FROM subscriptions WHERE shop_id = ?',
+      ).bind(context.shopId).first();
+      const checkoutCredit = credited?.sold_by_ambassador_id
+        ? { ambassador: { id: credited.sold_by_ambassador_id }, saleSource: credited.sale_source || 'ambassador_referral' }
+        : await resolveAttribution(env, {
+          referralCode: body.referralCode || getCookieValue(request, REFERRAL_COOKIE),
+          saleSource: body.referralSource || getCookieValue(request, REFERRAL_SOURCE_COOKIE),
+        });
       const params = new URLSearchParams({
         mode: 'subscription',
         success_url: successUrl,
@@ -3375,7 +3506,13 @@ async function handleBilling(request, env, context, segments) {
         'metadata[interval]': interval,
         'subscription_data[metadata][shopId]': context.shopId,
         'subscription_data[metadata][planId]': plan.id,
+        'metadata[saleSource]': checkoutCredit.saleSource,
+        'subscription_data[metadata][saleSource]': checkoutCredit.saleSource,
       });
+      if (checkoutCredit.ambassador?.id) {
+        params.set('metadata[ambassadorId]', checkoutCredit.ambassador.id);
+        params.set('subscription_data[metadata][ambassadorId]', checkoutCredit.ambassador.id);
+      }
       const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
         method: 'POST',
         headers: { Authorization: `Basic ${btoa(`${stripeKey}:`)}`, 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -3531,6 +3668,22 @@ async function handleBilling(request, env, context, segments) {
         `).bind(
           shopId, subscriptionId || null, planId, status, periodEnd, periodStart, nowIso, nowIso,
         ).run();
+        capturePostHogEvent(env, { shopId, userId: `billing-webhook:${shopId}` }, 'subscription_status_changed', {
+          plan_id: planId,
+          subscription_status: status,
+          provider: 'stripe',
+          $process_person_profile: false,
+        });
+        if (checkoutEvent || (subscriptionEvent && object.metadata?.ambassadorId)) {
+          await attributeMembership(env, shopId, {
+            ambassadorId: String(object.metadata?.ambassadorId || ''),
+            saleSource: object.metadata?.saleSource,
+            defaultSource: 'shopcrank_online',
+            changedBy: 'stripe_checkout',
+            reason: `Stripe ${event.type}`,
+            onlyIfUncredited: true,
+          });
+        }
         await env.DB.prepare(`
           INSERT OR IGNORE INTO billing_events (id, shop_id, event_type, event_json, created_at)
           VALUES (?, ?, ?, ?, ?)
@@ -3538,13 +3691,11 @@ async function handleBilling(request, env, context, segments) {
           eventId, shopId, String(event.type || 'unknown'),
           JSON.stringify(event), new Date().toISOString(),
         ).run();
-        capturePostHogEvent(env, { shopId, userId: `billing-webhook:${shopId}` }, 'subscription_status_changed', {
-          plan_id: planId,
-          subscription_status: status,
-          provider: 'stripe',
-          $process_person_profile: false,
-        });
       } else {
+        if (event.type === 'invoice.paid') {
+          const commission = await recordInvoiceCommission(env, shopId, object);
+          console.log(JSON.stringify({ message: 'ambassador commission from invoice.paid', shopId, ...commission }));
+        }
         await env.DB.prepare(`
           INSERT OR IGNORE INTO billing_events (id, shop_id, event_type, event_json, created_at)
           VALUES (?, ?, ?, ?, ?)
@@ -3663,6 +3814,7 @@ async function route(request, env, analytics) {
   }
   if (path === '/healthz') return json({ ok: true, service: HEALTHZ_SERVICE });
   if (segments[0] === 'founding') return handleFounding(request, env);
+  if (segments[0] === 'ambassadors') return handleAmbassadorPublic(request, env, segments, { verifyTurnstile });
   if (path === '/licenses/unlock' && request.method === 'GET') return unlockLandingPage();
   if (segments[0] === 'auth') return handleAuth(request, env, segments, analytics);
   if (segments[0] === 'book') {
@@ -3879,6 +4031,7 @@ async function route(request, env, analytics) {
   if (path === '/subscription/entitlement') return handleEntitlement(request, env, context);
   if (segments[0] === 'admin' && segments[1] === 'accounts') return handleAdmin(request, env, context, segments, analytics);
   if (segments[0] === 'admin' && segments[1] === 'licenses') return handleLicenseAdmin(request, env, context, segments);
+  if (segments[0] === 'admin' && String(segments[1] || '').startsWith('ambassador')) return handleAmbassadorAdmin(request, env, context, segments);
   if (segments[0] === 'admin' && segments[1] === 'health-check') {
     return handleHealthCheckAdmin(request, env, context, segments, { getSecret: getIntegrationSecret, saveSecret: saveIntegrationSecret });
   }
@@ -3986,6 +4139,14 @@ async function proxyPagesRequest(request, env) {
 
 export default {
   async scheduled(controller, env, executionCtx) {
+    if (controller?.cron === AMBASSADOR_PAYOUT_CRON) {
+      const payouts = runScheduledAmbassadorPayouts(env)
+        .then(result => console.log(JSON.stringify({ message: 'ambassador payout report cron', ...result })))
+        .catch(error => console.error('ambassador payout report cron failed', error));
+      if (executionCtx?.waitUntil) executionCtx.waitUntil(payouts);
+      else await payouts;
+      return;
+    }
     if (controller?.cron === HEALTH_CHECK_CRON) {
       const health = runScheduledHealthCheck(env, { getSecret: getIntegrationSecret, saveSecret: saveIntegrationSecret })
         .catch(error => console.error('dependency health check cron failed', error));

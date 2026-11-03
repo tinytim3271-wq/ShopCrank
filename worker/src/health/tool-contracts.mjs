@@ -10,9 +10,16 @@
 // Shapes use a small JSON-Schema subset (type, properties, required, items, enum,
 // anyOf, additionalProperties); see ./schema.mjs.
 
-export const TOOL_CONTRACTS_VERSION = '1.1.0';
+export const TOOL_CONTRACTS_VERSION = '1.2.0';
 
 export const TOOL_CONTRACTS_CHANGELOG = Object.freeze([
+  {
+    version: '1.2.0',
+    date: '2026-11-03',
+    changes: [
+      'lookup_labor_time can return Open Labor Project reference times, explicitly labeled not book time with confidence and range metadata.',
+    ],
+  },
   {
     version: '1.1.0',
     date: '2026-10-30',
@@ -142,12 +149,17 @@ export const TOOL_CONTRACTS = Object.freeze({
     canary: { ...TECH, args: { customer: { name: 'Health Check' }, vehicle: { description: '2020 Honda Civic' }, complaint: 'Health check canary' } },
   },
   lookup_labor_time: {
-    since: '1.0.0',
-    summary: 'Verified numeric labor hours from a licensed labor guide, or source "unavailable" with no operations.',
+    since: '1.2.0',
+    summary: 'Numeric labor hours from a licensed guide or clearly labeled Open Labor Project reference, or source "unavailable" with no operations.',
     dependencies: ['labor-guide'],
     returns: obj({
-      source: { type: 'string', enum: ['licensed_labor_guide', 'unavailable'] },
-      operations: arr(obj({ operation: ANY, hours: N, source: ANY }, ['hours'])),
+      source: { type: 'string', enum: ['licensed_labor_guide', 'open_labor_reference', 'unavailable'] },
+      label: S,
+      bookTime: B,
+      operations: arr(obj({
+        operation: ANY, hours: N, source: ANY, confidence: S,
+        lowRange: nullable(N), highRange: nullable(N), bookTime: B,
+      }, ['hours'])),
       note: S,
     }, ['source', 'operations']),
     canary: { ...TECH, args: { operation: 'front brake pads', vehicle: { year: '2020', make: 'Honda', model: 'Civic' } }, network: true },

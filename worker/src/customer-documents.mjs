@@ -13,6 +13,8 @@ import { HttpError, json, requestJson } from './http.mjs';
 import { putSignatureEvidence } from './routes/files.mjs';
 
 const LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** A signed/approved document stays viewable as the customer's receipt for this long, then the link expires. */
+export const COMPLETED_LINK_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const SIGNATURE_LIMIT = 1024 * 1024;
 const RESPONSE_BODY_LIMIT = 1536 * 1024;
 
@@ -465,11 +467,17 @@ async function documentMedia(request, env, link, document) {
   return new Response(object.body, { headers });
 }
 
+/** Open links expire after LINK_TTL_MS; completed ones a year after the customer signed or answered. */
+export function linkExpired(link, now = Date.now()) {
+  if (link.consumed_at) return new Date(link.consumed_at).getTime() + COMPLETED_LINK_TTL_MS <= now;
+  return new Date(link.expires_at).getTime() <= now;
+}
+
 export async function handleCustomerDocument(request, env, token, subresource = '') {
   if (!/^[A-Za-z0-9_-]{40,100}$/.test(token)) throw new HttpError(404, 'Document link not found');
   const link = await linkRecord(env, token);
   if (!link) throw new HttpError(404, 'Document link not found');
-  if (!link.consumed_at && new Date(link.expires_at).getTime() <= Date.now()) throw new HttpError(410, 'This link has expired');
+  if (linkExpired(link)) throw new HttpError(410, 'This link has expired');
   const row = await entityRow(env, link.shop_id, entityTypeForDocument(link.document_type), link.document_id);
   const document = parseEntity(row);
   if (!document) throw new HttpError(404, 'Document not found');

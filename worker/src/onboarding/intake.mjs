@@ -65,6 +65,9 @@ export function normalizeIntake(input = {}) {
       role: SHOP_STAFF_ROLES.includes(member?.role) ? member.role : 'technician',
     })).filter(member => member.email),
     planId: str(input.planId || 'shop', 40),
+    soldByAmbassadorId: str(input.soldByAmbassadorId, 64),
+    referralCode: str(input.referralCode, 32).toUpperCase().replace(/[^A-Z0-9]/g, ''),
+    saleSource: str(input.saleSource, 40),
   };
 }
 

@@ -1,3 +1,5 @@
+import { OPEN_LABOR_SOURCE, openLaborConfigured, searchOpenLabor } from './open-labor.mjs';
+
 const MAX_QUERY_LENGTH = 500;
 const MAX_TEXT_LENGTH = 120;
 const MAX_RESULTS = 50;
@@ -97,6 +99,18 @@ function providerConfig(env, spec) {
 }
 
 export function getLaborProviderStatus(env = {}) {
+  return { ...licensedProviderStatus(env), openlabor: {
+    provider: OPEN_LABOR_SOURCE,
+    configured: openLaborConfigured(env),
+    credentialsConfigured: openLaborConfigured(env),
+    licenseConfirmed: false,
+    bookTime: false,
+    hasPunchout: false,
+    configurationError: null,
+  } };
+}
+
+function licensedProviderStatus(env = {}) {
   return Object.fromEntries(Object.values(LABOR_PROVIDER_REGISTRY).map((spec) => {
     const config = providerConfig(env, spec);
     let configurationError = null;
@@ -220,7 +234,7 @@ export async function searchLicensedLabor(env, input, options = {}) {
   const specs = requested
     ? [LABOR_PROVIDER_REGISTRY[requested]].filter(Boolean)
     : Object.values(LABOR_PROVIDER_REGISTRY);
-  if (requested && specs.length === 0) throw new TypeError(`Unknown labor provider: ${requested}`);
+  if (requested && requested !== 'openlabor' && specs.length === 0) throw new TypeError(`Unknown labor provider: ${requested}`);
 
   for (const spec of specs) {
     const config = providerConfig(env, spec);
@@ -268,6 +282,16 @@ export async function searchLicensedLabor(env, input, options = {}) {
       .map((item) => normalizeResult(item, spec.provider))
       .filter(Boolean);
     if (results.length) return results;
+  }
+
+  // No licensed book time: Open Labor Project reference times, labeled with their confidence.
+  if ((!requested || requested === 'openlabor') && openLaborConfigured(env)) {
+    try {
+      const reference = await searchOpenLabor(env, { ...normalized, vehicle: input.vehicle }, { fetcher: fetchImpl });
+      if (reference.length) return reference.slice(0, MAX_RESULTS);
+    } catch (error) {
+      console.warn(JSON.stringify({ message: 'Open Labor Project lookup failed', code: error.code || null, error: error.message }));
+    }
   }
 
   return [unverifiedLaborEstimate()];
