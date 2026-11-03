@@ -47,9 +47,13 @@ const LINK_LABELS = {
 const FINANCIAL_LINKS = {
   customers: [
     { type: 'invoices', field: 'customer', key: 'name' },
+    { type: 'invoices', field: 'customerId', key: 'id' },
     { type: 'payments', field: 'customer', key: 'name' },
+    { type: 'payments', field: 'customerId', key: 'id' },
     { type: 'orders', field: 'customer', key: 'name' },
+    { type: 'orders', field: 'customerId', key: 'id' },
     { type: 'estimates', field: 'customer', key: 'name' },
+    { type: 'estimates', field: 'customerId', key: 'id' },
   ],
   orders: [
     { type: 'invoices', field: 'ro', key: 'id' },
