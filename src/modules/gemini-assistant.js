@@ -77,6 +77,16 @@ function getShopContext() {
 /**
  * Format grounding search queries and web sources markup
  */
+/** Search-grounding links are external data: only http(s) URLs become links. */
+export function safeSourceUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
+  } catch {
+    return '#';
+  }
+}
+
 function renderGroundingSources(grounding) {
   if (!grounding) return '';
   const queries = Array.isArray(grounding.queries) ? grounding.queries : [];
@@ -98,7 +108,7 @@ function renderGroundingSources(grounding) {
           ${sources
             .slice(0, 4)
             .map((s) => {
-              const url = s.url || '#';
+              const url = safeSourceUrl(s.url);
               const title = s.title || url.replace(/^https?:\/\//, '').split('/')[0];
               return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" class="grounding-link">${escapeHtml(title)}</a></li>`;
             })

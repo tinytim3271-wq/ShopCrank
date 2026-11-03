@@ -3225,17 +3225,21 @@ async function handleAuthCallback(request, env) {
       },
     });
   }
+  // Claim the link before creating a session: two simultaneous redemptions of one
+  // link must not both sign in.
+  const claimedAt = new Date().toISOString();
+  const claimed = await env.DB.prepare(
+    'UPDATE login_tokens SET used_at = ? WHERE id = ? AND token_hash = ? AND used_at IS NULL AND expires_at > ?',
+  ).bind(claimedAt, loginToken.id, tokenHash, claimedAt).run();
+  if (Number(claimed?.meta?.changes) !== 1) throw new HttpError(401, 'The sign-in link has expired');
   const sessionToken = crypto.randomUUID().replaceAll('-', '');
   const sessionId = crypto.randomUUID();
   const sessionHash = await hashValue(sessionToken);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
-  await env.DB.batch([
-    env.DB.prepare(`
-      INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(sessionId, user.id, sessionHash, expiresAt, new Date().toISOString()),
-    env.DB.prepare('UPDATE login_tokens SET used_at = ? WHERE id = ?').bind(new Date().toISOString(), loginToken.id),
-  ]);
+  await env.DB.prepare(`
+    INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(sessionId, user.id, sessionHash, expiresAt, claimedAt).run();
   const posthog = getPostHog(env);
   posthog?.identify({
     distinctId: String(user.id),

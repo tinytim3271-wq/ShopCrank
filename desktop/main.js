@@ -7,6 +7,7 @@ const edition = require('./edition.json');
 const vault = require('./local-vault');
 const { configurePortableData } = require('./portable-data');
 const { isPrintPopupUrl } = require('./print-window');
+const { TRUSTED_ORIGINS, canOpenExternally, isTrustedNavigation } = require('./url-policy');
 
 try {
   configurePortableData(app, edition);
@@ -17,20 +18,11 @@ try {
 
 let mainWindow = null;
 
-const trustedOrigins = new Set([
-  'https://www.shopcrank.com',
-  'https://shopcrank.com',
-  'https://shopcrank-dispatch.pages.dev',
-  'https://accounts.google.com',
-]);
+const trustedOrigins = new Set(TRUSTED_ORIGINS);
+const appRoot = path.join(__dirname, '..');
 
 function isTrustedUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    return url.protocol === 'file:' || (edition.demo !== true && trustedOrigins.has(url.origin));
-  } catch {
-    return false;
-  }
+  return isTrustedNavigation(rawUrl, { appRoot, demo: edition.demo === true });
 }
 
 function isGoogleSignInStart(rawUrl) {
@@ -144,7 +136,7 @@ function createWindow() {
         },
       };
     }
-    if (edition.demo !== true && isTrustedUrl(url)) void shell.openExternal(url);
+    if (canOpenExternally(url, { demo: edition.demo === true })) void shell.openExternal(url);
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
