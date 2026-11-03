@@ -146,17 +146,41 @@ function invoicePeriodStart(invoice) {
   return seconds > 0 ? new Date(seconds * 1000) : new Date();
 }
 
+async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
+  const stripeSubscriptionId = typeof invoice?.subscription === 'string'
+    ? invoice.subscription
+    : invoice?.subscription?.id || invoice?.parent?.subscription_details?.subscription || '';
+  if (!stripeSubscriptionId) return;
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(`
+    UPDATE subscriptions SET status = 'active', updated_at = ?
+    WHERE shop_id = ? AND stripe_subscription_id = ? AND status IN ('past_due', 'unpaid', 'incomplete')
+  `).bind(now, shopId, stripeSubscriptionId).run();
+  if (Number(result?.meta?.changes || 0) > 0) {
+    await env.DB.batch([
+      env.DB.prepare('UPDATE accounts SET subscription_status = ?, updated_at = ? WHERE shop_id = ?').bind('active', now, shopId),
+      env.DB.prepare('UPDATE shops SET billing_status = ?, updated_at = ? WHERE id = ?').bind('active', now, shopId),
+    ]);
+  }
+}
+
 /** Stripe invoice.paid: accrue the month the invoice covers if it charged money. */
 export async function recordInvoiceCommission(env, shopId, invoice) {
   if (!(Number(invoice?.amount_paid) > 0)) return { recorded: false, reason: 'zero_amount' };
+  await reconcilePaidInvoiceSubscription(env, shopId, invoice);
   const subscription = await env.DB.prepare(`
-    SELECT s.plan_id, s.sale_source, s.sold_by_ambassador_id AS ambassador_id, a.status AS ambassador_status,
+    SELECT s.plan_id, s.sale_source, s.status AS subscription_status,
+           s.sold_by_ambassador_id AS ambassador_id, a.status AS ambassador_status,
+           COALESCE(acct.suspended, 0) AS account_suspended,
            r.tier, r.monthly_cents
     FROM subscriptions s
     LEFT JOIN ambassadors a ON a.id = s.sold_by_ambassador_id
     LEFT JOIN ambassador_commission_rates r ON r.plan_id = s.plan_id
+    LEFT JOIN accounts acct ON acct.shop_id = s.shop_id
     WHERE s.shop_id = ?
   `).bind(shopId).first();
+  if (subscription?.subscription_status !== 'active') return { recorded: false, reason: 'membership_not_active' };
+  if (Number(subscription.account_suspended) === 1) return { recorded: false, reason: 'account_suspended' };
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };

@@ -301,6 +301,43 @@ test('invoice.paid accrues one commission per shop per month and skips $0 and un
   assert.equal(lines[0].period, periodOf(new Date()));
 });
 
+test('invoice.paid recovers payment-failed memberships and skips canceled or suspended shops', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  for (const shopId of ['recovered-shop', 'canceled-invoice-shop', 'suspended-invoice-shop']) {
+    await createShop(call, shopId, { soldByAmbassadorId: amb.id });
+    DB.sqlite.prepare('UPDATE subscriptions SET stripe_subscription_id = ? WHERE shop_id = ?').run(`sub-${shopId}`, shopId);
+  }
+  DB.sqlite.prepare("UPDATE subscriptions SET status = 'past_due' WHERE shop_id = 'recovered-shop'").run();
+  DB.sqlite.prepare("UPDATE accounts SET subscription_status = 'past_due' WHERE shop_id = 'recovered-shop'").run();
+  DB.sqlite.prepare("UPDATE shops SET billing_status = 'past_due' WHERE id = 'recovered-shop'").run();
+  DB.sqlite.prepare("UPDATE subscriptions SET status = 'canceled' WHERE shop_id = 'canceled-invoice-shop'").run();
+  DB.sqlite.prepare("UPDATE accounts SET suspended = 1 WHERE shop_id = 'suspended-invoice-shop'").run();
+
+  const periodStart = Math.floor(Date.now() / 1000);
+  for (const shopId of ['recovered-shop', 'canceled-invoice-shop', 'suspended-invoice-shop']) {
+    await signedWebhook(env, {
+      id: `evt_${shopId}`,
+      type: 'invoice.paid',
+      data: { object: {
+        id: `in_${shopId}`,
+        subscription: `sub-${shopId}`,
+        metadata: { shopId },
+        amount_paid: 2000,
+        period_start: periodStart,
+      } },
+    });
+  }
+
+  assert.equal(subscription(DB, 'recovered-shop').status, 'active');
+  assert.equal(DB.sqlite.prepare('SELECT subscription_status FROM accounts WHERE shop_id = ?').get('recovered-shop').subscription_status, 'active');
+  assert.equal(DB.sqlite.prepare('SELECT billing_status FROM shops WHERE id = ?').get('recovered-shop').billing_status, 'active');
+  assert.deepEqual(
+    DB.sqlite.prepare('SELECT shop_id FROM ambassador_commissions ORDER BY shop_id').all().map(row => row.shop_id),
+    ['recovered-shop'],
+  );
+});
+
 test('monthly ledger pays only active, paid memberships of approved ambassadors', async () => {
   const { call, DB, env } = setup();
   const amb = await createAmbassador(call);
