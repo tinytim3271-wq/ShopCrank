@@ -27,11 +27,12 @@ async function signedRequest(event) {
   });
 }
 
-function billingDb({ failSubscriptionWrite = false, subscription = null } = {}) {
+function billingDb({ failSubscriptionWrite = false, failAttributionOnce = false, subscription = null } = {}) {
   const state = {
     events: new Map(),
     subscription: subscription && { ...subscription },
     failed: false,
+    attributionFailed: false,
     subscriptionWrites: [],
     accountWrites: [],
   };
@@ -45,6 +46,13 @@ function billingDb({ failSubscriptionWrite = false, subscription = null } = {}) 
                 return state.events.has(args[0]) ? { id: args[0] } : null;
               }
               if (/SELECT plan_id, stripe_subscription_id/.test(sql)) return state.subscription;
+              if (/SELECT shop_id, sold_by_ambassador_id/.test(sql)) {
+                if (failAttributionOnce && !state.attributionFailed) {
+                  state.attributionFailed = true;
+                  throw new Error('temporary attribution failure');
+                }
+                return { shop_id: 'shop-1', sold_by_ambassador_id: null, sold_by: null, sale_source: null };
+              }
               return null;
             },
             async run() {
@@ -72,6 +80,9 @@ function billingDb({ failSubscriptionWrite = false, subscription = null } = {}) 
         },
       };
     },
+    async batch() {
+      return [{ meta: { changes: 1 } }, { meta: { changes: 1 } }];
+    },
   };
   return { DB, state };
 }
@@ -98,6 +109,26 @@ test('failed billing updates remain retryable because the event is not marked co
   const duplicate = await worker.fetch(await signedRequest(event), env);
   assert.equal(duplicate.status, 200);
   assert.equal((await duplicate.json()).duplicate, true);
+});
+
+test('checkout attribution failures remain retryable because the event is not marked complete', async () => {
+  const event = {
+    id: 'evt-attribution-retry-1',
+    type: 'checkout.session.completed',
+    data: { object: {
+      id: 'cs-attribution-retry-1',
+      customer: 'cus-1',
+      subscription: 'sub-1',
+      metadata: { shopId: 'shop-1', planId: 'shop' },
+    } },
+  };
+  const { DB, state } = billingDb({ failAttributionOnce: true });
+  const env = { DB, STRIPE_BILLING_WEBHOOK_SECRET: secret };
+
+  assert.equal((await worker.fetch(await signedRequest(event), env)).status, 500);
+  assert.equal(state.events.has(event.id), false);
+  assert.equal((await worker.fetch(await signedRequest(event), env)).status, 202);
+  assert.equal(state.events.has(event.id), true);
 });
 
 test('invoice payment failures preserve subscription IDs and billing periods', async () => {

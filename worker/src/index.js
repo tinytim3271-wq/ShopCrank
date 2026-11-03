@@ -3624,13 +3624,6 @@ async function handleBilling(request, env, context, segments) {
         `).bind(
           shopId, subscriptionId || null, planId, status, periodEnd, periodStart, nowIso, nowIso,
         ).run();
-        await env.DB.prepare(`
-          INSERT OR IGNORE INTO billing_events (id, shop_id, event_type, event_json, created_at)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(
-          eventId, shopId, String(event.type || 'unknown'),
-          JSON.stringify(event), new Date().toISOString(),
-        ).run();
         capturePostHogEvent(env, { shopId, userId: `billing-webhook:${shopId}` }, 'subscription_status_changed', {
           plan_id: planId,
           subscription_status: status,
@@ -3638,19 +3631,22 @@ async function handleBilling(request, env, context, segments) {
           $process_person_profile: false,
         });
         if (checkoutEvent || (subscriptionEvent && object.metadata?.ambassadorId)) {
-          try {
-            await attributeMembership(env, shopId, {
-              ambassadorId: String(object.metadata?.ambassadorId || ''),
-              saleSource: object.metadata?.saleSource,
-              defaultSource: 'shopcrank_online',
-              changedBy: 'stripe_checkout',
-              reason: `Stripe ${event.type}`,
-              onlyIfUncredited: true,
-            });
-          } catch (error) {
-            console.error(JSON.stringify({ message: 'checkout attribution failed', shopId, error: String(error?.message || error) }));
-          }
+          await attributeMembership(env, shopId, {
+            ambassadorId: String(object.metadata?.ambassadorId || ''),
+            saleSource: object.metadata?.saleSource,
+            defaultSource: 'shopcrank_online',
+            changedBy: 'stripe_checkout',
+            reason: `Stripe ${event.type}`,
+            onlyIfUncredited: true,
+          });
         }
+        await env.DB.prepare(`
+          INSERT OR IGNORE INTO billing_events (id, shop_id, event_type, event_json, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(
+          eventId, shopId, String(event.type || 'unknown'),
+          JSON.stringify(event), new Date().toISOString(),
+        ).run();
       } else {
         if (event.type === 'invoice.paid') {
           const commission = await recordInvoiceCommission(env, shopId, object);
