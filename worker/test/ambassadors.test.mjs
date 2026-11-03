@@ -442,6 +442,33 @@ test('commission rates are configurable and drive new accruals', async () => {
   assert.equal(ledger.body.totals.pendingCents, 2500);
 });
 
+test('payout closing redirects invoice accruals and completes the frozen month ledger', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'closing-shop', { soldByAmbassadorId: amb.id });
+  await createShop(call, 'ledger-shop', { soldByAmbassadorId: amb.id });
+  backdateSale(DB, 'closing-shop');
+  backdateSale(DB, 'ledger-shop');
+  DB.sqlite.prepare('INSERT INTO ambassador_payout_period_closures (period, status, closed_at) VALUES (?, ?, ?)').run(LAST_MONTH, 'closing', new Date().toISOString());
+
+  assert.equal((await generateCommissionLedger(env, LAST_MONTH)).frozen, true);
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM ambassador_commissions').get().n, 0);
+
+  const periodStart = Math.floor(Date.parse(periodBounds(LAST_MONTH).start) / 1000) + 3600;
+  await signedWebhook(env, {
+    id: 'evt_closing',
+    type: 'invoice.paid',
+    data: { object: { id: 'in_closing', metadata: { shopId: 'closing-shop' }, amount_paid: 2000, period_start: periodStart } },
+  });
+  assert.equal(DB.sqlite.prepare('SELECT period FROM ambassador_commissions WHERE shop_id = ?').get('closing-shop').period, shiftPeriod(LAST_MONTH, 1));
+
+  const report = await call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH });
+  assert.equal(report.status, 201, JSON.stringify(report.body));
+  assert.equal(report.body.report.totals.grandTotalCents, 2000);
+  assert.equal(DB.sqlite.prepare('SELECT period FROM ambassador_commissions WHERE shop_id = ?').get('ledger-shop').period, LAST_MONTH);
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM ambassador_commissions WHERE shop_id = ?').get('closing-shop').n, 1);
+});
+
 test('sales view filters and audited credit reassignment', async () => {
   const { call, DB } = setup();
   const amb = await createAmbassador(call);

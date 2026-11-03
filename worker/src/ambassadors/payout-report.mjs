@@ -176,7 +176,16 @@ export async function generatePayoutReport(env, period, { generatedBy = 'system'
   if (!periodHasEnded(period, now)) throw new HttpError(400, 'A payout report can only be generated after the month ends');
   const existing = await getPayoutReport(env, period);
   if (existing) return { report: existing, created: false };
-  const ledger = await generateCommissionLedger(env, period, { accruedVia: 'cron' });
+  await env.DB.prepare(`
+    INSERT INTO ambassador_payout_period_closures (period, status, closed_at)
+    VALUES (?, 'closing', ?)
+    ON CONFLICT(period) DO NOTHING
+  `).bind(period, now.toISOString()).run();
+  const ledger = await generateCommissionLedger(env, period, { accruedVia: 'cron', allowClosingPeriod: true });
+  await env.DB.prepare(`
+    UPDATE ambassador_payout_period_closures SET status = 'frozen'
+    WHERE period = ? AND status = 'closing'
+  `).bind(period).run();
   const report = await buildPayoutReport(env, period, { generatedBy, now });
   report.ledger = { created: ledger.created, eligible: ledger.eligible };
   const result = await env.DB.prepare(`

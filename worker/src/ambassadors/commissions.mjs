@@ -96,10 +96,20 @@ async function reportExists(env, period) {
   return Boolean(row);
 }
 
+async function periodClosed(env, period) {
+  const row = await env.DB.prepare(`
+    SELECT period FROM ambassador_payout_reports WHERE period = ?
+    UNION ALL
+    SELECT period FROM ambassador_payout_period_closures WHERE period = ?
+    LIMIT 1
+  `).bind(period, period).first();
+  return Boolean(row);
+}
+
 /** A frozen month cannot take new lines; late accruals land in the next open month. */
 export async function openPeriodFor(env, period) {
   let candidate = period;
-  for (let guard = 0; guard < 24 && await reportExists(env, candidate); guard += 1) candidate = shiftPeriod(candidate, 1);
+  for (let guard = 0; guard < 24 && await periodClosed(env, candidate); guard += 1) candidate = shiftPeriod(candidate, 1);
   return candidate;
 }
 
@@ -118,27 +128,35 @@ const ELIGIBLE_SQL = `
 
 /**
  * Accrue one line per eligible shop for `period`. Idempotent (UNIQUE shop_id,
- * period), so re-running the cron or racing invoice.paid never double-pays.
+ * earning_period), so re-running the cron or racing invoice.paid never double-pays.
  */
-export async function generateCommissionLedger(env, period, { accruedVia = 'cron' } = {}) {
+export async function generateCommissionLedger(env, period, { accruedVia = 'cron', allowClosingPeriod = false } = {}) {
   requirePeriod(period);
-  if (await reportExists(env, period)) return { period, created: 0, eligible: 0, frozen: true };
+  if (!allowClosingPeriod && await periodClosed(env, period)) return { period, created: 0, eligible: 0, frozen: true };
+  if (allowClosingPeriod && await reportExists(env, period)) return { period, created: 0, eligible: 0, frozen: true };
   const { start, end } = periodBounds(period);
   const eligible = await env.DB.prepare(`${ELIGIBLE_SQL}`).bind(start, end).all();
   const now = new Date().toISOString();
   const rows = eligible.results || [];
-  if (!rows.length) return { period, created: 0, eligible: 0, frozen: false };
+  if (!rows.length) return { period, created: 0, eligible: 0, frozen: await periodClosed(env, period) };
   const results = await env.DB.batch(rows.map(row => env.DB.prepare(`
     INSERT INTO ambassador_commissions (
       id, ambassador_id, shop_id, period, earning_period, plan_id, tier, sale_source, amount_cents, status, accrued_via, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+    WHERE ((? = 1 AND EXISTS (
+      SELECT 1 FROM ambassador_payout_period_closures WHERE period = ? AND status = 'closing'
+    )) OR (? = 0 AND
+      NOT EXISTS (SELECT 1 FROM ambassador_payout_period_closures WHERE period = ?)
+    )) AND NOT EXISTS (SELECT 1 FROM ambassador_payout_reports WHERE period = ?)
     ON CONFLICT(shop_id, earning_period) DO NOTHING
   `).bind(
     crypto.randomUUID(), row.ambassador_id, row.shop_id, period, period, row.plan_id, row.tier,
     row.sale_source || null, Number(row.monthly_cents), accruedVia, now,
+    Number(allowClosingPeriod), period, Number(allowClosingPeriod), period, period,
   )));
   const created = results.reduce((sum, result) => sum + Number(result?.meta?.changes || 0), 0);
-  return { period, created, eligible: rows.length, frozen: false };
+  return { period, created, eligible: rows.length, frozen: await periodClosed(env, period) };
 }
 
 function invoicePeriodStart(invoice) {
@@ -185,18 +203,27 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };
   const earningPeriod = periodOf(invoicePeriodStart(invoice));
-  const period = await openPeriodFor(env, earningPeriod);
-  const result = await env.DB.prepare(`
-    INSERT INTO ambassador_commissions (
-      id, ambassador_id, shop_id, period, earning_period, plan_id, tier, sale_source, amount_cents, status, accrued_via, stripe_invoice_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'invoice_paid', ?, ?)
-    ON CONFLICT(shop_id, earning_period) DO NOTHING
-  `).bind(
-    crypto.randomUUID(), subscription.ambassador_id, shopId, period, earningPeriod, subscription.plan_id, subscription.tier,
-    subscription.sale_source || null, Number(subscription.monthly_cents), String(invoice?.id || '') || null,
-    new Date().toISOString(),
-  ).run();
-  return { recorded: Number(result?.meta?.changes || 0) > 0, period };
+  let period = await openPeriodFor(env, earningPeriod);
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const result = await env.DB.prepare(`
+      INSERT INTO ambassador_commissions (
+        id, ambassador_id, shop_id, period, earning_period, plan_id, tier, sale_source, amount_cents, status, accrued_via, stripe_invoice_id, created_at
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'invoice_paid', ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM ambassador_payout_period_closures WHERE period = ?)
+        AND NOT EXISTS (SELECT 1 FROM ambassador_payout_reports WHERE period = ?)
+      ON CONFLICT(shop_id, earning_period) DO NOTHING
+    `).bind(
+      crypto.randomUUID(), subscription.ambassador_id, shopId, period, earningPeriod, subscription.plan_id, subscription.tier,
+      subscription.sale_source || null, Number(subscription.monthly_cents), String(invoice?.id || '') || null,
+      new Date().toISOString(), period, period,
+    ).run();
+    if (Number(result?.meta?.changes || 0) > 0) return { recorded: true, period };
+    const existing = await env.DB.prepare('SELECT 1 FROM ambassador_commissions WHERE shop_id = ? AND earning_period = ?').bind(shopId, earningPeriod).first();
+    if (existing) return { recorded: false, period };
+    period = await openPeriodFor(env, shiftPeriod(period, 1));
+  }
+  throw new Error('Unable to find an open commission period');
 }
 
 export async function listCommissions(env, { period = '', ambassadorId = '', from = '', to = '', status = '' } = {}) {
