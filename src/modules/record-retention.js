@@ -63,6 +63,7 @@ const FINANCIAL_LINKS = {
   vehicles: [
     { type: 'orders', field: 'vehicleId', key: 'id' },
     { type: 'orders', field: 'vin', key: 'vin' },
+    { type: 'invoices', field: 'vehicleId', key: 'id' },
     { type: 'invoices', field: 'vin', key: 'vin' },
   ],
   employees: [
