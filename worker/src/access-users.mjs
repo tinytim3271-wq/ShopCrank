@@ -11,6 +11,18 @@ export async function revokeSessionsForUserIds(env, userIds, revokedAt = new Dat
   }
 }
 
+export async function assertAccessUserAvailable(env, context, email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) return null;
+  const existing = await env.DB.prepare(
+    'SELECT id, shop_id FROM users WHERE email = ? COLLATE NOCASE',
+  ).bind(normalizedEmail).first();
+  if (existing && String(existing.shop_id || '') !== String(context.shopId || '')) {
+    throw new HttpError(409, 'That email already belongs to another shop account');
+  }
+  return existing;
+}
+
 /**
  * Upsert the SaaS `users` row for an employee without ever reassigning an
  * existing account to a different shop (cross-tenant steal).
@@ -22,13 +34,7 @@ export async function syncAccessUser(env, context, employee) {
   const now = new Date().toISOString();
   const enabled = employee.active === false ? 0 : 1;
   const name = String(employee.name || email);
-  const existing = await env.DB.prepare(
-    'SELECT id, shop_id FROM users WHERE email = ? COLLATE NOCASE',
-  ).bind(email).first();
-
-  if (existing && String(existing.shop_id || '') !== String(context.shopId || '')) {
-    throw new HttpError(409, 'That email already belongs to another shop account');
-  }
+  const existing = await assertAccessUserAvailable(env, context, email);
 
   let userId = existing?.id ? String(existing.id) : '';
   if (existing) {

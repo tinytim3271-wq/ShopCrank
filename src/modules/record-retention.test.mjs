@@ -54,6 +54,16 @@ test('archived invoices still count as financial ties', () => {
   assert.equal(deletionPlan('customers', customer, counts).action, 'archive');
 });
 
+test('customers remain financially linked after their name changes', () => {
+  const customer = { id: 'customer-1', name: 'Updated name' };
+  const counts = countLinksInCollections('customers', customer, {
+    orders: [{ customerId: 'customer-1', customer: 'Former name' }],
+  });
+  const plan = deletionPlan('customers', customer, counts);
+  assert.equal(plan.action, 'archive');
+  assert.deepEqual(plan.reasons, ['linked to 1 work order']);
+});
+
 test('vehicles archive when a work order references them by id or VIN', () => {
   const vehicle = { id: 'veh-1', vin: 'VIN123' };
   const plan = rows => deletionPlan('vehicles', vehicle, countLinksInCollections('vehicles', vehicle, { orders: rows }));

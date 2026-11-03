@@ -343,6 +343,7 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
   body.printing-record #modal-root .modal h1{font-size:18pt!important}
   body.printing-record #modal-root .modal h2{font-size:15pt!important}
   body.printing-record #modal-root .modal :is(h3,h4){font-size:13pt!important}
+  body.printing-record #modal-root .modal label{color:#111!important}
   body.printing-record #modal-root .modal-head{position:static!important;padding:0 0 8pt!important;border-top:0!important;border-bottom:2px solid #111!important}
   body.printing-record #modal-root .modal-body{padding:10pt 0 0!important;overflow:visible!important;max-height:none!important}
   body.printing-record #modal-root :is(button:not(.damage-zone),.modal-actions,.modal-head-actions,.no-print){display:none!important}

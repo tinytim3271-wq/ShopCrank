@@ -27,6 +27,11 @@ test('record print styles retain state-bearing damage-zone buttons', () => {
   assert.match(css, /button:not\(\.damage-zone\)/);
 });
 
+test('record print labels use a dark color in print mode', () => {
+  const css = readFileSync(new URL('../../styles.css', import.meta.url), 'utf8');
+  assert.match(css, /body\.printing-record #modal-root \.modal label\{color:#111!important\}/);
+});
+
 function fakeModal({ matches = false, head = true, body = true } = {}) {
   return {
     matches: () => matches,

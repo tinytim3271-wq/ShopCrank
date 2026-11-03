@@ -54,7 +54,7 @@ import { isArchived } from '../../src/modules/record-retention.js';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
-import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
+import { assertAccessUserAvailable, revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   FOUNDING_MEMBER_CAP,
@@ -516,8 +516,7 @@ export async function putEntity(
     updatedAt: now,
   };
   if (type === 'employees' && isArchived(record)) record.active = false;
-  // Validate shop access before writing so an email conflict cannot leave an orphan employee.
-  if (type === 'employees') await syncAccessUser(env, context, record);
+  if (type === 'employees') await assertAccessUserAvailable(env, context, record.email);
   if (requireUnlockedEstimate) {
     // CAS on updated_at inside the same UPDATE as the unlock guard. The early
     // If-Match check above is not atomic with this write, so a concurrent staff
@@ -572,13 +571,18 @@ export async function putEntity(
     if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
     return record;
   }
-  await env.DB.prepare(`
-    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, entity_type, entity_id) DO UPDATE SET
-      data_json = excluded.data_json,
-      updated_at = excluded.updated_at
-  `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  const result = existing
+    ? await env.DB.prepare(`
+      UPDATE entities SET data_json = ?, updated_at = ?
+      WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
+        AND data_json = ? AND updated_at = ?
+    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json, existing.updated_at).run()
+    : await env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  if (!result?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
+  if (type === 'employees') await syncAccessUser(env, context, record);
   return record;
 }
 
@@ -960,7 +964,10 @@ async function handleEntities(request, env, context, segments, analytics) {
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {
-    const result = await removeEntity(env, context, type, id, { putEntity });
+    const result = await removeEntity(env, context, type, id, {
+      putEntity,
+      archiveOnly: request.headers.get('X-ShopCrank-Archive-Only') === 'true',
+    });
     const event = result.action === 'archive' ? 'entity_archived' : 'entity_deleted';
     captureForContext(analytics, context, event, { entity_type: type });
     capturePostHogEvent(env, context, event, {
@@ -3601,7 +3608,7 @@ async function route(request, env, analytics) {
       headers: {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Headers': 'Content-Type, If-Match',
+        'Access-Control-Allow-Headers': 'Content-Type, If-Match, X-ShopCrank-Archive-Only',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         Vary: 'Origin',
       },

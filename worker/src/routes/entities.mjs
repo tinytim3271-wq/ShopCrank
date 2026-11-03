@@ -7,7 +7,7 @@ import {
   redactEmployee,
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
-import { syncAccessUser } from '../access-users.mjs';
+import { assertAccessUserAvailable, syncAccessUser } from '../access-users.mjs';
 import {
   SELF_MANAGED_DELETE_TYPES,
   archivedRecord,
@@ -80,14 +80,19 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     updatedAt: now,
   };
   if (type === 'employees' && isArchived(record)) record.active = false;
+  if (type === 'employees') await assertAccessUserAvailable(env, context, record.email);
+  const result = existing
+    ? await env.DB.prepare(`
+      UPDATE entities SET data_json = ?, updated_at = ?
+      WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
+        AND data_json = ? AND updated_at = ?
+    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json, existing.updated_at).run()
+    : await env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  if (!result?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   if (type === 'employees') await syncAccessUser(env, context, record);
-  await env.DB.prepare(`
-    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, entity_type, entity_id) DO UPDATE SET
-      data_json = excluded.data_json,
-      updated_at = excluded.updated_at
-  `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
   return record;
 }
 
@@ -135,22 +140,50 @@ async function archiveEntity(env, context, type, id, existing, reasons) {
     updatedAt,
     ...('active' in existing ? { active: false } : {}),
   };
-  const archiveStatement = env.DB.prepare(`
+  const statements = [env.DB.prepare(`
     UPDATE entities SET data_json = json_patch(data_json, ?), updated_at = ?
     WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
-  `).bind(JSON.stringify(patch), updatedAt, context.shopId, type, id);
-  const accessDelete = employeeAccessDeleteStatement(env, context, type, existing);
-  if (accessDelete) await env.DB.batch([archiveStatement, accessDelete]);
-  else await archiveStatement.run();
+  `).bind(JSON.stringify(patch), updatedAt, context.shopId, type, id)];
+  if (type === 'employees' && existing.email) {
+    statements.push(env.DB.prepare(`
+      UPDATE sessions SET revoked_at = ?
+      WHERE revoked_at IS NULL AND user_id IN (
+        SELECT id FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?
+      )
+    `).bind(updatedAt, existing.email, context.shopId));
+    statements.push(env.DB.prepare(`
+      DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?
+        AND EXISTS (
+          SELECT 1 FROM entities WHERE shop_id = ? AND entity_type = 'employees'
+            AND entity_id = ? AND COALESCE(trim(json_extract(data_json, '$.archivedAt')), '') <> ''
+        )
+    `).bind(existing.email, context.shopId, context.shopId, id));
+  }
+  const results = await env.DB.batch(statements);
+  if (!results?.[0]?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before removing it.');
   const updated = await getEntity(env, context.shopId, type, id);
   if (!updated) throw new HttpError(404, 'Not found');
   return updated;
 }
 
-function employeeAccessDeleteStatement(env, context, type, existing) {
-  if (type !== 'employees' || !existing.email) return null;
-  return env.DB.prepare('DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?')
-    .bind(existing.email, context.shopId);
+function conditionalDeleteStatement(env, context, type, id, existingRow, existing) {
+  const lookups = linkLookups(type, existing);
+  const predicates = [];
+  const values = [context.shopId, type, id, existingRow.data_json, existingRow.updated_at];
+  for (const spec of [...lookups.financial, ...lookups.blocking]) {
+    predicates.push(`NOT EXISTS (
+      SELECT 1 FROM entities linked
+      WHERE linked.shop_id = ? AND linked.entity_type = ?
+        AND json_extract(linked.data_json, ?) = ?
+    )`);
+    values.push(context.shopId, spec.type, `$.${spec.field}`, spec.value);
+  }
+  return env.DB.prepare(`
+    DELETE FROM entities
+    WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
+      AND data_json = ? AND updated_at = ?
+      ${predicates.map(predicate => `AND ${predicate}`).join(' ')}
+  `).bind(...values);
 }
 
 export async function linkCountsForRecord(env, shopId, type, record) {
@@ -171,8 +204,11 @@ function membershipDeleteAllowed(existing, context) {
  * Remove an entity under the shop deletion policy: owner/admin only; records
  * with financial ties are archived; returns `{ status, body }`.
  */
-export async function removeEntity(env, context, type, id) {
-  const existing = await getEntity(env, context.shopId, type, id);
+export async function removeEntity(env, context, type, id, { archiveOnly = false, attempt = 0 } = {}) {
+  const existingRow = await env.DB.prepare(
+    'SELECT data_json, updated_at FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+  ).bind(context.shopId, type, id).first();
+  const existing = entityRecord(existingRow, type);
   if (!existing) throw new HttpError(404, 'Not found');
   if (SELF_MANAGED_DELETE_TYPES.has(type)) {
     if (!membershipDeleteAllowed(existing, context)) throw new HttpError(403, 'Not permitted');
@@ -181,17 +217,43 @@ export async function removeEntity(env, context, type, id) {
   }
   if (!canDeleteRecords(context.role)) throw new HttpError(403, 'Only the shop owner or an admin can delete records');
   if (isArchived(existing)) {
-    const accessDelete = employeeAccessDeleteStatement(env, context, type, existing);
-    if (accessDelete) await env.DB.batch([accessDelete]);
+    if (type === 'employees' && existing.email) {
+      await env.DB.batch([env.DB.prepare(`
+        UPDATE sessions SET revoked_at = ?
+        WHERE revoked_at IS NULL AND user_id IN (
+          SELECT id FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?
+        )
+      `).bind(new Date().toISOString(), existing.email, context.shopId), env.DB.prepare(`
+        DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?
+          AND EXISTS (
+            SELECT 1 FROM entities WHERE shop_id = ? AND entity_type = 'employees'
+              AND entity_id = ? AND COALESCE(trim(json_extract(data_json, '$.archivedAt')), '') <> ''
+          )
+      `).bind(existing.email, context.shopId, context.shopId, id)]);
+    }
     return { status: 200, action: 'archive', body: { archived: true, record: existing, reasons: existing.archiveReasons || [] } };
   }
   const plan = deletionPlan(type, existing, await linkCountsForRecord(env, context.shopId, type, existing));
-  if (plan.action === 'blocked') throw new HttpError(409, plan.message);
-  if (plan.action === 'archive') {
-    const record = await archiveEntity(env, context, type, id, existing, plan.reasons);
-    return { status: 200, action: 'archive', body: { archived: true, record, reasons: plan.reasons } };
+  if (plan.action === 'blocked' && !archiveOnly) throw new HttpError(409, plan.message);
+  if (archiveOnly || plan.action === 'archive') {
+    const reasons = plan.action === 'archive' ? plan.reasons : ['archived at user request'];
+    const record = await archiveEntity(env, context, type, id, existing, reasons);
+    return { status: 200, action: 'archive', body: { archived: true, record, reasons } };
   }
-  await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing));
+  const statements = buildEntityDeleteStatements(
+    env,
+    context,
+    type,
+    id,
+    existing,
+    [],
+    conditionalDeleteStatement(env, context, type, id, existingRow, existing),
+  );
+  const results = await env.DB.batch(statements);
+  if (!results?.[0]?.meta?.changes) {
+    if (attempt < 2) return removeEntity(env, context, type, id, { archiveOnly, attempt: attempt + 1 });
+    throw new HttpError(409, 'Record or its links changed while removing it. Reload and try again.');
+  }
   return { status: 204, action: 'delete' };
 }
 
@@ -279,8 +341,8 @@ export async function listChatMessagesForConversations(env, shopId, email, { lim
  * Build D1 statements for deleting an entity.
  * Employee deletes must revoke Access users even when the row is not an invoice.
  */
-export function buildEntityDeleteStatements(env, context, type, id, existing, relatedPayments = []) {
-  const statements = [env.DB.prepare(
+export function buildEntityDeleteStatements(env, context, type, id, existing, relatedPayments = [], deleteStatement = null) {
+  const statements = [deleteStatement || env.DB.prepare(
     'DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id)];
 
@@ -293,9 +355,20 @@ export function buildEntityDeleteStatements(env, context, type, id, existing, re
   }
 
   if (type === 'employees' && existing.email) {
+    statements.push(env.DB.prepare(`
+      UPDATE sessions SET revoked_at = ?
+      WHERE revoked_at IS NULL AND user_id IN (
+        SELECT id FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?
+      ) AND NOT EXISTS (
+        SELECT 1 FROM entities WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ?
+      )
+    `).bind(new Date().toISOString(), existing.email, context.shopId, context.shopId, id));
     statements.push(env.DB.prepare(
-      'DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?',
-    ).bind(existing.email, context.shopId));
+      `DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM entities WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ?
+        )`,
+    ).bind(existing.email, context.shopId, context.shopId, id));
   }
 
   return statements;
@@ -389,7 +462,9 @@ export async function handleEntities(request, env, context, segments) {
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {
-    const result = await removeEntity(env, context, type, id);
+    const result = await removeEntity(env, context, type, id, {
+      archiveOnly: request.headers.get('X-ShopCrank-Archive-Only') === 'true',
+    });
     return result.status === 204 ? new Response(null, { status: 204 }) : json(result.body);
   }
   throw new HttpError(405, 'Method not allowed');

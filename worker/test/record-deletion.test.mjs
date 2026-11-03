@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../src/index.js';
+import worker, { putEntity as deployedPutEntity } from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
-import { handleEntities, removeEntity } from '../src/routes/entities.mjs';
+import { handleEntities, putEntity as modularPutEntity, removeEntity } from '../src/routes/entities.mjs';
 import { HttpError } from '../src/http.mjs';
 
 const shopId = 'shop-del';
@@ -26,10 +26,10 @@ async function setup(modular = false) {
   const seed = async (type, id, record) => DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .bind(shopId, type, id, JSON.stringify({ id, ...record }), 'seed', stamp, stamp).run();
   const env = { DB, DEV_AUTH_BYPASS: '1' };
-  const call = async (who, method, path, body) => {
+  const call = async (who, method, path, body, extraHeaders = {}) => {
     const request = new Request(`https://app.example.test/api/entities/${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json', 'X-ShopCrank-Dev-Email': people[who] },
+      headers: { 'Content-Type': 'application/json', 'X-ShopCrank-Dev-Email': people[who], ...extraHeaders },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     if (!modular) return worker.fetch(request, env);
@@ -46,7 +46,7 @@ async function setup(modular = false) {
     const row = await DB.prepare('SELECT data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?').bind(shopId, type, id).first();
     return row ? JSON.parse(row.data_json) : null;
   };
-  return { DB, seed, call, stored };
+  return { DB, seed, call, stored, env };
 }
 
 test('only owners and admins can delete records', async () => {
@@ -61,6 +61,131 @@ test('only owners and admins can delete records', async () => {
   assert.equal(await stored('orders', 'RO-1'), null);
   await seed('orders', 'RO-2', { customer: 'Pat', status: 'estimate' });
   assert.equal((await call('admin', 'DELETE', 'orders/RO-2')).status, 204);
+});
+
+test('a financial link added during delete planning causes archival instead of deletion', async () => {
+  const { DB, seed, stored } = await setup();
+  await seed('estimates', 'EST-RACE', { status: 'draft' });
+  let inserted = false;
+  const raceDB = {
+    prepare(sql) {
+      const statement = DB.prepare(sql);
+      if (!sql.includes('SELECT COUNT(*) AS found FROM entities')) return statement;
+      return {
+        bind(...values) {
+          const bound = statement.bind(...values);
+          return {
+            first: async () => {
+              const row = await bound.first();
+              if (!inserted) {
+                DB.sqlite.prepare(`
+                  INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+                  VALUES (?, 'payments', 'pay-race', ?, 'seed', ?, ?)
+                `).run(shopId, JSON.stringify({ id: 'pay-race', estimateId: 'EST-RACE', amount: 10 }), stamp, stamp);
+                inserted = true;
+              }
+              return row;
+            },
+          };
+        },
+      };
+    },
+    batch: statements => DB.batch(statements),
+  };
+  const result = await removeEntity(
+    { DB: raceDB },
+    { shopId, email: people.admin, userId: 'admin-user', role: 'admin' },
+    'estimates',
+    'EST-RACE',
+  );
+  assert.equal(result.action, 'archive');
+  assert.match((await stored('estimates', 'EST-RACE')).archiveReasons.join(' '), /payment/);
+  assert.ok(await stored('payments', 'pay-race'));
+});
+
+test('employee archive and Access removal roll back together; retry revokes already-archived access', async () => {
+  const { DB, seed, call, stored } = await setup();
+  await seed('employees', 'emp-atomic', { email: people.tech, active: true, role: 'technician' });
+  await seed('payrollentries', 'pay-atomic', { employeeId: 'emp-atomic' });
+  await DB.prepare('UPDATE users SET id = ? WHERE email = ?').bind('user-atomic', people.tech).run();
+  const user = await DB.prepare('SELECT id FROM users WHERE email = ?').bind(people.tech).first();
+  await DB.prepare('INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind('session-atomic', user.id, 'hash-atomic', '2027-01-01T00:00:00.000Z', stamp).run();
+  DB.sqlite.exec(`
+    CREATE TRIGGER fail_employee_access_delete BEFORE DELETE ON users
+    WHEN lower(old.email) = '${people.tech}'
+    BEGIN SELECT RAISE(ABORT, 'simulated Access deletion failure'); END
+  `);
+  assert.equal((await call('owner', 'DELETE', 'employees/emp-atomic')).status, 500);
+  assert.equal((await stored('employees', 'emp-atomic')).archivedAt, undefined);
+  assert.equal((await DB.prepare('SELECT revoked_at FROM sessions WHERE id = ?').bind('session-atomic').first()).revoked_at, null);
+  DB.sqlite.exec('DROP TRIGGER fail_employee_access_delete');
+
+  await DB.prepare(`UPDATE entities SET data_json = json_set(data_json, '$.archivedAt', ?, '$.active', 0)
+    WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ?`).bind(stamp, shopId, 'emp-atomic').run();
+  const response = await call('owner', 'DELETE', 'employees/emp-atomic');
+  assert.equal(response.status, 200);
+  assert.equal(await DB.prepare('SELECT 1 AS found FROM users WHERE email = ?').bind(people.tech).first(), null);
+  assert.ok((await DB.prepare('SELECT revoked_at FROM sessions WHERE id = ?').bind('session-atomic').first()).revoked_at);
+});
+
+for (const [name, put] of [['deployed', deployedPutEntity], ['module', modularPutEntity]]) {
+  test(`stale saves cannot clear an archive or change employee Access (${name} putEntity)`, async () => {
+    const { DB, seed, stored } = await setup();
+    await seed('invoices', 'INV-CAS', { number: 'INV-CAS', amount: 50 });
+    await seed('employees', 'emp-cas', { email: people.tech, active: true, role: 'technician' });
+    await DB.prepare('UPDATE users SET enabled = 0 WHERE email = ?').bind(people.tech).run();
+    let updateInvoice = true;
+    let archiveEmployee = true;
+    const raceDB = {
+      prepare(sql) {
+        const statement = DB.prepare(sql);
+        if (!sql.includes('SELECT created_at, created_by, updated_at, data_json FROM entities')) return statement;
+        return {
+          bind(...values) {
+            const bound = statement.bind(...values);
+            return {
+              first: async () => {
+                const row = await bound.first();
+                if (values[1] === 'invoices' && updateInvoice) {
+                  DB.sqlite.prepare(`UPDATE entities SET data_json = json_set(data_json, '$.archivedAt', ?), updated_at = ?
+                    WHERE shop_id = ? AND entity_type = 'invoices' AND entity_id = ?`).run(stamp, '2026-10-31T08:01:00.000Z', shopId, 'INV-CAS');
+                  updateInvoice = false;
+                }
+                if (values[1] === 'employees' && archiveEmployee) {
+                  DB.sqlite.prepare(`UPDATE entities SET data_json = json_set(data_json, '$.archivedAt', ?, '$.active', 0), updated_at = ?
+                    WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ?`).run(stamp, '2026-10-31T08:01:00.000Z', shopId, 'emp-cas');
+                  archiveEmployee = false;
+                }
+                return row;
+              },
+            };
+          },
+        };
+      },
+      batch: statements => DB.batch(statements),
+    };
+    const context = { shopId, userId: 'admin-user', email: people.admin, role: 'admin' };
+    await assert.rejects(put({ DB: raceDB }, context, 'invoices', 'INV-CAS', {
+      id: 'INV-CAS', number: 'INV-CAS', amount: 90,
+    }, stamp), error => error.status === 409);
+    await assert.rejects(put({ DB: raceDB }, context, 'employees', 'emp-cas', {
+      id: 'emp-cas', email: people.tech, active: true, role: 'technician',
+    }, stamp), error => error.status === 409);
+    assert.ok((await stored('invoices', 'INV-CAS')).archivedAt);
+    assert.ok((await stored('employees', 'emp-cas')).archivedAt);
+    const access = await DB.prepare('SELECT enabled FROM users WHERE email = ?').bind(people.tech).first();
+    assert.equal(access.enabled, 0);
+  });
+}
+
+test('archive-only request header is permitted by CORS preflight', async () => {
+  const { env } = await setup();
+  const response = await worker.fetch(new Request('https://app.example.test/api/entities/customers/c1', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://app.example.test' },
+  }), env);
+  assert.match(response.headers.get('Access-Control-Allow-Headers'), /X-ShopCrank-Archive-Only/);
 });
 
 test('invoices are archived with their payments kept', async () => {
@@ -78,6 +203,16 @@ test('invoices are archived with their payments kept', async () => {
   assert.ok(await stored('payments', 'pay-1'), 'payment history must survive');
 });
 
+for (const modular of [false, true]) {
+  test(`explicit archive intent cannot escalate to hard deletion (${modular ? 'module' : 'deployed'} handler)`, async () => {
+    const { seed, call, stored } = await setup(modular);
+    await seed('customers', 'No-history', { name: 'No history' });
+    const response = await call('owner', 'DELETE', 'customers/No-history', null, { 'X-ShopCrank-Archive-Only': 'true' });
+    assert.equal(response.status, 200);
+    assert.ok((await stored('customers', 'No-history')).archivedAt);
+  });
+}
+
 test('archiving preserves invoice changes made after the initial read', async () => {
   const { DB, seed, stored } = await setup();
   await seed('invoices', 'INV-RACE', { number: 'INV-RACE', customer: 'Pat', amount: 100 });
@@ -85,7 +220,7 @@ test('archiving preserves invoice changes made after the initial read', async ()
   const raceDB = {
     prepare(sql) {
       const statement = DB.prepare(sql);
-      if (!sql.includes('SELECT data_json FROM entities')) return statement;
+      if (!sql.includes('SELECT data_json, updated_at FROM entities')) return statement;
       return {
         bind(...values) {
           const bound = statement.bind(...values);
@@ -105,6 +240,7 @@ test('archiving preserves invoice changes made after the initial read', async ()
         },
       };
     },
+    batch: statements => DB.batch(statements),
   };
 
   const result = await removeEntity(

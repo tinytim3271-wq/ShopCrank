@@ -27,6 +27,12 @@ export function prepareEntityMutation(path, options, createMutationId = defaultM
   if (!queueable) return { path, options, queueable: false };
   const requestOptions = { ...options };
   delete requestOptions.archive;
+  if (archive) {
+    requestOptions.headers = {
+      ...(requestOptions.headers || {}),
+      'X-ShopCrank-Archive-Only': 'true',
+    };
+  }
   let body = null;
   if (options.body) {
     try { body = JSON.parse(options.body); } catch { body = null; }

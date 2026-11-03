@@ -48,10 +48,11 @@ test('employee delete also revokes the Access user row', () => {
   const context = { shopId: 'shop-1' };
   const existing = { id: 'emp-1', email: 'tech@shop.test', name: 'Tech' };
   const statements = buildEntityDeleteStatements(env, context, 'employees', 'emp-1', existing, []);
-  assert.equal(statements.length, 2);
+  assert.equal(statements.length, 3);
   assert.match(statements[0].sql, /DELETE FROM entities/i);
-  assert.match(statements[1].sql, /DELETE FROM users/i);
-  assert.deepEqual(statements[1].args, ['tech@shop.test', 'shop-1']);
+  assert.match(statements[1].sql, /UPDATE sessions/i);
+  assert.match(statements[2].sql, /DELETE FROM users/i);
+  assert.deepEqual(statements[2].args, ['tech@shop.test', 'shop-1', 'shop-1', 'emp-1']);
 });
 
 test('invoice delete removes linked payments without requiring employee branch', () => {
@@ -371,13 +372,14 @@ test('putEntity rejects stale If-Match so remote approvals are not overwritten',
                     created_at: '2026-10-06T10:00:00.000Z',
                     created_by: 'writer-1',
                     updated_at: '2026-10-06T12:00:00.000Z',
+                    data_json: '{"id":"RO-1","status":"in_progress"}',
                   };
                 }
                 return null;
               },
               async run() {
                 writes.push({ sql, args });
-                return { success: true };
+                return { success: true, meta: { changes: 1 } };
               },
             };
           },

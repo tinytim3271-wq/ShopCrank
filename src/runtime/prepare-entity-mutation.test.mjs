@@ -39,6 +39,7 @@ test('explicit archive deletes are queueable for financial records', () => {
   assert.equal(result.queueable, true);
   assert.equal(result.archive, true);
   assert.equal(result.options.archive, undefined);
+  assert.equal(result.options.headers['X-ShopCrank-Archive-Only'], 'true');
 });
 
 test('blocked payroll entities are never queued', () => {

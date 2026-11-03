@@ -637,6 +637,12 @@
     if (!queueable) return { path, options, queueable: false };
     const requestOptions = { ...options };
     delete requestOptions.archive;
+    if (archive) {
+      requestOptions.headers = {
+        ...requestOptions.headers || {},
+        "X-ShopCrank-Archive-Only": "true"
+      };
+    }
     let body = null;
     if (options.body) {
       try {
@@ -9889,7 +9895,7 @@ button{margin-top:12px;padding:8px 14px}
       writeMutationQueue(queue);
       return;
     }
-    const item = { id: mutationId(), key: mutation.key, path: mutation.path, method: mutation.options.method, body: mutation.options.body, expectedUpdatedAt: mutation.expectedUpdatedAt || null, queuedAt: (/* @__PURE__ */ new Date()).toISOString(), conflict, ...archivedRecord ? { archivedRecord } : {} };
+    const item = { id: mutationId(), key: mutation.key, path: mutation.path, method: mutation.options.method, body: mutation.options.body, expectedUpdatedAt: mutation.expectedUpdatedAt || null, archiveOnly: mutation.archive === true, queuedAt: (/* @__PURE__ */ new Date()).toISOString(), conflict, ...archivedRecord ? { archivedRecord } : {} };
     if (existingIndex >= 0) queue.splice(existingIndex, 1, item);
     else queue.push(item);
     writeMutationQueue(queue);
@@ -9928,7 +9934,7 @@ button{margin-top:12px;padding:8px 14px}
         if (item.conflict) continue;
         let response;
         try {
-          response = await authorizedApiRequest(item.path, withOptimisticConcurrencyHeaders({ method: item.method, body: item.body }, item.expectedUpdatedAt));
+          response = await authorizedApiRequest(item.path, withOptimisticConcurrencyHeaders({ method: item.method, body: item.body, ...item.archiveOnly ? { headers: { "X-ShopCrank-Archive-Only": "true" } } : {} }, item.expectedUpdatedAt));
         } catch {
           break;
         }
