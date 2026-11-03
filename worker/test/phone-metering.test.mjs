@@ -155,7 +155,7 @@ test('when the AI cannot take a call (no active plan or cap reached), Twilio rin
   DB.sqlite.prepare(`INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
     VALUES (?, 'shopsettings', 'front_desk_questionnaire', ?, 'test', 'now', 'now')`).run(SHOP, JSON.stringify({ answers: { transferTargets: [{ name: 'Front desk', phone: '+18065550100' }] } }));
   // Signature checks are covered in twilio-voice-verification.test.mjs.
-  const env = { DB, TWILIO_VERIFY_VOICE: '0' };
+  const env = { DB, TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1' };
   const request = new Request(`https://www.shopcrank.com/api/voice/twilio/incoming/${SHOP}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

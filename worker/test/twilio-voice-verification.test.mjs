@@ -45,3 +45,16 @@ test('a wrong signature is rejected and a correct one accepted', async () => {
   const good = await twilioSignature('twilio-test-token', url, params);
   await assert.doesNotReject(verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': good }), env, SHOP, params, noSecrets));
 });
+
+test('TWILIO_VERIFY_VOICE=0 cannot switch the check off outside local development', async () => {
+  const params = new URLSearchParams({ From: '+18065550199' });
+  await assert.rejects(
+    verifyTwilioVoiceRequest(incoming(), { TWILIO_VERIFY_VOICE: '0' }, SHOP, params, noSecrets),
+    error => error instanceof HttpError && error.status === 503,
+  );
+  await assert.rejects(
+    verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': 'forged' }), { TWILIO_VERIFY_VOICE: '0', TWILIO_AUTH_TOKEN: 'twilio-test-token' }, SHOP, params, noSecrets),
+    error => error instanceof HttpError && error.status === 401,
+  );
+  await assert.doesNotReject(verifyTwilioVoiceRequest(incoming(), { TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1', TWILIO_AUTH_TOKEN: 'twilio-test-token' }, SHOP, params, noSecrets));
+});

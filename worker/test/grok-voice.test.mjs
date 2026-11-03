@@ -193,7 +193,7 @@ test('Twilio incoming voice webhook returns Connect Stream TwiML with verifiable
   const env = {
     XAI_API_KEY: 'xai-test-key-1234567890abcdef',
     INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
-    TWILIO_VERIFY_VOICE: '0',
+    TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1',
   };
   const body = new URLSearchParams({
     From: '+18065550123',

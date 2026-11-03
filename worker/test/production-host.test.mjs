@@ -127,7 +127,7 @@ test('legacy Twilio voice callbacks return a stream URL on the legacy host', asy
   ), {
     XAI_API_KEY: 'xai-test-key-1234567890abcdef',
     INTEGRATION_ENCRYPTION_KEY: 'test-encryption-secret-key-for-stream',
-    TWILIO_VERIFY_VOICE: '0',
+    TWILIO_VERIFY_VOICE: '0', DEV_AUTH_BYPASS: '1',
   });
 
   assert.equal(response.status, 200);
