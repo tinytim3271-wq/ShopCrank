@@ -227,7 +227,7 @@ export async function searchOpenLabor(env, input = {}, { fetcher = fetch } = {})
         jobSlug: row.jobSlug,
         engine: row.engine,
         description: `${row.job}${catalog.length > 1 ? ` (${row.engine})` : ''}`,
-        source: verified ? `${OPEN_LABOR_SOURCE} (high confidence)` : `${OPEN_LABOR_SOURCE} (estimated)`,
+        source: `${OPEN_LABOR_LABEL} (${verified ? 'high confidence' : 'estimated'}${row.lowRange != null && row.highRange != null ? `, range ${row.lowRange}–${row.highRange} h` : ''})`,
         provider: OPEN_LABOR_SOURCE,
         bookTime: false,
       };
