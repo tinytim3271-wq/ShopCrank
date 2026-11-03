@@ -47,6 +47,8 @@ test('shop wording finds the right catalog job; vague or wrong words find none',
   };
   for (const [query, slug] of Object.entries(cases)) assert.equal(matchOpenLaborJob(query, JOBS)?.jobSlug, slug, query);
   assert.equal(matchOpenLaborJob('timing belt', JOBS), null, 'a chain engine has no timing belt; "belt" alone must not pick Seat Belt');
+  assert.equal(matchOpenLaborJob('rear struts', JOBS), null, 'a rear request must not select front struts');
+  assert.equal(matchOpenLaborJob('o2 sensor downstream', JOBS), null, 'a downstream request must not select an upstream sensor');
   assert.equal(matchOpenLaborJob('front', JOBS), null);
   assert.equal(matchOpenLaborJob('', JOBS), null);
 });
@@ -67,10 +69,10 @@ test('a lookup reads the catalog, then the one job, sends the key, and caches bo
   assert.equal(results.length, 3);
   assert.deepEqual(results[0], {
     hours: 2.5, lowRange: 2, highRange: 3.5, confidence: 'high', verified: true, job: 'AC Compressor', jobSlug: 'ac-compressor',
-    engine: '2.5L I4', description: 'AC Compressor (2.5L I4)', source: 'Open Labor Project (high confidence)', provider: 'Open Labor Project', bookTime: false,
+    engine: '2.5L I4', description: 'AC Compressor (2.5L I4)', source: 'Open Labor Project — not book time (high confidence, range 2–3.5 h)', provider: 'Open Labor Project', bookTime: false,
   });
   assert.equal(results[2].verified, false, 'estimated rows are never marked verified');
-  assert.equal(results[2].source, 'Open Labor Project (estimated)');
+  assert.equal(results[2].source, 'Open Labor Project — not book time (estimated, range 2–3.5 h)');
 
   const again = await searchOpenLabor(e, { year: '2018', make: 'toyota', model: 'camry', query: 'a/c compressor' }, { fetcher: api.fetcher });
   assert.equal(api.apiCalls().length, 2, 'the free key allows 7 calls a day, so repeat lookups come from the cache');
@@ -83,6 +85,8 @@ test('the engine narrows the answer; a hybrid ask gets the hybrid row', async ()
   assert.deepEqual(v6.map(row => row.engine), ['3.5L V6']);
   const hybrid = await searchOpenLabor(env(), { year: 2018, make: 'Toyota', model: 'Camry', engine: '2.5L hybrid', query: 'ac compressor' }, { fetcher: fakeApi().fetcher });
   assert.deepEqual(hybrid.map(row => row.engine), ['2.5L I4 Hybrid']);
+  const unmatchedHybrid = await searchOpenLabor(env(), { year: 2018, make: 'Toyota', model: 'Camry', engine: '3.5L hybrid', query: 'ac compressor' }, { fetcher: fakeApi().fetcher });
+  assert.deepEqual(unmatchedHybrid, [], 'an explicit engine mismatch must not return another engine’s time');
 });
 
 test('with a paid key (every job unlocked in the catalog) a lookup takes one call', async () => {
@@ -102,6 +106,8 @@ test('the estimate editor sends one vehicle string; a bare VIN is decoded first'
   const fromVin = await searchOpenLabor(env(), { vin: '4T1B11HK5JU000001', query: 'ac compressor' }, { fetcher: api.fetcher });
   assert.deepEqual(fromVin.map(row => row.engine), ['3.5L V6'], 'the decoded 3.5L picks the V6 row');
   assert.equal(api.apiCalls()[0].url.searchParams.get('make'), 'TOYOTA');
+  const completeVehicleWithVin = await searchOpenLabor(env(), { model: '2018 Toyota Camry', vin: '4T1B11HK5JU000001', query: 'ac compressor' }, { fetcher: fakeApi().fetcher });
+  assert.deepEqual(completeVehicleWithVin.map(row => row.engine), ['3.5L V6'], 'decode VIN engine even when year, make, and model are already known');
 });
 
 test('no key, no vehicle or no job means no call', async () => {

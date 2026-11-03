@@ -217,6 +217,8 @@ export async function searchOpenLabor(env, input = {}, { fetcher = fetch } = {})
     .map(({ row }) => {
       const confidence = String(row.confidence || 'estimated');
       const verified = confidence === 'high';
+      const confidenceLabel = verified ? 'high confidence' : confidence;
+      const range = row.lowRange != null && row.highRange != null ? `${row.lowRange}–${row.highRange} h` : 'unavailable';
       return {
         hours: Number(row.hours),
         lowRange: row.lowRange ?? null,
@@ -227,7 +229,7 @@ export async function searchOpenLabor(env, input = {}, { fetcher = fetch } = {})
         jobSlug: row.jobSlug,
         engine: row.engine,
         description: `${row.job}${catalog.length > 1 ? ` (${row.engine})` : ''}`,
-        source: `${OPEN_LABOR_LABEL} (${verified ? 'high confidence' : 'estimated'}${row.lowRange != null && row.highRange != null ? `, range ${row.lowRange}–${row.highRange} h` : ''})`,
+        source: `${OPEN_LABOR_LABEL} (${confidenceLabel}, range ${range})`,
         provider: OPEN_LABOR_SOURCE,
         bookTime: false,
       };

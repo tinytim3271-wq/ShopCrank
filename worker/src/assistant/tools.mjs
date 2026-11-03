@@ -16,6 +16,7 @@ import {
   prepareEstimateWorkOrderDraft,
 } from '../ai.mjs';
 import { searchLicensedLabor } from '../integrations/labor.mjs';
+import { OPEN_LABOR_LABEL, OPEN_LABOR_SOURCE } from '../integrations/open-labor.mjs';
 import {
   ACCESS_DENIED_ACCOUNTING,
   ACCESS_DENIED_PERSONA,
@@ -73,7 +74,7 @@ const TECH_TOOLS = [
   fromAnthropic('prepare_estimate_work_order'),
   {
     name: 'lookup_labor_time',
-    description: 'Look up verified numeric labor hours for an operation on a vehicle from the licensed labor guide. If unavailable, ask staff to check a licensed guide; never invent book time.',
+    description: 'Look up numeric labor hours for an operation on a vehicle from a licensed labor guide. If unavailable, an Open Labor Project reference time may be returned with its confidence and range; clearly label it as not book time and never present it as a licensed result.',
     parameters: object({
       operation: str('Repair operation, e.g. "front brake pads and rotors".'),
       vehicle: object({ year: { type: 'string' }, make: { type: 'string' }, model: { type: 'string' }, vin: { type: 'string' } }),
@@ -358,9 +359,27 @@ async function runTechTool(env, { shopId, role, userId, name, args, callerPhone,
         console.warn(JSON.stringify({ message: 'licensed labor search failed', tool: name, shopId, input: redactToolInput(args), error: serializeError(error) }));
         return [];
       });
-      const licensed = Array.isArray(response) ? response.filter(item => item.verified === true && typeof item.hours === 'number' && Number.isFinite(item.hours) && item.hours > 0) : [];
+      const numeric = Array.isArray(response) ? response.filter(item => typeof item.hours === 'number' && Number.isFinite(item.hours) && item.hours > 0) : [];
+      const licensed = numeric.filter(item => item.verified === true && item.bookTime !== false);
       if (licensed.length) {
         return { source: 'licensed_labor_guide', operations: licensed.slice(0, 5).map(item => ({ operation: item.operation || item.description, hours: item.hours, source: item.source })) };
+      }
+      const reference = numeric.filter(item => item.provider === OPEN_LABOR_SOURCE && item.bookTime === false);
+      if (reference.length) {
+        return {
+          source: 'open_labor_reference',
+          label: OPEN_LABOR_LABEL,
+          bookTime: false,
+          operations: reference.slice(0, 5).map(item => ({
+            operation: item.operation || item.description,
+            hours: item.hours,
+            source: item.source,
+            confidence: item.confidence,
+            lowRange: item.lowRange,
+            highRange: item.highRange,
+            bookTime: false,
+          })),
+        };
       }
       return { source: 'unavailable', note: 'No verified numeric labor hours available. Check a licensed guide; do not invent book time.', operations: [] };
     }
