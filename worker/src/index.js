@@ -129,7 +129,7 @@ import {
 import { redactSensitive } from './redact.mjs';
 import { HEALTH_CHECK_CRON, handleHealthCheckAdmin, runScheduledHealthCheck } from './health/health-check.mjs';
 import { applyAttribution, attributeMembership, normalizeReferralCode, resolveAttribution } from './ambassadors/store.mjs';
-import { recordInvoiceCommission } from './ambassadors/commissions.mjs';
+import { recordInvoiceCommission, recordPaidCoverage } from './ambassadors/commissions.mjs';
 import { AMBASSADOR_PAYOUT_CRON, runScheduledAmbassadorPayouts } from './ambassadors/payout-report.mjs';
 import { handleAmbassadorAdmin, handleAmbassadorPublic } from './ambassadors/routes.mjs';
 
@@ -2416,6 +2416,11 @@ async function handleAdmin(request, env, context, segments, analytics) {
         ON CONFLICT(shop_id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status,
           current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
       `).bind(shopId, planId, subscriptionStatus, subscriptionExpiresAt, nowIso),
+      ...(subscriptionStatus === 'active' ? [env.DB.prepare(`
+        INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
+        VALUES (?, ?, NULL, 'admin', ?)
+        ON CONFLICT(shop_id, starts_at) DO NOTHING
+      `).bind(shopId, nowIso, nowIso)] : []),
     ]);
     const credit = await applyAttribution(env, shopId, {
       ambassador: attribution.ambassador,
@@ -2476,6 +2481,15 @@ async function handleAdmin(request, env, context, segments, analytics) {
       'UPDATE accounts SET suspended = ?, updated_at = ? WHERE shop_id = ?',
     ).bind(body.suspended ? 1 : 0, now, target).run();
     if (!result.meta.changes) throw new HttpError(404, 'Customer account not found');
+    if (body.suspended) {
+      await env.DB.prepare(`
+        UPDATE ambassador_paid_coverage SET ends_at = ?
+        WHERE shop_id = ? AND ends_at IS NULL
+      `).bind(now, target).run();
+    } else {
+      const membership = await env.DB.prepare('SELECT status FROM subscriptions WHERE shop_id = ?').bind(target).first();
+      if (membership?.status === 'active') await recordPaidCoverage(env, target, now, null, { source: 'admin' });
+    }
     await env.DB.prepare('UPDATE users SET enabled = ?, updated_at = ? WHERE shop_id = ?').bind(body.suspended ? 0 : 1, now, target).run();
     if (body.suspended) {
       const userRows = await env.DB.prepare('SELECT id FROM users WHERE shop_id = ?').bind(target).all();
@@ -2504,6 +2518,15 @@ async function handleAdmin(request, env, context, segments, analytics) {
     }
     const account = await env.DB.prepare('SELECT * FROM accounts WHERE shop_id = ?').bind(target).first();
     if (!account) throw new HttpError(404, 'Customer account not found');
+    const hasAttribution = Boolean(body.saleSource || body.soldByAmbassadorId || body.referralCode);
+    const attribution = hasAttribution ? await resolveAttribution(env, {
+      ambassadorId: String(body.soldByAmbassadorId || '').trim(),
+      referralCode: body.referralCode,
+      saleSource: body.saleSource,
+      defaultSource: 'admin_manual',
+      trusted: true,
+    }) : null;
+    const previousMembership = await env.DB.prepare('SELECT status FROM subscriptions WHERE shop_id = ?').bind(target).first();
     const now = new Date();
     const nowIso = now.toISOString();
     let subscriptionStatus = String(account.subscription_status || 'trialing');
@@ -2534,14 +2557,19 @@ async function handleAdmin(request, env, context, segments, analytics) {
       ON CONFLICT(shop_id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status,
         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
     `).bind(target, planId, subscriptionStatus, subscriptionExpiresAt, nowIso, nowIso).run();
+    if (subscriptionStatus === 'active' && previousMembership?.status !== 'active') {
+      await recordPaidCoverage(env, target, nowIso, null, { source: 'admin' });
+    } else if (subscriptionStatus !== 'active') {
+      await env.DB.prepare(`
+        UPDATE ambassador_paid_coverage SET ends_at = ?
+        WHERE shop_id = ? AND ends_at IS NULL
+      `).bind(nowIso, target).run();
+    }
     let credit = null;
-    if (body.saleSource || body.soldByAmbassadorId || body.referralCode) {
-      credit = await attributeMembership(env, target, {
-        ambassadorId: String(body.soldByAmbassadorId || '').trim(),
-        referralCode: body.referralCode,
-        saleSource: body.saleSource,
-        defaultSource: 'admin_manual',
-        trusted: true,
+    if (attribution) {
+      credit = await applyAttribution(env, target, {
+        ambassador: attribution.ambassador,
+        saleSource: attribution.saleSource,
         soldBy: body.soldBy,
         changedBy: context.email || context.userId,
         reason: String(body.reason || '').trim() || `Admin set membership to ${mode}`,
@@ -2680,6 +2708,7 @@ async function ensureSaasUser(env, email, name, signup = {}) {
     }
     // Do not attach founding plans to existing shops on login. Claim emails are
     // unverified, so applying here would let a stolen invite rewrite a live plan.
+    if (existing.shop_id) await retryPendingSignupAttribution(env, existing.shop_id);
     return existing;
   }
   const intent = normalizeSignupIntent({
@@ -2690,6 +2719,9 @@ async function ensureSaasUser(env, email, name, signup = {}) {
   const userId = crypto.randomUUID();
   const now = new Date().toISOString();
   const shopId = `shop-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const referralCode = normalizeReferralCode(signup.referralCode);
+  const referralSource = ['ambassador_site', 'ambassador_referral'].includes(signup.referralSource)
+    ? signup.referralSource : null;
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO shops (id, name, slug, timezone, billing_status, created_at, updated_at)
@@ -2717,6 +2749,12 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       createdAt: now,
       updatedAt: now,
     }), userId, now, now),
+    ...(referralCode ? [env.DB.prepare(`
+      INSERT INTO ambassador_pending_attributions (shop_id, referral_code, sale_source, created_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(shop_id) DO UPDATE SET referral_code = excluded.referral_code,
+        sale_source = excluded.sale_source, created_at = excluded.created_at
+    `).bind(shopId, referralCode, referralSource, now)] : []),
   ]);
   const founding = await applyPendingFoundingClaim(env, {
     email: normalized,
@@ -2733,19 +2771,42 @@ async function ensureSaasUser(env, email, name, signup = {}) {
       planId: intent.planId,
     });
   }
-  try {
-    await attributeMembership(env, shopId, {
-      referralCode: signup.referralCode,
-      saleSource: signup.referralSource,
-      defaultSource: 'shopcrank_online',
-      changedBy: `signup:${normalized}`,
-      reason: signup.referralCode ? `Self-signup with referral code ${normalizeReferralCode(signup.referralCode)}` : 'Self-signup',
-    });
-  } catch (error) {
-    // Attribution must never block a new shop from signing in.
-    console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+  if (referralCode) await retryPendingSignupAttribution(env, shopId);
+  else {
+    try {
+      await attributeMembership(env, shopId, {
+        defaultSource: 'shopcrank_online',
+        changedBy: `signup:${normalized}`,
+        reason: 'Self-signup',
+        onlyIfUncredited: true,
+      });
+    } catch (error) {
+      if (/no such table:\s*ambassador_pending_attributions/i.test(String(error?.message || error))) return;
+      console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+    }
   }
   return { id: userId, email: normalized, shop_id: shopId, role: 'admin', name: intent.ownerName, enabled: 1 };
+}
+
+async function retryPendingSignupAttribution(env, shopId) {
+  try {
+    const pending = await env.DB.prepare(
+      'SELECT referral_code, sale_source FROM ambassador_pending_attributions WHERE shop_id = ?',
+    ).bind(shopId).first();
+    if (!pending) return;
+    await attributeMembership(env, shopId, {
+      referralCode: pending.referral_code,
+      saleSource: pending.sale_source,
+      defaultSource: 'shopcrank_online',
+      changedBy: 'signup_retry',
+      reason: `Self-signup with referral code ${pending.referral_code}`,
+      onlyIfUncredited: true,
+    });
+    await env.DB.prepare('DELETE FROM ambassador_pending_attributions WHERE shop_id = ? AND referral_code = ?')
+      .bind(shopId, pending.referral_code).run();
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'signup attribution failed', shopId, error: String(error?.message || error) }));
+  }
 }
 
 function requireGoogleConfig(env) {
@@ -3616,6 +3677,28 @@ async function handleBilling(request, env, context, segments) {
         `).bind(
           shopId, subscriptionId || null, planId, status, periodEnd, periodStart, nowIso, nowIso,
         ).run();
+        if (status === 'active') {
+          const trialEndSeconds = Number(object.trial_end || 0);
+          const paidStart = trialEndSeconds > 0 && (!periodStart || trialEndSeconds * 1000 > Date.parse(periodStart))
+            ? new Date(trialEndSeconds * 1000).toISOString()
+            : periodStart || nowIso;
+          await recordPaidCoverage(env, shopId, paidStart, periodEnd, { source: 'stripe_subscription' });
+        } else {
+          await env.DB.prepare(`
+            UPDATE ambassador_paid_coverage SET ends_at = COALESCE(ends_at, ?)
+            WHERE shop_id = ? AND ends_at IS NULL
+          `).bind(periodEnd || nowIso, shopId).run();
+        }
+        if (checkoutEvent || (subscriptionEvent && object.metadata?.ambassadorId)) {
+          await attributeMembership(env, shopId, {
+            ambassadorId: String(object.metadata?.ambassadorId || ''),
+            saleSource: object.metadata?.saleSource,
+            defaultSource: 'shopcrank_online',
+            changedBy: 'stripe_checkout',
+            reason: `Stripe ${event.type}`,
+            onlyIfUncredited: true,
+          });
+        }
         await env.DB.prepare(`
           INSERT OR IGNORE INTO billing_events (id, shop_id, event_type, event_json, created_at)
           VALUES (?, ?, ?, ?, ?)
@@ -3629,20 +3712,6 @@ async function handleBilling(request, env, context, segments) {
           provider: 'stripe',
           $process_person_profile: false,
         });
-        if (checkoutEvent || (subscriptionEvent && object.metadata?.ambassadorId)) {
-          try {
-            await attributeMembership(env, shopId, {
-              ambassadorId: String(object.metadata?.ambassadorId || ''),
-              saleSource: object.metadata?.saleSource,
-              defaultSource: 'shopcrank_online',
-              changedBy: 'stripe_checkout',
-              reason: `Stripe ${event.type}`,
-              onlyIfUncredited: true,
-            });
-          } catch (error) {
-            console.error(JSON.stringify({ message: 'checkout attribution failed', shopId, error: String(error?.message || error) }));
-          }
-        }
       } else {
         if (event.type === 'invoice.paid') {
           const commission = await recordInvoiceCommission(env, shopId, object);

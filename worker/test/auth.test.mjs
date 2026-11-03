@@ -280,6 +280,7 @@ function callbackDb({ sessionError = null } = {}) {
                   enabled: 1,
                 };
               }
+              if (/FROM ambassador_pending_attributions/.test(sql)) return null;
               if (/FROM founding_invites/.test(sql)) {
                 throw new Error('D1_ERROR: no such table: founding_invites: SQLITE_ERROR');
               }
@@ -397,6 +398,7 @@ test('Google sign-in validates the ID token and creates a one-time desktop hando
                 if (/FROM founding_invites/i.test(sql)) {
                   throw new Error('D1_ERROR: no such table: founding_invites: SQLITE_ERROR');
                 }
+                if (/FROM ambassador_pending_attributions/.test(sql)) return null;
                 assert.match(sql, /FROM users WHERE email/);
                 assert.equal(args[0], 'owner@example.test');
                 return {
@@ -560,6 +562,7 @@ test('Google sign-in bridges through a non-canonical GOOGLE_REDIRECT_ORIGIN and 
                 if (/FROM founding_invites/i.test(sql)) {
                   throw new Error('D1_ERROR: no such table: founding_invites: SQLITE_ERROR');
                 }
+                if (/FROM ambassador_pending_attributions/.test(sql)) return null;
                 assert.match(sql, /FROM users WHERE email/);
                 return {
                   id: 'user-google',

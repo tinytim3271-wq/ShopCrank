@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
-import { AMBASSADOR_PAYOUT_CRON, assembleReport } from '../src/ambassadors/payout-report.mjs';
+import { AMBASSADOR_PAYOUT_CRON, assembleReport, payoutReportHtml } from '../src/ambassadors/payout-report.mjs';
 import { generateCommissionLedger, periodBounds, periodOf, previousPeriod, shiftPeriod } from '../src/ambassadors/commissions.mjs';
 import { applyAttribution, normalizeReferralCode, randomReferralCode } from '../src/ambassadors/store.mjs';
 import { provisionShopRoles } from '../src/onboarding/roles.mjs';
@@ -85,6 +85,11 @@ function subscription(DB, shopId) {
 
 function backdateSale(DB, shopId, when = IN_LAST_MONTH) {
   DB.sqlite.prepare('UPDATE subscriptions SET attributed_at = ? WHERE shop_id = ?').run(when, shopId);
+  const { start, end } = periodBounds(periodOf(when));
+  DB.sqlite.prepare(`
+    INSERT OR REPLACE INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
+    VALUES (?, ?, ?, 'test', ?)
+  `).run(shopId, start, end, new Date().toISOString());
 }
 
 async function magicLinkSignup(call, body, headers = {}) {
@@ -217,6 +222,48 @@ test('every creation path records sold_by and sale_source', async () => {
   assert.ok(log.every(row => row.changed_by && row.created_at));
 });
 
+test('signup keeps referral attribution pending and retries it on a later sign-in', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  const requested = await call('POST', '/auth/magic-link', {
+    email: 'retry-attribution@shops.test',
+    shopName: 'Retry Auto',
+    referralCode: amb.referralCode,
+    referralSource: 'ambassador_referral',
+  }, { email: null });
+  assert.equal(requested.status, 200);
+  const token = new URL(requested.body.loginUrl).searchParams.get('token');
+  const originalPrepare = env.DB.prepare;
+  let failPendingRead = true;
+  env.DB.prepare = sql => {
+    if (failPendingRead && String(sql).includes('FROM ambassador_pending_attributions')) {
+      failPendingRead = false;
+      throw new Error('temporary database read failure');
+    }
+    return originalPrepare(sql);
+  };
+  const callback = await call('POST', '/auth/callback', `token=${token}`, {
+    email: null,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: ORIGIN },
+  });
+  env.DB.prepare = originalPrepare;
+  assert.equal(callback.status, 302);
+  const shopId = shopIdForEmail(DB, 'retry-attribution@shops.test');
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM ambassador_pending_attributions WHERE shop_id = ?').get(shopId).n, 1);
+  assert.equal(subscription(DB, shopId).sold_by_ambassador_id, null);
+
+  const retriedLink = await call('POST', '/auth/magic-link', { email: 'retry-attribution@shops.test' }, { email: null });
+  assert.equal(retriedLink.status, 200);
+  const retryToken = new URL(retriedLink.body.loginUrl).searchParams.get('token');
+  const retried = await call('POST', '/auth/callback', `token=${retryToken}`, {
+    email: null,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: ORIGIN },
+  });
+  assert.equal(retried.status, 302);
+  assert.equal(subscription(DB, shopId).sold_by_ambassador_id, amb.id);
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM ambassador_pending_attributions WHERE shop_id = ?').get(shopId).n, 0);
+});
+
 test('only one concurrent first-credit attribution wins and is audited', async () => {
   const { call, DB, env } = setup();
   const jane = await createAmbassador(call);
@@ -305,13 +352,56 @@ test('Stripe checkout carries the referral into metadata and the webhook credits
   assert.equal(subscription(DB, 'online-shop').sale_source, 'shopcrank_online');
 });
 
+test('checkout webhook is retryable when attribution fails transiently', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'webhook-retry', { accountMode: 'trialing' });
+  const event = {
+    id: 'evt_attribution_retry',
+    type: 'checkout.session.completed',
+    data: { object: {
+      id: 'cs_retry',
+      client_reference_id: 'webhook-retry',
+      subscription: 'sub_retry',
+      metadata: { shopId: 'webhook-retry', planId: 'shop', ambassadorId: amb.id, saleSource: 'ambassador_referral' },
+    } },
+  };
+  const originalBatch = env.DB.batch;
+  let failAttribution = true;
+  env.DB.batch = async statements => {
+    if (failAttribution) {
+      failAttribution = false;
+      throw new Error('temporary attribution failure');
+    }
+    return originalBatch.call(env.DB, statements);
+  };
+  const failed = await signedWebhook(env, event);
+  env.DB.batch = originalBatch;
+  assert.equal(failed.status, 500);
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM billing_events WHERE id = ?').get(event.id).n, 0);
+  assert.equal(subscription(DB, 'webhook-retry').sold_by_ambassador_id, null);
+
+  const retried = await signedWebhook(env, event);
+  assert.equal(retried.status, 202);
+  assert.equal(subscription(DB, 'webhook-retry').sold_by_ambassador_id, amb.id);
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM billing_events WHERE id = ?').get(event.id).n, 1);
+});
+
 test('invoice.paid accrues one commission per shop per month and skips $0 and uncredited invoices', async () => {
   const { call, DB, env } = setup();
   const amb = await createAmbassador(call);
   await createShop(call, 'inv-shop', { soldByAmbassadorId: amb.id, planId: 'shop_pro' });
   await createShop(call, 'inv-direct', { planId: 'shop' });
   const periodStart = Math.floor(Date.parse(`${periodOf(new Date())}-01T00:00:00Z`) / 1000) + 86400;
-  const invoice = (id, extra = {}) => ({ id, type: 'invoice.paid', data: { object: { id: `in_${id}`, metadata: { shopId: 'inv-shop' }, amount_paid: 27900, period_start: periodStart, ...extra } } });
+  const invoice = (id, extra = {}) => ({ id, type: 'invoice.paid', data: { object: {
+    id: `in_${id}`, metadata: { shopId: 'inv-shop' }, amount_paid: 27900,
+    period_start: periodStart - 40 * 86400,
+    lines: { data: [
+      { type: 'invoiceitem', price: { type: 'one_time' }, period: { start: periodStart - 40 * 86400, end: periodStart - 10 * 86400 } },
+      { type: 'subscription', period: { start: periodStart, end: periodStart + 30 * 86400 } },
+    ] },
+    ...extra,
+  } } });
 
   await signedWebhook(env, invoice('evt_inv_1'));
   await signedWebhook(env, invoice('evt_inv_1'));
@@ -325,6 +415,8 @@ test('invoice.paid accrues one commission per shop per month and skips $0 and un
   assert.equal(lines[0].tier, 'shop_pro');
   assert.equal(lines[0].accrued_via, 'invoice_paid');
   assert.equal(lines[0].period, periodOf(new Date()));
+  assert.equal(lines[0].earning_period, periodOf(new Date()));
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'inv-shop' AND source = 'stripe_invoice'").get().n, 1);
 });
 
 test('invoice.paid recovers payment-failed memberships and skips canceled or suspended shops', async () => {
@@ -364,6 +456,33 @@ test('invoice.paid recovers payment-failed memberships and skips canceled or sus
   );
 });
 
+test('accrual writes skip a period while its payout report is closing', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'closing-shop', { soldByAmbassadorId: amb.id });
+  backdateSale(DB, 'closing-shop');
+  DB.sqlite.prepare(`
+    INSERT INTO ambassador_payout_period_locks (period, lock_token, created_at) VALUES (?, 'test-lock', ?)
+  `).run(LAST_MONTH, new Date().toISOString());
+
+  assert.equal((await generateCommissionLedger(env, LAST_MONTH)).frozen, true);
+  const periodStart = Math.floor(Date.parse(periodBounds(LAST_MONTH).start) / 1000) + 3600;
+  await signedWebhook(env, {
+    id: 'evt_closing_period',
+    type: 'invoice.paid',
+    data: { object: {
+      id: 'in_closing_period',
+      metadata: { shopId: 'closing-shop' },
+      amount_paid: 2000,
+      period_start: periodStart,
+    } },
+  });
+  const commission = DB.sqlite.prepare('SELECT period, earning_period FROM ambassador_commissions WHERE shop_id = ?')
+    .get('closing-shop');
+  assert.equal(commission.period, shiftPeriod(LAST_MONTH, 1));
+  assert.equal(commission.earning_period, LAST_MONTH);
+});
+
 test('monthly ledger pays only active, paid memberships of approved ambassadors', async () => {
   const { call, DB, env } = setup();
   const amb = await createAmbassador(call);
@@ -398,6 +517,47 @@ test('monthly ledger pays only active, paid memberships of approved ambassadors'
   assert.equal(open.status, 400, 'the current month is still open');
 });
 
+test('a late trial-to-paid conversion does not earn for an unpaid month', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'late-conversion', { accountMode: 'trialing', soldByAmbassadorId: amb.id });
+  await createShop(call, 'stripe-late-conversion', { accountMode: 'trialing', soldByAmbassadorId: amb.id });
+  DB.sqlite.prepare('UPDATE subscriptions SET attributed_at = ? WHERE shop_id = ?').run(IN_LAST_MONTH, 'late-conversion');
+  DB.sqlite.prepare('UPDATE subscriptions SET attributed_at = ? WHERE shop_id = ?').run(IN_LAST_MONTH, 'stripe-late-conversion');
+
+  const rejected = await call('POST', '/admin/accounts/late-conversion/subscription', {
+    mode: 'active', soldByAmbassadorId: 'missing-ambassador',
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal(subscription(DB, 'late-conversion').status, 'trialing');
+  assert.equal(DB.sqlite.prepare('SELECT subscription_status FROM accounts WHERE shop_id = ?').get('late-conversion').subscription_status, 'trialing');
+
+  const activated = await call('POST', '/admin/accounts/late-conversion/subscription', { mode: 'active' });
+  assert.equal(activated.status, 200);
+  const coverage = DB.sqlite.prepare('SELECT starts_at FROM ambassador_paid_coverage WHERE shop_id = ?').get('late-conversion');
+  assert.ok(coverage.starts_at >= periodBounds(LAST_MONTH).end);
+
+  const paidEffectiveAt = Math.floor(Date.parse(periodBounds(shiftPeriod(LAST_MONTH, 1)).start) / 1000);
+  const periodStart = Math.floor(Date.parse(periodBounds(LAST_MONTH).start) / 1000);
+  const periodEnd = Math.floor(Date.parse(periodBounds(shiftPeriod(shiftPeriod(LAST_MONTH, 1), 1)).start) / 1000);
+  await signedWebhook(env, {
+    id: 'evt_trial_paid_effective',
+    type: 'customer.subscription.updated',
+    data: { object: {
+      id: 'sub-stripe-late',
+      status: 'active',
+      current_period_start: periodStart,
+      current_period_end: periodEnd,
+      trial_end: paidEffectiveAt,
+      metadata: { shopId: 'stripe-late-conversion', planId: 'shop' },
+    } },
+  });
+  const stripeCoverage = DB.sqlite.prepare('SELECT starts_at FROM ambassador_paid_coverage WHERE shop_id = ?').get('stripe-late-conversion');
+  assert.equal(stripeCoverage.starts_at, periodBounds(shiftPeriod(LAST_MONTH, 1)).start);
+  assert.equal((await generateCommissionLedger(env, LAST_MONTH)).created, 0);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_commissions WHERE shop_id = 'stripe-late-conversion'").get().n, 0);
+});
+
 test('commission rates are configurable and drive new accruals', async () => {
   const { call, DB } = setup();
   const rates = await call('GET', '/admin/ambassador-commission-rates');
@@ -417,6 +577,36 @@ test('commission rates are configurable and drive new accruals', async () => {
   const ledger = await call('GET', `/admin/ambassador-commissions?period=${LAST_MONTH}`);
   assert.equal(ledger.body.lines[0].amountCents, 2500);
   assert.equal(ledger.body.totals.pendingCents, 2500);
+});
+
+test('commission statements paginate ledger rows without truncating totals', async () => {
+  const { call, DB } = setup();
+  const amb = await createAmbassador(call);
+  const insert = DB.sqlite.prepare(`
+    INSERT INTO ambassador_commissions (
+      id, ambassador_id, shop_id, period, earning_period, plan_id, tier, amount_cents, status, accrued_via, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'shop', 'shop', 100, 'pending', 'manual', ?)
+  `);
+  DB.sqlite.exec('BEGIN');
+  for (let index = 0; index < 2005; index += 1) {
+    insert.run(`commission-${index}`, amb.id, `shop-${index}`, LAST_MONTH, LAST_MONTH, new Date().toISOString());
+  }
+  DB.sqlite.exec('COMMIT');
+
+  const ledger = await call('GET', `/admin/ambassador-commissions?period=${LAST_MONTH}&page=11&pageSize=200`);
+  assert.equal(ledger.body.lines.length, 5);
+  assert.deepEqual(ledger.body.pagination, { page: 11, pageSize: 200, total: 2005, pages: 11 });
+  assert.deepEqual(ledger.body.totals, { earnedCents: 200500, paidCents: 0, pendingCents: 200500, lines: 2005 });
+
+  const statement = await call('GET', `/admin/ambassadors/${amb.id}/statement?page=11&pageSize=200`);
+  assert.equal(statement.body.lines.length, 5);
+  assert.equal(statement.body.totals.earnedCents, 200500);
+  assert.equal(statement.body.pagination.total, 2005);
+  const publicStatement = await call('POST', '/ambassadors/statement', {
+    code: amb.referralCode, email: amb.email, page: 11, pageSize: 200,
+  }, { email: null });
+  assert.equal(publicStatement.body.lines.length, 5);
+  assert.equal(publicStatement.body.totals.pendingCents, 200500);
 });
 
 test('sales view filters and audited credit reassignment', async () => {
@@ -469,27 +659,34 @@ test('payout report: tiers, sources, frozen snapshot, mark paid, print and PDF',
     await createShop(call, shopId, { planId, soldByAmbassadorId: amb.id, saleSource });
     backdateSale(DB, shopId);
   }
+  await call('PUT', '/admin/ambassador-commission-rates', { rates: [{ planId: 'founding_shop', tier: 'shop', monthlyCents: 2500 }] });
   const generated = await call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH });
   assert.equal(generated.status, 201, JSON.stringify(generated.body));
   const report = generated.body.report;
+  assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM ambassador_payout_period_locks WHERE period = ?').get(LAST_MONTH).n, 1);
   assert.equal(report.totals.ambassadorCount, 2);
   const j = report.ambassadors.find(item => item.ambassadorNumber === 'AMB-0001');
   assert.equal(j.referralCode, jane.referralCode);
   assert.deepEqual(['solo', 'shop', 'shop_pro', 'enterprise'].map(tier => j.tiers[tier].count), [1, 3, 1, 0]);
-  assert.deepEqual(['solo', 'shop', 'shop_pro', 'enterprise'].map(tier => j.tiers[tier].rateCents), [1000, 2000, 4000, 10000]);
-  assert.equal(j.tiers.shop.subtotalCents, 6000);
-  assert.equal(j.totalCents, 1000 + 6000 + 4000);
+  assert.deepEqual(['solo', 'shop', 'shop_pro', 'enterprise'].map(tier => j.tiers[tier].rateCents), [1000, null, 4000, null]);
+  assert.deepEqual(j.tiers.shop.rateBreakdown, [
+    { rateCents: 2000, count: 2, subtotalCents: 4000 },
+    { rateCents: 2500, count: 1, subtotalCents: 2500 },
+  ]);
+  assert.equal(j.tiers.shop.subtotalCents, 6500);
+  assert.equal(j.totalCents, 1000 + 6500 + 4000);
   assert.deepEqual(['shopcrank_online', 'ambassador_site', 'ambassador_referral'].map(source => j.sources[source].count), [1, 2, 2]);
   assert.equal(j.sources.ambassador_site.amountCents, 3000);
-  assert.equal(report.totals.grandTotalCents, 11000 + 10000);
+  assert.equal(report.totals.grandTotalCents, 11500 + 10000);
   assert.equal(report.totals.tiers.enterprise.subtotalCents, 10000);
+  assert.match(payoutReportHtml(report), /Mixed: 2 × \$20\.00; 1 × \$25\.00/);
 
   // Frozen: rate changes and re-generation leave the snapshot alone.
   await call('PUT', '/admin/ambassador-commission-rates', { rates: [{ planId: 'enterprise', monthlyCents: 99900 }] });
   const regenerated = await call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH });
   assert.equal(regenerated.status, 200);
   assert.equal(regenerated.body.created, false);
-  assert.equal(regenerated.body.report.totals.grandTotalCents, 21000);
+  assert.equal(regenerated.body.report.totals.grandTotalCents, 21500);
   assert.equal((await generateCommissionLedger(env, LAST_MONTH)).frozen, true);
 
   // Late invoice.paid for the frozen month lands in the next open month.
@@ -512,11 +709,11 @@ test('payout report: tiers, sources, frozen snapshot, mark paid, print and PDF',
   assert.equal((await call('POST', `/admin/ambassador-payout-reports/${LAST_MONTH}/payouts/${jane.id}`, { checkNumber: '1001', paidOn: '11/03/2026' })).status, 400);
   const paid = await call('POST', `/admin/ambassador-payout-reports/${LAST_MONTH}/payouts/${jane.id}`, { checkNumber: '1001', paidOn: '2026-11-03' });
   assert.equal(paid.status, 200, JSON.stringify(paid.body));
-  assert.equal(paid.body.payout.amountCents, 11000);
+  assert.equal(paid.body.payout.amountCents, 11500);
   const view = await call('GET', `/admin/ambassador-payout-reports/${LAST_MONTH}`);
   assert.equal(view.body.ambassadors.find(item => item.ambassadorId === jane.id).payout.checkNumber, '1001');
   assert.equal(view.body.ambassadors.find(item => item.ambassadorId === marco.id).payout, null);
-  assert.equal(view.body.paidCents, 11000);
+  assert.equal(view.body.paidCents, 11500);
   assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_commissions WHERE ambassador_id = ? AND status = 'paid'").get(jane.id).n, 5);
   const list = await call('GET', '/admin/ambassador-payout-reports');
   assert.equal(list.body.schedule, AMBASSADOR_PAYOUT_CRON);
@@ -527,7 +724,7 @@ test('payout report: tiers, sources, frozen snapshot, mark paid, print and PDF',
   assert.equal((print.body.match(/<section class="page">/g) || []).length, 3, 'summary + one page per ambassador');
   assert.match(print.body, /Canyon, TX 79015/);
   assert.match(print.body, /Check 1001/);
-  assert.match(print.body, /Grand total: <b>\$210\.00<\/b>/);
+  assert.match(print.body, /Grand total: <b>\$215\.00<\/b>/);
 
   const pdf = await call('GET', `/admin/ambassador-payout-reports/${LAST_MONTH}/pdf`, undefined, { raw: true });
   assert.equal(pdf.headers.get('Content-Type'), 'application/pdf');
@@ -535,7 +732,8 @@ test('payout report: tiers, sources, frozen snapshot, mark paid, print and PDF',
   assert.ok(bytes.startsWith('%PDF-1.4'));
   assert.ok(bytes.trimEnd().endsWith('%%EOF'));
   assert.equal((bytes.match(/\/Type \/Page /g) || []).length, 3);
-  assert.match(bytes, /\(Total due: \$110\.00\)/);
+  assert.match(bytes, /Mixed:/);
+  assert.match(bytes, /\(Total due: \$115\.00\)/);
 
   assert.equal((await call('GET', '/admin/ambassador-payout-reports/2020-01')).status, 404);
   assert.equal((await call('POST', '/admin/ambassador-payout-reports', { period: periodOf(new Date()) })).status, 400);
@@ -560,6 +758,22 @@ test('the monthly cron freezes last month and emails the admin once', async () =
   const noEmail = setup({ EMAIL: undefined });
   await worker.scheduled({ cron: AMBASSADOR_PAYOUT_CRON }, noEmail.env, {});
   assert.equal(noEmail.DB.sqlite.prepare('SELECT email_status FROM ambassador_payout_reports').get().email_status, 'email_not_configured');
+
+  let shouldFail = true;
+  const retriedEmails = [];
+  const retry = setup({ EMAIL: { send: async message => {
+    if (shouldFail) throw new Error('temporary email outage');
+    retriedEmails.push(message);
+  } } });
+  assert.equal((await retry.call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH })).status, 201);
+  const failed = await retry.call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH, notify: true });
+  assert.match(failed.body.email, /^send_failed:/);
+  shouldFail = false;
+  const resent = await retry.call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH, notify: true });
+  assert.match(resent.body.email, /^sent:/);
+  assert.equal(retriedEmails.length, 1);
+  await retry.call('POST', '/admin/ambassador-payout-reports', { period: LAST_MONTH, notify: true });
+  assert.equal(retriedEmails.length, 1, 'sent reports are not emailed twice');
 });
 
 test('statements: admin view and ambassador self-service by code and email', async () => {

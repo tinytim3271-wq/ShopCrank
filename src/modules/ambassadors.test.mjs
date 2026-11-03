@@ -9,6 +9,7 @@ import {
   payoutReportDialogHtml,
   saleSourceLabel,
   salesQuery,
+  soldByForAmbassadorChange,
   statementHtml,
 } from './ambassadors.js';
 
@@ -24,7 +25,10 @@ const ambassadors = [
 
 function tiers(counts) {
   const rates = { solo: 1000, shop: 2000, shop_pro: 4000, enterprise: 10000 };
-  return Object.fromEntries(Object.entries(rates).map(([tier, rate]) => [tier, { count: counts[tier] || 0, rateCents: rate, subtotalCents: (counts[tier] || 0) * rate }]));
+  return Object.fromEntries(Object.entries(rates).map(([tier, rate]) => {
+    const count = counts[tier] || 0;
+    return [tier, { count, rateCents: rate, rateBreakdown: count ? [{ rateCents: rate, count, subtotalCents: count * rate }] : [], subtotalCents: count * rate }];
+  }));
 }
 const sources = counts => Object.fromEntries(['shopcrank_online', 'ambassador_site', 'ambassador_referral', 'other'].map(source => [source, { count: counts[source] || 0, amountCents: (counts[source] || 0) * 1000 }]));
 
@@ -36,6 +40,9 @@ test('formatting helpers', () => {
   assert.equal(salesQuery({ ambassadorId: 'a1', source: '', from: '2026-10-01' }), '?ambassadorId=a1&from=2026-10-01');
   assert.equal(salesQuery({}), '');
   assert.equal(lastMonth(new Date('2026-01-15T00:00:00Z')), '2025-12');
+  assert.equal(soldByForAmbassadorChange('a1', 'a2', 'AMB-0001 · Jane', 'AMB-0001 · Jane'), '');
+  assert.equal(soldByForAmbassadorChange('a1', 'a2', 'Jane — manual override', 'AMB-0001 · Jane'), 'Jane — manual override');
+  assert.equal(soldByForAmbassadorChange('a1', 'a1', 'AMB-0001 · Jane', 'AMB-0001 · Jane'), 'AMB-0001 · Jane');
 });
 
 test('ambassador picker hides suspended ambassadors unless already credited', () => {
@@ -91,6 +98,12 @@ test('payout dialog shows tiers, sources, totals, and mark-paid only for unpaid 
   assert.match(html, /value="2026-11-05"/);
   assert.match(html, /\$210\.00/);
   assert.match(html, /\$60\.00 @ \$20\.00/);
+  const mixedReport = structuredClone(report);
+  mixedReport.totals.tiers.shop = {
+    count: 2, subtotalCents: 4500, rateCents: null,
+    rateBreakdown: [{ rateCents: 2000, count: 1, subtotalCents: 2000 }, { rateCents: 2500, count: 1, subtotalCents: 2500 }],
+  };
+  assert.match(payoutReportDialogHtml(mixedReport, helpers), /Mixed: 1 × \$20\.00; 1 × \$25\.00/);
   assert.match(html, /Ambassador site: 2 · Ambassador referral: 2/);
   assert.match(html, /id="amb-report-print"/);
   assert.match(html, /id="amb-report-pdf"/);
@@ -110,9 +123,11 @@ test('credit dialog and statement escape content and show the audit trail', () =
   const statement = statementHtml({
     ambassador: { ambassadorNumber: 'AMB-0001', name: 'Jane', referralCode: 'TX4K9P' },
     totals: { earnedCents: 3000, paidCents: 1000, pendingCents: 2000 },
+    pagination: { page: 2, pages: 3, total: 250 },
     lines: [{ period: '2026-10', shopName: 'High Plains', tier: 'enterprise', saleSource: 'ai_agent', status: 'pending', amountCents: 10000 }],
   }, helpers);
   assert.match(statement, /Enterprise/);
   assert.match(statement, /AI agent/);
   assert.match(statement, /\$20\.00/);
+  assert.match(statement, /Page 2 of 3 · 250 lines/);
 });

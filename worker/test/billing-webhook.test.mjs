@@ -45,6 +45,9 @@ function billingDb({ failSubscriptionWrite = false, subscription = null } = {}) 
                 return state.events.has(args[0]) ? { id: args[0] } : null;
               }
               if (/SELECT plan_id, stripe_subscription_id/.test(sql)) return state.subscription;
+              if (/SELECT shop_id, sold_by_ambassador_id/.test(sql)) {
+                return { shop_id: 'shop-1', sold_by_ambassador_id: null, sold_by: null, sale_source: null };
+              }
               return null;
             },
             async run() {
@@ -71,6 +74,11 @@ function billingDb({ failSubscriptionWrite = false, subscription = null } = {}) 
           };
         },
       };
+    },
+    async batch(statements) {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
     },
   };
   return { DB, state };

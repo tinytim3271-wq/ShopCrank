@@ -81,19 +81,39 @@
             turnstile?.reset();
           }
         });
-        document.querySelector("#statement-form").addEventListener("submit", async (event) => {
-          event.preventDefault();
+        const statementForm = document.querySelector("#statement-form");
+        const statementResult = document.querySelector("#statement-result");
+        async function loadStatement(page = 1) {
           const error = document.querySelector("#statement-error");
-          const result = document.querySelector("#statement-result");
           error.hidden = true;
-          result.innerHTML = "";
-          try {
-            const statement = await post("/api/ambassadors/statement", Object.fromEntries(new FormData(event.currentTarget)));
-            const rows = statement.lines.map((line) => `<tr><td>${text(line.period)}</td><td>${text(line.shopName)}</td><td>${text(line.tier)}</td><td>${text(line.status)}</td><td class="num">${money(line.amountCents)}</td></tr>`).join("");
-            result.innerHTML = `<p><b>${text(statement.ambassador.name)}</b> · ${text(statement.ambassador.ambassadorNumber)} · ${text(statement.ambassador.referralCode)}</p>`
-              + `<p>Earned ${money(statement.totals.earnedCents)} · Paid ${money(statement.totals.paidCents)} · Pending ${money(statement.totals.pendingCents)}</p>`
-              + `<table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Status</th><th class="num">Commission</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No commissions yet.</td></tr>'}</tbody></table>`;
-          } catch (requestError) {
+          const statement = await post("/api/ambassadors/statement", {
+            ...Object.fromEntries(new FormData(statementForm)),
+            page,
+            pageSize: 100,
+          });
+          const rows = statement.lines.map((line) => `<tr><td>${text(line.period)}</td><td>${text(line.shopName)}</td><td>${text(line.tier)}</td><td>${text(line.status)}</td><td class="num">${money(line.amountCents)}</td></tr>`).join("");
+          const pagination = statement.pagination;
+          const pager = pagination?.pages > 1
+            ? `<p>Page ${pagination.page} of ${pagination.pages} · ${pagination.total} lines</p><button type="button" data-statement-page="${pagination.page - 1}"${pagination.page <= 1 ? " disabled" : ""}>Previous</button> <button type="button" data-statement-page="${pagination.page + 1}"${pagination.page >= pagination.pages ? " disabled" : ""}>Next</button>`
+            : "";
+          statementResult.innerHTML = `<p><b>${text(statement.ambassador.name)}</b> · ${text(statement.ambassador.ambassadorNumber)} · ${text(statement.ambassador.referralCode)}</p>`
+            + `<p>Earned ${money(statement.totals.earnedCents)} · Paid ${money(statement.totals.paidCents)} · Pending ${money(statement.totals.pendingCents)}</p>`
+            + `<table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Status</th><th class="num">Commission</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No commissions yet.</td></tr>'}</tbody></table>${pager}`;
+        }
+        statementForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          statementResult.innerHTML = "";
+          try { await loadStatement() } catch (requestError) {
+            const error = document.querySelector("#statement-error");
+            error.hidden = false;
+            error.textContent = requestError.message;
+          }
+        });
+        statementResult.addEventListener("click", async (event) => {
+          const button = event.target.closest("[data-statement-page]");
+          if (!button) return;
+          try { await loadStatement(Number(button.dataset.statementPage)) } catch (requestError) {
+            const error = document.querySelector("#statement-error");
             error.hidden = false;
             error.textContent = requestError.message;
           }

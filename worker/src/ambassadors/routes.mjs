@@ -34,7 +34,7 @@ import {
   listCommissions,
   periodHasEnded,
   requirePeriod,
-  summarizeCommissions,
+  summarizeCommissionsFor,
   updateCommissionRates,
 } from './commissions.mjs';
 import {
@@ -150,9 +150,26 @@ async function ambassadorList(env) {
   }));
 }
 
-async function statementFor(env, ambassadorId, { from = '', to = '' } = {}) {
-  const lines = await listCommissions(env, { ambassadorId, from, to });
-  return { lines, totals: summarizeCommissions(lines) };
+function commissionPage(page, pageSize) {
+  const parsedPage = Math.floor(Number(page) || 1);
+  const parsedSize = Math.floor(Number(pageSize) || 100);
+  return {
+    page: Math.max(1, parsedPage),
+    pageSize: Math.max(1, Math.min(200, parsedSize)),
+  };
+}
+
+async function statementFor(env, ambassadorId, { from = '', to = '', page = 1, pageSize = 100 } = {}) {
+  const filters = { ambassadorId, from, to };
+  const pagination = commissionPage(page, pageSize);
+  const summary = await summarizeCommissionsFor(env, filters);
+  pagination.page = Math.min(pagination.page, Math.max(1, Math.ceil(summary.paginationTotal / pagination.pageSize)));
+  const lines = await listCommissions(env, filters, pagination);
+  return {
+    lines,
+    totals: summary.totals,
+    pagination: { ...pagination, total: summary.paginationTotal, pages: Math.ceil(summary.paginationTotal / pagination.pageSize) },
+  };
 }
 
 function downloadName(period, extension) {
@@ -166,7 +183,7 @@ async function handlePayoutReports(request, env, context, rest) {
     if (request.method === 'POST') {
       const body = await requestJson(request);
       const { report, created } = await generatePayoutReport(env, requirePeriod(body.period), { generatedBy: context.email || context.userId });
-      const email = created && body.notify === true ? await notifyPayoutReport(env, report) : null;
+      const email = body.notify === true ? await notifyPayoutReport(env, report) : null;
       return json({ created, email, report: await reportWithPayouts(env, report.period) }, created ? 201 : 200);
     }
     throw new HttpError(405, 'Method not allowed');
@@ -223,7 +240,12 @@ export async function handleAmbassadorAdmin(request, env, context, segments) {
     if (view === 'statement' && request.method === 'GET') {
       return json({
         ambassador: publicAmbassador(ambassador),
-        ...(await statementFor(env, ambassador.id, { from: url.searchParams.get('from') || '', to: url.searchParams.get('to') || '' })),
+        ...(await statementFor(env, ambassador.id, {
+          from: url.searchParams.get('from') || '',
+          to: url.searchParams.get('to') || '',
+          page: url.searchParams.get('page'),
+          pageSize: url.searchParams.get('pageSize'),
+        })),
       });
     }
     if (view) throw new HttpError(404, 'Not found');
@@ -288,8 +310,15 @@ export async function handleAmbassadorAdmin(request, env, context, segments) {
   if (section === 'ambassador-commissions') {
     if (!rest[0] && request.method === 'GET') {
       const filters = Object.fromEntries(['period', 'ambassadorId', 'status', 'from', 'to'].map(key => [key, url.searchParams.get(key) || '']));
-      const lines = await listCommissions(env, filters);
-      return json({ lines, totals: summarizeCommissions(lines) });
+      const pagination = commissionPage(url.searchParams.get('page'), url.searchParams.get('pageSize'));
+      const summary = await summarizeCommissionsFor(env, filters);
+      pagination.page = Math.min(pagination.page, Math.max(1, Math.ceil(summary.paginationTotal / pagination.pageSize)));
+      const lines = await listCommissions(env, filters, pagination);
+      return json({
+        lines,
+        totals: summary.totals,
+        pagination: { ...pagination, total: summary.paginationTotal, pages: Math.ceil(summary.paginationTotal / pagination.pageSize) },
+      });
     }
     if (rest[0] === 'generate' && request.method === 'POST') {
       const body = await requestJson(request);
@@ -375,7 +404,10 @@ export async function handleAmbassadorPublic(request, env, segments, { verifyTur
     if (!ambassador || !email || String(ambassador.email).toLowerCase() !== email) {
       throw new HttpError(404, 'No ambassador matches that code and email');
     }
-    const { lines, totals } = await statementFor(env, ambassador.id);
+    const { lines, totals, pagination } = await statementFor(env, ambassador.id, {
+      page: body.page,
+      pageSize: body.pageSize,
+    });
     return json({
       ambassador: {
         ambassadorNumber: ambassador.ambassador_number,
@@ -384,6 +416,7 @@ export async function handleAmbassadorPublic(request, env, segments, { verifyTur
         status: ambassador.status,
       },
       totals,
+      pagination,
       lines: lines.map(line => ({
         period: line.period,
         shopName: line.shopName,
@@ -397,4 +430,3 @@ export async function handleAmbassadorPublic(request, env, segments, { verifyTur
   }
   throw new HttpError(404, 'Not found');
 }
-
