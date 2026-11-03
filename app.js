@@ -16390,24 +16390,29 @@ ${line}`.trim();
     }));
   }
   async function loadAmbassadorData(patch = {}) {
-    if (ambassadorLoading) return;
-    ambassadorLoading = true;
+    const loadId = ++ambassadorLoadId;
     const next = { tab: "ambassadors", salesFilters: {}, ledgerPeriod: lastMonth(), ...ambassadorData || {}, ...patch, loading: false };
     try {
       const { ambassadors } = await platformApi("/admin/ambassadors");
+      if (loadId !== ambassadorLoadId) return;
       next.ambassadors = ambassadors;
-      if (next.tab === "sales") next.sales = (await platformApi(`/admin/ambassador-sales${salesQuery(next.salesFilters)}`)).sales;
+      if (next.tab === "sales") {
+        next.sales = (await platformApi(`/admin/ambassador-sales${salesQuery(next.salesFilters)}`)).sales;
+        if (loadId !== ambassadorLoadId) return;
+      }
       if (next.tab === "commissions") {
         next.rates = (await platformApi("/admin/ambassador-commission-rates")).rates;
+        if (loadId !== ambassadorLoadId) return;
         next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}`);
+        if (loadId !== ambassadorLoadId) return;
       }
       if (next.tab === "reports") Object.assign(next, await platformApi("/admin/ambassador-payout-reports"));
     } catch (error) {
+      if (loadId !== ambassadorLoadId) return;
       next.ambassadors || (next.ambassadors = []);
       toast(error.message || "Could not load ambassadors");
-    } finally {
-      ambassadorLoading = false;
     }
+    if (loadId !== ambassadorLoadId) return;
     ambassadorData = next;
     if (state.route === "ambassadors") render();
   }
@@ -17028,7 +17033,7 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoading, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -19237,7 +19242,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
       };
       if (!roleRoutes.super_admin.includes("ambassadors")) roleRoutes.super_admin.push("ambassadors");
       ambassadorData = null;
-      ambassadorLoading = false;
+      ambassadorLoadId = 0;
       platformShellAmbassadorCore = platformShell;
       platformShell = function(content) {
         const healthNav = nav("health", "activity", "System health");

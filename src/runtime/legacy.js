@@ -6121,31 +6121,36 @@ render = function () {
 };
 // --- Platform console: ambassador program (/api/admin/ambassador*) ---
 if (!roleRoutes.super_admin.includes("ambassadors")) roleRoutes.super_admin.push("ambassadors");
-let ambassadorData = null, ambassadorLoading = false;
+let ambassadorData = null, ambassadorLoadId = 0;
 const platformShellAmbassadorCore = platformShell;
 platformShell = function (content) {
   const healthNav = nav("health", "activity", "System health");
   return platformShellAmbassadorCore(content).replace(healthNav, `${healthNav}${nav("ambassadors", "handshake", "Ambassadors")}`);
 };
 async function loadAmbassadorData(patch = {}) {
-  if (ambassadorLoading) return;
-  ambassadorLoading = true;
+  const loadId = ++ambassadorLoadId;
   const next = { tab: "ambassadors", salesFilters: {}, ledgerPeriod: Ambassadors.lastMonth(), ...(ambassadorData || {}), ...patch, loading: false };
   try {
     const { ambassadors } = await platformApi("/admin/ambassadors");
+    if (loadId !== ambassadorLoadId) return;
     next.ambassadors = ambassadors;
-    if (next.tab === "sales") next.sales = (await platformApi(`/admin/ambassador-sales${Ambassadors.salesQuery(next.salesFilters)}`)).sales;
+    if (next.tab === "sales") {
+      next.sales = (await platformApi(`/admin/ambassador-sales${Ambassadors.salesQuery(next.salesFilters)}`)).sales;
+      if (loadId !== ambassadorLoadId) return;
+    }
     if (next.tab === "commissions") {
       next.rates = (await platformApi("/admin/ambassador-commission-rates")).rates;
+      if (loadId !== ambassadorLoadId) return;
       next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}`);
+      if (loadId !== ambassadorLoadId) return;
     }
     if (next.tab === "reports") Object.assign(next, await platformApi("/admin/ambassador-payout-reports"));
   } catch (error) {
+    if (loadId !== ambassadorLoadId) return;
     next.ambassadors ||= [];
     toast(error.message || "Could not load ambassadors");
-  } finally {
-    ambassadorLoading = false;
   }
+  if (loadId !== ambassadorLoadId) return;
   ambassadorData = next;
   if (state.route === "ambassadors") render();
 }
