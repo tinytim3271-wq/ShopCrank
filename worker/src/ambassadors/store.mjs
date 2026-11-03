@@ -220,23 +220,36 @@ export async function applyAttribution(env, shopId, {
     return { changed: false, reason: 'unchanged' };
   }
   const now = new Date().toISOString();
-  await env.DB.batch([
+  const results = await env.DB.batch([
     env.DB.prepare(`
       UPDATE subscriptions SET sold_by_ambassador_id = ?, sold_by = ?, sale_source = ?,
         referral_code = COALESCE(?, referral_code), attributed_at = ?
       WHERE shop_id = ?
-    `).bind(nextAmbassadorId, nextSoldBy, saleSource, normalizeReferralCode(referralCode) || ambassador?.referral_code || null, now, shopId),
+        AND (? = 0 OR (
+          sold_by_ambassador_id IS NULL
+          AND (? = 1 OR sale_source IS NULL OR sale_source = '')
+        ))
+    `).bind(
+      nextAmbassadorId, nextSoldBy, saleSource,
+      normalizeReferralCode(referralCode) || ambassador?.referral_code || null,
+      now, shopId, Number(onlyIfUncredited), Number(Boolean(ambassador)),
+    ),
     env.DB.prepare(`
       INSERT INTO ambassador_attribution_log (
         id, shop_id, previous_ambassador_id, new_ambassador_id, previous_source, new_source,
         previous_sold_by, new_sold_by, changed_by, reason, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE ? = 0 OR changes() > 0
     `).bind(
       crypto.randomUUID(), shopId, current.sold_by_ambassador_id || null, nextAmbassadorId,
       current.sale_source || null, saleSource, current.sold_by || null, nextSoldBy,
-      String(changedBy || 'system'), str(reason, 500) || null, now,
+      String(changedBy || 'system'), str(reason, 500) || null, now, Number(onlyIfUncredited),
     ),
   ]);
+  if (onlyIfUncredited && !Number(results?.[0]?.meta?.changes)) {
+    return { changed: false, reason: 'already_attributed' };
+  }
   return { changed: true, ambassadorId: nextAmbassadorId, saleSource, soldBy: nextSoldBy };
 }
 

@@ -4,7 +4,7 @@ import worker from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
 import { AMBASSADOR_PAYOUT_CRON, assembleReport } from '../src/ambassadors/payout-report.mjs';
 import { generateCommissionLedger, periodBounds, periodOf, previousPeriod, shiftPeriod } from '../src/ambassadors/commissions.mjs';
-import { normalizeReferralCode, randomReferralCode } from '../src/ambassadors/store.mjs';
+import { applyAttribution, normalizeReferralCode, randomReferralCode } from '../src/ambassadors/store.mjs';
 import { provisionShopRoles } from '../src/onboarding/roles.mjs';
 import { buildPdf } from '../src/ambassadors/pdf.mjs';
 
@@ -215,6 +215,32 @@ test('every creation path records sold_by and sale_source', async () => {
   const log = DB.sqlite.prepare('SELECT * FROM ambassador_attribution_log').all();
   assert.ok(log.length >= 8);
   assert.ok(log.every(row => row.changed_by && row.created_at));
+});
+
+test('only one concurrent first-credit attribution wins and is audited', async () => {
+  const { call, DB, env } = setup();
+  const jane = await createAmbassador(call);
+  const marco = await createAmbassador(call, { name: 'Marco Diaz' });
+  await createShop(call, 'race-credit');
+
+  const results = await Promise.all([
+    applyAttribution(env, 'race-credit', {
+      ambassador: jane, saleSource: 'ambassador_referral', onlyIfUncredited: true,
+    }),
+    applyAttribution(env, 'race-credit', {
+      ambassador: marco, saleSource: 'ambassador_site', onlyIfUncredited: true,
+    }),
+  ]);
+  const sub = subscription(DB, 'race-credit');
+  const credits = DB.sqlite.prepare(`
+    SELECT * FROM ambassador_attribution_log
+    WHERE shop_id = ? AND new_ambassador_id IS NOT NULL
+  `).all('race-credit');
+
+  assert.equal(results.filter(result => result.changed).length, 1);
+  assert.ok([jane.id, marco.id].includes(sub.sold_by_ambassador_id));
+  assert.equal(credits.length, 1);
+  assert.equal(credits[0].new_ambassador_id, sub.sold_by_ambassador_id);
 });
 
 test('Stripe checkout carries the referral into metadata and the webhook credits the sale', async () => {
