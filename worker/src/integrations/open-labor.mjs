@@ -68,6 +68,7 @@ export function matchOpenLaborJob(query, jobs = []) {
   let best = null;
   for (const job of jobs) {
     const have = new Set([...tokens(job.job), ...tokens(String(job.jobSlug || '').replace(/-/g, ' '))]);
+    if (wanted.some(word => QUALIFIERS.has(word) && !have.has(word))) continue;
     const contentHits = content.filter(word => have.has(word)).length;
     // Every job word named by the shop ("starter motor" → Starter) also counts as a match.
     const fullyNamed = contentHits > 0 && [...have].every(word => wanted.includes(word) || QUALIFIERS.has(word));
