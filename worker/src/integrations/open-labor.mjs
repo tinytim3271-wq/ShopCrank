@@ -213,7 +213,7 @@ export async function searchOpenLabor(env, input = {}, { fetcher = fetch } = {})
   return rows
     .map(row => ({ row, match: engineMatches(row, engine) }))
     .sort((a, b) => Number(b.match) - Number(a.match))
-    .filter((item, index, list) => item.match || !list.some(other => other.match))
+    .filter(item => item.match)
     .map(({ row }) => {
       const confidence = String(row.confidence || 'estimated');
       const verified = confidence === 'high';
