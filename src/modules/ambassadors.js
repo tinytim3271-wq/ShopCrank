@@ -29,10 +29,6 @@ export function tierLabel(tier) {
   return TIERS.find(([id]) => id === tier)?.[1] || tier || '';
 }
 
-export function soldByForAmbassadorChange(currentAmbassadorId, nextAmbassadorId, soldBy, previousSoldBy) {
-  return currentAmbassadorId !== nextAmbassadorId && soldBy === previousSoldBy ? '' : soldBy;
-}
-
 /** Query string for /admin/ambassador-sales from the filter form. */
 export function salesQuery(filters = {}) {
   const params = new URLSearchParams();
@@ -49,13 +45,6 @@ export function lastMonth(now = new Date()) {
 
 function badge(status, escapeHtml) {
   return `<span class="badge ${STATUS_BADGE[status] ?? ''}">${escapeHtml(status || '')}</span>`;
-}
-
-function tierRateText(item) {
-  const rates = item.rateBreakdown || [];
-  if (!rates.length) return item.rateCents == null ? '—' : formatCents(item.rateCents);
-  if (rates.length === 1) return formatCents(rates[0].rateCents);
-  return `Mixed: ${rates.map(rate => `${rate.count} × ${formatCents(rate.rateCents)}`).join('; ')}`;
 }
 
 export function ambassadorOptions(ambassadors = [], selected = '', { escapeHtml, includeNone = true, noneLabel = 'No ambassador' } = {}) {
@@ -87,10 +76,8 @@ function commissionsTab(data, { escapeHtml, icon }) {
   const lines = (data.commissions?.lines || []).map(line => `<tr><td class="mono">${escapeHtml(line.period)}</td><td><b class="mono">${escapeHtml(line.ambassadorNumber)}</b><small>${escapeHtml(line.ambassadorName)}</small></td><td>${escapeHtml(line.shopName)}</td><td>${escapeHtml(tierLabel(line.tier))}</td><td>${escapeHtml(saleSourceLabel(line.saleSource))}</td><td>${badge(line.status, escapeHtml)}${line.checkNumber ? `<small>Check ${escapeHtml(line.checkNumber)}</small>` : ''}</td><td>${formatCents(line.amountCents)}</td></tr>`).join('');
   const totals = data.commissions?.totals;
   const pagination = data.commissions?.pagination;
-  const pager = pagination?.pages > 1
-    ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pages} · ${pagination.total} lines</span><button class="secondary" type="button" id="amb-ledger-previous"${pagination.page <= 1 ? ' disabled' : ''}>Previous</button><button class="secondary" type="button" id="amb-ledger-next"${pagination.page >= pagination.pages ? ' disabled' : ''}>Next</button></div>`
-    : '';
-  return `<h2>Monthly commission rates</h2><form id="amb-rates-form"><div class="form-grid">${rates}</div><div class="platform-action-buttons"><button class="primary" type="submit">${icon('save', 14)} Save rates</button></div></form><p class="ops-note">Paid monthly for each referred shop while its membership stays active and paid. Rate changes apply to new monthly lines; frozen payout reports never change.</p><h2>Commission ledger</h2><form class="platform-action-buttons" id="amb-ledger-form"><label>Month<input type="month" name="period" value="${escapeHtml(data.ledgerPeriod || lastMonth())}"/></label><button class="secondary" type="submit">${icon('search', 14)} Show</button><button class="secondary" type="button" id="amb-ledger-generate">${icon('refresh-cw', 14)} Accrue month</button></form>${totals ? `<div class="platform-kpis"><article><span>Lines</span><strong>${totals.lines}</strong></article><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article></div>` : ''}<div class="data-panel"><table><thead><tr><th>Month</th><th>Ambassador</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${lines || '<tr><td colspan="7">No commission lines for this month.</td></tr>'}</tbody></table></div>${pager}`;
+  const pageControls = pagination ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pageCount} · ${pagination.totalLines} lines</span><button class="secondary" type="button" data-ledger-page="${pagination.page - 1}"${pagination.page <= 1 ? ' disabled' : ''}>Previous</button><button class="secondary" type="button" data-ledger-page="${pagination.page + 1}"${pagination.page >= pagination.pageCount ? ' disabled' : ''}>Next</button></div>` : '';
+  return `<h2>Monthly commission rates</h2><form id="amb-rates-form"><div class="form-grid">${rates}</div><div class="platform-action-buttons"><button class="primary" type="submit">${icon('save', 14)} Save rates</button></div></form><p class="ops-note">Paid monthly for each referred shop while its membership stays active and paid. Rate changes apply to new monthly lines; frozen payout reports never change.</p><h2>Commission ledger</h2><form class="platform-action-buttons" id="amb-ledger-form"><label>Month<input type="month" name="period" value="${escapeHtml(data.ledgerPeriod || lastMonth())}"/></label><button class="secondary" type="submit">${icon('search', 14)} Show</button><button class="secondary" type="button" id="amb-ledger-generate">${icon('refresh-cw', 14)} Accrue month</button></form>${totals ? `<div class="platform-kpis"><article><span>Lines</span><strong>${totals.lines}</strong></article><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article></div>` : ''}<div class="data-panel"><table><thead><tr><th>Month</th><th>Ambassador</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${lines || '<tr><td colspan="7">No commission lines for this month.</td></tr>'}</tbody></table></div>${pageControls}`;
 }
 
 function reportsTab(data, { escapeHtml, icon }) {
@@ -125,23 +112,32 @@ export function statementHtml(statement, { escapeHtml, icon }) {
   const rows = (statement.lines || []).map(line => `<tr><td class="mono">${escapeHtml(line.period)}</td><td>${escapeHtml(line.shopName)}</td><td>${escapeHtml(tierLabel(line.tier))}</td><td>${escapeHtml(saleSourceLabel(line.saleSource))}</td><td>${badge(line.status, escapeHtml)}${line.checkNumber ? `<small>Check ${escapeHtml(line.checkNumber)}</small>` : ''}</td><td>${formatCents(line.amountCents)}</td></tr>`).join('');
   const { ambassador, totals } = statement;
   const pagination = statement.pagination;
-  const pager = pagination?.pages > 1
-    ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pages} · ${pagination.total} lines</span><button class="secondary" type="button" data-statement-page="${pagination.page - 1}"${pagination.page <= 1 ? ' disabled' : ''}>Previous</button><button class="secondary" type="button" data-statement-page="${pagination.page + 1}"${pagination.page >= pagination.pages ? ' disabled' : ''}>Next</button></div>`
-    : '';
-  return `<div class="modal wide"><div class="modal-head"><h2>Statement · ${escapeHtml(ambassador.ambassadorNumber)} ${escapeHtml(ambassador.name)}</h2><button type="button" class="close" data-close>${icon('x')}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article></div><p class="ops-note">Ambassadors can see this at /ambassador with code <span class="mono">${escapeHtml(ambassador.referralCode)}</span> and their email.</p><div class="data-panel"><table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No commissions yet.</td></tr>'}</tbody></table></div>${pager}</div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
+  const pageControls = pagination ? `<div class="platform-action-buttons"><span>Page ${pagination.page} of ${pagination.pageCount} · ${pagination.totalLines} lines</span><button class="secondary" type="button" data-statement-page="${pagination.page - 1}"${pagination.page <= 1 ? ' disabled' : ''}>Previous</button><button class="secondary" type="button" data-statement-page="${pagination.page + 1}"${pagination.page >= pagination.pageCount ? ' disabled' : ''}>Next</button></div>` : '';
+  return `<div class="modal wide"><div class="modal-head"><h2>Statement · ${escapeHtml(ambassador.ambassadorNumber)} ${escapeHtml(ambassador.name)}</h2><button type="button" class="close" data-close>${icon('x')}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Earned</span><strong>${formatCents(totals.earnedCents)}</strong></article><article><span>Paid</span><strong>${formatCents(totals.paidCents)}</strong></article><article><span>Pending</span><strong>${formatCents(totals.pendingCents)}</strong></article></div><p class="ops-note">Ambassadors can see this at /ambassador with code <span class="mono">${escapeHtml(ambassador.referralCode)}</span> and their email.</p><div class="data-panel"><table><thead><tr><th>Month</th><th>Shop</th><th>Plan</th><th>Source</th><th>Status</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No commissions yet.</td></tr>'}</tbody></table></div>${pageControls}</div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
+}
+
+function payoutTierRateLabel(item) {
+  const entries = item.rateBreakdown?.length
+    ? item.rateBreakdown
+    : item.count && Number.isFinite(Number(item.rateCents))
+      ? [{ rateCents: Number(item.rateCents) }]
+      : [];
+  if (!entries.length) return '—';
+  if (entries.length === 1) return formatCents(entries[0].rateCents);
+  return `Mixed (${entries.map(entry => formatCents(entry.rateCents)).join(', ')})`;
 }
 
 /** View/print dialog for one month, with a mark-paid form per ambassador. */
 export function payoutReportDialogHtml(report, { escapeHtml, icon, today = new Date().toISOString().slice(0, 10) }) {
   const tierHead = TIERS.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join('');
   const rows = report.ambassadors.map(entry => {
-    const tiers = TIERS.map(([tier]) => `<td>${entry.tiers[tier].count}<small>${formatCents(entry.tiers[tier].subtotalCents)} @ ${escapeHtml(tierRateText(entry.tiers[tier]))}</small></td>`).join('');
+    const tiers = TIERS.map(([tier]) => `<td>${entry.tiers[tier].count}<small>${formatCents(entry.tiers[tier].subtotalCents)} @ ${escapeHtml(payoutTierRateLabel(entry.tiers[tier]))}</small></td>`).join('');
     const sources = REPORT_SOURCES.map(source => `${escapeHtml(saleSourceLabel(source))}: ${entry.sources[source].count}`).join(' · ');
     const pay = entry.payout
       ? `<span class="badge paid">Paid</span><small>Check ${escapeHtml(entry.payout.checkNumber)} · ${escapeHtml(entry.payout.paidOn)}</small>`
       : `<form class="amb-pay-form" data-ambassador="${escapeHtml(entry.ambassadorId)}"><input name="checkNumber" placeholder="Check #" required size="8"/><input name="paidOn" type="date" value="${escapeHtml(today)}" required/><button class="mini-action" type="submit">${icon('badge-check', 13)} Mark paid</button></form>`;
     return `<tr><td><b class="mono">${escapeHtml(entry.ambassadorNumber)}</b><small class="mono">${escapeHtml(entry.referralCode)}</small></td><td><b>${escapeHtml(entry.name)}</b><small>${sources}</small></td>${tiers}<td><b>${formatCents(entry.totalCents)}</b></td><td>${pay}</td></tr>`;
   }).join('');
-  const totals = TIERS.map(([tier]) => `<td><b>${report.totals.tiers[tier].count}</b><small>${formatCents(report.totals.tiers[tier].subtotalCents)} @ ${escapeHtml(tierRateText(report.totals.tiers[tier]))}</small></td>`).join('');
+  const totals = TIERS.map(([tier]) => `<td><b>${report.totals.tiers[tier].count}</b><small>${formatCents(report.totals.tiers[tier].subtotalCents)} @ ${escapeHtml(payoutTierRateLabel(report.totals.tiers[tier]))}</small></td>`).join('');
   return `<div class="modal wide" id="amb-report-dialog" data-period="${escapeHtml(report.period)}"><div class="modal-head"><h2>Ambassador Payout Report · ${escapeHtml(report.periodLabel)}</h2><button type="button" class="close" data-close>${icon('x')}</button></div><div class="modal-body"><div class="platform-kpis"><article><span>Grand total</span><strong>${formatCents(report.totals.grandTotalCents)}</strong></article><article><span>Ambassadors</span><strong>${report.totals.ambassadorCount}</strong></article><article><span>Paid so far</span><strong>${formatCents(report.paidCents)}</strong></article><article><span>By source</span><strong>${REPORT_SOURCES.map(source => report.totals.sources[source].count).join(' / ')}</strong></article></div><div class="platform-action-buttons"><button class="secondary" type="button" id="amb-report-print">${icon('printer', 14)} Print</button><button class="secondary" type="button" id="amb-report-pdf">${icon('download', 14)} Download PDF</button></div><div class="data-panel"><table><thead><tr><th>Ambassador</th><th>Name · sources</th>${tierHead}<th>Total due</th><th>Payout</th></tr></thead><tbody>${rows || `<tr><td colspan="${TIERS.length + 4}">No ambassador commissions this month.</td></tr>`}</tbody><tfoot><tr><td colspan="2"><b>All ambassadors</b><small>Sources: ${REPORT_SOURCES.map(source => `${escapeHtml(saleSourceLabel(source))} ${formatCents(report.totals.sources[source].amountCents)}`).join(' · ')}</small></td>${totals}<td><b>${formatCents(report.totals.grandTotalCents)}</b></td><td></td></tr></tfoot></table></div><p class="ops-note">Snapshot generated ${escapeHtml(String(report.generatedAt).slice(0, 16).replace('T', ' '))} UTC by ${escapeHtml(report.generatedBy)}. It will not change; marking a check paid is recorded alongside it.</p></div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`;
 }

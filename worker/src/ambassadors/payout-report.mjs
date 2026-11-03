@@ -3,7 +3,7 @@
 // Mark-paid data (check number/date) lives beside the snapshot, never in it.
 
 import { HttpError } from '../http.mjs';
-import { COMMISSION_TIERS, TIER_LABELS, generateCommissionLedger, periodBounds, periodHasEnded, previousPeriod, requirePeriod, tierRates } from './commissions.mjs';
+import { COMMISSION_TIERS, TIER_LABELS, generateCommissionLedger, periodBounds, periodHasEnded, previousPeriod, requirePeriod } from './commissions.mjs';
 import { SALE_SOURCE_LABELS } from './store.mjs';
 import { buildPdf } from './pdf.mjs';
 
@@ -11,7 +11,17 @@ export const AMBASSADOR_PAYOUT_CRON = '0 9 1 * *';
 export const REPORT_SOURCES = Object.freeze(['shopcrank_online', 'ambassador_site', 'ambassador_referral']);
 const OTHER_SOURCE = 'other';
 const DEFAULT_FROM = 'noreply@shopcrank.com';
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isEmailAddress(value) {
+  const at = value.indexOf('@');
+  const lastDot = value.lastIndexOf('.');
+  return value.length <= 254
+    && at > 0
+    && at === value.lastIndexOf('@')
+    && lastDot > at + 1
+    && lastDot < value.length - 1
+    && !/\s/.test(value);
+}
 
 export function formatCents(cents) {
   const value = Number(cents || 0) / 100;
@@ -24,9 +34,7 @@ export function periodLabel(period) {
 }
 
 function emptyTiers() {
-  return Object.fromEntries(COMMISSION_TIERS.map(tier => [tier, {
-    tier, label: TIER_LABELS[tier], count: 0, rateCents: null, rateBreakdown: [], subtotalCents: 0,
-  }]));
+  return Object.fromEntries(COMMISSION_TIERS.map(tier => [tier, { tier, label: TIER_LABELS[tier], count: 0, rateCents: null, rateBreakdown: [], subtotalCents: 0 }]));
 }
 
 function emptySources() {
@@ -39,7 +47,7 @@ function emptySources() {
 }
 
 /** Pure: group ledger lines into the report shape. */
-export function assembleReport({ period, rates, lines, ambassadors, generatedAt, generatedBy }) {
+export function assembleReport({ period, lines, ambassadors, generatedAt, generatedBy }) {
   const byAmbassador = new Map();
   const totals = { tiers: emptyTiers(), sources: emptySources(), grandTotalCents: 0, lineCount: 0 };
   for (const line of lines) {
@@ -65,13 +73,13 @@ export function assembleReport({ period, rates, lines, ambassadors, generatedAt,
     const tier = COMMISSION_TIERS.includes(line.tier) ? line.tier : 'shop';
     const source = REPORT_SOURCES.includes(line.sale_source) ? line.sale_source : OTHER_SOURCE;
     for (const bucket of [entry, totals]) {
-      const tierTotal = bucket.tiers[tier];
-      tierTotal.count += 1;
-      tierTotal.subtotalCents += amount;
-      let rate = tierTotal.rateBreakdown.find(item => item.rateCents === amount);
+      const tierTotals = bucket.tiers[tier];
+      tierTotals.count += 1;
+      tierTotals.subtotalCents += amount;
+      let rate = tierTotals.rateBreakdown.find(item => item.rateCents === amount);
       if (!rate) {
         rate = { rateCents: amount, count: 0, subtotalCents: 0 };
-        tierTotal.rateBreakdown.push(rate);
+        tierTotals.rateBreakdown.push(rate);
       }
       rate.count += 1;
       rate.subtotalCents += amount;
@@ -94,19 +102,24 @@ export function assembleReport({ period, rates, lines, ambassadors, generatedAt,
     });
   }
   const list = [...byAmbassador.values()].sort((a, b) => a.ambassadorNumber.localeCompare(b.ambassadorNumber));
-  for (const bucket of [totals, ...list]) {
-    for (const tier of Object.values(bucket.tiers)) {
-      tier.rateBreakdown.sort((a, b) => a.rateCents - b.rateCents);
-      tier.rateCents = tier.rateBreakdown.length === 1 ? tier.rateBreakdown[0].rateCents : null;
+  for (const entry of list) {
+    entry.lines.sort((a, b) => a.shopName.localeCompare(b.shopName));
+    for (const tier of COMMISSION_TIERS) {
+      const rateBreakdown = entry.tiers[tier].rateBreakdown;
+      rateBreakdown.sort((a, b) => a.rateCents - b.rateCents);
+      if (rateBreakdown.length === 1) entry.tiers[tier].rateCents = rateBreakdown[0].rateCents;
     }
-    if (bucket.lines) bucket.lines.sort((a, b) => a.shopName.localeCompare(b.shopName));
+  }
+  for (const tier of COMMISSION_TIERS) {
+    const rateBreakdown = totals.tiers[tier].rateBreakdown;
+    rateBreakdown.sort((a, b) => a.rateCents - b.rateCents);
+    if (rateBreakdown.length === 1) totals.tiers[tier].rateCents = rateBreakdown[0].rateCents;
   }
   return {
     period,
     periodLabel: periodLabel(period),
     generatedAt,
     generatedBy,
-    rates,
     ambassadors: list,
     totals: { ...totals, ambassadorCount: list.length },
   };
@@ -126,7 +139,6 @@ export async function buildPayoutReport(env, period, { generatedBy = 'system', n
   }
   return assembleReport({
     period,
-    rates: await tierRates(env),
     lines: lines.results || [],
     ambassadors,
     generatedAt: now.toISOString(),
@@ -136,6 +148,10 @@ export async function buildPayoutReport(env, period, { generatedBy = 'system', n
 
 function snapshotFromRow(row) {
   return row ? { ...JSON.parse(row.report_json), emailStatus: row.email_status || '' } : null;
+}
+
+function payoutReportEmailSent(report) {
+  return String(report?.emailStatus || '').startsWith('sent:');
 }
 
 export async function getPayoutReport(env, period) {
@@ -170,46 +186,25 @@ export async function generatePayoutReport(env, period, { generatedBy = 'system'
   if (!periodHasEnded(period, now)) throw new HttpError(400, 'A payout report can only be generated after the month ends');
   const existing = await getPayoutReport(env, period);
   if (existing) return { report: existing, created: false };
-  const lockStartedAt = new Date().toISOString();
-  const expiredBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   await env.DB.prepare(`
-    DELETE FROM ambassador_payout_period_locks
-    WHERE period = ? AND created_at < ?
-      AND NOT EXISTS (SELECT 1 FROM ambassador_payout_reports WHERE period = ?)
-  `).bind(period, expiredBefore, period).run();
-  const lockToken = crypto.randomUUID();
-  const lock = await env.DB.prepare(`
-    INSERT INTO ambassador_payout_period_locks (period, lock_token, created_at)
-    VALUES (?, ?, ?)
+    INSERT INTO ambassador_payout_period_closures (period, status, closed_at)
+    VALUES (?, 'closing', ?)
     ON CONFLICT(period) DO NOTHING
-  `).bind(period, lockToken, lockStartedAt).run();
-  if (!Number(lock?.meta?.changes)) {
-    const frozen = await getPayoutReport(env, period);
-    if (frozen) return { report: frozen, created: false };
-    throw new HttpError(409, 'This payout report is being generated; retry shortly');
-  }
-  let frozen = false;
-  try {
-    const ledger = await generateCommissionLedger(env, period, { accruedVia: 'cron', closingPeriod: true });
-    const report = await buildPayoutReport(env, period, { generatedBy, now });
-    report.ledger = { created: ledger.created, eligible: ledger.eligible };
-    const result = await env.DB.prepare(`
-      INSERT INTO ambassador_payout_reports (period, report_json, grand_total_cents, ambassador_count, generated_at, generated_by)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(period) DO NOTHING
-    `).bind(period, JSON.stringify(report), report.totals.grandTotalCents, report.totals.ambassadorCount, report.generatedAt, generatedBy).run();
-    if (!Number(result?.meta?.changes)) {
-      frozen = Boolean(await getPayoutReport(env, period));
-      return { report: await getPayoutReport(env, period), created: false };
-    }
-    frozen = true;
-    return { report: await getPayoutReport(env, period), created: true };
-  } finally {
-    if (!frozen) {
-      await env.DB.prepare('DELETE FROM ambassador_payout_period_locks WHERE period = ? AND lock_token = ?')
-        .bind(period, lockToken).run();
-    }
-  }
+  `).bind(period, now.toISOString()).run();
+  const ledger = await generateCommissionLedger(env, period, { accruedVia: 'cron', allowClosingPeriod: true });
+  await env.DB.prepare(`
+    UPDATE ambassador_payout_period_closures SET status = 'frozen'
+    WHERE period = ? AND status = 'closing'
+  `).bind(period).run();
+  const report = await buildPayoutReport(env, period, { generatedBy, now });
+  report.ledger = { created: ledger.created, eligible: ledger.eligible };
+  const result = await env.DB.prepare(`
+    INSERT INTO ambassador_payout_reports (period, report_json, grand_total_cents, ambassador_count, generated_at, generated_by)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(period) DO NOTHING
+  `).bind(period, JSON.stringify(report), report.totals.grandTotalCents, report.totals.ambassadorCount, report.generatedAt, generatedBy).run();
+  if (!Number(result?.meta?.changes)) return { report: await getPayoutReport(env, period), created: false };
+  return { report: await getPayoutReport(env, period), created: true };
 }
 
 export async function listPayouts(env, period) {
@@ -264,15 +259,41 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '
 const nl2br = value => escapeHtml(value).replace(/\r?\n/g, '<br>');
 
 function tierTable(tiers) {
-  const rows = COMMISSION_TIERS.map(tier => tiers[tier]).map(item => `<tr><td>${escapeHtml(item.label)}</td><td class="num">${item.count}</td><td class="num">${escapeHtml(rateBreakdownLabel(item))}</td><td class="num">${formatCents(item.subtotalCents)}</td></tr>`).join('');
+  const rows = COMMISSION_TIERS.map(tier => tiers[tier]).map(item => `<tr><td>${escapeHtml(item.label)}</td><td class="num">${item.count}</td><td class="num">${escapeHtml(tierRateLabel(item))}</td><td class="num">${formatCents(item.subtotalCents)}</td></tr>`).join('');
   return `<table><thead><tr><th>Tier</th><th class="num">Active paid sales</th><th class="num">Rate / month</th><th class="num">Subtotal</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-function rateBreakdownLabel(item) {
-  const rates = item.rateBreakdown || [];
-  if (!rates.length) return '—';
-  if (rates.length === 1) return formatCents(rates[0].rateCents);
-  return `Mixed: ${rates.map(rate => `${rate.count} × ${formatCents(rate.rateCents)}`).join('; ')}`;
+function tierRateEntries(item) {
+  return item.rateBreakdown?.length
+    ? item.rateBreakdown
+    : item.count && Number.isFinite(Number(item.rateCents))
+      ? [{ rateCents: Number(item.rateCents), count: item.count }]
+      : [];
+}
+
+function tierRateLabel(item) {
+  const entries = tierRateEntries(item);
+  if (!entries.length) return '—';
+  if (entries.length === 1) return formatCents(entries[0].rateCents);
+  return `Mixed (${entries.map(entry => formatCents(entry.rateCents)).join(', ')})`;
+}
+
+function tierRateDetail(item) {
+  const entries = tierRateEntries(item);
+  if (!entries.length) return '0 sales';
+  const breakdown = entries.map(entry => `${entry.count} x ${formatCents(entry.rateCents)}`).join(', ');
+  return entries.length === 1 ? breakdown : `Mixed: ${breakdown}`;
+}
+
+function tierPdfRows(item) {
+  const entries = tierRateEntries(item);
+  if (entries.length <= 1) {
+    return [{ columns: [item.label, tierRateDetail(item), formatCents(item.subtotalCents)], widths: [150, 150, 100] }];
+  }
+  return entries.map(entry => ({
+    columns: [`${item.label} (mixed)`, `${entry.count} x ${formatCents(entry.rateCents)}`, formatCents(entry.subtotalCents)],
+    widths: [150, 150, 100],
+  }));
 }
 
 function sourceTable(sources) {
@@ -352,7 +373,7 @@ export function payoutReportPdf(report) {
     })),
     { rule: true },
     { text: 'By tier', size: 11, bold: true },
-    ...COMMISSION_TIERS.map(tier => report.totals.tiers[tier]).map(item => ({ columns: [item.label, rateBreakdownLabel(item), formatCents(item.subtotalCents)], widths: [150, 150, 100] })),
+    ...COMMISSION_TIERS.flatMap(tier => tierPdfRows(report.totals.tiers[tier])),
     { text: 'By source', size: 11, bold: true },
     ...[...REPORT_SOURCES, OTHER_SOURCE].map(source => report.totals.sources[source])
       .filter(item => REPORT_SOURCES.includes(item.source) || item.count)
@@ -375,7 +396,7 @@ export function payoutReportPdf(report) {
       { columns: ['Shop', 'Plan', 'Source', 'Commission'], widths: [220, 80, 120, 92], bold: true },
       ...entry.lines.map(line => ({ columns: [line.shopName, line.tierLabel, line.saleSourceLabel, formatCents(line.amountCents)], widths: [220, 80, 120, 92] })),
       { rule: true },
-      ...COMMISSION_TIERS.map(tier => entry.tiers[tier]).map(item => ({ columns: [item.label, rateBreakdownLabel(item), formatCents(item.subtotalCents)], widths: [150, 150, 100] })),
+      ...COMMISSION_TIERS.flatMap(tier => tierPdfRows(entry.tiers[tier])),
       { gap: 4 },
       ...REPORT_SOURCES.map(source => entry.sources[source]).map(item => ({ columns: [item.label, `${item.count} sales`, formatCents(item.amountCents)], widths: [150, 150, 100] })),
       ...(entry.sources[OTHER_SOURCE].count ? [{ columns: [entry.sources[OTHER_SOURCE].label, `${entry.sources[OTHER_SOURCE].count} sales`, formatCents(entry.sources[OTHER_SOURCE].amountCents)], widths: [150, 150, 100] }] : []),
@@ -406,26 +427,9 @@ function emailText(report, origin) {
 export async function notifyPayoutReport(env, report) {
   const to = String(env.AMBASSADOR_REPORT_EMAIL_TO || env.SUPPORT_EMAIL_TO || '').trim();
   const from = String(env.AMBASSADOR_REPORT_EMAIL_FROM || env.AUTH_EMAIL_FROM || DEFAULT_FROM).trim();
-  const current = await env.DB.prepare('SELECT email_status FROM ambassador_payout_reports WHERE period = ?')
-    .bind(report.period).first();
-  if (String(current?.email_status || '').startsWith('sent:')) return current.email_status;
-  const startedAt = new Date().toISOString();
-  const previousStatus = current?.email_status || '';
-  if (previousStatus.startsWith('sending:') && Date.now() - Date.parse(previousStatus.slice(8)) < 5 * 60 * 1000) {
-    return 'notification_in_progress';
-  }
-  const claimed = await env.DB.prepare(`
-    UPDATE ambassador_payout_reports SET email_status = ?
-    WHERE period = ? AND COALESCE(email_status, '') = ?
-  `).bind(`sending:${startedAt}`, report.period, previousStatus).run();
-  if (!Number(claimed?.meta?.changes)) {
-    const status = await env.DB.prepare('SELECT email_status FROM ambassador_payout_reports WHERE period = ?')
-      .bind(report.period).first();
-    return String(status?.email_status || '').startsWith('sent:') ? status.email_status : 'notification_in_progress';
-  }
   let status;
   if (typeof env.EMAIL?.send !== 'function') status = 'email_not_configured';
-  else if (!EMAIL_PATTERN.test(to) || !EMAIL_PATTERN.test(from)) status = 'invalid_address';
+  else if (!isEmailAddress(to) || !isEmailAddress(from)) status = 'invalid_address';
   else {
     try {
       await env.EMAIL.send({
@@ -447,6 +451,6 @@ export async function notifyPayoutReport(env, report) {
 export async function runScheduledAmbassadorPayouts(env, { now = new Date() } = {}) {
   const period = previousPeriod(now);
   const { report, created } = await generatePayoutReport(env, period, { generatedBy: 'cron', now });
-  const email = await notifyPayoutReport(env, report);
+  const email = payoutReportEmailSent(report) ? 'skipped_existing' : await notifyPayoutReport(env, report);
   return { period, created, grandTotalCents: report.totals.grandTotalCents, ambassadors: report.totals.ambassadorCount, email };
 }

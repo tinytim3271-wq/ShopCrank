@@ -30,11 +30,12 @@ import {
 } from './store.mjs';
 import {
   generateCommissionLedger,
+  commissionPagination,
+  commissionSummary,
   listCommissionRates,
   listCommissions,
   periodHasEnded,
   requirePeriod,
-  summarizeCommissionsFor,
   updateCommissionRates,
 } from './commissions.mjs';
 import {
@@ -150,26 +151,13 @@ async function ambassadorList(env) {
   }));
 }
 
-function commissionPage(page, pageSize) {
-  const parsedPage = Math.floor(Number(page) || 1);
-  const parsedSize = Math.floor(Number(pageSize) || 100);
-  return {
-    page: Math.max(1, parsedPage),
-    pageSize: Math.max(1, Math.min(200, parsedSize)),
-  };
-}
-
-async function statementFor(env, ambassadorId, { from = '', to = '', page = 1, pageSize = 100 } = {}) {
+async function statementFor(env, ambassadorId, { from = '', to = '', page = 1 } = {}) {
   const filters = { ambassadorId, from, to };
-  const pagination = commissionPage(page, pageSize);
-  const summary = await summarizeCommissionsFor(env, filters);
-  pagination.page = Math.min(pagination.page, Math.max(1, Math.ceil(summary.paginationTotal / pagination.pageSize)));
-  const lines = await listCommissions(env, filters, pagination);
-  return {
-    lines,
-    totals: summary.totals,
-    pagination: { ...pagination, total: summary.paginationTotal, pages: Math.ceil(summary.paginationTotal / pagination.pageSize) },
-  };
+  const [lines, summary] = await Promise.all([
+    listCommissions(env, { ...filters, page }),
+    commissionSummary(env, filters),
+  ]);
+  return { lines, totals: summary.totals, pagination: commissionPagination(summary.totalLines, page) };
 }
 
 function downloadName(period, extension) {
@@ -183,7 +171,9 @@ async function handlePayoutReports(request, env, context, rest) {
     if (request.method === 'POST') {
       const body = await requestJson(request);
       const { report, created } = await generatePayoutReport(env, requirePeriod(body.period), { generatedBy: context.email || context.userId });
-      const email = body.notify === true ? await notifyPayoutReport(env, report) : null;
+      const email = body.notify === true && !String(report.emailStatus || '').startsWith('sent:')
+        ? await notifyPayoutReport(env, report)
+        : null;
       return json({ created, email, report: await reportWithPayouts(env, report.period) }, created ? 201 : 200);
     }
     throw new HttpError(405, 'Method not allowed');
@@ -243,8 +233,7 @@ export async function handleAmbassadorAdmin(request, env, context, segments) {
         ...(await statementFor(env, ambassador.id, {
           from: url.searchParams.get('from') || '',
           to: url.searchParams.get('to') || '',
-          page: url.searchParams.get('page'),
-          pageSize: url.searchParams.get('pageSize'),
+          page: url.searchParams.get('page') || 1,
         })),
       });
     }
@@ -310,15 +299,12 @@ export async function handleAmbassadorAdmin(request, env, context, segments) {
   if (section === 'ambassador-commissions') {
     if (!rest[0] && request.method === 'GET') {
       const filters = Object.fromEntries(['period', 'ambassadorId', 'status', 'from', 'to'].map(key => [key, url.searchParams.get(key) || '']));
-      const pagination = commissionPage(url.searchParams.get('page'), url.searchParams.get('pageSize'));
-      const summary = await summarizeCommissionsFor(env, filters);
-      pagination.page = Math.min(pagination.page, Math.max(1, Math.ceil(summary.paginationTotal / pagination.pageSize)));
-      const lines = await listCommissions(env, filters, pagination);
-      return json({
-        lines,
-        totals: summary.totals,
-        pagination: { ...pagination, total: summary.paginationTotal, pages: Math.ceil(summary.paginationTotal / pagination.pageSize) },
-      });
+      const page = url.searchParams.get('page') || 1;
+      const [lines, summary] = await Promise.all([
+        listCommissions(env, { ...filters, page }),
+        commissionSummary(env, filters),
+      ]);
+      return json({ lines, totals: summary.totals, pagination: commissionPagination(summary.totalLines, page) });
     }
     if (rest[0] === 'generate' && request.method === 'POST') {
       const body = await requestJson(request);
@@ -404,10 +390,7 @@ export async function handleAmbassadorPublic(request, env, segments, { verifyTur
     if (!ambassador || !email || String(ambassador.email).toLowerCase() !== email) {
       throw new HttpError(404, 'No ambassador matches that code and email');
     }
-    const { lines, totals, pagination } = await statementFor(env, ambassador.id, {
-      page: body.page,
-      pageSize: body.pageSize,
-    });
+    const { lines, totals, pagination } = await statementFor(env, ambassador.id, { page: body.page || 1 });
     return json({
       ambassador: {
         ambassadorNumber: ambassador.ambassador_number,

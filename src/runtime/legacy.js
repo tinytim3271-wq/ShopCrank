@@ -6129,7 +6129,7 @@ platformShell = function (content) {
 };
 async function loadAmbassadorData(patch = {}) {
   const loadId = ++ambassadorLoadId;
-  const next = { tab: "ambassadors", salesFilters: {}, ledgerPeriod: Ambassadors.lastMonth(), ledgerPage: 1, ...(ambassadorData || {}), ...patch, loading: false };
+  const next = { tab: "ambassadors", salesFilters: {}, ledgerPeriod: Ambassadors.lastMonth(), ...(ambassadorData || {}), ...patch, loading: false };
   try {
     const { ambassadors } = await platformApi("/admin/ambassadors");
     if (loadId !== ambassadorLoadId) return;
@@ -6141,7 +6141,7 @@ async function loadAmbassadorData(patch = {}) {
     if (next.tab === "commissions") {
       next.rates = (await platformApi("/admin/ambassador-commission-rates")).rates;
       if (loadId !== ambassadorLoadId) return;
-      next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}&page=${encodeURIComponent(next.ledgerPage)}`);
+      next.commissions = await platformApi(`/admin/ambassador-commissions?period=${encodeURIComponent(next.ledgerPeriod)}&page=${encodeURIComponent(next.ledgerPage || 1)}`);
       if (loadId !== ambassadorLoadId) return;
     }
     if (next.tab === "reports") Object.assign(next, await platformApi("/admin/ambassador-payout-reports"));
@@ -6182,15 +6182,6 @@ function openAmbassadorForm(ambassador = null) {
     try { await platformApi(`/admin/ambassadors/${encodeURIComponent(ambassador.id)}`, { method: "DELETE" }); closeModal(); toast("Ambassador deleted"); void loadAmbassadorData() } catch (requestError) { toast(requestError.message) }
   });
 }
-async function openAmbassadorStatement(ambassadorId, page = 1) {
-  try {
-    const statement = await platformApi(`/admin/ambassadors/${encodeURIComponent(ambassadorId)}/statement?page=${encodeURIComponent(page)}`);
-    showModal(Ambassadors.statementHtml(statement, { escapeHtml, icon }));
-    document.querySelectorAll("[data-statement-page]").forEach(button => button.addEventListener("click", () => {
-      void openAmbassadorStatement(ambassadorId, Number(button.dataset.statementPage));
-    }));
-  } catch (error) { toast(error.message) }
-}
 async function openSaleCredit(shopId) {
   const sale = (ambassadorData?.sales || []).find(item => item.shopId === shopId);
   if (!sale) return;
@@ -6202,8 +6193,8 @@ async function openSaleCredit(shopId) {
     const error = document.querySelector("#amb-credit-error"), data = readFormValues(form);
     error.hidden = true;
     try {
-      const soldBy = Ambassadors.soldByForAmbassadorChange(sale.ambassadorId || "", data.ambassadorId || "", data.soldBy, sale.soldBy);
-      await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/attribution`, { method: "POST", body: JSON.stringify({ ambassadorId: data.ambassadorId || null, saleSource: data.saleSource, soldBy, reason: data.reason }) });
+      if ((data.ambassadorId || "") !== (sale.ambassadorId || "") && data.soldBy === sale.soldBy) data.soldBy = "";
+      await platformApi(`/admin/ambassador-sales/${encodeURIComponent(shopId)}/attribution`, { method: "POST", body: JSON.stringify({ ambassadorId: data.ambassadorId || null, saleSource: data.saleSource, soldBy: data.soldBy, reason: data.reason }) });
       closeModal();
       toast("Sale credit updated");
       void loadAmbassadorData();
@@ -6263,7 +6254,16 @@ function bindAmbassadors() {
   document.querySelectorAll("[data-amb-tab]").forEach(button => button.addEventListener("click", () => { ambassadorData = { ...ambassadorData, tab: button.dataset.ambTab, loading: true }; render(); void loadAmbassadorData({ tab: button.dataset.ambTab }) }));
   document.querySelector("#amb-new")?.addEventListener("click", () => openAmbassadorForm());
   document.querySelectorAll("[data-amb-edit]").forEach(button => button.addEventListener("click", () => openAmbassadorForm(ambassadorData.ambassadors.find(item => item.id === button.dataset.ambEdit))));
-  document.querySelectorAll("[data-amb-statement]").forEach(button => button.addEventListener("click", () => { void openAmbassadorStatement(button.dataset.ambStatement) }));
+  const openAmbassadorStatement = async (id, page = 1) => {
+    const statement = await platformApi(`/admin/ambassadors/${encodeURIComponent(id)}/statement?page=${encodeURIComponent(page)}`);
+    showModal(Ambassadors.statementHtml(statement, { escapeHtml, icon }));
+    document.querySelectorAll("[data-statement-page]").forEach(button => button.addEventListener("click", () => {
+      void openAmbassadorStatement(id, Number(button.dataset.statementPage));
+    }));
+  };
+  document.querySelectorAll("[data-amb-statement]").forEach(button => button.addEventListener("click", async () => {
+    try { await openAmbassadorStatement(button.dataset.ambStatement) } catch (error) { toast(error.message) }
+  }));
   document.querySelector("#amb-sales-filters")?.addEventListener("submit", event => { event.preventDefault(); void loadAmbassadorData({ salesFilters: readFormValues(event.target) }) });
   document.querySelectorAll("[data-sale-credit]").forEach(button => button.addEventListener("click", () => { void openSaleCredit(button.dataset.saleCredit) }));
   document.querySelector("#amb-rates-form")?.addEventListener("submit", async event => {
@@ -6272,11 +6272,10 @@ function bindAmbassadors() {
     try { await platformApi("/admin/ambassador-commission-rates", { method: "PUT", body: JSON.stringify({ rates }) }); toast("Commission rates saved"); void loadAmbassadorData() } catch (error) { toast(error.message) }
   });
   document.querySelector("#amb-ledger-form")?.addEventListener("submit", event => { event.preventDefault(); void loadAmbassadorData({ ledgerPeriod: readFormValues(event.target).period, ledgerPage: 1 }) });
-  document.querySelector("#amb-ledger-previous")?.addEventListener("click", () => { void loadAmbassadorData({ ledgerPage: Math.max(1, (ambassadorData?.ledgerPage || 1) - 1) }) });
-  document.querySelector("#amb-ledger-next")?.addEventListener("click", () => { void loadAmbassadorData({ ledgerPage: (ambassadorData?.ledgerPage || 1) + 1 }) });
+  document.querySelectorAll("[data-ledger-page]").forEach(button => button.addEventListener("click", () => { void loadAmbassadorData({ ledgerPage: Number(button.dataset.ledgerPage) }) }));
   document.querySelector("#amb-ledger-generate")?.addEventListener("click", async () => {
     const period = document.querySelector("#amb-ledger-form")?.elements.period.value;
-    try { const result = await platformApi("/admin/ambassador-commissions/generate", { method: "POST", body: JSON.stringify({ period }) }); toast(result.frozen ? "That month is frozen in a payout report" : `${result.created} commission line${result.created === 1 ? "" : "s"} added`); void loadAmbassadorData({ ledgerPeriod: period }) } catch (error) { toast(error.message) }
+    try { const result = await platformApi("/admin/ambassador-commissions/generate", { method: "POST", body: JSON.stringify({ period }) }); toast(result.frozen ? "That month is frozen in a payout report" : `${result.created} commission line${result.created === 1 ? "" : "s"} added`); void loadAmbassadorData({ ledgerPeriod: period, ledgerPage: 1 }) } catch (error) { toast(error.message) }
   });
   document.querySelector("#amb-report-form")?.addEventListener("submit", event => { event.preventDefault(); void openPayoutReport(readFormValues(event.target).period) });
   document.querySelectorAll("[data-report-view]").forEach(button => button.addEventListener("click", () => { void openPayoutReport(button.dataset.reportView) }));
