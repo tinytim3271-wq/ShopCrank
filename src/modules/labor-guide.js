@@ -175,6 +175,40 @@ export function mapWebLaborEstimateToEstimateLine(estimate = {}, options = {}, i
   };
 }
 
+export const OPEN_LABOR_LABEL = 'Open Labor Project — not book time';
+
+/** One Open Labor Project result → an estimate labor line, labeled with its confidence and range. */
+export function mapOpenLaborToEstimateLine(result = {}, options = {}, index = 0) {
+  const hours = Math.max(0, Number(result.hours) || 0);
+  const laborRate = Math.max(0, Number(options.laborRate) || 0);
+  const confidence = result.confidence === 'high' ? 'high confidence' : 'estimated';
+  const range = result.lowRange != null && result.highRange != null ? `, range ${result.lowRange}–${result.highRange} h` : '';
+  return {
+    id: `open-labor-${index + 1}`,
+    type: 'labor',
+    description: String(result.description || result.job || 'Labor'),
+    notes: `${OPEN_LABOR_LABEL} (${confidence}${range})`,
+    hours,
+    laborRate,
+    quantity: hours,
+    unitPrice: laborRate,
+    total: Math.round(hours * laborRate * 100) / 100,
+    approvalStatus: 'pending',
+    source: 'open_labor',
+    laborGuide: {
+      provider: 'open_labor',
+      label: OPEN_LABOR_LABEL,
+      confidence: result.confidence || 'estimated',
+      verified: result.confidence === 'high',
+      lowRange: result.lowRange ?? null,
+      highRange: result.highRange ?? null,
+      jobSlug: result.jobSlug || null,
+      engine: result.engine || null,
+      notBookTime: true,
+    },
+  };
+}
+
 export function buildLaborWebSearchQuery({
   year, make, model, engine, operation, keyword,
 } = {}) {
@@ -305,6 +339,10 @@ const LICENSE_LABELS = Object.freeze({
 
 /** Banner shown above book-time results so estimates show where the hours came from. */
 export function laborBookTimeBanner(result = {}, escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, '')) {
+  if (result.provider === 'open_labor') {
+    const high = (result.lines || []).every(line => line.laborGuide?.confidence === 'high');
+    return `<div class="messaging-status ${high ? 'ready' : 'idle'}"><div><strong>${escapeHtml(OPEN_LABOR_LABEL)}</strong><span>${high ? 'High confidence: checked against OEM or Mitchell/Motor data.' : 'Estimated times (not checked against a book guide). Confirm before quoting.'} Source: openlaborproject.com.</span></div></div>`;
+  }
   if (!result.bookTime) return '';
   const label = result.label || `${PROVIDER_LABELS[result.provider] || 'Labor guide'} book time`;
   const via = LICENSE_LABELS[result.licensedBy] || '';
@@ -348,7 +386,7 @@ export function laborGuidePanelHtml(account = {}, { canSave = false, escapeHtml 
       <label>Labor rate<input name="laborRate" type="number" step=".01" min="0" value="${escapeHtml(account.defaultLaborRate || '')}"/></label>
       <button class="primary" type="submit">${icon('search', 14)} Look up labor times</button>
     </form>
-    <p class="ops-note">Connected book providers return guide times. Otherwise results are labeled <b>${escapeHtml(WEB_ESTIMATE_LABEL)}</b> with source links, or “no estimate found”.</p>
+    <p class="ops-note">Connected book providers return guide times. Otherwise Open Labor Project reference times (labeled <b>${escapeHtml(OPEN_LABOR_LABEL)}</b>, with their confidence) are used when ShopCrank has a key, then a web average labeled <b>${escapeHtml(WEB_ESTIMATE_LABEL)}</b>, or “no estimate found”.</p>
     <form id="manual-labor-form" class="form-grid">
       <label class="full">Manual labor description<input name="description" required placeholder="Diagnose noise"/></label>
       <label>Hours<input name="hours" type="number" step=".1" min="0" value="1" required/></label>

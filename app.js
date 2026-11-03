@@ -2621,6 +2621,10 @@
     };
   }
   function laborBookTimeBanner(result = {}, escapeHtml4 = (value2) => String(value2 ?? "").replace(/[&<>"']/g, "")) {
+    if (result.provider === "open_labor") {
+      const high = (result.lines || []).every((line) => line.laborGuide?.confidence === "high");
+      return `<div class="messaging-status ${high ? "ready" : "idle"}"><div><strong>${escapeHtml4(OPEN_LABOR_LABEL)}</strong><span>${high ? "High confidence: checked against OEM or Mitchell/Motor data." : "Estimated times (not checked against a book guide). Confirm before quoting."} Source: openlaborproject.com.</span></div></div>`;
+    }
     if (!result.bookTime) return "";
     const label2 = result.label || `${PROVIDER_LABELS[result.provider] || "Labor guide"} book time`;
     const via = LICENSE_LABELS[result.licensedBy] || "";
@@ -2656,7 +2660,7 @@
       <label>Labor rate<input name="laborRate" type="number" step=".01" min="0" value="${escapeHtml4(account.defaultLaborRate || "")}"/></label>
       <button class="primary" type="submit">${icon2("search", 14)} Look up labor times</button>
     </form>
-    <p class="ops-note">Connected book providers return guide times. Otherwise results are labeled <b>${escapeHtml4(WEB_ESTIMATE_LABEL)}</b> with source links, or \u201Cno estimate found\u201D.</p>
+    <p class="ops-note">Connected book providers return guide times. Otherwise Open Labor Project reference times (labeled <b>${escapeHtml4(OPEN_LABOR_LABEL)}</b>, with their confidence) are used when ShopCrank has a key, then a web average labeled <b>${escapeHtml4(WEB_ESTIMATE_LABEL)}</b>, or \u201Cno estimate found\u201D.</p>
     <form id="manual-labor-form" class="form-grid">
       <label class="full">Manual labor description<input name="description" required placeholder="Diagnose noise"/></label>
       <label>Hours<input name="hours" type="number" step=".1" min="0" value="1" required/></label>
@@ -2671,7 +2675,7 @@
     ${search}
   </section>`;
   }
-  var LABOR_GUIDE_PROVIDERS, BOOK_LABOR_PROVIDERS, WEB_ESTIMATE_LABEL, PROVIDER_LABELS, LICENSE_LABELS;
+  var LABOR_GUIDE_PROVIDERS, BOOK_LABOR_PROVIDERS, WEB_ESTIMATE_LABEL, PROVIDER_LABELS, OPEN_LABOR_LABEL, LICENSE_LABELS;
   var init_labor_guide = __esm({
     "src/modules/labor-guide.js"() {
       LABOR_GUIDE_PROVIDERS = Object.freeze(["manual", "motor", "alldata", "shopkey"]);
@@ -2683,6 +2687,7 @@
         alldata: "ALLDATA labor guide",
         shopkey: "ShopKey labor guide"
       });
+      OPEN_LABOR_LABEL = "Open Labor Project \u2014 not book time";
       LICENSE_LABELS = Object.freeze({
         partstech: "through the shop's PartsTech account",
         shop: "with the shop's own license",
@@ -11269,7 +11274,7 @@ ${lines.join("\n")}`, raw: rawResponses.join("\n\n") };
           const rows = (result.lines || []).map((line) => `<tr><td>${escapeHtml(line.description)}</td><td>${line.hours}</td><td>${money4(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
           if (panel) panel.innerHTML = `<div class="messaging-status idle"><div><strong>web estimate \u2014 not book time</strong><span>Average ${escapeHtml(String(result.averageHours))} hrs from ${escapeHtml(String(result.sourceCount || 0))} source(s). Not ALLDATA / MOTOR / ShopKey book time.</span></div></div><table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows}</tbody></table><ol class="ops-note">${sources}</ol>`;
         } else {
-          const rows = (result.lines || []).map((line) => `<tr><td>${escapeHtml(line.description)}</td><td>${line.hours}</td><td>${money4(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
+          const rows = (result.lines || []).map((line) => `<tr><td>${escapeHtml(line.description)}${line.source === "open_labor" ? `<small>${escapeHtml(line.notes)}</small>` : ""}</td><td>${line.hours}</td><td>${money4(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
           if (panel) panel.innerHTML = `${laborBookTimeBanner(result, escapeHtml)}<table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No operations returned</td></tr>"}</tbody></table>`;
         }
         window.__SHOP_CRANK_LABOR_LINES__ = Object.fromEntries((result.lines || []).map((line) => [line.id, line]));
@@ -14301,7 +14306,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
           row.dataset.laborVerified = labor.verified ? "1" : "0";
           row.querySelector(".labor-source").innerHTML = `<span class="badge ${labor.verified ? "paid" : "estimate"}">${labor.verified ? "Verified" : "Unverified"}</span> ${escapeHtml(row.dataset.laborSource)}`;
           refreshEstimateEditor(root);
-          toast(labor.verified ? `Verified ${labor.provider} labor time applied` : "No licensed result; keeping the shop estimate unverified");
+          toast(labor.verified ? `Verified ${labor.provider} labor time applied` : labor.hours != null ? `${labor.source || "Reference"} labor time applied (${labor.hours} h): not book time, confirm before quoting` : "No licensed result; keeping the shop estimate unverified");
         } catch (error) {
           toast(error.message);
         } finally {

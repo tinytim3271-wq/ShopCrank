@@ -5,6 +5,7 @@ import { executeAssistantTool, buildPersonaSession } from '../src/assistant/tool
 import { putShopEntity, putShopSetting } from '../src/shop-settings-store.mjs';
 import { createOnboarding, saveOnboarding } from '../src/onboarding/store.mjs';
 import { renderFrontDeskTemplate } from '../../src/modules/front-desk-questionnaire.js';
+import { checkToolOutput } from '../src/health/schema.mjs';
 
 const tech = (env, name, args = {}, role = 'technician') => executeAssistantTool(env, { shopId: 'shop-1', persona: 'tech_assistant', role, name, args });
 const front = (env, name, args = {}) => executeAssistantTool(env, { shopId: 'shop-1', persona: 'front_desk', name, args, callerPhone: '+18065550123' });
@@ -58,6 +59,37 @@ test('labor tool returns only finite verified numeric hours from a configured gu
   }, 'lookup_labor_time', { operation: 'front brakes' });
   assert.equal(result.source, 'licensed_labor_guide');
   assert.deepEqual(result.operations.map(item => item.hours), [2.5]);
+});
+
+test('labor tool preserves Open Labor reference labeling and metadata without calling it book time', async (t) => {
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = new URL(input);
+    if (url.searchParams.has('job')) {
+      return Response.json({ data: { engines: [{ engine: '2.5L I4', laborTimes: [
+        { job: 'Starter', jobSlug: 'starter', hours: 2.5, lowRange: 2, highRange: 3, confidence: 'high' },
+      ] }] } });
+    }
+    return Response.json({ data: { engines: [{ engine: '2.5L I4', laborTimes: [
+      { job: 'Starter', jobSlug: 'starter' },
+    ] }] } });
+  });
+  const result = await tech({ DB: createD1(), OPEN_LABOR_API_KEY: 'test-key' }, 'lookup_labor_time', {
+    operation: 'starter',
+    vehicle: { year: '2018', make: 'Toyota', model: 'Camry' },
+  });
+  assert.equal(result.source, 'open_labor_reference');
+  assert.equal(result.label, 'Open Labor Project — not book time');
+  assert.equal(result.bookTime, false);
+  assert.deepEqual(result.operations, [{
+    operation: 'Starter',
+    hours: 2.5,
+    source: 'Open Labor Project — not book time (high confidence, range 2–3 h)',
+    confidence: 'high',
+    lowRange: 2,
+    highRange: 3,
+    bookTime: false,
+  }]);
+  assert.equal(checkToolOutput('lookup_labor_time', result).kind, 'ok');
 });
 
 test('financial report uses payment receivedAt and payroll reads payrollentries', async () => {

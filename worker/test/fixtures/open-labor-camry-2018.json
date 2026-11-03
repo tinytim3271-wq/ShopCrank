@@ -1,0 +1,423 @@
+{
+ "data": {
+  "make": "Toyota",
+  "model": "Camry",
+  "engines": [
+   {
+    "vehicleId": "fffc5f08-1371-4bce-b188-017161f3303a",
+    "engine": "2.5L I4",
+    "engineSlug": "2.5l-i4",
+    "drivetrain": "fwd",
+    "yearRange": "2018-2018",
+    "laborTimes": [
+     {
+      "job": "AC Compressor",
+      "jobSlug": "ac-compressor",
+      "category": "hvac",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Alternator",
+      "jobSlug": "alternator",
+      "category": "electrical",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Drum - Rear",
+      "jobSlug": "brake-drum-rear",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads and Rotors - Front",
+      "jobSlug": "brake-pads-rotors-front",
+      "category": "brakes",
+      "hours": 1.8,
+      "lowRange": 1.5,
+      "highRange": 2.2,
+      "confidence": "high"
+     },
+     {
+      "job": "Brake Pads - Front",
+      "jobSlug": "brake-pads-front",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads - Rear",
+      "jobSlug": "brake-pads-rear",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Front Struts - Pair",
+      "jobSlug": "front-struts-pair",
+      "category": "suspension",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Noise Diagnosis",
+      "jobSlug": "noise-diagnosis",
+      "category": "maintenance",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "O2 Sensor - Upstream",
+      "jobSlug": "o2-sensor-upstream",
+      "category": "exhaust",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Seat Belt",
+      "jobSlug": "seat-belt",
+      "category": "interior",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Starter",
+      "jobSlug": "starter",
+      "category": "electrical",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Timing Chain",
+      "jobSlug": "timing-chain",
+      "category": "engine",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     }
+    ],
+    "engineCode": "A25A-FKS",
+    "generation": {
+     "label": "8th gen (V80)",
+     "chassisCode": "V80",
+     "yearStart": 2018,
+     "yearEnd": 2026
+    }
+   },
+   {
+    "vehicleId": "022c5724-4124-4cf1-895a-7d2d606d466b",
+    "engine": "2.5L I4 Hybrid",
+    "engineSlug": "2.5l-i4-hybrid",
+    "drivetrain": "fwd",
+    "yearRange": "2018-2018",
+    "laborTimes": [
+     {
+      "job": "AC Compressor",
+      "jobSlug": "ac-compressor",
+      "category": "hvac",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Alternator",
+      "jobSlug": "alternator",
+      "category": "electrical",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Drum - Rear",
+      "jobSlug": "brake-drum-rear",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads and Rotors - Front",
+      "jobSlug": "brake-pads-rotors-front",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads - Front",
+      "jobSlug": "brake-pads-front",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads - Rear",
+      "jobSlug": "brake-pads-rear",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Front Struts - Pair",
+      "jobSlug": "front-struts-pair",
+      "category": "suspension",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Noise Diagnosis",
+      "jobSlug": "noise-diagnosis",
+      "category": "maintenance",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "O2 Sensor - Upstream",
+      "jobSlug": "o2-sensor-upstream",
+      "category": "exhaust",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Seat Belt",
+      "jobSlug": "seat-belt",
+      "category": "interior",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Starter",
+      "jobSlug": "starter",
+      "category": "electrical",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Timing Chain",
+      "jobSlug": "timing-chain",
+      "category": "engine",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     }
+    ],
+    "engineCode": "A25A-FXS",
+    "generation": {
+     "label": "8th gen (V80)",
+     "chassisCode": "V80",
+     "yearStart": 2018,
+     "yearEnd": 2026
+    }
+   },
+   {
+    "vehicleId": "99791a7e-a034-49e9-9f3b-b53aa90f8b77",
+    "engine": "3.5L V6",
+    "engineSlug": "3.5l-v6",
+    "drivetrain": "fwd",
+    "yearRange": "2018-2024",
+    "laborTimes": [
+     {
+      "job": "AC Compressor",
+      "jobSlug": "ac-compressor",
+      "category": "hvac",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Alternator",
+      "jobSlug": "alternator",
+      "category": "electrical",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Drum - Rear",
+      "jobSlug": "brake-drum-rear",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads and Rotors - Front",
+      "jobSlug": "brake-pads-rotors-front",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads - Front",
+      "jobSlug": "brake-pads-front",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Brake Pads - Rear",
+      "jobSlug": "brake-pads-rear",
+      "category": "brakes",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Front Struts - Pair",
+      "jobSlug": "front-struts-pair",
+      "category": "suspension",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Noise Diagnosis",
+      "jobSlug": "noise-diagnosis",
+      "category": "maintenance",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "O2 Sensor - Upstream",
+      "jobSlug": "o2-sensor-upstream",
+      "category": "exhaust",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Seat Belt",
+      "jobSlug": "seat-belt",
+      "category": "interior",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Starter",
+      "jobSlug": "starter",
+      "category": "electrical",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     },
+     {
+      "job": "Timing Chain",
+      "jobSlug": "timing-chain",
+      "category": "engine",
+      "hours": null,
+      "lowRange": null,
+      "highRange": null,
+      "confidence": null,
+      "locked": true
+     }
+    ],
+    "engineCode": "2GR-FKS",
+    "generation": {
+     "label": "8th gen (V80)",
+     "chassisCode": "V80",
+     "yearStart": 2018,
+     "yearEnd": 2026
+    }
+   }
+  ]
+ },
+ "meta": {
+  "engineCount": 3,
+  "region": "US",
+  "freeTier": {
+   "locked": true
+  }
+ },
+ "error": null
+}

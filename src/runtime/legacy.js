@@ -987,7 +987,7 @@ function bindShopOperations() { document.querySelector("#open-oem-programming")?
         const rows = (result.lines || []).map(line => `<tr><td>${escapeHtml(line.description)}</td><td>${line.hours}</td><td>${money(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
         if (panel) panel.innerHTML = `<div class="messaging-status idle"><div><strong>web estimate — not book time</strong><span>Average ${escapeHtml(String(result.averageHours))} hrs from ${escapeHtml(String(result.sourceCount || 0))} source(s). Not ALLDATA / MOTOR / ShopKey book time.</span></div></div><table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows}</tbody></table><ol class="ops-note">${sources}</ol>`;
       } else {
-        const rows = (result.lines || []).map(line => `<tr><td>${escapeHtml(line.description)}</td><td>${line.hours}</td><td>${money(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
+        const rows = (result.lines || []).map(line => `<tr><td>${escapeHtml(line.description)}${line.source === "open_labor" ? `<small>${escapeHtml(line.notes)}</small>` : ""}</td><td>${line.hours}</td><td>${money(line.total)}</td><td><button type="button" class="mini-action" data-add-labor-line="${escapeAttr(line.id)}">Add</button></td></tr>`).join("");
         if (panel) panel.innerHTML = `${laborBookTimeBanner(result, escapeHtml)}<table><thead><tr><th>Operation</th><th>Hours</th><th>Total</th><th></th></tr></thead><tbody>${rows || "<tr><td colspan=4>No operations returned</td></tr>"}</tbody></table>`;
       }
       window.__SHOP_CRANK_LABOR_LINES__ = Object.fromEntries((result.lines || []).map(line => [line.id, line]));
@@ -2782,7 +2782,7 @@ function bindEstimateEditor(root, options) {
         row.dataset.laborVerified = labor.verified ? "1" : "0";
         row.querySelector(".labor-source").innerHTML = `<span class="badge ${labor.verified ? "paid" : "estimate"}">${labor.verified ? "Verified" : "Unverified"}</span> ${escapeHtml(row.dataset.laborSource)}`;
         refreshEstimateEditor(root);
-        toast(labor.verified ? `Verified ${labor.provider} labor time applied` : "No licensed result; keeping the shop estimate unverified");
+        toast(labor.verified ? `Verified ${labor.provider} labor time applied` : labor.hours != null ? `${labor.source || "Reference"} labor time applied (${labor.hours} h): not book time, confirm before quoting` : "No licensed result; keeping the shop estimate unverified");
       } catch (error) {
         toast(error.message);
       } finally {
