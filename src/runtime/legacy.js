@@ -3287,7 +3287,8 @@ openOrder = function (id) {
     if (!confirm(`Delete ${order.id}?${keepsInvoice} This cannot be undone.`)) return;
     clearTimeout(jobCardTimer);
     jobCardDirty = false;
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    button.disabled = true;
     try {
       await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
       state.orders = state.orders.filter(item => item !== order);
@@ -3298,7 +3299,7 @@ openOrder = function (id) {
       toast(`${order.id} deleted`);
       render();
     } catch (error) {
-      event.currentTarget.disabled = false;
+      button.disabled = false;
       toast(error.message || "Work order could not be deleted");
     }
   });
