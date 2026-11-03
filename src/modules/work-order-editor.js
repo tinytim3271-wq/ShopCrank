@@ -1,8 +1,11 @@
+import { isArchived } from './record-retention.js';
+
 export function customersWithSelected(customers = [], selected = '') {
   const records = Array.isArray(customers) ? customers : [];
   const selectedName = String(selected || '');
-  if (!selectedName || records.some(customer => customer?.name === selectedName)) return records;
-  return [{ name: selectedName }, ...records];
+  const available = records.filter(customer => !isArchived(customer) || customer?.name === selectedName);
+  if (!selectedName || available.some(customer => customer?.name === selectedName)) return available;
+  return [{ name: selectedName }, ...available];
 }
 
 export function customLaborDraft(id, laborRate) {

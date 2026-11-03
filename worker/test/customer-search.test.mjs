@@ -55,6 +55,7 @@ test('customer name search is shop scoped, tokenized, bounded, and order indepen
   const statement = env.DB.statements[0];
 
   assert.match(statement.sql, /shop_id = \?/);
+  assert.match(statement.sql, /COALESCE\(trim\(json_extract\(data_json, '\$\.archivedAt'\)\), ''\) = ''/);
   assert.match(statement.sql, /LIMIT \?/);
   assert.deepEqual(statement.args.slice(0, 3), ['shop-42', '%gall%', '%isaac%']);
   assert.equal(statement.args.at(-1), 'shop-42');

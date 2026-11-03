@@ -14,6 +14,7 @@ import {
 const customers = [
   { id: 'customer-1', name: 'Isaac Gallardo', phone: '(555) 111-2222', email: 'isaac@example.com' },
   { id: 'customer-2', name: 'Gail Isaacson', phone: '555-999-1000', email: 'gail@example.com' },
+  { id: 'customer-archived', name: 'Archived Gallardo', phone: '555-333-4444', email: 'archived@example.com', archivedAt: '2026-10-31T12:00:00.000Z' },
 ];
 const vehicles = [
   { id: 'vehicle-1', customerId: 'customer-1', year: 2022, make: 'Ford', model: 'F-150' },
@@ -33,6 +34,7 @@ test('local fallback partially matches any name token in either order', () => {
   assert.deepEqual(localCustomerMatches('isa gall', customers, vehicles).map(item => item.id), ['customer-1']);
   assert.equal(localCustomerMatches('ga', customers, vehicles).length, 0);
   assert.equal(localCustomerMatches('gall', customers, vehicles)[0].recentVehicle.label, '2022 Ford F-150');
+  assert.deepEqual(localCustomerMatches('archived', customers, vehicles), []);
 });
 
 test('likely duplicate detection normalizes phone and email', () => {
@@ -52,6 +54,7 @@ test('likely duplicate detection normalizes phone and email', () => {
     ).length,
     1,
   );
+  assert.deepEqual(likelyDuplicateCustomers({ phone: '555-333-4444' }, customers, vehicles), []);
 });
 
 test('customer contact fields keep phone, email, and billing address', () => {

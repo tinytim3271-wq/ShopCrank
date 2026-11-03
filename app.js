@@ -5086,6 +5086,128 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/record-retention.js
+  function canDeleteRecords(role) {
+    return RECORD_DELETE_ROLES.includes(String(role || ""));
+  }
+  function present(value2) {
+    return value2 !== void 0 && value2 !== null && String(value2).trim() !== "";
+  }
+  function intrinsicFinancialReasons(type, record = {}) {
+    if (ALWAYS_ARCHIVE_TYPES.has(type)) return [`${TYPE_LABELS[type] || "record"} is a financial record`];
+    const reasons = [];
+    const status = String(record.status || "").toLowerCase();
+    if (type === "orders" && ["invoiced", "paid"].includes(status)) reasons.push("work order has been invoiced");
+    if (type === "estimates" && (status === "approved" || present(record.signatureKey) || present(record.signature))) {
+      reasons.push("estimate carries a signed customer approval");
+    }
+    return reasons;
+  }
+  function linkLookups(type, record = {}) {
+    const resolve = (specs) => (specs || []).filter((spec) => present(record[spec.key])).map((spec) => ({ ...spec, value: String(record[spec.key]) }));
+    return { financial: resolve(FINANCIAL_LINKS[type]), blocking: resolve(BLOCKING_LINKS[type]) };
+  }
+  function countLabel(count, noun) {
+    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  }
+  function deletionPlan(type, record = {}, linkCounts = {}) {
+    const lookups = linkLookups(type, record);
+    const tally = (specs) => {
+      const byType = /* @__PURE__ */ new Map();
+      for (const spec of specs) {
+        const count = Number(linkCounts[`${spec.type}.${spec.field}`] || 0);
+        if (count > 0) byType.set(spec.type, Math.max(byType.get(spec.type) || 0, count));
+      }
+      return [...byType].map(([linkType, count]) => countLabel(count, LINK_LABELS[linkType] || "record"));
+    };
+    const financial = [...intrinsicFinancialReasons(type, record), ...tally(lookups.financial).map((item) => `linked to ${item}`)];
+    const label2 = TYPE_LABELS[type] || "record";
+    if (financial.length) {
+      return {
+        action: "archive",
+        reasons: financial,
+        message: `This ${label2} has financial history, so it will be archived instead of deleted. It stays in reports and can be found under archived records.`
+      };
+    }
+    const blocking = tally(lookups.blocking);
+    if (blocking.length) {
+      return {
+        action: "blocked",
+        reasons: blocking.map((item) => `still has ${item}`),
+        message: `Remove this ${label2}'s ${blocking.join(", ")} first.`
+      };
+    }
+    return { action: "delete", reasons: [], message: `This ${label2} has no financial history and will be permanently deleted.` };
+  }
+  function countLinksInCollections(type, record, collections = {}) {
+    const { financial, blocking } = linkLookups(type, record);
+    const counts = {};
+    for (const spec of [...financial, ...blocking]) {
+      const rows = Array.isArray(collections[spec.type]) ? collections[spec.type] : [];
+      counts[`${spec.type}.${spec.field}`] = rows.filter((row) => present(row?.[spec.field]) && String(row[spec.field]) === spec.value).length;
+    }
+    return counts;
+  }
+  function isArchived(record) {
+    return present(record?.archivedAt);
+  }
+  var RECORD_DELETE_ROLES, ALWAYS_ARCHIVE_TYPES, TYPE_LABELS, LINK_LABELS, FINANCIAL_LINKS, BLOCKING_LINKS;
+  var init_record_retention = __esm({
+    "src/modules/record-retention.js"() {
+      RECORD_DELETE_ROLES = Object.freeze(["owner", "admin"]);
+      ALWAYS_ARCHIVE_TYPES = /* @__PURE__ */ new Set(["invoices", "payments", "expenses", "payrollentries", "purchases"]);
+      TYPE_LABELS = {
+        customers: "customer",
+        vehicles: "vehicle",
+        orders: "work order",
+        invoices: "invoice",
+        estimates: "estimate",
+        payments: "payment",
+        expenses: "expense",
+        payrollentries: "payroll entry",
+        purchases: "purchase",
+        employees: "employee"
+      };
+      LINK_LABELS = {
+        invoices: "invoice",
+        payments: "payment",
+        orders: "work order",
+        estimates: "estimate",
+        payrollentries: "payroll entry",
+        vehicles: "vehicle"
+      };
+      FINANCIAL_LINKS = {
+        customers: [
+          { type: "invoices", field: "customer", key: "name" },
+          { type: "payments", field: "customer", key: "name" },
+          { type: "orders", field: "customer", key: "name" },
+          { type: "estimates", field: "customer", key: "name" }
+        ],
+        orders: [
+          { type: "invoices", field: "ro", key: "id" },
+          { type: "payments", field: "workOrderId", key: "id" },
+          { type: "payrollentries", field: "workOrderId", key: "id" }
+        ],
+        estimates: [
+          { type: "payments", field: "estimateId", key: "id" },
+          { type: "invoices", field: "estimateId", key: "id" }
+        ],
+        vehicles: [
+          { type: "orders", field: "vehicleId", key: "id" },
+          { type: "orders", field: "vin", key: "vin" },
+          { type: "invoices", field: "vehicleId", key: "id" },
+          { type: "invoices", field: "vin", key: "vin" }
+        ],
+        employees: [
+          { type: "payrollentries", field: "employeeId", key: "id" }
+        ]
+      };
+      BLOCKING_LINKS = {
+        customers: [{ type: "vehicles", field: "customer", key: "name" }]
+      };
+    }
+  });
+
   // src/modules/customer-intake.js
   function normalizeCustomerSearch(value2) {
     return String(value2 || "").trim().replace(/\s+/g, " ");
@@ -5121,7 +5243,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   }
   function localCustomerMatches(query2, customers2 = [], vehicles = []) {
     if (!shouldSearchCustomers(query2)) return [];
-    return uniqueCustomers(customers2).filter((customer) => matchesName(customer.name, query2)).sort((left, right) => String(left.name).localeCompare(String(right.name))).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
+    return uniqueCustomers(customers2).filter((customer) => !isArchived(customer)).filter((customer) => matchesName(customer.name, query2)).sort((left, right) => String(left.name).localeCompare(String(right.name))).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
   }
   function customerContactFields(data = {}, existing = null) {
     const source = data && typeof data === "object" ? data : {};
@@ -5150,11 +5272,12 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const phoneDigits2 = String(phone || "").replace(/\D/g, "");
     const normalizedEmail = String(email || "").trim().toLocaleLowerCase();
     if (!phoneDigits2 && !normalizedEmail) return [];
-    return uniqueCustomers(customers2).filter((customer) => phoneDigits2 && String(customer.phone || "").replace(/\D/g, "") === phoneDigits2 || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
+    return uniqueCustomers(customers2).filter((customer) => !isArchived(customer)).filter((customer) => phoneDigits2 && String(customer.phone || "").replace(/\D/g, "") === phoneDigits2 || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
   }
   var CUSTOMER_SEARCH_MIN_LENGTH, CUSTOMER_SEARCH_DEBOUNCE_MS, CUSTOMER_SEARCH_RESULT_LIMIT, CONTACT_FIELDS;
   var init_customer_intake = __esm({
     "src/modules/customer-intake.js"() {
+      init_record_retention();
       CUSTOMER_SEARCH_MIN_LENGTH = 3;
       CUSTOMER_SEARCH_DEBOUNCE_MS = 275;
       CUSTOMER_SEARCH_RESULT_LIMIT = 8;
@@ -5590,15 +5713,15 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
     const selected = threads.find((thread) => thread.key === selectedKey) || threads[0] || null;
     const list = threads.map((thread) => `<button type="button" class="sms-thread${thread === selected ? " active" : ""}" data-sms-thread="${escapeAttr4(thread.key)}"><strong>${escapeHtml4(thread.customer || thread.phone)}</strong>${thread.unread ? `<span class="badge">${thread.unread}</span>` : ""}<small>${escapeHtml4(thread.preview)}</small></button>`).join("");
-    const bubbles = selected ? selected.messages.map((message) => `<div class="sms-bubble ${message.direction === "inbound" ? "in" : "out"}"><p>${escapeHtml4(message.body)}</p><small>${escapeHtml4(time(message.createdAt))}${TYPE_LABELS[message.messageType] ? ` \xB7 ${escapeHtml4(TYPE_LABELS[message.messageType])}` : ""}${message.direction === "outbound" && message.status ? ` \xB7 ${escapeHtml4(message.status)}` : ""}</small></div>`).join("") : "";
+    const bubbles = selected ? selected.messages.map((message) => `<div class="sms-bubble ${message.direction === "inbound" ? "in" : "out"}"><p>${escapeHtml4(message.body)}</p><small>${escapeHtml4(time(message.createdAt))}${TYPE_LABELS2[message.messageType] ? ` \xB7 ${escapeHtml4(TYPE_LABELS2[message.messageType])}` : ""}${message.direction === "outbound" && message.status ? ` \xB7 ${escapeHtml4(message.status)}` : ""}</small></div>`).join("") : "";
     const composer = selected ? selected.optedOut ? `<p class="ops-note">${icon2("ban", 14)} This customer replied STOP. ShopCrank won't text them until they reply START.</p>` : `<form id="sms-reply-form" class="sms-composer"><input type="hidden" name="to" value="${escapeAttr4(selected.phone)}"/><input type="hidden" name="customerId" value="${escapeAttr4(selected.customerId)}"/><textarea name="messageBody" maxlength="1600" rows="2" required placeholder="Reply to ${escapeAttr4(selected.customer || selected.phone)}"></textarea><button class="primary" type="submit">${icon2("send", 14)} Send</button></form>` : "";
     const start = `<form id="sms-new-form" class="sms-composer"><input name="to" required placeholder="Customer mobile number" autocomplete="off"/><textarea name="messageBody" maxlength="1600" rows="2" required placeholder="New text message"></textarea><button class="secondary" type="submit">${icon2("message-square-plus", 14)} Start text</button></form>`;
     return `<section class="messaging-panel sms-inbox"><div class="statement-head"><div><div class="eyebrow">Two-way texting</div><h2>Customer texts</h2><p>Replies from customers land here. Texting and text-to-pay are included on every plan.</p></div>${icon2("messages-square", 20)}</div>${error ? `<p class="login-error">${escapeHtml4(error)}</p>` : ""}${loading && !threads.length ? "<p>Loading conversations\u2026</p>" : ""}<div class="sms-inbox-grid"><div class="sms-thread-list">${list || '<p class="ops-note">No conversations yet.</p>'}</div><div class="sms-conversation">${bubbles || '<p class="ops-note">Pick a conversation or start a new text.</p>'}${composer}</div></div>${start}</section>`;
   }
-  var TYPE_LABELS;
+  var TYPE_LABELS2;
   var init_sms_inbox = __esm({
     "src/modules/sms-inbox.js"() {
-      TYPE_LABELS = Object.freeze({
+      TYPE_LABELS2 = Object.freeze({
         text_to_pay: "Text-to-pay link",
         estimate: "Estimate",
         reminder: "Reminder",
@@ -8327,134 +8450,13 @@ button{margin-top:12px;padding:8px 14px}
     }
   });
 
-  // src/modules/record-retention.js
-  function canDeleteRecords(role) {
-    return RECORD_DELETE_ROLES.includes(String(role || ""));
-  }
-  function present(value2) {
-    return value2 !== void 0 && value2 !== null && String(value2).trim() !== "";
-  }
-  function intrinsicFinancialReasons(type, record = {}) {
-    if (ALWAYS_ARCHIVE_TYPES.has(type)) return [`${TYPE_LABELS2[type] || "record"} is a financial record`];
-    const reasons = [];
-    const status = String(record.status || "").toLowerCase();
-    if (type === "orders" && ["invoiced", "paid"].includes(status)) reasons.push("work order has been invoiced");
-    if (type === "estimates" && (status === "approved" || present(record.signatureKey) || present(record.signature))) {
-      reasons.push("estimate carries a signed customer approval");
-    }
-    return reasons;
-  }
-  function linkLookups(type, record = {}) {
-    const resolve = (specs) => (specs || []).filter((spec) => present(record[spec.key])).map((spec) => ({ ...spec, value: String(record[spec.key]) }));
-    return { financial: resolve(FINANCIAL_LINKS[type]), blocking: resolve(BLOCKING_LINKS[type]) };
-  }
-  function countLabel(count, noun) {
-    return `${count} ${noun}${count === 1 ? "" : "s"}`;
-  }
-  function deletionPlan(type, record = {}, linkCounts = {}) {
-    const lookups = linkLookups(type, record);
-    const tally = (specs) => {
-      const byType = /* @__PURE__ */ new Map();
-      for (const spec of specs) {
-        const count = Number(linkCounts[`${spec.type}.${spec.field}`] || 0);
-        if (count > 0) byType.set(spec.type, Math.max(byType.get(spec.type) || 0, count));
-      }
-      return [...byType].map(([linkType, count]) => countLabel(count, LINK_LABELS[linkType] || "record"));
-    };
-    const financial = [...intrinsicFinancialReasons(type, record), ...tally(lookups.financial).map((item) => `linked to ${item}`)];
-    const label2 = TYPE_LABELS2[type] || "record";
-    if (financial.length) {
-      return {
-        action: "archive",
-        reasons: financial,
-        message: `This ${label2} has financial history, so it will be archived instead of deleted. It stays in reports and can be found under archived records.`
-      };
-    }
-    const blocking = tally(lookups.blocking);
-    if (blocking.length) {
-      return {
-        action: "blocked",
-        reasons: blocking.map((item) => `still has ${item}`),
-        message: `Remove this ${label2}'s ${blocking.join(", ")} first.`
-      };
-    }
-    return { action: "delete", reasons: [], message: `This ${label2} has no financial history and will be permanently deleted.` };
-  }
-  function countLinksInCollections(type, record, collections = {}) {
-    const { financial, blocking } = linkLookups(type, record);
-    const counts = {};
-    for (const spec of [...financial, ...blocking]) {
-      const rows = Array.isArray(collections[spec.type]) ? collections[spec.type] : [];
-      counts[`${spec.type}.${spec.field}`] = rows.filter((row) => present(row?.[spec.field]) && String(row[spec.field]) === spec.value).length;
-    }
-    return counts;
-  }
-  function isArchived(record) {
-    return present(record?.archivedAt);
-  }
-  var RECORD_DELETE_ROLES, ALWAYS_ARCHIVE_TYPES, TYPE_LABELS2, LINK_LABELS, FINANCIAL_LINKS, BLOCKING_LINKS;
-  var init_record_retention = __esm({
-    "src/modules/record-retention.js"() {
-      RECORD_DELETE_ROLES = Object.freeze(["owner", "admin"]);
-      ALWAYS_ARCHIVE_TYPES = /* @__PURE__ */ new Set(["invoices", "payments", "expenses", "payrollentries", "purchases"]);
-      TYPE_LABELS2 = {
-        customers: "customer",
-        vehicles: "vehicle",
-        orders: "work order",
-        invoices: "invoice",
-        estimates: "estimate",
-        payments: "payment",
-        expenses: "expense",
-        payrollentries: "payroll entry",
-        purchases: "purchase",
-        employees: "employee"
-      };
-      LINK_LABELS = {
-        invoices: "invoice",
-        payments: "payment",
-        orders: "work order",
-        estimates: "estimate",
-        payrollentries: "payroll entry",
-        vehicles: "vehicle"
-      };
-      FINANCIAL_LINKS = {
-        customers: [
-          { type: "invoices", field: "customer", key: "name" },
-          { type: "payments", field: "customer", key: "name" },
-          { type: "orders", field: "customer", key: "name" },
-          { type: "estimates", field: "customer", key: "name" }
-        ],
-        orders: [
-          { type: "invoices", field: "ro", key: "id" },
-          { type: "payments", field: "workOrderId", key: "id" },
-          { type: "payrollentries", field: "workOrderId", key: "id" }
-        ],
-        estimates: [
-          { type: "payments", field: "estimateId", key: "id" },
-          { type: "invoices", field: "estimateId", key: "id" }
-        ],
-        vehicles: [
-          { type: "orders", field: "vehicleId", key: "id" },
-          { type: "orders", field: "vin", key: "vin" },
-          { type: "invoices", field: "vehicleId", key: "id" },
-          { type: "invoices", field: "vin", key: "vin" }
-        ],
-        employees: [
-          { type: "payrollentries", field: "employeeId", key: "id" }
-        ]
-      };
-      BLOCKING_LINKS = {
-        customers: [{ type: "vehicles", field: "customer", key: "name" }]
-      };
-    }
-  });
-
   // src/modules/work-order-editor.js
   function customersWithSelected(customers2 = [], selected = "") {
     const records = Array.isArray(customers2) ? customers2 : [];
     const selectedName = String(selected || "");
-    if (!selectedName || records.some((customer) => customer?.name === selectedName)) return records;
-    return [{ name: selectedName }, ...records];
+    const available = records.filter((customer) => !isArchived(customer) || customer?.name === selectedName);
+    if (!selectedName || available.some((customer) => customer?.name === selectedName)) return available;
+    return [{ name: selectedName }, ...available];
   }
   function customLaborDraft(id, laborRate) {
     return {
@@ -8518,6 +8520,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   var init_work_order_editor = __esm({
     "src/modules/work-order-editor.js"() {
+      init_record_retention();
     }
   });
 

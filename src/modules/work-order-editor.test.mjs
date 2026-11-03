@@ -11,11 +11,15 @@ import {
 } from './work-order-editor.js';
 
 test('customer choices retain an order customer missing from the loaded customer list', () => {
-  const customers = [{ name: 'Tebria Ingram' }];
+  const customers = [
+    { name: 'Tebria Ingram' },
+    { name: 'Archived customer', archivedAt: '2026-10-31T12:00:00.000Z' },
+  ];
   const choices = customersWithSelected(customers, 'Isaac Gallardo');
 
   assert.deepEqual(choices.map(customer => customer.name), ['Isaac Gallardo', 'Tebria Ingram']);
-  assert.deepEqual(customers, [{ name: 'Tebria Ingram' }]);
+  assert.equal(customersWithSelected(customers, 'Archived customer').some(customer => customer.name === 'Archived customer'), true);
+  assert.equal(customers.length, 2);
   assert.equal(customersWithSelected(choices, 'Isaac Gallardo').length, 2);
 });
 
