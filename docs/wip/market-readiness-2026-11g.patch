@@ -1,0 +1,359 @@
+From ac8881481a8526cb0d7421e5dd82fa7b1af179b8 Mon Sep 17 00:00:00 2001
+From: Lee_Alderman <tinytim3271@gmail.com>
+Date: Tue, 3 Nov 2026 13:16:49 -0600
+Subject: [PATCH] Move the extra Settings panels into a tested module (3 fewer
+ settings overrides)
+
+src/modules/settings-panels.js now builds the danger zone, archived records,
+phone and apps & billing panels in one ordered list, replacing four stacked
+settings = function overrides in legacy.js. Rendered panels are unchanged.
+The legacy.js ratchet limits are lowered to match.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GGEY5cQcwh34RQLfpVUQwK
+---
+ app.js                               | 72 ++++++++++++++++++----------
+ index.html                           |  2 +-
+ package.json                         |  2 +-
+ scripts/stamp-assets.mjs             |  4 +-
+ scripts/stamp-assets.test.mjs        |  1 +
+ src/modules/settings-panels.js       | 43 +++++++++++++++++
+ src/modules/settings-panels.test.mjs | 32 +++++++++++++
+ src/runtime/legacy-growth.test.mjs   |  6 +--
+ src/runtime/legacy.js                | 24 ++++------
+ worker/test/download.test.mjs        |  3 +-
+ 10 files changed, 141 insertions(+), 48 deletions(-)
+ create mode 100644 src/modules/settings-panels.js
+ create mode 100644 src/modules/settings-panels.test.mjs
+
+diff --git a/app.js b/app.js
+index ffeade9..7e8f661 100644
+--- a/app.js
++++ b/app.js
+@@ -7114,6 +7114,38 @@ button{margin-top:12px;padding:8px 14px}
+     }
+   });
+ 
++  // src/modules/settings-panels.js
++  function dangerZonePanel({ icon: icon2 }) {
++    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon2("trash-2", 14)} Remove all shop data</button></div></section>`;
++  }
++  function archivedRecordsPanel({ icon: icon2, escapeHtml: escapeHtml4, archiveNote }) {
++    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml4(archiveNote)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon2("archive", 14)} View archived records</button></div></section>`;
++  }
++  function agentPhonePanel({ icon: icon2, escapeHtml: escapeHtml4, apiUrl, shopId }) {
++    return `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above \u2014 not here.</p></div>${icon2("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${apiUrl}/agentphone/webhook/${escapeHtml4(shopId)}</code></div><div class="full"><button class="primary" type="submit">${icon2("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>`;
++  }
++  function appsBillingPanel({ icon: icon2 }) {
++    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon2("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon2("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon2("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon2("sparkles", 14)} Upgrade to paid</button></div></section>`;
++  }
++  function settingsExtraPanels(viewer, deps) {
++    const role = String(viewer?.role || "");
++    const isAdmin = role === "admin";
++    const panels = [];
++    if (isAdmin) panels.push(dangerZonePanel(deps));
++    if (viewer?.canDeleteRecords && !viewer?.offline) panels.push(archivedRecordsPanel(deps));
++    panels.push(deps.phoneUsagePanel());
++    if (deps.twilioPanel || isAdmin) {
++      panels.push(deps.twilioPanel || "");
++      if (isAdmin) panels.push(agentPhonePanel(deps));
++    }
++    if (["admin", "super_admin"].includes(role)) panels.push(appsBillingPanel(deps));
++    return panels.join("");
++  }
++  var init_settings_panels = __esm({
++    "src/modules/settings-panels.js"() {
++    }
++  });
++
+   // src/modules/archived-records.js
+   function archivedRecordLabel(type, item = {}, money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`) {
+     if (type === "customers") return item.name || item.id;
+@@ -17372,7 +17404,7 @@ ${line}`.trim();
+       }
+     };
+   }
+-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, ENTITY_LIST_QUERY, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsArchiveCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, SERVICE_REFUSED, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok, renderKeepingFocusCore;
++  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, ENTITY_LIST_QUERY, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, bindDataResetCore, settingsExtraPanelsCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, SERVICE_REFUSED, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok, renderKeepingFocusCore;
+   var init_legacy = __esm({
+     "src/runtime/legacy.js"() {
+       init_config();
+@@ -17414,6 +17446,7 @@ ${line}`.trim();
+       init_mileage();
+       init_filing();
+       init_customer_metrics();
++      init_settings_panels();
+       init_archived_records();
+       init_record_deletion();
+       init_offline_desktop();
+@@ -18014,12 +18047,6 @@ ${line}`.trim();
+         document.querySelector("#add-vendor-register")?.addEventListener("click", () => addVendor());
+         document.querySelectorAll("[data-edit-vendor]").forEach((button) => button.onclick = () => addVendor(state.vendors.find((vendor) => vendor.id === button.dataset.editVendor)));
+       };
+-      settingsDataResetCore = settings;
+-      settings = function() {
+-        const page = settingsDataResetCore();
+-        if (currentUser()?.role !== "admin") return page;
+-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon("trash-2", 14)} Remove all shop data</button></div></section></main>`);
+-      };
+       bindDataResetCore = bindExpandedFeatures;
+       bindExpandedFeatures = function() {
+         bindDataResetCore();
+@@ -18027,26 +18054,19 @@ ${line}`.trim();
+         document.querySelector("#open-archived-records")?.addEventListener("click", openArchivedRecords);
+         bindPhoneUsagePanel();
+       };
+-      settingsArchiveCore = settings;
+-      settings = function() {
+-        const page = settingsArchiveCore();
+-        if (!userCanDeleteRecords() || isOfflineDesktop()) return page;
+-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml(ARCHIVE_NOTE)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon("archive", 14)} View archived records</button></div></section></main>`);
+-      };
+-      settingsAgentPhoneCore = settings;
+-      settings = function() {
+-        const page = settingsAgentPhoneCore();
+-        const twilioPanel = twilioInlineSettingsPanelHtml();
+-        const isAdmin = currentUser()?.role === "admin";
+-        if (!twilioPanel && !isAdmin) return page.replace("</main>", `${phoneUsagePanel()}</main>`);
+-        const agentPhonePanel = isAdmin ? `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above \u2014 not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>` : "";
+-        return page.replace("</main>", `${phoneUsagePanel()}${twilioPanel}${agentPhonePanel}</main>`);
+-      };
+-      settingsAppsBillingCore = settings;
++      settingsExtraPanelsCore = settings;
+       settings = function() {
+-        const page = settingsAppsBillingCore();
+-        if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page;
+-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`);
++        const user = currentUser();
++        const panels = settingsExtraPanels({ role: user?.role, canDeleteRecords: userCanDeleteRecords(), offline: isOfflineDesktop() }, {
++          icon,
++          escapeHtml,
++          archiveNote: ARCHIVE_NOTE,
++          phoneUsagePanel,
++          twilioPanel: twilioInlineSettingsPanelHtml(),
++          apiUrl: cloudflareConfig2.apiUrl,
++          shopId: sessionClaimShopId(authSession()?.claims)
++        });
++        return settingsExtraPanelsCore().replace("</main>", `${panels}</main>`);
+       };
+       bindAgentPhoneSettingsCore = bindExpandedFeatures;
+       bindExpandedFeatures = function() {
+diff --git a/index.html b/index.html
+index b4e508a..e286465 100644
+--- a/index.html
++++ b/index.html
+@@ -30,6 +30,6 @@
+     <script src="./assets/turnstile-client.js"></script>
+     <script src="./assets/ambassador-ref.js"></script>
+     <script src="./diagnostics-ui.js?v=024e276a3a"></script>
+-    <script src="./app.js?v=7a5a5b9d76"></script>
++    <script src="./app.js?v=c71104f4eb"></script>
+   </body>
+ </html>
+diff --git a/package.json b/package.json
+index 6aac977..732f348 100644
+--- a/package.json
++++ b/package.json
+@@ -76,7 +76,7 @@
+     "test:diagnostics-identity": "node --test src/modules/diagnostics/vehicle-identity.test.mjs",
+     "test:work-orders": "node --test src/modules/work-order-editor.test.mjs",
+     "issue-invite": "node scripts/issue-founding-invite.mjs",
+-    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:growth && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shell-defects && npm run test:shop-os && npm run test:diagnostics-identity && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs src/modules/health-check.test.mjs src/modules/ambassadors.test.mjs src/modules/assistant-media.test.mjs src/modules/phone-usage.test.mjs && node --test src/modules/record-deletion.test.mjs src/modules/archived-records.test.mjs src/modules/customer-metrics.test.mjs src/modules/perf.test.mjs src/runtime/shop-entity-load.test.mjs scripts/merge-open-prs.test.mjs",
++    "test:modules": "npm run test:home && npm run test:mutation && npm run test:html && npm run test:chat && npm run test:storage && npm run test:upload && npm run test:desktop && npm run test:offline && npm run test:imports && npm run test:canned && npm run test:guides && npm run test:inspections && npm run test:autozone && npm run test:repair-flow && npm run test:partstech && npm run test:labor-guide && npm run test:labor-web && npm run test:quickbooks && npm run test:revrec && npm run test:estimate && npm run test:work-orders && npm run test:payments && npm run test:growth && npm run test:market && node --test src/modules/ai-workflow.test.mjs && node --test src/modules/shop-ai-settings.test.mjs && npm run test:mileage && npm run test:customer-intake && npm run test:filing && npm run test:shell-defects && npm run test:shop-os && npm run test:diagnostics-identity && node --test src/modules/technician-assignment.test.mjs src/modules/intake-wizard.test.mjs src/modules/help-menu.test.mjs src/modules/diagnostic-ai.test.mjs && node --test src/modules/print-document.test.mjs src/modules/health-check.test.mjs src/modules/ambassadors.test.mjs src/modules/assistant-media.test.mjs src/modules/phone-usage.test.mjs && node --test src/modules/record-deletion.test.mjs src/modules/archived-records.test.mjs src/modules/settings-panels.test.mjs src/modules/customer-metrics.test.mjs src/modules/perf.test.mjs src/runtime/shop-entity-load.test.mjs scripts/merge-open-prs.test.mjs",
+     "test:filing": "node --test src/modules/filing/withholding.test.mjs src/modules/filing/jurisdictions.test.mjs",
+     "test:shell-defects": "node --test src/runtime/shell-defects.test.mjs src/runtime/audit-showstoppers.test.mjs src/runtime/legacy-growth.test.mjs",
+     "test:growth": "node --test src/modules/sms-inbox.test.mjs src/modules/growth-settings.test.mjs src/modules/shop-kpis.test.mjs src/modules/vehicle-lookups.test.mjs src/modules/pricing-matrix.test.mjs src/modules/scan-to-estimate.test.mjs"
+diff --git a/scripts/stamp-assets.mjs b/scripts/stamp-assets.mjs
+index e83c648..3e1b27f 100644
+--- a/scripts/stamp-assets.mjs
++++ b/scripts/stamp-assets.mjs
+@@ -13,7 +13,9 @@ import { fileURLToPath } from 'node:url';
+ export const STAMPED_ASSETS = Object.freeze(['app.js', 'styles.css', 'theme.css', 'diagnostics-ui.js']);
+ 
+ export function contentVersion(content) {
+-  return createHash('sha256').update(content).digest('hex').slice(0, 10);
++  // Hash with LF line endings so a Windows checkout (CRLF) stamps the same version as CI.
++  const text = Buffer.isBuffer(content) ? content.toString('utf8') : String(content);
++  return createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 10);
+ }
+ 
+ /** Rewrite `./<asset>` or `./<asset>?v=…` references in index.html markup. */
+diff --git a/scripts/stamp-assets.test.mjs b/scripts/stamp-assets.test.mjs
+index 2cba0d7..ba17a8a 100644
+--- a/scripts/stamp-assets.test.mjs
++++ b/scripts/stamp-assets.test.mjs
+@@ -18,6 +18,7 @@ test('a content change gives a new version; the same content keeps it', () => {
+   assert.equal(contentVersion('body{}'), contentVersion('body{}'));
+   assert.notEqual(contentVersion('body{}'), contentVersion('body{color:red}'));
+   assert.match(contentVersion('x'), /^[0-9a-f]{10}$/);
++  assert.equal(contentVersion('a\r\nb\r\n'), contentVersion('a\nb\n'), 'Windows line endings stamp the same version');
+ });
+ 
+ test('stampAssets rewrites index.html from the files on disk', () => {
+diff --git a/src/modules/settings-panels.js b/src/modules/settings-panels.js
+new file mode 100644
+index 0000000..8de7cb1
+--- /dev/null
++++ b/src/modules/settings-panels.js
+@@ -0,0 +1,43 @@
++/**
++ * Panels added below the core Settings page: danger zone, archived records,
++ * phone (usage, Twilio, AgentPhone) and apps & billing. These used to be four
++ * separate `settings = function () { … }` overrides in legacy.js; one ordered
++ * list here replaces them. Each panel is a pure function of the viewer so it
++ * can be tested without the app.
++ *
++ * `deps`: { icon, escapeHtml, archiveNote, phoneUsagePanel, twilioPanel, apiUrl, shopId }
++ */
++export function dangerZonePanel({ icon }) {
++  return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon("trash-2", 14)} Remove all shop data</button></div></section>`;
++}
++
++export function archivedRecordsPanel({ icon, escapeHtml, archiveNote }) {
++  return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml(archiveNote)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon("archive", 14)} View archived records</button></div></section>`;
++}
++
++export function agentPhonePanel({ icon, escapeHtml, apiUrl, shopId }) {
++  return `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above — not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${apiUrl}/agentphone/webhook/${escapeHtml(shopId)}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>`;
++}
++
++export function appsBillingPanel({ icon }) {
++  return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section>`;
++}
++
++/**
++ * Which panels a viewer sees, in page order.
++ * viewer: { role, canDeleteRecords, offline }
++ */
++export function settingsExtraPanels(viewer, deps) {
++  const role = String(viewer?.role || '');
++  const isAdmin = role === 'admin';
++  const panels = [];
++  if (isAdmin) panels.push(dangerZonePanel(deps));
++  if (viewer?.canDeleteRecords && !viewer?.offline) panels.push(archivedRecordsPanel(deps));
++  panels.push(deps.phoneUsagePanel());
++  if (deps.twilioPanel || isAdmin) {
++    panels.push(deps.twilioPanel || '');
++    if (isAdmin) panels.push(agentPhonePanel(deps));
++  }
++  if (['admin', 'super_admin'].includes(role)) panels.push(appsBillingPanel(deps));
++  return panels.join('');
++}
+diff --git a/src/modules/settings-panels.test.mjs b/src/modules/settings-panels.test.mjs
+new file mode 100644
+index 0000000..df0c0a9
+--- /dev/null
++++ b/src/modules/settings-panels.test.mjs
+@@ -0,0 +1,32 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { settingsExtraPanels } from './settings-panels.js';
++
++const deps = {
++  icon: name => `<i data-lucide="${name}"></i>`,
++  escapeHtml: value => String(value).replace(/</g, '&lt;'),
++  archiveNote: 'Kept for <tax>',
++  phoneUsagePanel: () => '<section id="phone-usage"></section>',
++  twilioPanel: '',
++  apiUrl: '/api',
++  shopId: 'shop-1',
++};
++const ids = html => [...html.matchAll(/id="([^"]+)"/g)].map(match => match[1]);
++
++test('an admin sees every panel in page order', () => {
++  const html = settingsExtraPanels({ role: 'admin', canDeleteRecords: true, offline: false }, deps);
++  assert.deepEqual(ids(html), ['open-full-reset', 'open-archived-records', 'phone-usage', 'agentphone-config-form', 'upgrade-shop-plan']);
++  assert.match(html, /\/api\/agentphone\/webhook\/shop-1/);
++  assert.match(html, /Kept for &lt;tax>/, 'the archive note is escaped');
++});
++
++test('a service writer sees only phone usage; an owner also sees archived records', () => {
++  assert.deepEqual(ids(settingsExtraPanels({ role: 'service_writer', canDeleteRecords: false }, deps)), ['phone-usage']);
++  assert.deepEqual(ids(settingsExtraPanels({ role: 'owner', canDeleteRecords: true }, deps)), ['open-archived-records', 'phone-usage']);
++});
++
++test('the offline desktop hides archived records; a Twilio panel shows for non-admins too', () => {
++  assert.ok(!ids(settingsExtraPanels({ role: 'owner', canDeleteRecords: true, offline: true }, deps)).includes('open-archived-records'));
++  const html = settingsExtraPanels({ role: 'office' }, { ...deps, twilioPanel: '<section id="twilio-panel"></section>' });
++  assert.deepEqual(ids(html), ['phone-usage', 'twilio-panel']);
++});
+diff --git a/src/runtime/legacy-growth.test.mjs b/src/runtime/legacy-growth.test.mjs
+index 45f1480..64d4abb 100644
+--- a/src/runtime/legacy-growth.test.mjs
++++ b/src/runtime/legacy-growth.test.mjs
+@@ -12,9 +12,9 @@ import assert from 'node:assert/strict';
+ import { readFileSync, statSync } from 'node:fs';
+ 
+ const LEGACY = new URL('./legacy.js', import.meta.url);
+-const MAX_OVERRIDES = 129;
+-const MAX_BYTES = 816_000;
+-const MAX_OVERRIDES_PER_NAME = { bind: 17, settings: 10, render: 8, bindEstimateActions: 6, bindExpandedFeatures: 5 };
++const MAX_OVERRIDES = 126;
++const MAX_BYTES = 811_000;
++const MAX_OVERRIDES_PER_NAME = { bind: 17, settings: 7, render: 8, bindEstimateActions: 6, bindExpandedFeatures: 5 };
+ 
+ const source = readFileSync(LEGACY, 'utf8');
+ const overrides = [...source.matchAll(/^([A-Za-z_$][\w$]*) = (?:async )?function\b/gm)].map(match => match[1]);
+diff --git a/src/runtime/legacy.js b/src/runtime/legacy.js
+index 46db221..5b30f3a 100644
+--- a/src/runtime/legacy.js
++++ b/src/runtime/legacy.js
+@@ -53,6 +53,7 @@ import * as ImportMappers from '../modules/import-mappers.js';
+ import * as Mileage from '../modules/mileage.js';
+ import * as Filing from '../modules/filing/index.js';
+ import { customerLifetimeSpend } from '../modules/customer-metrics.js';
++import { settingsExtraPanels } from '../modules/settings-panels.js';
+ import { ARCHIVE_NOTE, ARCHIVE_TYPE_LABELS, applyRemovalResult as applyRemovalToCollections, archivedRecordLabel as archivedLabel, withoutArchived } from '../modules/archived-records.js';
+ import { RECORD_DELETE_DENIED, canDeleteRecords, customerLinkedRecords, describeLinkedCounts, hasLinkedRecords, relatedForRemoval, removalAction } from '../modules/record-deletion.js';
+ import { applyShopSnapshot, ensureOfflineOwner, isOfflineDesktop, offlineLoginMarkup, offlineSession, snapshotShop } from '../modules/offline-desktop.js';
+@@ -1898,25 +1899,18 @@ bindShopOperations = function () { bindVendorManagementCore(); document.querySel
+ function clearLocalShopData() { ["orders", "invoices", "customers", "expenses", "vehicles", "payments", "estimates", "shiftEntries", "jobClockEntries", "payrollEntries", "inventory", "vendors", "services", "inspectionTemplates", "inspections", "reminders", "appointments", "purchases", "conversations", "chatMessages"].forEach(type => { if (Array.isArray(state[type])) state[type] = [] }); save() }
+ async function resetAllShopData(form) { const button = form.querySelector("button[type=submit]"); button.disabled = true; try { const confirmation = new FormData(form).get("confirmation"), result = await apiFetch("/onboarding/start", { method: "POST", body: JSON.stringify({ mode: "all", confirmation }) }); clearLocalShopData(); await reloadOperationalData(); closeModal(); toast(`${result.removed} record${result.removed === 1 ? "" : "s"} removed. The shop is ready for setup.`); render() } catch (error) { button.disabled = false; toast(error.message || "Shop data could not be removed") } }
+ function openFullReset() { showModal(`<form class="modal" id="full-reset-form"><div class="modal-head"><h2>Remove all shop data</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status blocked">${icon("triangle-alert", 17)}<div><strong>This permanently removes the shop's data</strong><span>Customers, vehicles, work orders, invoices, payments, inventory, vendors, messages, schedules, and shop settings will be deleted. User access and the subscription remain active.</span></div></div><label>Type <b>DELETE ALL DATA</b> to continue<input name="confirmation" autocomplete="off" pattern="DELETE ALL DATA" required/></label></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="danger" type="submit">${icon("trash-2", 14)} Permanently remove data</button></div></form>`); document.querySelector("#full-reset-form").onsubmit = event => { event.preventDefault(); resetAllShopData(event.target) } }
+-const settingsDataResetCore = settings;
+-settings = function () { const page = settingsDataResetCore(); if (currentUser()?.role !== "admin") return page; return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon("trash-2", 14)} Remove all shop data</button></div></section></main>`) };
+ const bindDataResetCore = bindExpandedFeatures;
+ bindExpandedFeatures = function () { bindDataResetCore(); document.querySelector("#open-full-reset")?.addEventListener("click", openFullReset); document.querySelector("#open-archived-records")?.addEventListener("click", openArchivedRecords); bindPhoneUsagePanel() };
+-const settingsArchiveCore = settings;
+-settings = function () { const page = settingsArchiveCore(); if (!userCanDeleteRecords() || isOfflineDesktop()) return page; return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml(ARCHIVE_NOTE)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon("archive", 14)} View archived records</button></div></section></main>`) };
+-const settingsAgentPhoneCore = settings;
++// Danger zone, archived records, phone and apps & billing panels: see src/modules/settings-panels.js.
++const settingsExtraPanelsCore = settings;
+ settings = function () {
+-  const page = settingsAgentPhoneCore();
+-  const twilioPanel = twilioInlineSettingsPanelHtml();
+-  const isAdmin = currentUser()?.role === "admin";
+-  if (!twilioPanel && !isAdmin) return page.replace("</main>", `${phoneUsagePanel()}</main>`);
+-  const agentPhonePanel = isAdmin
+-    ? `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above — not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>`
+-    : "";
+-  return page.replace("</main>", `${phoneUsagePanel()}${twilioPanel}${agentPhonePanel}</main>`);
++  const user = currentUser();
++  const panels = settingsExtraPanels({ role: user?.role, canDeleteRecords: userCanDeleteRecords(), offline: isOfflineDesktop() }, {
++    icon, escapeHtml, archiveNote: ARCHIVE_NOTE, phoneUsagePanel, twilioPanel: twilioInlineSettingsPanelHtml(),
++    apiUrl: cloudflareConfig.apiUrl, shopId: sessionClaimShopId(authSession()?.claims),
++  });
++  return settingsExtraPanelsCore().replace("</main>", `${panels}</main>`);
+ };
+-const settingsAppsBillingCore = settings;
+-settings = function () { const page = settingsAppsBillingCore(); if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page; return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`) };
+ 
+ const bindAgentPhoneSettingsCore = bindExpandedFeatures;
+ bindExpandedFeatures = function () { bindAgentPhoneSettingsCore(); document.querySelector("#agentphone-config-form")?.addEventListener("submit", async event => { event.preventDefault(); const form = event.target, data = readFormValues(form), button = form.querySelector("button[type=submit]"); button.disabled = true; try { const result = await apiFetch("/agentphone/configure", { method: "POST", body: JSON.stringify({ apiKey: data.apiKey, agentId: data.agentId, contextLimit: Number(data.contextLimit), timeout: Number(data.timeout) }) }); form.reset(); toast(`AgentPhone connected for ${result.agentId}`); render() } catch (error) { toast(error.message || "AgentPhone could not be connected"); button.disabled = false } }) };
+diff --git a/worker/test/download.test.mjs b/worker/test/download.test.mjs
+index 3c5f1e7..fcec700 100644
+--- a/worker/test/download.test.mjs
++++ b/worker/test/download.test.mjs
+@@ -64,7 +64,8 @@ test('download route rejects writes and paths outside the allowlist', async () =
+ test('Windows download links use the Worker route and the version the Windows workflow publishes', () => {
+   const sources = {
+     'downloads/index.html': readFileSync(new URL('../../downloads/index.html', import.meta.url), 'utf8'),
+-    'src/runtime/legacy.js': readFileSync(new URL('../../src/runtime/legacy.js', import.meta.url), 'utf8'),
++    // The Settings "Apps and subscription" panel (moved out of legacy.js).
++    'src/modules/settings-panels.js': readFileSync(new URL('../../src/modules/settings-panels.js', import.meta.url), 'utf8'),
+   };
+   for (const [file, source] of Object.entries(sources)) {
+     const links = [...source.matchAll(/href="([^"]*ShopCrank-(?:Offline-)?Setup-[^"]+)"/g)].map((match) => match[1]);
+-- 
+2.43.0
+
