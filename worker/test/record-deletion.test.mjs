@@ -130,6 +130,57 @@ test('employee archive and Access removal roll back together; retry revokes alre
 });
 
 for (const [name, put] of [['deployed', deployedPutEntity], ['module', modularPutEntity]]) {
+  test(`employee save and Access sync cannot race archive revocation (${name} putEntity)`, async () => {
+    const { DB, seed, stored } = await setup();
+    await seed('employees', 'emp-sync-race', { email: people.tech, active: true, role: 'technician' });
+    await DB.prepare('UPDATE users SET id = ? WHERE email = ?').bind('user-sync-race', people.tech).run();
+    await DB.prepare('INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
+      .bind('session-sync-race', 'user-sync-race', 'hash-sync-race', '2027-01-01T00:00:00.000Z', stamp).run();
+    let archived = false;
+    const archiveEmployee = async () => {
+      if (archived) return;
+      archived = true;
+      const archivedAt = '2026-10-31T08:01:00.000Z';
+      await DB.batch([
+        DB.prepare(`UPDATE entities SET data_json = json_set(data_json, '$.archivedAt', ?, '$.active', 0), updated_at = ?
+          WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ?`).bind(archivedAt, archivedAt, shopId, 'emp-sync-race'),
+        DB.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').bind(archivedAt, 'user-sync-race'),
+        DB.prepare('DELETE FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?').bind(people.tech, shopId),
+      ]);
+    };
+    const raceDB = {
+      prepare(sql) {
+        const statement = DB.prepare(sql);
+        if (!sql.includes('UPDATE entities SET data_json = ?, updated_at = ?')) return statement;
+        return {
+          bind(...values) {
+            const bound = statement.bind(...values);
+            return {
+              runSync: () => bound.runSync(),
+              run: async () => {
+                const result = await bound.run();
+                await archiveEmployee();
+                return result;
+              },
+            };
+          },
+        };
+      },
+      batch: async statements => {
+        const results = await DB.batch(statements);
+        await archiveEmployee();
+        return results;
+      },
+    };
+    await put({ DB: raceDB }, { shopId, userId: 'admin-user', email: people.admin, role: 'admin' }, 'employees', 'emp-sync-race', {
+      id: 'emp-sync-race', email: people.tech, active: true, role: 'technician',
+    }, stamp);
+    assert.ok((await stored('employees', 'emp-sync-race')).archivedAt);
+    assert.equal((await stored('employees', 'emp-sync-race')).active, 0);
+    assert.equal(await DB.prepare('SELECT 1 AS found FROM users WHERE email = ?').bind(people.tech).first(), null);
+    assert.ok((await DB.prepare('SELECT revoked_at FROM sessions WHERE id = ?').bind('session-sync-race').first()).revoked_at);
+  });
+
   test(`stale saves cannot clear an archive or change employee Access (${name} putEntity)`, async () => {
     const { DB, seed, stored } = await setup();
     await seed('invoices', 'INV-CAS', { number: 'INV-CAS', amount: 50 });

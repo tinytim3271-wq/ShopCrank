@@ -7,7 +7,7 @@ import {
   redactEmployee,
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
-import { assertAccessUserAvailable, syncAccessUser } from '../access-users.mjs';
+import { accessUserSyncStatements } from '../access-users.mjs';
 import {
   SELF_MANAGED_DELETE_TYPES,
   archivedRecord,
@@ -80,19 +80,43 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     updatedAt: now,
   };
   if (type === 'employees' && isArchived(record)) record.active = false;
-  if (type === 'employees') await assertAccessUserAvailable(env, context, record.email);
-  const result = existing
-    ? await env.DB.prepare(`
+  const employeeAccessStatements = type === 'employees'
+    ? await accessUserSyncStatements(env, context, record, { id, dataJson: JSON.stringify(record), updatedAt: now })
+    : null;
+  const employeeAccessGuard = type === 'employees'
+    ? 'AND NOT EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND shop_id <> ?)'
+    : '';
+  const employeeAccessValues = type === 'employees'
+    ? [String(record.email || '').trim().toLowerCase(), context.shopId]
+    : [];
+  const writeStatement = existing
+    ? env.DB.prepare(`
       UPDATE entities SET data_json = ?, updated_at = ?
       WHERE shop_id = ? AND entity_type = ? AND entity_id = ?
         AND data_json = ? AND updated_at = ?
-    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json, existing.updated_at).run()
-    : await env.DB.prepare(`
-      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
-    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+        ${employeeAccessGuard}
+    `).bind(
+      JSON.stringify(record), now, context.shopId, type, id, existing.data_json, existing.updated_at,
+      ...employeeAccessValues,
+    )
+    : type === 'employees'
+      ? env.DB.prepare(`
+        INSERT OR IGNORE INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+        SELECT ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND shop_id <> ?)
+      `).bind(
+        context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now,
+        ...employeeAccessValues,
+      )
+      : env.DB.prepare(`
+        INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+      `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now);
+  const results = employeeAccessStatements
+    ? await env.DB.batch([writeStatement, ...employeeAccessStatements])
+    : [await writeStatement.run()];
+  const result = results[0];
   if (!result?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-  if (type === 'employees') await syncAccessUser(env, context, record);
   return record;
 }
 

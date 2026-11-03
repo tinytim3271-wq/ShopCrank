@@ -23,6 +23,53 @@ export async function assertAccessUserAvailable(env, context, email) {
   return existing;
 }
 
+export async function accessUserSyncStatements(env, context, employee, entitySnapshot = null) {
+  const email = String(employee.email || '').trim().toLowerCase();
+  const role = String(employee.role || 'technician');
+  if (!email || !SHOP_ROLES.has(role)) throw new HttpError(400, 'Employee email and a valid role are required');
+  const existing = await assertAccessUserAvailable(env, context, email);
+  const now = employee.updatedAt || new Date().toISOString();
+  const enabled = employee.active === false ? 0 : 1;
+  const name = String(employee.name || email);
+  const snapshotGuard = entitySnapshot
+    ? `AND EXISTS (
+        SELECT 1 FROM entities
+        WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ?
+          AND data_json = ? AND updated_at = ?
+      )`
+    : '';
+  const snapshotValues = entitySnapshot
+    ? [context.shopId, entitySnapshot.id, entitySnapshot.dataJson, entitySnapshot.updatedAt]
+    : [];
+  const statements = [env.DB.prepare(`
+    INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE 1 = 1 ${snapshotGuard}
+    ON CONFLICT(email) DO UPDATE SET
+      role = excluded.role, name = excluded.name, enabled = excluded.enabled, updated_at = excluded.updated_at
+    WHERE users.shop_id = excluded.shop_id
+  `).bind(
+    existing?.id || crypto.randomUUID(),
+    email,
+    context.shopId,
+    role,
+    name,
+    enabled,
+    employee.createdAt || now,
+    now,
+    ...snapshotValues,
+  )];
+  if (!enabled) {
+    statements.push(env.DB.prepare(`
+      UPDATE sessions SET revoked_at = ?
+      WHERE revoked_at IS NULL AND user_id IN (
+        SELECT id FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?
+      ) ${snapshotGuard}
+    `).bind(now, email, context.shopId, ...snapshotValues));
+  }
+  return statements;
+}
+
 /**
  * Upsert the SaaS `users` row for an employee without ever reassigning an
  * existing account to a different shop (cross-tenant steal).
