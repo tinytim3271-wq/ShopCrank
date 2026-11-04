@@ -96,6 +96,27 @@ test('syncAccessUser updates role and revokes sessions for same-shop deactivate'
   assert.match(DB.sessionRevokes[0].revokedAt, /^\d{4}-/);
 });
 
+test('syncAccessUser applies a current employee snapshot to Access updates', async () => {
+  const DB = memoryUsersDb([
+    { id: 'user-1', email: 'tech@shop.test', shop_id: 'shop-a', role: 'technician', name: 'Tech', enabled: 0 },
+  ]);
+  const employeeSnapshot = {
+    id: 'emp-1',
+    email: 'tech@shop.test',
+    role: 'technician',
+    name: 'Tech',
+    active: true,
+  };
+  DB.employees.set('shop-a:emp-1', JSON.stringify(employeeSnapshot));
+  await syncAccessUser(
+    { DB },
+    { shopId: 'shop-a' },
+    employeeSnapshot,
+    { employeeSnapshot },
+  );
+  assert.equal(DB.users.get('tech@shop.test').enabled, 1);
+});
+
 test('syncAccessUser inserts a new shop-scoped user with an id', async () => {
   const DB = memoryUsersDb();
   const result = await syncAccessUser({ DB }, { shopId: 'shop-a' }, {
@@ -112,6 +133,25 @@ test('syncAccessUser inserts a new shop-scoped user with an id', async () => {
   assert.equal(row.id, result.id);
   assert.match(row.id, /^[0-9a-f-]{36}$/i);
   assert.equal(DB.sessionRevokes.length, 0);
+});
+
+test('syncAccessUser applies a current employee snapshot to Access inserts', async () => {
+  const DB = memoryUsersDb();
+  const employeeSnapshot = {
+    id: 'emp-1',
+    email: 'new@shop.test',
+    role: 'technician',
+    name: 'New Tech',
+    active: true,
+  };
+  DB.employees.set('shop-a:emp-1', JSON.stringify(employeeSnapshot));
+  await syncAccessUser(
+    { DB },
+    { shopId: 'shop-a' },
+    employeeSnapshot,
+    { employeeSnapshot },
+  );
+  assert.equal(DB.users.get('new@shop.test').enabled, 1);
 });
 
 test('syncAccessUser skips an employee Access write when its saved snapshot is stale', async () => {
