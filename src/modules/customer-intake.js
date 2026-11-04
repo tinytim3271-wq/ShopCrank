@@ -51,6 +51,7 @@ function uniqueCustomers(customers) {
 export function localCustomerMatches(query, customers = [], vehicles = []) {
   if (!shouldSearchCustomers(query)) return [];
   return uniqueCustomers(customers)
+    .filter(customer => !String(customer.archivedAt || '').trim())
     .filter(customer => matchesName(customer.name, query))
     .sort((left, right) => String(left.name).localeCompare(String(right.name)))
     .slice(0, CUSTOMER_SEARCH_RESULT_LIMIT)
@@ -90,6 +91,7 @@ export function likelyDuplicateCustomers({ phone = '', email = '' }, customers =
   const normalizedEmail = String(email || '').trim().toLocaleLowerCase();
   if (!phoneDigits && !normalizedEmail) return [];
   return uniqueCustomers(customers)
+    .filter(customer => !String(customer.archivedAt || '').trim())
     .filter(customer => (
       (phoneDigits && String(customer.phone || '').replace(/\D/g, '') === phoneDigits)
       || (normalizedEmail && String(customer.email || '').trim().toLocaleLowerCase() === normalizedEmail)

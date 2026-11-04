@@ -35,6 +35,18 @@ test('local fallback partially matches any name token in either order', () => {
   assert.equal(localCustomerMatches('gall', customers, vehicles)[0].recentVehicle.label, '2022 Ford F-150');
 });
 
+test('local customer lookups omit archived customers', () => {
+  const archived = {
+    id: 'customer-archived',
+    name: 'Isaac Archived',
+    phone: '555-111-2222',
+    email: 'isaac@example.com',
+    archivedAt: '2026-10-01T00:00:00.000Z',
+  };
+  assert.deepEqual(localCustomerMatches('archived', [archived]).map(item => item.id), []);
+  assert.deepEqual(likelyDuplicateCustomers({ phone: '555-111-2222' }, [archived]), []);
+});
+
 test('likely duplicate detection normalizes phone and email', () => {
   assert.deepEqual(
     likelyDuplicateCustomers({ phone: '555-111-2222' }, customers, vehicles).map(item => item.id),

@@ -5188,7 +5188,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   }
   function localCustomerMatches(query2, customers2 = [], vehicles = []) {
     if (!shouldSearchCustomers(query2)) return [];
-    return uniqueCustomers(customers2).filter((customer) => matchesName(customer.name, query2)).sort((left, right) => String(left.name).localeCompare(String(right.name))).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
+    return uniqueCustomers(customers2).filter((customer) => !String(customer.archivedAt || "").trim()).filter((customer) => matchesName(customer.name, query2)).sort((left, right) => String(left.name).localeCompare(String(right.name))).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
   }
   function customerContactFields(data = {}, existing = null) {
     const source = data && typeof data === "object" ? data : {};
@@ -5217,7 +5217,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const phoneDigits2 = String(phone || "").replace(/\D/g, "");
     const normalizedEmail = String(email || "").trim().toLocaleLowerCase();
     if (!phoneDigits2 && !normalizedEmail) return [];
-    return uniqueCustomers(customers2).filter((customer) => phoneDigits2 && String(customer.phone || "").replace(/\D/g, "") === phoneDigits2 || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
+    return uniqueCustomers(customers2).filter((customer) => !String(customer.archivedAt || "").trim()).filter((customer) => phoneDigits2 && String(customer.phone || "").replace(/\D/g, "") === phoneDigits2 || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
   }
   var CUSTOMER_SEARCH_MIN_LENGTH, CUSTOMER_SEARCH_DEBOUNCE_MS, CUSTOMER_SEARCH_RESULT_LIMIT, CONTACT_FIELDS;
   var init_customer_intake = __esm({
@@ -8766,9 +8766,12 @@ button{margin-top:12px;padding:8px 14px}
 
   // src/modules/work-order-editor.js
   function customersWithSelected(customers2 = [], selected = "") {
-    const records = Array.isArray(customers2) ? customers2 : [];
+    const allRecords = Array.isArray(customers2) ? customers2 : [];
+    const records = allRecords.filter((customer) => !String(customer?.archivedAt || "").trim());
     const selectedName = String(selected || "");
     if (!selectedName || records.some((customer) => customer?.name === selectedName)) return records;
+    const archivedSelection = allRecords.find((customer) => customer?.name === selectedName);
+    if (archivedSelection) return [archivedSelection, ...records];
     return [{ name: selectedName }, ...records];
   }
   function customLaborDraft(id, laborRate) {
