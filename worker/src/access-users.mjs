@@ -134,3 +134,9 @@ export async function saveEmployeeWithAccess(env, context, { id, record, create,
   }
   return record;
 }
+
+/** Employee saves always move updated_at forward, so the guarded batch can tell a stale save apart. */
+export function nextEmployeeTimestamp(existing, now = new Date().toISOString()) {
+  const previous = Date.parse(existing?.updated_at || '');
+  return Number.isFinite(previous) && Date.parse(now) <= previous ? new Date(previous + 1).toISOString() : now;
+}

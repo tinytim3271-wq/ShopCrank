@@ -7,7 +7,7 @@ import {
   redactEmployee,
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
-import { saveEmployeeWithAccess, validateEmployeeAccess } from '../access-users.mjs';
+import { nextEmployeeTimestamp, saveEmployeeWithAccess, validateEmployeeAccess } from '../access-users.mjs';
 import {
   CUSTOMER_LINKED_TYPES,
   RECORD_DELETE_DENIED,
@@ -89,16 +89,11 @@ export async function writeEntityIfUnchanged(env, context, { type, id, record, e
 
 export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
   const now = new Date().toISOString();
-  if (type === 'employees') {
-    body = { ...body, ...validateEmployeeAccess(body) };
-  }
+  if (type === 'employees') body = { ...body, ...validateEmployeeAccess(body) };
   const existing = await env.DB.prepare(
     'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
-  const previousTimestamp = Date.parse(existing?.updated_at || '');
-  const updatedAt = type === 'employees' && Number.isFinite(previousTimestamp) && Date.parse(now) <= previousTimestamp
-    ? new Date(previousTimestamp + 1).toISOString()
-    : now;
+  const updatedAt = type === 'employees' ? nextEmployeeTimestamp(existing, now) : now;
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
