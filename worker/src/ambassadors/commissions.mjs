@@ -126,6 +126,46 @@ export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, {
   `).bind(shopId, start, end, source, new Date().toISOString()).run();
 }
 
+/**
+ * Cut every coverage interval still running at `at`, and retire intervals that
+ * start later, so a suspension or a drop to trial/comped never leaves paid
+ * coverage spanning the unpaid gap. Zero-length intervals are ignored by the
+ * eligibility check.
+ */
+export async function endPaidCoverage(env, shopId, at = new Date()) {
+  const when = at instanceof Date ? at.toISOString() : new Date(at).toISOString();
+  return env.DB.prepare(`
+    UPDATE ambassador_paid_coverage
+    SET ends_at = CASE WHEN starts_at > ? THEN starts_at ELSE ? END
+    WHERE shop_id = ? AND (ends_at IS NULL OR ends_at > ?)
+  `).bind(when, when, shopId, when).run();
+}
+
+/**
+ * Active membership: make sure some coverage runs at `at`. Admin-managed
+ * memberships get open-ended coverage; a Stripe membership (e.g. one restored
+ * from suspension) is covered only up to the period it already paid for.
+ * Idempotent, so a retry after a failed write repairs missing coverage instead
+ * of relying on a status transition.
+ */
+export async function ensureActivePaidCoverage(env, shopId, at = new Date()) {
+  const when = at instanceof Date ? at.toISOString() : new Date(at).toISOString();
+  const membership = await env.DB.prepare(
+    'SELECT status, stripe_subscription_id, current_period_end FROM subscriptions WHERE shop_id = ?',
+  ).bind(shopId).first();
+  if (membership?.status !== 'active') return { recorded: false };
+  const stripeEnd = membership.stripe_subscription_id ? membership.current_period_end : null;
+  if (membership.stripe_subscription_id && !(stripeEnd && Date.parse(stripeEnd) > Date.parse(when))) return { recorded: false };
+  const covered = await env.DB.prepare(`
+    SELECT 1 FROM ambassador_paid_coverage
+    WHERE shop_id = ? AND starts_at <= ? AND (ends_at IS NULL OR ends_at > ?)
+    LIMIT 1
+  `).bind(shopId, when, when).first();
+  if (covered) return { recorded: false };
+  await recordPaidCoverage(env, shopId, when, stripeEnd, { source: stripeEnd ? 'stripe_restore' : 'admin' });
+  return { recorded: true };
+}
+
 const ELIGIBLE_SQL = `
   SELECT s.shop_id, s.plan_id, s.sale_source, s.sold_by_ambassador_id AS ambassador_id,
          r.tier, r.monthly_cents
@@ -141,7 +181,7 @@ const ELIGIBLE_SQL = `
       SELECT 1 FROM ambassador_paid_coverage paid
       WHERE paid.shop_id = s.shop_id
         AND paid.starts_at < ?
-        AND (paid.ends_at IS NULL OR paid.ends_at > ?)
+        AND (paid.ends_at IS NULL OR (paid.ends_at > ? AND paid.ends_at > paid.starts_at))
     )
 `;
 
@@ -178,18 +218,37 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   return { period, created, eligible: rows.length, frozen: await periodClosed(env, period) };
 }
 
-function invoiceServicePeriod(invoice) {
-  const lines = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : [];
-  const recurringLine = lines.find(line =>
-    line?.type === 'subscription'
-    || Boolean(line?.price?.recurring)
+function lineNetCents(line) {
+  const discounts = Array.isArray(line?.discount_amounts)
+    ? line.discount_amounts.reduce((sum, item) => sum + Number(item?.amount || 0), 0)
+    : 0;
+  return Number(line?.amount || 0) - discounts;
+}
+
+function isMembershipLine(line) {
+  const price = line?.price || line?.pricing?.price_details || {};
+  const recurring = price?.recurring || line?.plan || null;
+  const subscriptionLine = line?.type === 'subscription'
     || line?.parent?.type === 'subscription_item_details'
-    || Boolean(line?.plan?.interval),
-  );
-  const startSeconds = Number(recurringLine?.period?.start || invoice?.period_start || lines[0]?.period?.start || invoice?.created || 0);
-  const endSeconds = Number(recurringLine?.period?.end || invoice?.period_end || lines[0]?.period?.end || 0);
+    || Boolean(recurring);
+  const metered = (price?.recurring?.usage_type || line?.plan?.usage_type) === 'metered';
+  const proration = line?.proration === true || line?.parent?.subscription_item_details?.proration === true;
+  return subscriptionLine && !metered && !proration;
+}
+
+/**
+ * The membership fee line of a paid invoice, picked explicitly: recurring,
+ * licensed (not the metered AI-phone overage), not a proration, and charging
+ * money after discounts. Null when the invoice paid no membership fee.
+ */
+export function invoiceMembershipPeriod(invoice) {
+  const lines = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : [];
+  const line = lines.find(item => isMembershipLine(item) && lineNetCents(item) > 0);
+  const startSeconds = Number(line?.period?.start || 0);
+  if (!line || !(startSeconds > 0)) return null;
+  const endSeconds = Number(line.period?.end || 0);
   return {
-    start: startSeconds > 0 ? new Date(startSeconds * 1000) : new Date(),
+    start: new Date(startSeconds * 1000),
     end: endSeconds > 0 ? new Date(endSeconds * 1000) : null,
   };
 }
@@ -215,6 +274,8 @@ async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
 /** Stripe invoice.paid: accrue the month the invoice covers if it charged money. */
 export async function recordInvoiceCommission(env, shopId, invoice) {
   if (!(Number(invoice?.amount_paid) > 0)) return { recorded: false, reason: 'zero_amount' };
+  const servicePeriod = invoiceMembershipPeriod(invoice);
+  if (!servicePeriod) return { recorded: false, reason: 'no_paid_membership_line' };
   await reconcilePaidInvoiceSubscription(env, shopId, invoice);
   const subscription = await env.DB.prepare(`
     SELECT s.plan_id, s.sale_source, s.status AS subscription_status,
@@ -229,12 +290,11 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
   `).bind(shopId).first();
   if (subscription?.subscription_status !== 'active') return { recorded: false, reason: 'membership_not_active' };
   if (Number(subscription.account_suspended) === 1) return { recorded: false, reason: 'account_suspended' };
+  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { source: 'stripe_invoice' });
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };
-  const servicePeriod = invoiceServicePeriod(invoice);
   const earningPeriod = periodOf(servicePeriod.start);
-  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { source: 'stripe_invoice' });
   let period = await openPeriodFor(env, earningPeriod);
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const result = await env.DB.prepare(`

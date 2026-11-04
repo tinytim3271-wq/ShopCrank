@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readdirSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { createD1 } from './helpers/d1-sqlite.mjs';
@@ -77,6 +78,11 @@ async function createShop(call, shopId, body = {}) {
   });
   assert.equal(result.status, 201, JSON.stringify(result.body));
   return result.body;
+}
+
+/** A Stripe invoice line for the licensed membership price covering `start`. */
+function membershipLine(start, amount, extra = {}) {
+  return { type: 'subscription', amount, period: { start, end: start + 30 * 86400 }, price: { recurring: { interval: 'month', usage_type: 'licensed' } }, ...extra };
 }
 
 function subscription(DB, shopId) {
@@ -346,7 +352,7 @@ test('invoice.paid accrues one commission per shop per month and skips $0 and un
     type: 'invoice.paid',
     data: { object: {
       id: `in_${id}`, metadata: { shopId: 'inv-shop' }, amount_paid: 27900, period_start: periodStart,
-      lines: { data: [{ type: 'subscription', period: { start: servicePeriodStart } }] },
+      lines: { data: [membershipLine(servicePeriodStart, 27900)] },
       ...extra,
     } },
   });
@@ -355,7 +361,7 @@ test('invoice.paid accrues one commission per shop per month and skips $0 and un
   await signedWebhook(env, invoice('evt_inv_1'));
   await signedWebhook(env, invoice('evt_inv_2'));
   await signedWebhook(env, invoice('evt_inv_zero', { amount_paid: 0, metadata: { shopId: 'inv-shop' }, period_start: periodStart + 40 * 86400 }));
-  await signedWebhook(env, { id: 'evt_inv_direct', type: 'invoice.paid', data: { object: { id: 'in_d', metadata: { shopId: 'inv-direct' }, amount_paid: 13900, period_start: periodStart } } });
+  await signedWebhook(env, { id: 'evt_inv_direct', type: 'invoice.paid', data: { object: { id: 'in_d', metadata: { shopId: 'inv-direct' }, amount_paid: 13900, period_start: periodStart, lines: { data: [membershipLine(periodStart, 13900)] } } } });
   const lines = DB.sqlite.prepare('SELECT * FROM ambassador_commissions').all();
   assert.equal(lines.length, 1);
   assert.equal(lines[0].shop_id, 'inv-shop');
@@ -390,6 +396,7 @@ test('invoice.paid recovers payment-failed memberships and skips canceled or sus
         metadata: { shopId },
         amount_paid: 2000,
         period_start: periodStart,
+        lines: { data: [membershipLine(periodStart, 2000)] },
       } },
     });
   }
@@ -466,7 +473,7 @@ test('a late trial-to-paid conversion does not earn for an unpaid month', async 
     } },
   });
   const stripeCoverage = DB.sqlite.prepare('SELECT starts_at FROM ambassador_paid_coverage WHERE shop_id = ?').get('stripe-late-conversion');
-  assert.equal(stripeCoverage.starts_at, periodBounds(shiftPeriod(LAST_MONTH, 1)).start);
+  assert.equal(stripeCoverage, undefined, 'subscription status alone never records paid coverage');
   assert.equal((await generateCommissionLedger(env, LAST_MONTH)).created, 0);
   assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_commissions WHERE shop_id IN ('late-conversion', 'stripe-late-conversion')").get().n, 0);
 });
@@ -508,7 +515,7 @@ test('payout closing redirects invoice accruals and completes the frozen month l
   await signedWebhook(env, {
     id: 'evt_closing',
     type: 'invoice.paid',
-    data: { object: { id: 'in_closing', metadata: { shopId: 'closing-shop' }, amount_paid: 2000, period_start: periodStart } },
+    data: { object: { id: 'in_closing', metadata: { shopId: 'closing-shop' }, amount_paid: 2000, period_start: periodStart, lines: { data: [membershipLine(periodStart, 2000)] } } },
   });
   assert.equal(DB.sqlite.prepare('SELECT period FROM ambassador_commissions WHERE shop_id = ?').get('closing-shop').period, shiftPeriod(LAST_MONTH, 1));
 
@@ -595,9 +602,9 @@ test('payout report: tiers, sources, frozen snapshot, mark paid, print and PDF',
   // Late invoice.paid for the frozen month lands in the next open month.
   await createShop(call, 'late-shop', { planId: 'solo', soldByAmbassadorId: marco.id });
   const lastMonthStart = Math.floor(Date.parse(periodBounds(LAST_MONTH).start) / 1000) + 3600;
-  await signedWebhook(env, { id: 'evt_late', type: 'invoice.paid', data: { object: { id: 'in_late', metadata: { shopId: 'late-shop' }, amount_paid: 6900, period_start: lastMonthStart } } });
+  await signedWebhook(env, { id: 'evt_late', type: 'invoice.paid', data: { object: { id: 'in_late', metadata: { shopId: 'late-shop' }, amount_paid: 6900, period_start: lastMonthStart, lines: { data: [membershipLine(lastMonthStart, 6900)] } } } });
   assert.equal(DB.sqlite.prepare("SELECT period FROM ambassador_commissions WHERE shop_id = 'late-shop'").get().period, shiftPeriod(LAST_MONTH, 1));
-  await signedWebhook(env, { id: 'evt_late_duplicate', type: 'invoice.paid', data: { object: { id: 'in_late_duplicate', metadata: { shopId: 'late-shop' }, amount_paid: 6900, period_start: lastMonthStart } } });
+  await signedWebhook(env, { id: 'evt_late_duplicate', type: 'invoice.paid', data: { object: { id: 'in_late_duplicate', metadata: { shopId: 'late-shop' }, amount_paid: 6900, period_start: lastMonthStart, lines: { data: [membershipLine(lastMonthStart, 6900)] } } } });
   backdateSale(DB, 'late-shop');
   await generateCommissionLedger(env, shiftPeriod(LAST_MONTH, 1));
   const lateShopLines = DB.sqlite.prepare("SELECT period, earning_period FROM ambassador_commissions WHERE shop_id = 'late-shop' ORDER BY earning_period").all()
@@ -789,4 +796,75 @@ test('payout rate breakdowns use accrued amounts and label mixed rates', () => {
   assert.match(pdf, /mixed/);
   assert.match(pdf, /1 x \$20\.00/);
   assert.match(pdf, /1 x \$25\.00/);
+});
+
+test('coverage backfill falls back to updated_at for admin-created active memberships', () => {
+  const before = readdirSync(new URL('../migrations/', import.meta.url)).filter(name => name.endsWith('.sql') && name < '0023').sort();
+  const DB = createD1(before);
+  DB.sqlite.prepare("INSERT INTO shops (id, name, slug, timezone, billing_status, created_at, updated_at) VALUES ('legacy-admin', 'Legacy', 'legacy-admin', 'America/Chicago', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").run();
+  DB.sqlite.prepare("INSERT INTO subscriptions (shop_id, plan_id, status, updated_at) VALUES ('legacy-admin', 'shop', 'active', '2026-02-03T04:05:06.000Z')").run();
+  DB.sqlite.exec(readFileSync(new URL('../migrations/0023_ambassador_paid_coverage.sql', import.meta.url), 'utf8'));
+  const row = DB.sqlite.prepare("SELECT starts_at, ends_at FROM ambassador_paid_coverage WHERE shop_id = 'legacy-admin'").get();
+  assert.deepEqual({ ...row }, { starts_at: '2026-02-03T04:05:06.000Z', ends_at: null });
+});
+
+test('only a paid membership line records coverage; metered usage and full discounts do not', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'line-shop', { soldByAmbassadorId: amb.id });
+  await createShop(call, 'discount-shop', { soldByAmbassadorId: amb.id });
+  for (const shopId of ['line-shop', 'discount-shop']) DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run(shopId);
+  const usageStart = Math.floor(Date.parse(periodBounds(shiftPeriod(periodOf(new Date()), -3)).start) / 1000) + 3600;
+  const membershipStart = Math.floor(Date.parse(periodBounds(shiftPeriod(periodOf(new Date()), -2)).start) / 1000) + 3600;
+  const usage = membershipLine(usageStart, 400, { price: { recurring: { interval: 'month', usage_type: 'metered' } } });
+
+  await signedWebhook(env, { id: 'evt_usage_first', type: 'invoice.paid', data: { object: {
+    id: 'in_usage_first', metadata: { shopId: 'line-shop' }, amount_paid: 14300,
+    lines: { data: [usage, membershipLine(membershipStart, 13900)] },
+  } } });
+  const line = DB.sqlite.prepare("SELECT earning_period FROM ambassador_commissions WHERE shop_id = 'line-shop'").get();
+  assert.equal(line.earning_period, shiftPeriod(periodOf(new Date()), -2), 'the membership line, not the usage line, sets the month');
+  assert.equal(DB.sqlite.prepare("SELECT starts_at FROM ambassador_paid_coverage WHERE shop_id = 'line-shop'").get().starts_at, new Date(membershipStart * 1000).toISOString());
+
+  await signedWebhook(env, { id: 'evt_discounted', type: 'invoice.paid', data: { object: {
+    id: 'in_discounted', metadata: { shopId: 'discount-shop' }, amount_paid: 400,
+    lines: { data: [membershipLine(membershipStart, 13900, { discount_amounts: [{ amount: 13900 }] }), usage] },
+  } } });
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'discount-shop'").get().n, 0);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_commissions WHERE shop_id = 'discount-shop'").get().n, 0);
+
+  await signedWebhook(env, { id: 'evt_checkout_trial', type: 'checkout.session.completed', data: { object: {
+    id: 'cs_trial', subscription: 'sub_trial', metadata: { shopId: 'discount-shop', planId: 'shop' },
+  } } });
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'discount-shop'").get().n, 0, 'checkout alone is not paid coverage');
+});
+
+test('suspension and trial transitions end bounded and future coverage; activation retries repair it', async () => {
+  const { call, DB } = setup();
+  await createShop(call, 'cut-shop');
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('cut-shop');
+  const past = new Date(Date.now() - 10 * 86400000).toISOString();
+  const soon = new Date(Date.now() + 20 * 86400000).toISOString();
+  const future = new Date(Date.now() + 40 * 86400000).toISOString();
+  const later = new Date(Date.now() + 70 * 86400000).toISOString();
+  const insert = DB.sqlite.prepare("INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at) VALUES ('cut-shop', ?, ?, 'stripe_invoice', ?)");
+  insert.run(past, soon, past);
+  insert.run(future, later, past);
+
+  assert.equal((await call('POST', '/admin/accounts/cut-shop/status', { suspended: true })).status, 200);
+  const now = Date.now();
+  const rows = DB.sqlite.prepare("SELECT starts_at, ends_at FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' ORDER BY starts_at").all();
+  assert.ok(Date.parse(rows[0].ends_at) <= now, 'running interval ends at suspension');
+  assert.equal(rows[1].ends_at, rows[1].starts_at, 'future interval is retired');
+
+  assert.equal((await call('POST', '/admin/accounts/cut-shop/status', { suspended: false })).status, 200);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' AND ends_at IS NULL").get().n, 1, 'admin membership resumes coverage');
+
+  assert.equal((await call('POST', '/admin/accounts/cut-shop/subscription', { mode: 'trialing' })).status, 200);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' AND ends_at IS NULL").get().n, 0, 'trial ends coverage');
+
+  await call('POST', '/admin/accounts/cut-shop/subscription', { mode: 'active' });
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('cut-shop');
+  assert.equal((await call('POST', '/admin/accounts/cut-shop/subscription', { mode: 'active' })).status, 200);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' AND ends_at IS NULL").get().n, 1, 'a retry on an already-active membership repairs missing coverage');
 });

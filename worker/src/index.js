@@ -140,7 +140,7 @@ import {
 import { redactSensitive } from './redact.mjs';
 import { HEALTH_CHECK_CRON, handleHealthCheckAdmin, runScheduledHealthCheck } from './health/health-check.mjs';
 import { applyAttribution, attributeMembership, normalizeReferralCode, resolveAttribution } from './ambassadors/store.mjs';
-import { recordInvoiceCommission, recordPaidCoverage } from './ambassadors/commissions.mjs';
+import { endPaidCoverage, ensureActivePaidCoverage, recordInvoiceCommission } from './ambassadors/commissions.mjs';
 import { AMBASSADOR_PAYOUT_CRON, runScheduledAmbassadorPayouts } from './ambassadors/payout-report.mjs';
 import { handleAmbassadorAdmin, handleAmbassadorPublic } from './ambassadors/routes.mjs';
 
@@ -2425,7 +2425,7 @@ async function handleAdmin(request, env, context, segments, analytics) {
           current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
       `).bind(shopId, planId, subscriptionStatus, subscriptionExpiresAt, nowIso),
     ]);
-    if (subscriptionStatus === 'active') await recordPaidCoverage(env, shopId, nowIso, null, { source: 'admin' });
+    await ensureActivePaidCoverage(env, shopId, nowIso);
     const credit = await applyAttribution(env, shopId, {
       ambassador: attribution.ambassador,
       saleSource: attribution.saleSource,
@@ -2485,15 +2485,8 @@ async function handleAdmin(request, env, context, segments, analytics) {
       'UPDATE accounts SET suspended = ?, updated_at = ? WHERE shop_id = ?',
     ).bind(body.suspended ? 1 : 0, now, target).run();
     if (!result.meta.changes) throw new HttpError(404, 'Customer account not found');
-    if (body.suspended) {
-      await env.DB.prepare(`
-        UPDATE ambassador_paid_coverage SET ends_at = ?
-        WHERE shop_id = ? AND ends_at IS NULL
-      `).bind(now, target).run();
-    } else {
-      const membership = await env.DB.prepare('SELECT status FROM subscriptions WHERE shop_id = ?').bind(target).first();
-      if (membership?.status === 'active') await recordPaidCoverage(env, target, now, null, { source: 'admin' });
-    }
+    if (body.suspended) await endPaidCoverage(env, target, now);
+    else await ensureActivePaidCoverage(env, target, now);
     await env.DB.prepare('UPDATE users SET enabled = ?, updated_at = ? WHERE shop_id = ?').bind(body.suspended ? 0 : 1, now, target).run();
     if (body.suspended) {
       const userRows = await env.DB.prepare('SELECT id FROM users WHERE shop_id = ?').bind(target).all();
@@ -2532,7 +2525,6 @@ async function handleAdmin(request, env, context, segments, analytics) {
         trusted: true,
       });
     }
-    const previousMembership = await env.DB.prepare('SELECT status FROM subscriptions WHERE shop_id = ?').bind(target).first();
     const now = new Date();
     const nowIso = now.toISOString();
     let subscriptionStatus = String(account.subscription_status || 'trialing');
@@ -2563,14 +2555,8 @@ async function handleAdmin(request, env, context, segments, analytics) {
       ON CONFLICT(shop_id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status,
         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
     `).bind(target, planId, subscriptionStatus, subscriptionExpiresAt, nowIso, nowIso).run();
-    if (subscriptionStatus === 'active' && previousMembership?.status !== 'active') {
-      await recordPaidCoverage(env, target, nowIso, null, { source: 'admin' });
-    } else if (subscriptionStatus !== 'active') {
-      await env.DB.prepare(`
-        UPDATE ambassador_paid_coverage SET ends_at = ?
-        WHERE shop_id = ? AND ends_at IS NULL
-      `).bind(nowIso, target).run();
-    }
+    if (subscriptionStatus === 'active') await ensureActivePaidCoverage(env, target, nowIso);
+    else await endPaidCoverage(env, target, nowIso);
     let credit = null;
     if (attribution) {
       credit = await applyAttribution(env, target, {
@@ -3700,18 +3686,10 @@ async function handleBilling(request, env, context, segments) {
         `).bind(
           shopId, subscriptionId || null, planId, status, periodEnd, periodStart, nowIso, nowIso,
         ).run();
-        if (status === 'active') {
-          const trialEndSeconds = Number(object.trial_end || 0);
-          const paidStart = trialEndSeconds > 0 && (!periodStart || trialEndSeconds * 1000 > Date.parse(periodStart))
-            ? new Date(trialEndSeconds * 1000).toISOString()
-            : periodStart || nowIso;
-          await recordPaidCoverage(env, shopId, paidStart, periodEnd, { source: 'stripe_subscription' });
-        } else {
-          await env.DB.prepare(`
-            UPDATE ambassador_paid_coverage SET ends_at = COALESCE(ends_at, ?)
-            WHERE shop_id = ? AND ends_at IS NULL
-          `).bind(periodEnd || nowIso, shopId).run();
-        }
+        // Paid coverage comes only from invoice.paid with a positive membership
+        // line (recordInvoiceCommission); here a membership that stops being
+        // active just ends whatever coverage is still running.
+        if (status !== 'active') await endPaidCoverage(env, shopId, nowIso);
         capturePostHogEvent(env, { shopId, userId: `billing-webhook:${shopId}` }, 'subscription_status_changed', {
           plan_id: planId,
           subscription_status: status,
