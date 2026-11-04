@@ -5,6 +5,7 @@
 // Cancelled, past-due, trialing, and suspended accounts accrue nothing.
 
 import { HttpError } from '../http.mjs';
+import { invoiceMembershipPeriod, recordPaidCoverage } from './coverage.mjs';
 
 export const COMMISSION_TIERS = Object.freeze(['solo', 'shop', 'shop_pro', 'enterprise']);
 export const TIER_LABELS = Object.freeze({ solo: 'Solo', shop: 'Shop', shop_pro: 'Shop Pro', enterprise: 'Enterprise' });
@@ -114,58 +115,6 @@ export async function openPeriodFor(env, period) {
   return candidate;
 }
 
-export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, { source = 'stripe' } = {}) {
-  const start = startsAt instanceof Date ? startsAt.toISOString() : new Date(startsAt).toISOString();
-  const end = endsAt ? (endsAt instanceof Date ? endsAt.toISOString() : new Date(endsAt).toISOString()) : null;
-  return env.DB.prepare(`
-    INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, starts_at) DO UPDATE SET
-      ends_at = COALESCE(excluded.ends_at, ambassador_paid_coverage.ends_at),
-      source = excluded.source
-  `).bind(shopId, start, end, source, new Date().toISOString()).run();
-}
-
-/**
- * Cut every coverage interval still running at `at`, and retire intervals that
- * start later, so a suspension or a drop to trial/comped never leaves paid
- * coverage spanning the unpaid gap. Zero-length intervals are ignored by the
- * eligibility check.
- */
-export async function endPaidCoverage(env, shopId, at = new Date()) {
-  const when = at instanceof Date ? at.toISOString() : new Date(at).toISOString();
-  return env.DB.prepare(`
-    UPDATE ambassador_paid_coverage
-    SET ends_at = CASE WHEN starts_at > ? THEN starts_at ELSE ? END
-    WHERE shop_id = ? AND (ends_at IS NULL OR ends_at > ?)
-  `).bind(when, when, shopId, when).run();
-}
-
-/**
- * Active membership: make sure some coverage runs at `at`. Admin-managed
- * memberships get open-ended coverage; a Stripe membership (e.g. one restored
- * from suspension) is covered only up to the period it already paid for.
- * Idempotent, so a retry after a failed write repairs missing coverage instead
- * of relying on a status transition.
- */
-export async function ensureActivePaidCoverage(env, shopId, at = new Date()) {
-  const when = at instanceof Date ? at.toISOString() : new Date(at).toISOString();
-  const membership = await env.DB.prepare(
-    'SELECT status, stripe_subscription_id, current_period_end FROM subscriptions WHERE shop_id = ?',
-  ).bind(shopId).first();
-  if (membership?.status !== 'active') return { recorded: false };
-  const stripeEnd = membership.stripe_subscription_id ? membership.current_period_end : null;
-  if (membership.stripe_subscription_id && !(stripeEnd && Date.parse(stripeEnd) > Date.parse(when))) return { recorded: false };
-  const covered = await env.DB.prepare(`
-    SELECT 1 FROM ambassador_paid_coverage
-    WHERE shop_id = ? AND starts_at <= ? AND (ends_at IS NULL OR ends_at > ?)
-    LIMIT 1
-  `).bind(shopId, when, when).first();
-  if (covered) return { recorded: false };
-  await recordPaidCoverage(env, shopId, when, stripeEnd, { source: stripeEnd ? 'stripe_restore' : 'admin' });
-  return { recorded: true };
-}
-
 const ELIGIBLE_SQL = `
   SELECT s.shop_id, s.plan_id, s.sale_source, s.sold_by_ambassador_id AS ambassador_id,
          r.tier, r.monthly_cents
@@ -218,41 +167,6 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   return { period, created, eligible: rows.length, frozen: await periodClosed(env, period) };
 }
 
-function lineNetCents(line) {
-  const discounts = Array.isArray(line?.discount_amounts)
-    ? line.discount_amounts.reduce((sum, item) => sum + Number(item?.amount || 0), 0)
-    : 0;
-  return Number(line?.amount || 0) - discounts;
-}
-
-function isMembershipLine(line) {
-  const price = line?.price || line?.pricing?.price_details || {};
-  const recurring = price?.recurring || line?.plan || null;
-  const subscriptionLine = line?.type === 'subscription'
-    || line?.parent?.type === 'subscription_item_details'
-    || Boolean(recurring);
-  const metered = (price?.recurring?.usage_type || line?.plan?.usage_type) === 'metered';
-  const proration = line?.proration === true || line?.parent?.subscription_item_details?.proration === true;
-  return subscriptionLine && !metered && !proration;
-}
-
-/**
- * The membership fee line of a paid invoice, picked explicitly: recurring,
- * licensed (not the metered AI-phone overage), not a proration, and charging
- * money after discounts. Null when the invoice paid no membership fee.
- */
-export function invoiceMembershipPeriod(invoice) {
-  const lines = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : [];
-  const line = lines.find(item => isMembershipLine(item) && lineNetCents(item) > 0);
-  const startSeconds = Number(line?.period?.start || 0);
-  if (!line || !(startSeconds > 0)) return null;
-  const endSeconds = Number(line.period?.end || 0);
-  return {
-    start: new Date(startSeconds * 1000),
-    end: endSeconds > 0 ? new Date(endSeconds * 1000) : null,
-  };
-}
-
 async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
   const stripeSubscriptionId = typeof invoice?.subscription === 'string'
     ? invoice.subscription
@@ -274,9 +188,10 @@ async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
 /** Stripe invoice.paid: accrue the month the invoice covers if it charged money. */
 export async function recordInvoiceCommission(env, shopId, invoice) {
   if (!(Number(invoice?.amount_paid) > 0)) return { recorded: false, reason: 'zero_amount' };
-  const servicePeriod = invoiceMembershipPeriod(invoice);
-  if (!servicePeriod) return { recorded: false, reason: 'no_paid_membership_line' };
+  // Any real payment restores billing access, even one that earns no commission.
   await reconcilePaidInvoiceSubscription(env, shopId, invoice);
+  const servicePeriod = invoiceMembershipPeriod(invoice, env);
+  if (!servicePeriod) return { recorded: false, reason: 'no_paid_membership_line' };
   const subscription = await env.DB.prepare(`
     SELECT s.plan_id, s.sale_source, s.status AS subscription_status,
            s.sold_by_ambassador_id AS ambassador_id, a.status AS ambassador_status,
@@ -288,9 +203,15 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
     LEFT JOIN accounts acct ON acct.shop_id = s.shop_id
     WHERE s.shop_id = ?
   `).bind(shopId).first();
+  // Keep the payment evidence whatever the cached status says; a suspended
+  // shop's paid time is stored already cut and comes back when it is restored.
+  const suspended = Number(subscription?.account_suspended) === 1;
+  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, {
+    source: 'stripe_invoice',
+    cutReason: suspended ? 'suspension' : null,
+  });
   if (subscription?.subscription_status !== 'active') return { recorded: false, reason: 'membership_not_active' };
-  if (Number(subscription.account_suspended) === 1) return { recorded: false, reason: 'account_suspended' };
-  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { source: 'stripe_invoice' });
+  if (suspended) return { recorded: false, reason: 'account_suspended' };
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };

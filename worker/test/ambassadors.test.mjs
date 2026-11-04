@@ -839,7 +839,7 @@ test('only a paid membership line records coverage; metered usage and full disco
   assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'discount-shop'").get().n, 0, 'checkout alone is not paid coverage');
 });
 
-test('suspension and trial transitions end bounded and future coverage; activation retries repair it', async () => {
+test('suspension cuts coverage and lifting it restores exactly the paid-through time', async () => {
   const { call, DB } = setup();
   await createShop(call, 'cut-shop');
   DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('cut-shop');
@@ -850,21 +850,89 @@ test('suspension and trial transitions end bounded and future coverage; activati
   const insert = DB.sqlite.prepare("INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at) VALUES ('cut-shop', ?, ?, 'stripe_invoice', ?)");
   insert.run(past, soon, past);
   insert.run(future, later, past);
+  const running = () => DB.sqlite.prepare("SELECT starts_at, ends_at FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' AND (ends_at IS NULL OR ends_at > starts_at) AND (ends_at IS NULL OR ends_at > ?) ORDER BY starts_at").all(new Date().toISOString());
 
   assert.equal((await call('POST', '/admin/accounts/cut-shop/status', { suspended: true })).status, 200);
-  const now = Date.now();
-  const rows = DB.sqlite.prepare("SELECT starts_at, ends_at FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' ORDER BY starts_at").all();
-  assert.ok(Date.parse(rows[0].ends_at) <= now, 'running interval ends at suspension');
-  assert.equal(rows[1].ends_at, rows[1].starts_at, 'future interval is retired');
+  assert.deepEqual(running(), [], 'nothing covers time after the suspension');
 
   assert.equal((await call('POST', '/admin/accounts/cut-shop/status', { suspended: false })).status, 200);
-  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' AND ends_at IS NULL").get().n, 1, 'admin membership resumes coverage');
+  const restored = running();
+  assert.deepEqual(restored.map(row => row.ends_at), [soon, later], 'restored to the original paid-through dates, no further');
+  assert.ok(Date.parse(restored[0].starts_at) > Date.parse(past), 'the suspended stretch stays unpaid');
+  assert.equal(restored[1].starts_at, future);
 
-  assert.equal((await call('POST', '/admin/accounts/cut-shop/subscription', { mode: 'trialing' })).status, 200);
-  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' AND ends_at IS NULL").get().n, 0, 'trial ends coverage');
+  assert.equal((await call('POST', '/admin/accounts/cut-shop/status', { suspended: false })).status, 200);
+  assert.equal(running().length, 2, 'restoring twice is harmless');
+});
 
-  await call('POST', '/admin/accounts/cut-shop/subscription', { mode: 'active' });
-  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('cut-shop');
-  assert.equal((await call('POST', '/admin/accounts/cut-shop/subscription', { mode: 'active' })).status, 200);
-  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'cut-shop' AND ends_at IS NULL").get().n, 1, 'a retry on an already-active membership repairs missing coverage');
+test('a fully discounted Stripe membership gets no coverage back from a suspension round trip', async () => {
+  const { call, DB } = setup();
+  await createShop(call, 'free-stripe', { accountMode: 'trialing' });
+  DB.sqlite.prepare("UPDATE subscriptions SET status = 'active', stripe_subscription_id = 'sub_free', current_period_end = ? WHERE shop_id = 'free-stripe'").run(new Date(Date.now() + 20 * 86400000).toISOString());
+  await call('POST', '/admin/accounts/free-stripe/status', { suspended: true });
+  await call('POST', '/admin/accounts/free-stripe/status', { suspended: false });
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'free-stripe'").get().n, 0);
+});
+
+test('admin grants are explicit and retry-safe, and trial or Stripe billing ends them', async () => {
+  const { call, DB, env } = setup();
+  await createShop(call, 'grant-shop', { accountMode: 'trialing' });
+  DB.sqlite.prepare("UPDATE subscriptions SET stripe_subscription_id = 'sub_old', current_period_end = NULL WHERE shop_id = 'grant-shop'").run();
+  const open = () => DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'grant-shop' AND source = 'admin' AND ends_at IS NULL").get().n;
+
+  assert.equal((await call('POST', '/admin/accounts/grant-shop/subscription', { mode: 'active' })).status, 200);
+  assert.equal(open(), 1, 'a manual activation counts even with an old Stripe ID on file');
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('grant-shop');
+  assert.equal((await call('POST', '/admin/accounts/grant-shop/subscription', { mode: 'active' })).status, 200);
+  assert.equal(open(), 1, 'a retry on an already-active membership repairs missing coverage');
+  assert.equal((await call('POST', '/admin/accounts/grant-shop/subscription', { mode: 'active' })).status, 200);
+  assert.equal(open(), 1, 'and never stacks a second grant');
+
+  await call('POST', '/admin/accounts/grant-shop/subscription', { mode: 'trialing' });
+  assert.equal(open(), 0, 'trial ends the grant');
+
+  await call('POST', '/admin/accounts/grant-shop/subscription', { mode: 'active' });
+  await signedWebhook(env, { id: 'evt_switch_checkout', type: 'checkout.session.completed', data: { object: {
+    id: 'cs_switch', subscription: 'sub_new', metadata: { shopId: 'grant-shop', planId: 'shop' },
+  } } });
+  assert.equal(open(), 0, 'moving onto Stripe billing ends the admin grant');
+});
+
+test('backfill skips suspended accounts and never treats a trial start as paid', () => {
+  const before = readdirSync(new URL('../migrations/', import.meta.url)).filter(name => name.endsWith('.sql') && name < '0023').sort();
+  const DB = createD1(before);
+  for (const id of ['was-trial', 'suspended-now']) {
+    DB.sqlite.prepare("INSERT INTO shops (id, name, slug, timezone, billing_status, created_at, updated_at) VALUES (?, ?, ?, 'America/Chicago', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").run(id, id, id);
+  }
+  DB.sqlite.prepare("INSERT INTO subscriptions (shop_id, plan_id, status, created_at, updated_at) VALUES ('was-trial', 'shop', 'active', '2026-01-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z')").run();
+  DB.sqlite.prepare("INSERT INTO subscriptions (shop_id, plan_id, status, updated_at) VALUES ('suspended-now', 'shop', 'active', '2026-03-01T00:00:00.000Z')").run();
+  DB.sqlite.prepare("INSERT INTO accounts (shop_id, shop_name, owner_email, owner_name, suspended, created_at, updated_at, created_by) VALUES ('suspended-now', 'Suspended', 'o@shops.test', 'Owner', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'admin')").run();
+  DB.sqlite.exec(readFileSync(new URL('../migrations/0023_ambassador_paid_coverage.sql', import.meta.url), 'utf8'));
+  const rows = DB.sqlite.prepare('SELECT shop_id, starts_at, source FROM ambassador_paid_coverage ORDER BY shop_id').all().map(row => ({ ...row }));
+  assert.deepEqual(rows, [{ shop_id: 'was-trial', starts_at: '2026-03-01T00:00:00.000Z', source: 'admin' }]);
+});
+
+test('invoice.paid keeps payment evidence before activation, reads ID-only lines, and still restores billing', async () => {
+  const membershipPrice = 'price_membershipShop';
+  const { call, DB, env } = setup({ STRIPE_PRICE_SHOP_MONTHLY: membershipPrice });
+  const amb = await createAmbassador(call);
+  await createShop(call, 'early-invoice', { accountMode: 'trialing', soldByAmbassadorId: amb.id });
+  await createShop(call, 'usage-only', { soldByAmbassadorId: amb.id });
+  DB.sqlite.prepare("UPDATE subscriptions SET status = 'past_due', stripe_subscription_id = 'sub_usage' WHERE shop_id = 'usage-only'").run();
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage').run();
+  const start = Math.floor(Date.now() / 1000) - 86400;
+  const idOnly = (price, amount, extra = {}) => ({ amount, period: { start, end: start + 30 * 86400 }, pricing: { price_details: { price } }, parent: { type: 'subscription_item_details' }, ...extra });
+
+  await signedWebhook(env, { id: 'evt_early', type: 'invoice.paid', data: { object: {
+    id: 'in_early', metadata: { shopId: 'early-invoice' }, amount_paid: 13900,
+    lines: { data: [idOnly('price_meteredUsage', 300), idOnly(membershipPrice, 13900)] },
+  } } });
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'early-invoice'").get().n, 1, 'paid while still trialing is kept');
+
+  await signedWebhook(env, { id: 'evt_usage_only', type: 'invoice.paid', data: { object: {
+    id: 'in_usage_only', subscription: 'sub_usage', metadata: { shopId: 'usage-only' }, amount_paid: 300,
+    lines: { data: [idOnly('price_meteredUsage', 300), idOnly(membershipPrice, 13900, { discount_amounts: [{ amount: 13900 }] })] },
+  } } });
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'usage-only'").get().n, 0, 'an unknown ID-only usage line is not a membership fee');
+  assert.equal(subscription(DB, 'usage-only').status, 'active', 'the payment still restores billing access');
 });
