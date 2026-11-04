@@ -5,9 +5,11 @@ import { revokeSessionsForUserIds, syncAccessUser } from '../src/access-users.mj
 
 function memoryUsersDb(seed = []) {
   const users = new Map(seed.map((row) => [String(row.email).toLowerCase(), { ...row }]));
+  const employees = new Map();
   const sessionRevokes = [];
   return {
     users,
+    employees,
     sessionRevokes,
     prepare(sql) {
       return {
@@ -20,12 +22,20 @@ function memoryUsersDb(seed = []) {
               return null;
             },
             async run() {
+              const guarded = /AND EXISTS\s*\(\s*SELECT 1 FROM entities/i.test(sql)
+                || /WHERE EXISTS\s*\(\s*SELECT 1 FROM entities/i.test(sql);
+              if (guarded) {
+                const [shopId, employeeId, snapshot] = args.slice(-3);
+                if (employees.get(`${shopId}:${employeeId}`) !== snapshot) {
+                  return { success: true, meta: { changes: 0 } };
+                }
+              }
               if (/INSERT INTO users/i.test(sql)) {
                 const [id, email, shopId, role, name, enabled] = args;
                 users.set(String(email).toLowerCase(), {
                   id, email, shop_id: shopId, role, name, enabled,
                 });
-                return { success: true };
+                return { success: true, meta: { changes: 1 } };
               }
               if (/UPDATE users/i.test(sql)) {
                 const [role, name, enabled, _updatedAt, email, shopId] = args;
@@ -33,11 +43,11 @@ function memoryUsersDb(seed = []) {
                 assert.ok(row);
                 assert.equal(row.shop_id, shopId);
                 Object.assign(row, { role, name, enabled });
-                return { success: true };
+                return { success: true, meta: { changes: 1 } };
               }
               if (/UPDATE sessions SET revoked_at/i.test(sql)) {
                 sessionRevokes.push({ revokedAt: args[0], userId: args[1] });
-                return { success: true };
+                return { success: true, meta: { changes: 1 } };
               }
               assert.fail(`unexpected SQL: ${sql}`);
             },
@@ -102,6 +112,51 @@ test('syncAccessUser inserts a new shop-scoped user with an id', async () => {
   assert.equal(row.id, result.id);
   assert.match(row.id, /^[0-9a-f-]{36}$/i);
   assert.equal(DB.sessionRevokes.length, 0);
+});
+
+test('syncAccessUser skips an employee Access write when its saved snapshot is stale', async () => {
+  const DB = memoryUsersDb([
+    { id: 'user-1', email: 'tech@shop.test', shop_id: 'shop-a', role: 'technician', name: 'Tech', enabled: 0 },
+  ]);
+  const staleSnapshot = {
+    id: 'emp-1',
+    email: 'tech@shop.test',
+    role: 'technician',
+    name: 'Tech',
+    active: true,
+  };
+  DB.employees.set('shop-a:emp-1', JSON.stringify({ ...staleSnapshot, active: false }));
+
+  await syncAccessUser(
+    { DB },
+    { shopId: 'shop-a' },
+    staleSnapshot,
+    { employeeSnapshot: staleSnapshot },
+  );
+
+  assert.equal(DB.users.get('tech@shop.test').enabled, 0);
+  assert.equal(DB.sessionRevokes.length, 0);
+});
+
+test('syncAccessUser guards employee Access inserts with the saved snapshot', async () => {
+  const DB = memoryUsersDb();
+  const staleSnapshot = {
+    id: 'emp-1',
+    email: 'new@shop.test',
+    role: 'technician',
+    name: 'New Tech',
+    active: true,
+  };
+  DB.employees.set('shop-a:emp-1', JSON.stringify({ ...staleSnapshot, active: false }));
+
+  await syncAccessUser(
+    { DB },
+    { shopId: 'shop-a' },
+    staleSnapshot,
+    { employeeSnapshot: staleSnapshot },
+  );
+
+  assert.equal(DB.users.has('new@shop.test'), false);
 });
 
 test('revokeSessionsForUserIds ignores blank ids', async () => {

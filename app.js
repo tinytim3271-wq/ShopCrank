@@ -7946,7 +7946,7 @@ button{margin-top:12px;padding:8px 14px}
       const id = String(body?.id || pathId || "");
       if (!id) continue;
       if (method === "DELETE") {
-        if (body?.archivedAt) {
+        if (body?.archivedAt && ["invoices", "payments"].includes(type)) {
           const remote = records.get(id);
           const archived = remote && typeof remote === "object" ? { ...body, ...remote } : body;
           for (const field2 of ["archivedAt", "archivedBy", "archiveReason", "archiveGroup"]) {
