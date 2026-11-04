@@ -105,7 +105,7 @@ import { refreshDueKnowledgeSources } from './knowledge/web.mjs';
 import { handleOnboardingRoutes, pollPendingA2p } from './onboarding/routes.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
 import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
-import { handlePhoneUsage, meterPhoneCall, phoneCallDecision, shopFallbackPhone } from './phone-metering.mjs';
+import { findOveragePrice, handlePhoneUsage, meterPhoneCall, phoneCallDecision, shopFallbackPhone } from './phone-metering.mjs';
 import { FOLLOWUP_CRON, runScheduledFollowups, runShopFollowups } from './customer-followups.mjs';
 import { handlePublicBooking } from './online-booking.mjs';
 import { automatedSmsEnabled } from './growth-flags.mjs';
@@ -3536,6 +3536,9 @@ async function handleBilling(request, env, context, segments) {
         'metadata[saleSource]': checkoutCredit.saleSource,
         'subscription_data[metadata][saleSource]': checkoutCredit.saleSource,
       });
+      // Extra AI phone minutes bill through the plan's metered overage price (no quantity: Stripe meters it).
+      const overagePrice = await findOveragePrice(env, plan.id, interval);
+      if (overagePrice) params.set('line_items[1][price]', overagePrice);
       if (checkoutCredit.ambassador?.id) {
         params.set('metadata[ambassadorId]', checkoutCredit.ambassador.id);
         params.set('subscription_data[metadata][ambassadorId]', checkoutCredit.ambassador.id);
