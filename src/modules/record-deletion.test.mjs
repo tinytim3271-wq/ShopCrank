@@ -79,6 +79,13 @@ test('relatedForRemoval finds invoices for an order, a vehicle and a customer', 
   assert.equal(relatedForRemoval('customers', { name: 'Ann' }, collections).invoices.length, 1);
 });
 
+test('relatedForRemoval finds invoices linked directly by vehicleId', () => {
+  const linked = relatedForRemoval('vehicles', { id: 'v1' }, {
+    invoices: [{ id: 'INV-1', vehicleId: 'v1' }],
+  });
+  assert.deepEqual(linked.invoices.map(invoice => invoice.id), ['INV-1']);
+});
+
 test('archive and restore round-trip the archive fields', () => {
   const archived = archivedCopy({ id: 'x', name: 'A' }, { actor: 'o@x', at: '2026-11-01T00:00:00Z', reason: 'r', group: 'customers:x' });
   assert.ok(isArchived(archived));

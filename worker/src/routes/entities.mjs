@@ -128,13 +128,16 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     }
     return record;
   }
-  await env.DB.prepare(`
-    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, entity_type, entity_id) DO UPDATE SET
-      data_json = excluded.data_json,
-      updated_at = excluded.updated_at
-  `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  const outcome = existing
+    ? await env.DB.prepare(`
+      UPDATE entities SET data_json = ?, updated_at = ?
+      WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
+    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json).run()
+    : await env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   return record;
 }
 
@@ -154,6 +157,7 @@ export function archiveFieldsForSave(existingRow, body, context, { create = fals
   // set them (hiding a record without the admin check) nor change them.
   for (const field of ARCHIVE_FIELDS) delete body[field];
   if (!isArchived(previous)) return {};
+  if (type === 'employees' && !restoring) body.active = false;
   if (create) {
     throw new HttpError(409, `${ARCHIVE_LABELS[type] || 'Record'} ${previous.name || previous.number || id} is archived. Restore it from Settings → Archived records, or use a different name or number.`);
   }

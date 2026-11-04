@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildEntityDeleteStatements,
+  handleEntities as handleRouteEntities,
   listChatMessagesForConversations,
   listEntities,
-  putEntity,
+  putEntity as putEntityRoute,
 } from '../src/routes/entities.mjs';
+import { putEntity as putEntityWorker } from '../src/index.js';
 import {
   assertUploadContentType,
   assertUploadSize,
@@ -372,6 +374,7 @@ test('putEntity rejects stale If-Match so remote approvals are not overwritten',
               async first() {
                 if (/SELECT created_at, created_by, updated_at(, data_json)? FROM entities/i.test(sql)) {
                   return {
+                    data_json: JSON.stringify({ id: 'RO-1', status: 'estimate' }),
                     created_at: '2026-10-06T10:00:00.000Z',
                     created_by: 'writer-1',
                     updated_at: '2026-10-06T12:00:00.000Z',
@@ -381,7 +384,7 @@ test('putEntity rejects stale If-Match so remote approvals are not overwritten',
               },
               async run() {
                 writes.push({ sql, args });
-                return { success: true };
+                return { meta: { changes: 1 } };
               },
             };
           },
@@ -397,14 +400,14 @@ test('putEntity rejects stale If-Match so remote approvals are not overwritten',
   };
 
   await assert.rejects(
-    () => putEntity(env, context, 'orders', 'RO-1', staleBody, '2026-10-06T10:00:00.000Z'),
+    () => putEntityRoute(env, context, 'orders', 'RO-1', staleBody, '2026-10-06T10:00:00.000Z'),
     (error) => error instanceof HttpError
       && error.status === 409
       && /updated elsewhere/i.test(error.message),
   );
   assert.equal(writes.length, 0);
 
-  const saved = await putEntity(
+  const saved = await putEntityRoute(
     env,
     context,
     'orders',
@@ -415,4 +418,76 @@ test('putEntity rejects stale If-Match so remote approvals are not overwritten',
   assert.equal(writes.length, 1);
   assert.equal(saved.estimateApproval.status, 'approved');
   assert.ok(saved.updatedAt);
+});
+
+test('both entity writers reject a snapshot changed during the save', async () => {
+  const snapshot = JSON.stringify({ id: 'INV-1', number: 'INV-1', status: 'sent' });
+  const context = { shopId: 'shop-1', userId: 'owner-1', role: 'owner' };
+  for (const [name, save] of [
+    ['route', putEntityRoute],
+    ['Worker', putEntityWorker],
+  ]) {
+    let updateSql = '';
+    let updateArgs = [];
+    const env = {
+      DB: {
+        prepare(sql) {
+          return {
+            bind(...args) {
+              return {
+                async first() {
+                  return {
+                    data_json: snapshot,
+                    created_at: '2026-11-01T00:00:00.000Z',
+                    created_by: 'owner-1',
+                    updated_at: '2026-11-01T00:00:00.000Z',
+                  };
+                },
+                async run() {
+                  updateSql = sql;
+                  updateArgs = args;
+                  return { meta: { changes: 0 } };
+                },
+              };
+            },
+          };
+        },
+      },
+    };
+    await assert.rejects(
+      () => save(env, context, 'invoices', 'INV-1', { id: 'INV-1', number: 'INV-1', status: 'paid' }),
+      error => error instanceof HttpError && error.status === 409,
+      name,
+    );
+    assert.match(updateSql, /AND data_json = \?/i, `${name} save must compare the read snapshot`);
+    assert.equal(updateArgs.at(-1), snapshot, `${name} save must guard against concurrent archive changes`);
+  }
+});
+
+test('route entity updates keep archived employees inactive and synchronize revoked access', async () => {
+  const DB = createD1();
+  const context = { shopId: 'shop-1', userId: 'admin-1', email: 'admin@shop.test', role: 'admin' };
+  const employee = {
+    id: 'emp-1',
+    name: 'Archived Tech',
+    email: 'archived-tech@shop.test',
+    role: 'technician',
+    active: false,
+    archivedAt: '2026-11-03T00:00:00.000Z',
+  };
+  await DB.prepare('INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind('shop-1', 'employees', 'emp-1', JSON.stringify(employee), 'owner-1', '2026-11-01', '2026-11-03').run();
+  await DB.prepare('INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind('employee-user', employee.email, 'shop-1', 'technician', employee.name, 0, 'now', 'now').run();
+
+  const response = await handleRouteEntities(new Request('https://shopcrank.test/api/entities/employees/emp-1', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...employee, active: true }),
+  }), { DB }, context, ['entities', 'employees', 'emp-1']);
+  assert.equal(response.status, 200);
+  const saved = JSON.parse((await DB.prepare('SELECT data_json FROM entities WHERE entity_type = ? AND entity_id = ?').bind('employees', 'emp-1').first()).data_json);
+  assert.ok(saved.archivedAt);
+  assert.equal(saved.active, false);
+  assert.equal((await DB.prepare('SELECT enabled FROM users WHERE id = ?').bind('employee-user').first()).enabled, 0);
 });
