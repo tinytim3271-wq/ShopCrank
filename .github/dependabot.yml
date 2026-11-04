@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned actions current (they were three majors behind and on Node 20).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # package.json overrides pin glob 7 (and with it minimatch 3) for electron-builder;
+      # Dependabot cannot move those, so its minimatch/glob PRs fail. The lockfile already
+      # carries the patched minimatch 3.1.5 / 5.1.9 / 9.0.9 / 10.2.6.
+      - dependency-name: glob
+        update-types: ['version-update:semver-major']
+      - dependency-name: minimatch
+        update-types: ['version-update:semver-major']

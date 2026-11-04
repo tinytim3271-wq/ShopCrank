@@ -71,7 +71,7 @@ async function enrichedCustomers(
     WITH matching_customers AS (
       SELECT entity_id, data_json, updated_at
       FROM entities
-      WHERE shop_id = ? AND entity_type = 'customers' AND (${whereSql})
+      WHERE shop_id = ? AND entity_type = 'customers' AND json_extract(data_json, '$.archivedAt') IS NULL AND (${whereSql})
       ORDER BY ${orderSql}
       LIMIT ?
     )
@@ -80,6 +80,7 @@ async function enrichedCustomers(
     LEFT JOIN entities vehicle
       ON vehicle.shop_id = ?
       AND vehicle.entity_type = 'vehicles'
+      AND json_extract(vehicle.data_json, '$.archivedAt') IS NULL
       AND (
         json_extract(vehicle.data_json, '$.customerId') = customer.entity_id
         OR (

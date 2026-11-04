@@ -6292,11 +6292,11 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   function cannedServicesForCodes(codes = [], services = [], { vehicle = "" } = {}) {
     const normalized = [...new Set(codes.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean))];
     const used = /* @__PURE__ */ new Set();
-    const matches = [];
+    const matches2 = [];
     const diagnostic = generalDiagnosticService(services, used, vehicle);
     if (diagnostic && normalized.length) {
       used.add(diagnostic.id);
-      matches.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
+      matches2.push({ service: diagnostic, reason: "Diagnosis", codes: normalized });
     }
     for (const rule of DTC_SERVICE_RULES) {
       const hit = normalized.filter((code) => rule.test(code));
@@ -6304,9 +6304,9 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
       const service = bestService(services, rule.keywords, used, vehicle);
       if (!service) continue;
       used.add(service.id);
-      matches.push({ service, reason: rule.label, codes: hit });
+      matches2.push({ service, reason: rule.label, codes: hit });
     }
-    return matches;
+    return matches2;
   }
   function cannedServiceLines(match, { laborRate = 0, scanId = "" } = {}) {
     const { service, codes, reason } = match;
@@ -6327,15 +6327,15 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     return lines;
   }
   function buildScanEstimateLines({ codes = [], services = [], aiLines = [], laborRate = 0, scanId = "", vehicle = "" } = {}) {
-    const matches = cannedServicesForCodes(codes, services, { vehicle });
-    const canned = matches.flatMap((match) => cannedServiceLines(match, { laborRate, scanId }));
+    const matches2 = cannedServicesForCodes(codes, services, { vehicle });
+    const canned = matches2.flatMap((match) => cannedServiceLines(match, { laborRate, scanId }));
     const seen = new Set(canned.map((line) => String(line.description).toLowerCase()));
     const extra = aiLines.filter((line) => !seen.has(String(line.description || "").toLowerCase()));
-    return { lines: [...canned, ...extra], matches };
+    return { lines: [...canned, ...extra], matches: matches2 };
   }
-  function scanEstimateSummary({ matches = [], lines = [] }) {
+  function scanEstimateSummary({ matches: matches2 = [], lines = [] }) {
     if (!lines.length) return "No canned services or AI lines matched these codes.";
-    const canned = matches.map((match) => `${match.service.name} (${match.codes.join(", ")})`).join("; ");
+    const canned = matches2.map((match) => `${match.service.name} (${match.codes.join(", ")})`).join("; ");
     return `${lines.length} line${lines.length === 1 ? "" : "s"}${canned ? ` \xB7 canned: ${canned}` : ""}`;
   }
   var range, DTC_SERVICE_RULES, GENERAL_DIAGNOSTIC, NARROW_DIAGNOSTIC, round3;
@@ -7114,6 +7114,73 @@ button{margin-top:12px;padding:8px 14px}
     }
   });
 
+  // src/modules/settings-panels.js
+  function dangerZonePanel({ icon: icon2 }) {
+    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon2("trash-2", 14)} Remove all shop data</button></div></section>`;
+  }
+  function archivedRecordsPanel({ icon: icon2, escapeHtml: escapeHtml4, archiveNote }) {
+    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Records</div><h2>Archived records</h2><p>${escapeHtml4(archiveNote)}</p></div><button type="button" class="secondary" id="open-archived-records">${icon2("archive", 14)} View archived records</button></div></section>`;
+  }
+  function agentPhonePanel({ icon: icon2, escapeHtml: escapeHtml4, apiUrl, shopId }) {
+    return `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above \u2014 not here.</p></div>${icon2("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${apiUrl}/agentphone/webhook/${escapeHtml4(shopId)}</code></div><div class="full"><button class="primary" type="submit">${icon2("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>`;
+  }
+  function appsBillingPanel({ icon: icon2 }) {
+    return `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon2("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon2("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon2("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon2("sparkles", 14)} Upgrade to paid</button></div></section>`;
+  }
+  function settingsExtraPanels(viewer, deps) {
+    const role = String(viewer?.role || "");
+    const isAdmin = role === "admin";
+    const panels = [];
+    if (isAdmin) panels.push(dangerZonePanel(deps));
+    if (viewer?.canDeleteRecords && !viewer?.offline) panels.push(archivedRecordsPanel(deps));
+    panels.push(deps.phoneUsagePanel());
+    if (deps.twilioPanel || isAdmin) {
+      panels.push(deps.twilioPanel || "");
+      if (isAdmin) panels.push(agentPhonePanel(deps));
+    }
+    if (["admin", "super_admin"].includes(role)) panels.push(appsBillingPanel(deps));
+    return panels.join("");
+  }
+  var init_settings_panels = __esm({
+    "src/modules/settings-panels.js"() {
+    }
+  });
+
+  // src/modules/archived-records.js
+  function archivedRecordLabel(type, item = {}, money5 = (value2) => `$${Number(value2 || 0).toFixed(2)}`) {
+    if (type === "customers") return item.name || item.id;
+    if (type === "vehicles") return [item.year, item.make, item.model].filter(Boolean).join(" ") || item.vin || item.id;
+    if (type === "invoices") return `${item.number || item.id}${item.customer ? ` \xB7 ${item.customer}` : ""}${item.amount != null ? ` \xB7 ${money5(Number(item.amount || 0))}` : ""}`;
+    if (type === "payments") return `${money5(Number(item.amount || 0))}${item.invoiceNumber ? ` \xB7 ${item.invoiceNumber}` : ""}${item.customer ? ` \xB7 ${item.customer}` : ""}`;
+    return `${item.id}${item.customer ? ` \xB7 ${item.customer}` : ""}`;
+  }
+  function applyRemovalResult(collections, result, at = (/* @__PURE__ */ new Date()).toISOString()) {
+    if (!result || result.action !== "archive") return false;
+    for (const [type, list] of Object.entries(result.archived || {})) {
+      if (!Array.isArray(collections[type])) continue;
+      const ids = new Set((list || []).map(String));
+      collections[type] = KEPT_WHEN_ARCHIVED.has(type) ? collections[type].map((item) => matches(ids, item) ? { ...item, archivedAt: item.archivedAt || at, archiveReason: result.reason || item.archiveReason } : item) : collections[type].filter((item) => !matches(ids, item));
+    }
+    for (const [type, list] of Object.entries(result.deleted || {})) {
+      if (!Array.isArray(collections[type])) continue;
+      const ids = new Set((list || []).map(String));
+      collections[type] = collections[type].filter((item) => !matches(ids, item));
+    }
+    return true;
+  }
+  function withoutArchived(rows = []) {
+    return rows.filter((item) => !(item && String(item.archivedAt || "").trim()));
+  }
+  var ARCHIVE_NOTE, ARCHIVE_TYPE_LABELS, KEPT_WHEN_ARCHIVED, matches;
+  var init_archived_records = __esm({
+    "src/modules/archived-records.js"() {
+      ARCHIVE_NOTE = "Records with payments, signatures or a sent invoice are archived for your tax records and can be restored from Settings \u2192 Archived records. Everything else is permanently deleted.";
+      ARCHIVE_TYPE_LABELS = Object.freeze({ customers: "Customers", vehicles: "Vehicles", orders: "Work orders", invoices: "Invoices", payments: "Payments" });
+      KEPT_WHEN_ARCHIVED = Object.freeze(/* @__PURE__ */ new Set(["invoices", "payments"]));
+      matches = (ids, item) => ids.has(String(item?.id ?? "")) || item?.number != null && ids.has(String(item.number));
+    }
+  });
+
   // src/modules/record-deletion.js
   function canDeleteRecords(role) {
     return RECORD_DELETE_ROLES.includes(String(role || ""));
@@ -7143,7 +7210,54 @@ button{margin-top:12px;padding:8px 14px}
   function hasLinkedRecords(counts = {}) {
     return CUSTOMER_LINKED_TYPES.some((type) => Number(Array.isArray(counts[type]) ? counts[type].length : counts[type] || 0) > 0);
   }
-  var RECORD_DELETE_ROLES, ADMIN_DELETE_TYPES, RECORD_DELETE_DENIED, CUSTOMER_LINKED_TYPES, LINK_LABELS;
+  function invoiceHasActivity(invoice = {}, { payments: payments2 = [], documentLinks = 0 } = {}) {
+    if (payments2.length > 0 || Number(documentLinks) > 0) return true;
+    if (Number(invoice.paid || invoice.amountPaid || 0) > 0) return true;
+    if (invoice.signature && (invoice.signature.signatureKey || invoice.signature.signedAt)) return true;
+    return PAID_STATUSES.has(String(invoice.status || "").toLowerCase());
+  }
+  function removalAction(type, record = {}, related = {}) {
+    const count = (key) => Array.isArray(related[key]) ? related[key].length : Number(related[key] || 0);
+    switch (type) {
+      case "payments":
+        return "archive";
+      case "invoices":
+        return invoiceHasActivity(record, { payments: related.payments || [], documentLinks: related.documentLinks || 0 }) ? "archive" : "delete";
+      case "orders":
+        return count("invoices") || count("payments") ? "archive" : "delete";
+      case "vehicles":
+        return count("invoices") ? "archive" : "delete";
+      case "customers":
+        return count("invoices") || count("payments") ? "archive" : "delete";
+      default:
+        return "delete";
+    }
+  }
+  function relatedForRemoval(type, record = {}, collections = {}) {
+    const list = (key) => Array.isArray(collections[key]) ? collections[key] : [];
+    const same = (a, b) => String(a ?? "").trim() !== "" && String(a).trim() === String(b ?? "").trim();
+    const realVin = (vin) => /^[A-HJ-NPR-Z0-9]{17}$/i.test(String(vin || "").trim());
+    if (type === "invoices") {
+      const number = record.number || record.id;
+      return { payments: list("payments").filter((p) => same(p.invoiceNumber, number) || record.ro && same(p.workOrderId, record.ro)) };
+    }
+    if (type === "orders") {
+      return {
+        invoices: list("invoices").filter((i) => same(i.ro, record.id)),
+        payments: list("payments").filter((p) => same(p.workOrderId, record.id))
+      };
+    }
+    if (type === "vehicles") {
+      const orderIds = new Set(list("orders").filter((o) => same(o.vehicleId, record.id) || realVin(record.vin) && same(o.vin, record.vin)).map((o) => o.id));
+      return { invoices: list("invoices").filter((i) => orderIds.has(i.ro) || realVin(record.vin) && same(i.vin, record.vin)) };
+    }
+    if (type === "customers") {
+      const linked = customerLinkedRecords(record, collections);
+      return { invoices: linked.invoices, payments: linked.payments };
+    }
+    return {};
+  }
+  var RECORD_DELETE_ROLES, ADMIN_DELETE_TYPES, RECORD_DELETE_DENIED, CUSTOMER_LINKED_TYPES, LINK_LABELS, ARCHIVABLE_TYPES, ARCHIVE_FIELDS, PAID_STATUSES;
   var init_record_deletion = __esm({
     "src/modules/record-deletion.js"() {
       RECORD_DELETE_ROLES = Object.freeze(["owner", "admin", "super_admin"]);
@@ -7158,6 +7272,9 @@ button{margin-top:12px;padding:8px 14px}
         payments: ["payment", "payments"],
         appointments: ["appointment", "appointments"]
       };
+      ARCHIVABLE_TYPES = Object.freeze(/* @__PURE__ */ new Set(["customers", "vehicles", "orders", "invoices", "payments"]));
+      ARCHIVE_FIELDS = Object.freeze(["archivedAt", "archivedBy", "archiveReason", "archiveGroup"]);
+      PAID_STATUSES = /* @__PURE__ */ new Set(["paid", "partial", "partially_paid", "partially-paid"]);
     }
   });
 
@@ -10042,7 +10159,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   async function loadInvoicesFromApi() {
     try {
-      state.invoices = await apiFetch("/entities/invoices");
+      state.invoices = await apiFetch("/entities/invoices?archived=include");
       save();
     } catch (error) {
       console.error("Failed to load invoices from API; using local data", error);
@@ -10057,7 +10174,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   async function loadPaymentsFromApi() {
     try {
-      state.payments = await apiFetch("/entities/payments");
+      state.payments = await apiFetch("/entities/payments?archived=include");
       save();
     } catch (error) {
       console.error("Failed to load payments from API; using local data", error);
@@ -10176,7 +10293,7 @@ button{margin-top:12px;padding:8px 14px}
   async function loadShopEntities() {
     const role = currentUser()?.role || "";
     const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
-    const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+    const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}${ENTITY_LIST_QUERY[type] || ""}`)));
     const failed = applySettledShopEntityResults(
       types,
       results,
@@ -10381,7 +10498,7 @@ button{margin-top:12px;padding:8px 14px}
   }
   function shell(content) {
     const user = currentUser(), profile = shopProfile(), shift = openShift(user.id);
-    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${query}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
+    return `<a class="skip-link" href="#main-content">Skip to content</a><div class="app-shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">${icon("wrench")}</div><div><div class="brand-name">ShopCrank</div><small>Run the shop. Read the car. Get paid.</small></div></div>${sidebarNavigation()}<div class="sidebar-foot"><div class="shop-card"><strong>${escapeHtml(profile.shopName || "Your shop")}</strong><span>${escapeHtml(profile.phone || "Add a phone in Settings")}</span></div><div class="user-menu" id="user-menu"><button class="user-row" id="user-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel"><div class="avatar">${initials(user.name)}</div><div><strong>${escapeHtml(user.name)}</strong><span>${roleLabel[user.role]}</span></div>${icon("chevron-up", 14)}</button><div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>${canAccess("settings") ? `<button type="button" role="menuitem" id="user-menu-settings">${icon("settings", 14)} Shop settings</button>` : ""}<button type="button" role="menuitem" id="sign-out">${icon("log-out", 14)} Sign out</button></div></div></div></aside><main class="main"><header class="topbar"><button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation menu" title="Open menu">${icon("menu")}</button><label class="global-search">${icon("search", 16)}<input id="global-search" aria-label="Search work orders, customers, and VINs" value="${escapeHtml(query)}" placeholder="Search ROs, customers, VIN..."/><span class="shortcut">/</span></label><div class="top-actions">${syncStatusBadge()}<button class="shift-button ${shift ? "clocked" : ""}" id="global-clock">${icon(shift ? "square" : "play", 14)} ${shift ? `Clock out \xB7 ${formatTime(shift.clockIn)}` : "Clock in"}</button><button class="location-pill" type="button" data-route="settings" title="Open shop settings">${icon("map-pin", 15)} ${escapeHtml(profile.shopName || "Shop")}</button>${attentionMenu()}</div></header><div class="content" id="main-content">${content}</div></main></div>`;
   }
   function heading(kicker, title, description, action = true) {
     return `<div class="page-head"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p>${description}</p></div><div class="head-actions"><button class="secondary" id="export-button">${icon("download", 15)} Export</button>${action ? `<button class="primary" id="new-ro-button">${icon("plus", 15)} New work order</button>` : ""}</div></div>`;
@@ -10399,7 +10516,7 @@ button{margin-top:12px;padding:8px 14px}
     return `<div class="stats ${tech ? "tech-stats" : ""}">${cells.map((x) => `<div class="stat"><div class="stat-top"><span>${x[1]}</span>${icon(x[0])}</div><div class="stat-value">${x[2]}</div><div class="stat-note ${x[4]}">${x[3]}</div></div>`).join("")}</div>`;
   }
   function toolbar() {
-    return `<div class="toolbar"><div class="tabs">${[["active", "Active"], ["completed", "Completed"], ["all", "All orders"]].map((x) => `<button class="tab ${filter === x[0] ? "active" : ""}" data-filter="${x[0]}">${x[1]}</button>`).join("")}</div><label class="toolbar-search">${icon("search")}<input id="order-search" value="${query}" placeholder="Filter this view..."/></label></div>`;
+    return `<div class="toolbar"><div class="tabs">${[["active", "Active"], ["completed", "Completed"], ["all", "All orders"]].map((x) => `<button class="tab ${filter === x[0] ? "active" : ""}" data-filter="${x[0]}">${x[1]}</button>`).join("")}</div><label class="toolbar-search">${icon("search")}<input id="order-search" value="${escapeHtml(query)}" placeholder="Filter this view..."/></label></div>`;
   }
   function card(x) {
     return `<button class="job-card ${x.priority}" data-order="${x.id}"><div class="job-meta"><span>${x.id}</span><span>\xB7</span><span>${x.bay}</span>${x.mobile ? `<span class="mobile">${icon("map-pin", 10)} Mobile</span>` : ""}</div><h4>${x.customer}</h4><div class="vehicle">${x.vehicle}</div><p class="complaint">${x.complaint}</p><div class="job-foot"><span class="tech"><span class="mini-avatar">${initials(x.tech)}</span>${x.tech}</span><span class="promise">${icon("clock-3", 11)}${x.promise}</span></div></button>`;
@@ -12572,14 +12689,17 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
         toast(RECORD_DELETE_DENIED);
         return;
       }
-      if (confirm(`Delete ${x.id}? This cannot be undone.`)) {
+      const archives = willArchive("orders", x);
+      if (confirm(archives ? `Archive ${x.id}? It has an invoice or payment, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${x.id}? This cannot be undone.`)) {
         state.orders = state.orders.filter((o) => o.id !== id);
-        state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== id);
-        state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== id);
-        deleteOrderInApi(id);
+        if (!archives) {
+          state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== id);
+          state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== id);
+        }
+        void deleteOrderInApi(id);
         save();
         closeModal();
-        toast(`${id} deleted`);
+        toast(archives ? `${id} archived` : `${id} deleted`);
         render();
       }
     });
@@ -12741,13 +12861,15 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const vehicle = state.vehicles.find((item) => item.id === id);
     if (!vehicle) return;
     const history = linkedOrders(vehicle).length;
-    if (!confirm(`Delete ${vehicleLabel3(vehicle)}?${history ? ` Its ${history} work order${history === 1 ? "" : "s"} will be kept.` : ""} This cannot be undone.`)) return;
+    const archives = willArchive("vehicles", vehicle);
+    if (!confirm(archives ? `Archive ${vehicleLabel3(vehicle)}? It is on an invoiced work order, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${vehicleLabel3(vehicle)}?${history ? ` Its ${history} work order${history === 1 ? "" : "s"} will be kept.` : ""} This cannot be undone.`)) return;
     try {
-      await apiFetch(`/entities/vehicles/${encodeURIComponent(vehicle.id)}`, { method: "DELETE" });
+      const result = await apiFetch(`/entities/vehicles/${encodeURIComponent(vehicle.id)}`, { method: "DELETE" });
+      applyRemovalResult2(result);
       state.vehicles = state.vehicles.filter((item) => item !== vehicle);
       save();
       closeModal();
-      toast("Vehicle deleted");
+      toast(result?.action === "archive" ? "Vehicle archived" : "Vehicle deleted");
       render();
     } catch (error) {
       toast(error.message || "Vehicle could not be deleted");
@@ -13342,6 +13464,55 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     save();
     render();
   }
+  function removalCollections() {
+    return { ...customerDeletionCollections() };
+  }
+  function willArchive(type, record) {
+    return removalAction(type, record, relatedForRemoval(type, record, removalCollections())) === "archive";
+  }
+  function applyRemovalResult2(result) {
+    const archived = applyRemovalResult(state, result);
+    if (archived) save();
+    return archived;
+  }
+  function archivedRecordLabel2(type, item) {
+    return archivedRecordLabel(type, item, money4);
+  }
+  async function openArchivedRecords() {
+    if (!userCanDeleteRecords()) {
+      toast("Only the shop owner or an admin can view archived records");
+      return;
+    }
+    showModal(`<div class="modal" id="archived-records-modal"><div class="modal-head"><h2>Archived records</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><p class="form-help">${escapeHtml(ARCHIVE_NOTE)}</p><div id="archived-records-list">Loading\u2026</div></div><div class="modal-actions"><button type="button" class="secondary" data-close>Close</button></div></div>`);
+    const host = document.querySelector("#archived-records-list");
+    const types = Object.keys(ARCHIVE_TYPE_LABELS);
+    const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}?archived=only`)));
+    if (!document.body.contains(host)) return;
+    const sections = types.map((type, index) => {
+      const result = results[index];
+      if (result.status !== "fulfilled") return `<h3>${ARCHIVE_TYPE_LABELS[type]}</h3><p>Could not load: ${escapeHtml(result.reason?.message || "error")}</p>`;
+      const rows = Array.isArray(result.value) ? result.value : result.value?.records || [];
+      if (!rows.length) return "";
+      return `<h3>${ARCHIVE_TYPE_LABELS[type]}</h3><ul class="archived-list">${rows.map((item) => `<li><div><b>${escapeHtml(archivedRecordLabel2(type, item))}</b><small>Archived ${escapeHtml(String(item.archivedAt || "").slice(0, 10))}${item.archivedBy ? ` by ${escapeHtml(item.archivedBy)}` : ""}${item.archiveReason ? ` \xB7 ${escapeHtml(item.archiveReason)}` : ""}</small></div><button type="button" class="mini-action" data-restore-type="${type}" data-restore-id="${encodeURIComponent(item.id)}">${icon("rotate-ccw", 14)} Restore</button></li>`).join("")}</ul>`;
+    }).join("");
+    host.innerHTML = sections || "<p>Nothing is archived.</p>";
+    lucide.createIcons();
+    host.querySelectorAll("[data-restore-type]").forEach((button) => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await apiFetch(`/entities/${button.dataset.restoreType}/${button.dataset.restoreId}/restore`, { method: "POST" });
+        await loadShopEntities();
+        await loadCustomersFromApi().catch(() => {
+        });
+        toast("Restored, together with anything archived with it");
+        render();
+        void openArchivedRecords();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Could not restore");
+      }
+    }));
+  }
   async function deleteCustomerRecord(key) {
     if (!userCanDeleteRecords()) {
       toast(RECORD_DELETE_DENIED);
@@ -13356,16 +13527,17 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
     if (!confirm(`Delete ${customer.name}? This cannot be undone.`)) return;
     try {
-      await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}`, { method: "DELETE" });
+      const result = await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}`, { method: "DELETE" });
+      applyRemovalResult2(result);
       removeCustomerFromState(customer);
-      toast("Customer deleted");
+      toast(result?.action === "archive" ? "Customer archived" : "Customer deleted");
     } catch (error) {
       toast(error.message || "Customer could not be deleted");
     }
   }
   function openCustomerCascadeDelete(customer, linked) {
-    const summary = describeLinkedCounts(linked);
-    showModal(`<form class="modal" id="customer-cascade-delete-form"><div class="modal-head"><h2>Delete ${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status blocked">${icon("triangle-alert", 17)}<div><strong>This permanently deletes the customer and their history</strong><span>${escapeHtml(customer.name)} has ${escapeHtml(summary)}. All of it will be deleted, including payment records. This cannot be undone.</span></div></div><label>Type <b>${escapeHtml(customer.name)}</b> to confirm<input name="confirmation" autocomplete="off" required/></label></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="danger" type="submit">${icon("trash-2", 14)} Delete customer and history</button></div></form>`);
+    const summary = describeLinkedCounts(linked), archives = willArchive("customers", customer);
+    showModal(`<form class="modal" id="customer-cascade-delete-form"><div class="modal-head"><h2>Delete ${escapeHtml(customer.name)}</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="messaging-status blocked">${icon("triangle-alert", 17)}<div><strong>${archives ? "This archives the customer, their vehicles and work orders" : "This permanently deletes the customer and their history"}</strong><span>${escapeHtml(customer.name)} has ${escapeHtml(summary)}. ${archives ? "Because they have invoices or payments, the customer, vehicles and work orders are archived (hidden, kept for your tax records, restorable from Settings \u2192 Archived records). Invoices and payments stay in Invoices. Appointments are deleted." : "All of it will be deleted. This cannot be undone."}</span></div></div><label>Type <b>${escapeHtml(customer.name)}</b> to confirm<input name="confirmation" autocomplete="off" required/></label></div><div class="modal-actions"><button type="button" class="secondary" data-close>Cancel</button><button class="danger" type="submit">${icon(archives ? "archive" : "trash-2", 14)} ${archives ? "Archive customer" : "Delete customer and history"}</button></div></form>`);
     const form = document.querySelector("#customer-cascade-delete-form");
     form.onsubmit = async (event) => {
       event.preventDefault();
@@ -13377,10 +13549,15 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const button = form.querySelector("button[type=submit]");
       button.disabled = true;
       try {
-        await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}?cascade=1`, { method: "DELETE" });
+        const result = await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}?cascade=1`, { method: "DELETE" });
         closeModal();
-        removeCustomerFromState(customer, linked);
-        toast(`${customer.name} and ${summary} deleted`);
+        if (applyRemovalResult2(result)) {
+          removeCustomerFromState(customer);
+          toast(`${customer.name} archived`);
+        } else {
+          removeCustomerFromState(customer, linked);
+          toast(`${customer.name} and ${summary} deleted`);
+        }
       } catch (error) {
         button.disabled = false;
         toast(error.message || "Customer could not be deleted");
@@ -13423,13 +13600,17 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
     if (!invoice) return;
     const payments2 = state.payments.filter((payment) => payment.invoiceNumber === invoice.number);
-    if (!confirm(`Delete ${invoice.number}${payments2.length || invoicePaid(invoice) > 0 ? " and its payment history" : ""}? This cannot be undone.`)) return;
+    const archives = willArchive("invoices", invoice);
+    if (!confirm(archives ? `Archive ${invoice.number}${payments2.length ? " and its payments" : ""}? It was sent, signed or paid, so it is kept for your tax records and can be restored from Settings \u2192 Archived records.` : `Delete ${invoice.number}? It is a draft with no payments, so it will be permanently deleted.`)) return;
     try {
-      await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE" });
-      state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
-      state.invoices = state.invoices.filter((item) => item !== invoice);
-      save();
-      toast(payments2.length ? "Invoice and its payments deleted" : "Invoice deleted");
+      const result = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE" });
+      if (applyRemovalResult2(result)) toast(`${invoice.number} archived`);
+      else {
+        state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
+        state.invoices = state.invoices.filter((item) => item !== invoice);
+        save();
+        toast("Invoice deleted");
+      }
       render();
     } catch (error) {
       toast(error.message || "Invoice could not be deleted");
@@ -14031,11 +14212,11 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       resultsElement.innerHTML = `<div class="customer-search-status">${escapeHtml(message)}</div>`;
       input.setAttribute("aria-expanded", "true");
     };
-    const showResults = (matches, source) => {
-      results = matches;
+    const showResults = (matches2, source) => {
+      results = matches2;
       resultsElement.hidden = false;
       input.setAttribute("aria-expanded", "true");
-      resultsElement.innerHTML = `<div class="customer-search-head"><span>${matches.length ? `${matches.length} existing customer${matches.length === 1 ? "" : "s"} found${source === "local" ? " \xB7 saved on this device" : ""}` : "No matching customers found"}</span><button type="button" class="customer-search-dismiss">Dismiss</button></div>${matches.map(customerIntakeResultMarkup).join("")}`;
+      resultsElement.innerHTML = `<div class="customer-search-head"><span>${matches2.length ? `${matches2.length} existing customer${matches2.length === 1 ? "" : "s"} found${source === "local" ? " \xB7 saved on this device" : ""}` : "No matching customers found"}</span><button type="button" class="customer-search-dismiss">Dismiss</button></div>${matches2.map(customerIntakeResultMarkup).join("")}`;
       resultsElement.querySelector(".customer-search-dismiss").onclick = () => {
         dismissedQuery = input.value.trim();
         hideResults();
@@ -14146,13 +14327,13 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       return likelyDuplicateCustomers(data, state.customers, state.vehicles);
     }
   }
-  function showIntakeDuplicateWarning(form, matches, picker, confirmationKey) {
+  function showIntakeDuplicateWarning(form, matches2, picker, confirmationKey) {
     const warning = document.querySelector("#duplicate-customer-warning");
     warning.hidden = false;
-    warning.innerHTML = `<strong>Possible duplicate customer</strong><p>This phone or email matches an existing customer. Link this work order or explicitly continue:</p>${matches.map((match, index) => `<button type="button" class="duplicate-customer-use" data-duplicate-result="${index}">Use ${escapeHtml(match.name)} instead</button>`).join("")}<button type="button" class="duplicate-customer-continue">Create a new customer anyway</button>`;
+    warning.innerHTML = `<strong>Possible duplicate customer</strong><p>This phone or email matches an existing customer. Link this work order or explicitly continue:</p>${matches2.map((match, index) => `<button type="button" class="duplicate-customer-use" data-duplicate-result="${index}">Use ${escapeHtml(match.name)} instead</button>`).join("")}<button type="button" class="duplicate-customer-continue">Create a new customer anyway</button>`;
     warning.querySelectorAll("[data-duplicate-result]").forEach((button) => {
       button.onclick = () => {
-        picker.select(matches[Number(button.dataset.duplicateResult)]);
+        picker.select(matches2[Number(button.dataset.duplicateResult)]);
         form.requestSubmit();
       };
     });
@@ -14378,11 +14559,34 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const signatureSrc = normalized.type === "signature" ? approvalSignatureSrc(normalized) : "";
     return `<section class="estimate-approval-record"><div><span>Estimate authorization</span><strong>${escapeHtml(summary)}</strong></div>${signatureSrc ? `<img src="${escapeAttr(signatureSrc)}" alt="Customer signature"/>` : ""}</section>`;
   }
+  async function refuseOrderServices(order, { customerName = "", note = "" } = {}, button = null) {
+    const who = customerName || order.customer || "The customer";
+    if (!confirm(`Record that ${who} refused the services on ${order.id}?
+
+The job card will be moved to the archive and taken off the board. An owner or admin can restore it from Settings \u2192 Archived records.
+
+Continue?`)) return;
+    if (button) button.disabled = true;
+    try {
+      const result = await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}/refuse`, { method: "POST", body: JSON.stringify({ customerName, note }) });
+      if (result?.queued) throw new Error("Reconnect to the online shop service to archive a refused job card.");
+      applyRemovalResult2(result);
+      state.orders = state.orders.filter((item) => item.id !== order.id);
+      save();
+      closeModal();
+      toast(`${order.id} archived: customer refused services`);
+      render();
+    } catch (error) {
+      if (button) button.disabled = false;
+      toast(error.message || "Could not archive the job card");
+    }
+  }
   function onsiteSignatureModal(kind, record) {
     const estimate = kind === "estimate" ? coherentOrderEstimate(record) : record;
     const number = kind === "estimate" ? record.id : record.number;
     const lineChoices = kind === "estimate" ? `<fieldset class="onsite-line-choices"><legend>Approve or decline each line</legend>${estimate.lines.map((line) => `<label><input type="checkbox" name="approvedLine" value="${escapeAttr(line.id)}" checked><span><b>${escapeHtml(line.description)}</b><small>${line.type === "part" ? `${line.quantity} \xD7 ${money4(line.unitPrice)}` : line.type === "fee" ? `Flat fee \xB7 ${money4(line.total)}` : `${line.hours.toFixed(2)} hr \xD7 ${money4(line.laborRate)}`}</small></span><strong>${money4(line.total)}</strong></label>`).join("")}</fieldset>` : "";
-    const typeOptions = ESTIMATE_APPROVAL_TYPES.map((option) => `<option value="${option.value}">${escapeHtml(option.label)}</option>`).join("");
+    const canRefuse = kind === "estimate" && record.id && !["completed", "invoiced"].includes(record.status) && ["owner", "admin", "super_admin", "service_writer"].includes(currentUser()?.role || "") && !isOfflineDesktop();
+    const typeOptions = ESTIMATE_APPROVAL_TYPES.map((option) => `<option value="${option.value}">${escapeHtml(option.label)}</option>`).join("") + (canRefuse ? `<option value="${SERVICE_REFUSED}">Customer refused services \xB7 archive job card</option>` : "");
     const approvalFields = kind === "estimate" ? `<div class="form-grid approval-method-fields"><label>Approval type *<select name="approvalType" id="approval-type">${typeOptions}</select></label><label id="custom-approval-label" hidden>Custom approval type *<input name="customLabel" maxlength="${APPROVAL_CUSTOM_LABEL_MAX}" placeholder="e.g. Approved via fleet manager email"/></label><label class="full">Approval note (optional)<textarea name="approvalNote" maxlength="${APPROVAL_NOTE_MAX}" placeholder="Who approved, callback number, or other audit detail"></textarea></label></div>` : "";
     showModal(`<form class="modal wide" id="document-signature-form"><div class="modal-head"><h2>${kind === "estimate" ? "Authorize estimate" : "Sign invoice"} on this device</h2><button type="button" class="close" data-close>${icon("x")}</button></div><div class="modal-body"><div class="estimate-sign-summary"><span>${escapeHtml(number)} \xB7 ${escapeHtml(record.vehicle || "")}</span><strong>${money4(estimate.total ?? estimate.amount)}</strong></div>${lineChoices}${approvalFields}<label>Approver name *<input name="authorizationName" maxlength="100" required value="${escapeAttr(record.customer || "")}"/></label><label class="signature-label" id="signature-capture">Draw signature *<canvas id="signature-pad" width="720" height="220"></canvas></label><p class="ai-disclaimer" id="approval-disclaimer">${kind === "estimate" ? "A signature authorizes the selected work. For phone, in-person, email, text, or other approval, ShopCrank records the current staff user and time instead." : "Signing acknowledges this invoice and the completed work listed on it."}</p></div><div class="modal-actions"><button type="button" class="secondary" id="clear-signature">Clear</button><button type="submit" class="primary" id="save-document-approval">${icon("signature", 14)} ${kind === "estimate" ? "Sign & approve" : "Sign invoice"}</button></div></form>`);
     const canvas = document.querySelector("#signature-pad"), context = canvas.getContext("2d");
@@ -14430,7 +14634,13 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       customApproval.hidden = !other;
       customApproval.style.display = other ? "" : "none";
       document.querySelector('[name="customLabel"]').required = other;
-      document.querySelector("#save-document-approval").innerHTML = `${icon(signature ? "signature" : "circle-check", 14)} ${signature ? "Sign & approve" : "Record approval"}`;
+      const refused = approvalType.value === SERVICE_REFUSED;
+      const lineChoicesBox = document.querySelector(".onsite-line-choices");
+      if (lineChoicesBox) lineChoicesBox.style.display = refused ? "none" : "";
+      const saveButton = document.querySelector("#save-document-approval");
+      saveButton.classList.toggle("danger", refused);
+      saveButton.classList.toggle("primary", !refused);
+      saveButton.innerHTML = refused ? `${icon("archive", 14)} Refuse services & archive` : `${icon(signature ? "signature" : "circle-check", 14)} ${signature ? "Sign & approve" : "Record approval"}`;
       lucide.createIcons();
     };
     approvalType?.addEventListener("change", syncApprovalMethod);
@@ -14439,6 +14649,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       event.preventDefault();
       const data = new FormData(event.target);
       const selectedType = kind === "estimate" ? String(data.get("approvalType") || "signature") : "signature";
+      if (selectedType === SERVICE_REFUSED) return refuseOrderServices(record, { customerName: String(data.get("authorizationName") || "").trim(), note: String(data.get("approvalNote") || "").trim() }, event.target.querySelector("button[type=submit]"));
       if (selectedType === "signature" && !drawn) return toast("Draw the customer signature first");
       const approvedIds = new Set([...event.target.querySelectorAll('[name="approvedLine"]:checked')].map((input) => input.value));
       if (kind === "estimate" && !approvedIds.size) return toast("Approve at least one line or close without signing");
@@ -16932,14 +17143,14 @@ ${line}`.trim();
     if (!scan || !order) return toast("Link this scan to a repair order first");
     const codes = scan.aiAnalysis?.codes?.length ? scan.aiAnalysis.codes : (scan.dtcs || []).map((item) => item.code || item);
     const aiLines = scan.aiAnalysis?.draft && !scan.aiAnalysis.appliedAt ? diagnosticDraftToOrderLines(scan.aiAnalysis.draft, { laborRate: shopProfile().laborRate, scanId: scan.id, codes }) : [];
-    const { lines, matches } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
+    const { lines, matches: matches2 } = buildScanEstimateLines({ codes, services: visibleCannedServices(), aiLines, laborRate: Number(shopProfile().laborRate) || 0, scanId: scan.id, vehicle: scanVehicleText(scan, order) });
     const existing = new Set((order.estimate?.lines || []).map((line) => line.id));
     const fresh = lines.filter((line) => !existing.has(line.id));
     if (!fresh.length && !(order.estimate?.lines || []).length) return toast("No canned services or AI lines matched these codes");
     if (fresh.length && !await addLinesToTargetOrder(fresh, "the scan estimate", order.id)) return;
     await sendJobEstimate(state.orders.find((item) => item.id === order.id), "sms");
-    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: scan.aiAnalysis.appliedAt || now(), approvalSentAt: now(), cannedServices: matches.map((match) => match.service.id) } });
-    toast(scanEstimateSummary({ matches, lines: fresh }));
+    await rememberBayRecord("diagnosticsessions", "diagnosticSessions", { ...scan, aiAnalysis: { ...scan.aiAnalysis, appliedAt: scan.aiAnalysis.appliedAt || now(), approvalSentAt: now(), cannedServices: matches2.map((match) => match.service.id) } });
+    toast(scanEstimateSummary({ matches: matches2, lines: fresh }));
     render();
   }
   async function runPaymentImport(mode, extra = {}) {
@@ -17180,7 +17391,20 @@ ${line}`.trim();
     saveIntakeDraft(draft);
     openCustomerIntake();
   }
-  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, settingsDataResetCore, bindDataResetCore, settingsAgentPhoneCore, settingsAppsBillingCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok;
+  function withCurrentFinancialRecords(view) {
+    return function(...args) {
+      const allInvoices = state.invoices, allPayments = state.payments;
+      state.invoices = withoutArchived(allInvoices || []);
+      state.payments = withoutArchived(allPayments || []);
+      try {
+        return view.apply(this, args);
+      } finally {
+        state.invoices = allInvoices;
+        state.payments = allPayments;
+      }
+    };
+  }
+  var chatDerivedCache, posReaders, posConfigured, posCharge, posPollTimer, posSelectedId, posMode, posPhoneEntry, posStripe, smsInboxMessages, smsInboxLoaded, smsInboxLoading, smsInboxError, integrationStatus, laborLookupResults, partsLookupResult, assistantConversation, assistantPaused, assistantSessionId, assistantActiveProvider, STORE2, seed, LOCAL_PREFERENCES_VERSION, stripePaymentStatus, state, filter, query, importPreview, accountingTab, payrollPeriodKey, taxPackageRange, filingCenterOpen, shopOpsTab, reminderFilter, aiTab, aiResult, taxReportResult, chatConversationId, chatRefreshTimer, platformAccounts, platformAccountsLoading, elmPort, pendingAuthProfile, usStates, saveTimer, pendingStateSnapshot, persistedStateSnapshot, cloudflareConfig2, desktopEntitlementVerified, desktopLoginMessage, offlineAccountReady, offlineAccountEmail, ROLE_ALIASES, cloudflareSignIn, MUTATION_QUEUE_STORE, mutationQueueStore, flushingMutationQueue, shopEntityCollections, shopEntityReadRoles, ENTITY_LIST_QUERY, roleLabel, roleRoutes, attentionDismissBound, userMenuDismissBound, inspectionPoints, relationshipDerivedCache, autozoneAccount, partstechAccount, laborGuideAccount, quickbooksAccount, orderingTargetOrderId, revrecStatus, financeDerivedCache, modalAutosaveFlush, baseShopOperations, bindEstimateActionsCore, bindNewOrderEstimatorCore, renderCore, bindBeforeProfileSync, shopProfileDefaults, appearanceMedia, importTypes, bindImportIntegrityCore, bindBrandingFeaturesCore, bindPrintableInvoiceCore, bindInvoiceDeleteActionsCore, updateOrderWithInvoiceCore, sampleOrderIds, sampleInvoiceIds, sampleCustomerNames, onboardingCheckComplete, bindRecordManagementCore, renderOnboardingCore, operationsInventoryCore, bindVendorManagementCore, bindDataResetCore, settingsExtraPanelsCore, bindAgentPhoneSettingsCore, bindAssistantGlobalCore, apiFetchAssistantCore, bindPosCore, renderHomeCore, customerListEpoch, openNewCore, SERVICE_REFUSED, bindJobCardInvoiceCore, bindDurableRecordsCore, NEW_ORDER_DRAFT_KEY, openNewEstimateFillCore, bindReferenceEstimatesCore, paymentStatusLabelCore, openOrderPaymentCore, SESSION_KEEPALIVE_MS, saveCloudPreferences, offlineSaveTimer, bindFilingCore, scanAiBusy, renderShopOsCore, shopAiSettings, settingsShopAiCore, bindShopAiCore, apiFetchShopAiNoticeCore, keyLicenseView, keyLicenseIdentity, keyProgrammingBayLicenseCore, startLiveKeyJobLicenseCore, apiFetchKeyLicenseCore, licenseAdminData, licenseAdminLoading, licenseAuditFilter, platformShellLicenseCore, LICENSE_EXPIRY_NOTE, LICENSE_ACTION_PROMPTS, bindKeyLicenseCore, renderKeyLicenseCore, healthCheckData, healthCheckLoading, platformShellHealthCore, bindHealthCheckCore, renderHealthCheckCore, ambassadorData, ambassadorLoadId, platformShellAmbassadorCore, bindAmbassadorsCore, renderAmbassadorsCore, SMS_READ_MARKS, smsInbox, smsInboxTimer, messagingTwilioPanelSmsCore, bindSmsInboxCore, shopOperationsDeclinedCore, bindDeclinedWorkCore, settingsGrowthCore, bindGrowthSettingsCore, kpiPeriod, reportsKpiCore, bindKpiCore, openVehicleFormLookupsCore, settingsPricingCore, bindPricingCore, scanAiPanelEstimateCore, bindScanEstimateCore, importSource, prepareImportMapperCore, importsMapperCore, bindImportMapperCore, paymentImport, canImportPayments, importsPaymentCore, bindPaymentImportCore, grokVoiceSettings, phoneUsage, phoneUsageLoading, activeGrokSession, activeGrokPhase, activeGrokTarget, liveAssistantBeforeGrok, bindLiveAssistantBeforeGrok, aiPhoneFormBeforeGrok, settingsBeforeGrok, openCustomerIntakeBeforeGrok, bindBeforeGrok, renderKeepingFocusCore;
   var init_legacy = __esm({
     "src/runtime/legacy.js"() {
       init_config();
@@ -17222,6 +17446,8 @@ ${line}`.trim();
       init_mileage();
       init_filing();
       init_customer_metrics();
+      init_settings_panels();
+      init_archived_records();
       init_record_deletion();
       init_offline_desktop();
       init_catalog_inspection_ui();
@@ -17393,6 +17619,7 @@ ${line}`.trim();
       }));
       shopEntityCollections = { calls: "calls", vehicles: "vehicles", inventory: "inventory", vendors: "vendors", services: "services", inspectiontemplates: "inspectionTemplates", inspections: "inspections", reminders: "reminders", appointments: "appointments", purchases: "purchases", shopsettings: "shopSettingsRecords", diagnosticsessions: "diagnosticSessions", keyprogrammingjobs: "keyJobs" };
       shopEntityReadRoles = { keyprogrammingjobs: ["admin", "technician", "service_writer"] };
+      ENTITY_LIST_QUERY = { invoices: "?archived=include", payments: "?archived=include" };
       roleLabel = { super_admin: "Super Admin", admin: "Admin", technician: "Technician", office: "Office", service_writer: "Service Writer" };
       roleRoutes = { super_admin: ["superadmin"], admin: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "accounting", "payroll", "messaging", "payments", "integrations", "support", "imports", "reports", "settings", "employees"], technician: ["dispatch", "orders", "schedule", "shopops", "oem-diagnostics", "obd", "keys", "chat", "ai", "payroll", "integrations", "support"], office: ["customers", "shopops", "chat", "invoices", "pos", "accounting", "messaging", "integrations", "support"], service_writer: ["dispatch", "orders", "schedule", "customers", "shopops", "oem-diagnostics", "obd", "keys", "chat", "invoices", "pos", "ai", "messaging", "integrations", "support"] };
       attentionDismissBound = false;
@@ -17820,32 +18047,26 @@ ${line}`.trim();
         document.querySelector("#add-vendor-register")?.addEventListener("click", () => addVendor());
         document.querySelectorAll("[data-edit-vendor]").forEach((button) => button.onclick = () => addVendor(state.vendors.find((vendor) => vendor.id === button.dataset.editVendor)));
       };
-      settingsDataResetCore = settings;
-      settings = function() {
-        const page = settingsDataResetCore();
-        if (currentUser()?.role !== "admin") return page;
-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Danger zone</div><h2>Start with a clean slate</h2><p>Remove every shop record while keeping employee access and subscription verification intact.</p></div><button type="button" class="danger" id="open-full-reset">${icon("trash-2", 14)} Remove all shop data</button></div></section></main>`);
-      };
       bindDataResetCore = bindExpandedFeatures;
       bindExpandedFeatures = function() {
         bindDataResetCore();
         document.querySelector("#open-full-reset")?.addEventListener("click", openFullReset);
+        document.querySelector("#open-archived-records")?.addEventListener("click", openArchivedRecords);
         bindPhoneUsagePanel();
       };
-      settingsAgentPhoneCore = settings;
+      settingsExtraPanelsCore = settings;
       settings = function() {
-        const page = settingsAgentPhoneCore();
-        const twilioPanel = twilioInlineSettingsPanelHtml();
-        const isAdmin = currentUser()?.role === "admin";
-        if (!twilioPanel && !isAdmin) return page.replace("</main>", `${phoneUsagePanel()}</main>`);
-        const agentPhonePanel = isAdmin ? `<section class="settings-panel agentphone-settings"><div class="statement-head"><div><div class="eyebrow">Optional third-party</div><h2>Connect AgentPhone.ai</h2><p>Optional separate product. Twilio credentials go in the <b>Shop phone (Twilio)</b> panel above \u2014 not here.</p></div>${icon("phone-call", 20)}</div><form class="form-grid" id="agentphone-config-form"><label>AgentPhone API key *<input name="apiKey" type="password" autocomplete="new-password" placeholder="ap_..." required/></label><label>Agent ID *<input name="agentId" placeholder="agt_..." required/></label><label>Conversation history<input name="contextLimit" type="number" min="0" max="50" value="10"/></label><label>Voice response timeout<input name="timeout" type="number" min="5" max="120" value="30"/></label><div class="full agentphone-webhook-preview"><span>Webhook URL</span><code>${cloudflareConfig2.apiUrl}/agentphone/webhook/${escapeHtml(sessionClaimShopId(authSession()?.claims))}</code></div><div class="full"><button class="primary" type="submit">${icon("plug-zap", 14)} Connect AgentPhone</button><small class="form-help">The AgentPhone webhook signing secret is generated and encrypted and stored in D1 by the Worker.</small></div></form></section>` : "";
-        return page.replace("</main>", `${phoneUsagePanel()}${twilioPanel}${agentPhonePanel}</main>`);
-      };
-      settingsAppsBillingCore = settings;
-      settings = function() {
-        const page = settingsAppsBillingCore();
-        if (!["admin", "super_admin"].includes(currentUser()?.role || "")) return page;
-        return page.replace("</main>", `<section class="settings-panel"><div class="statement-head"><div><div class="eyebrow">Apps and subscription</div><h2>Install ShopCrank and manage plan</h2><p>Download Windows or Android apps, install the web app on a phone home screen, or convert a free shop to paid.</p></div></div><div class="download-actions"><a class="secondary" href="/downloads" target="_blank" rel="noopener">${icon("download", 14)} Open downloads page</a><a class="secondary" href="/downloads/ShopCrank.apk">${icon("smartphone", 14)} Android APK</a><a class="secondary" href="/api/downloads/ShopCrank-Setup-1.1.0.exe">${icon("monitor", 14)} Windows setup</a><button type="button" class="primary" id="upgrade-shop-plan">${icon("sparkles", 14)} Upgrade to paid</button></div></section></main>`);
+        const user = currentUser();
+        const panels = settingsExtraPanels({ role: user?.role, canDeleteRecords: userCanDeleteRecords(), offline: isOfflineDesktop() }, {
+          icon,
+          escapeHtml,
+          archiveNote: ARCHIVE_NOTE,
+          phoneUsagePanel,
+          twilioPanel: twilioInlineSettingsPanelHtml(),
+          apiUrl: cloudflareConfig2.apiUrl,
+          shopId: sessionClaimShopId(authSession()?.claims)
+        });
+        return settingsExtraPanelsCore().replace("</main>", `${panels}</main>`);
       };
       bindAgentPhoneSettingsCore = bindExpandedFeatures;
       bindExpandedFeatures = function() {
@@ -17930,7 +18151,7 @@ ${line}`.trim();
       };
       loadInvoicesFromApi = async function() {
         try {
-          applyRemoteList("invoices", await apiFetch("/entities/invoices"));
+          applyRemoteList("invoices", await apiFetch("/entities/invoices?archived=include"));
         } catch (error) {
           console.error("Failed to load invoices from API; using local data", error);
         }
@@ -17945,7 +18166,7 @@ ${line}`.trim();
       loadShopEntities = async function() {
         const role = currentUser()?.role || "";
         const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
-        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}${ENTITY_LIST_QUERY[type] || ""}`)));
         const failed = applySettledShopEntityResults(
           types,
           results,
@@ -18162,13 +18383,15 @@ ${line}`.trim();
             toast(RECORD_DELETE_DENIED);
             return;
           }
-          if (!confirm(`Delete ${order.id}? This cannot be undone.`)) return;
+          const archives = willArchive("orders", order);
+          if (!confirm(archives ? `Archive ${order.id}? It has an invoice or payment, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${order.id}? This cannot be undone.`)) return;
           try {
-            if (!isOfflineDesktop()) await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            const result = isOfflineDesktop() ? null : await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            applyRemovalResult2(result);
             state.orders = state.orders.filter((item) => item !== order);
             save();
             closeModal();
-            toast(`${order.id} deleted`);
+            toast(result?.action === "archive" ? `${order.id} archived` : `${order.id} deleted`);
             render();
           } catch (error) {
             toast(error.message || "Work order could not be deleted");
@@ -18214,6 +18437,7 @@ ${line}`.trim();
         document.querySelector("#add-after-midnight-fee").onclick = () => addAfterMidnightFeeToEditor(root, append);
         bindEstimateEditor(root);
       };
+      SERVICE_REFUSED = "refused";
       ensureInvoiceForOrder = async function(order) {
         if (!["completed", "invoiced"].includes(order.status)) return null;
         const existing = state.invoices.find((invoice2) => invoice2.ro === order.id);
@@ -18448,7 +18672,8 @@ ${line}`.trim();
             return;
           }
           const keepsInvoice = invoice ? ` ${invoice.number} will be kept; delete it from Invoices if it should go too.` : "";
-          if (!confirm(`Delete ${order.id}?${keepsInvoice} This cannot be undone.`)) return;
+          const archives = willArchive("orders", order);
+          if (!confirm(archives ? `Archive ${order.id}? It has an invoice or payment, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${order.id}?${keepsInvoice} This cannot be undone.`)) return;
           const controls = [...document.querySelectorAll(".job-card-modal input, .job-card-modal textarea, .job-card-modal select, .job-card-modal button:not(#delete-job-card)")];
           const controlDisabledStates = controls.map((control) => control.disabled);
           jobCardDeleting = true;
@@ -18461,14 +18686,17 @@ ${line}`.trim();
           button.disabled = true;
           try {
             if (jobCardSavePromise) await jobCardSavePromise;
-            await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            const result = await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
             jobCardDirty = false;
+            const archived = applyRemovalResult2(result);
             state.orders = state.orders.filter((item) => item !== order);
-            state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== order.id);
-            state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== order.id);
+            if (!archived) {
+              state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== order.id);
+              state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== order.id);
+            }
             save();
             closeModal();
-            toast(`${order.id} deleted`);
+            toast(archived ? `${order.id} archived` : `${order.id} deleted`);
             render();
           } catch (error) {
             jobCardDeleting = false;
@@ -18521,7 +18749,7 @@ ${line}`.trim();
       loadShopEntities = async function() {
         const role = currentUser()?.role || "";
         const types = readableShopEntityTypes(shopEntityCollections, shopEntityReadRoles, role);
-        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}`)));
+        const results = await Promise.allSettled(types.map((type) => apiFetch(`/entities/${type}${ENTITY_LIST_QUERY[type] || ""}`)));
         const failed = applySettledShopEntityResults(
           types,
           results,
@@ -19861,6 +20089,26 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
         });
       };
       void startApp();
+      renderKeepingFocusCore = render;
+      render = function(...args) {
+        const active = document.activeElement;
+        const keep = active && active.id && /^(INPUT|TEXTAREA)$/.test(active.tagName) && !active.closest(".modal") ? { id: active.id, start: active.selectionStart, end: active.selectionEnd, value: active.value } : null;
+        const result = renderKeepingFocusCore.apply(this, args);
+        if (keep) {
+          const next = document.getElementById(keep.id);
+          if (next && next !== document.activeElement && /^(INPUT|TEXTAREA)$/.test(next.tagName)) {
+            if (next.value !== keep.value && keep.id.endsWith("search")) next.value = keep.value;
+            next.focus({ preventScroll: true });
+            try {
+              next.setSelectionRange(keep.start, keep.end);
+            } catch {
+            }
+          }
+        }
+        return result;
+      };
+      invoices = withCurrentFinancialRecords(invoices);
+      payments = withCurrentFinancialRecords(payments);
     }
   });
 

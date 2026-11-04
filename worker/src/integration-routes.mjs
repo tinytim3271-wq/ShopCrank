@@ -13,6 +13,7 @@ import {
   resolveTwilioShopConfig,
   sendSms,
   smsIntegrationStatus,
+  withFirstMessageDisclosure,
 } from './integrations/sms.mjs';
 import { QUICKBOOKS_TOKEN_SECRET, QuickBooksError, createQuickBooksIntegration } from './integrations/quickbooks.mjs';
 import { resolveSubscriptionEntitlements } from './plans.mjs';
@@ -212,8 +213,9 @@ export async function handleMessagingIntegration(request, env, context, segments
         ? 'This customer opted out of SMS'
         : 'Record the customer’s explicit SMS consent before sending');
     }
-    const message = String(body.body || '').trim();
-    if (!message) throw new HttpError(400, 'Message body is required');
+    const written = String(body.body || '').trim();
+    if (!written) throw new HttpError(400, 'Message body is required');
+    const message = await withFirstMessageDisclosure(env, context.shopId, phone, written);
     try {
       const callbackUrl = new URL(request.url);
       if (env.TWILIO_WEBHOOK_URL) {

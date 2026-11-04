@@ -125,7 +125,7 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
   let twilioCalls = 0;
   globalThis.fetch = async (url, init) => (String(url).includes('api.twilio.com') ? (twilioCalls += 1, Response.json({ sid: 'SM1', status: 'queued' })) : realFetch(url, init));
   try {
-    const book = (phone, time) => worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'X', phone, vehicle: 'Civic', service: 'Oil', date: day.date, time }) }), env, {});
+    const book = (phone, time, smsOptIn = 'yes') => worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'X', phone, vehicle: 'Civic', service: 'Oil', date: day.date, time, smsOptIn }) }), env, {});
     const optedOut = await book('806-555-0150', day.slots[0]);
     assert.equal(optedOut.status, 201);
     assert.equal((await optedOut.json()).confirmationSent, false);
@@ -135,6 +135,9 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
     assert.equal((await confirmed.json()).confirmationSent, true);
     assert.equal(twilioCalls, 1);
     assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM customer_messages WHERE message_type = 'booking_confirmation'").get().n, 1);
+    assert.match(DB.sqlite.prepare("SELECT body FROM customer_messages WHERE message_type = 'booking_confirmation'").get().body, /Reply STOP to opt out, HELP for help\. Msg & data rates may apply\./, 'the first text carries the opt-out notice');
+    assert.equal(DB.sqlite.prepare("SELECT source FROM sms_consent WHERE phone = '+18065550151'").get().source, 'online_booking_form', 'the checkbox is recorded as consent');
+    assert.equal(DB.sqlite.prepare("SELECT status FROM sms_consent WHERE phone = '+18065550150'").get().status, 'opted_out', 'a STOP on file beats the checkbox');
     const smsOff = { ...env, AUTOMATED_SMS_ENABLED: '0' };
     const quiet = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Y', phone: '806-555-0152', vehicle: 'Civic', service: 'Oil', date: day.date, time: day.slots[2] }) }), smsOff, {});
     assert.equal(quiet.status, 201, 'booking still works with automated texts off');
@@ -142,6 +145,8 @@ test('booking confirmation respects STOP and is logged when sent', async () => {
     assert.equal(twilioCalls, 1, 'but no confirmation text goes out');
     const page = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`), env, {})).text();
     assert.match(page, /b\.confirmationSent\?/, 'the success screen only promises a text when one was sent');
+    assert.match(page, /<input type="checkbox" name="smsOptIn" value="yes">/, 'the opt-in box starts unchecked');
+    assert.match(page, /sms-terms/);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -207,4 +212,23 @@ test('review fixes: attention is yellow, shop-scoped photo keys print, new calle
   assert.ok(reminder);
   assert.doesNotMatch(reminder.body, /\/api\/book\//);
   assert.match(reminder.body, /Reply to this text to schedule/);
+});
+
+test('online booking sends no text without the opt-in box', async () => {
+  const { DB } = shop();
+  const slots = await (await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w/slots`), { ...FLAGS_ON, DB }, {})).json();
+  const day = slots.days.find(item => item.slots.length >= 1);
+  const env = { ...FLAGS_ON, DB, TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 't', TWILIO_FROM_NUMBER: '+18065550000' };
+  const realFetch = globalThis.fetch;
+  let twilioCalls = 0;
+  globalThis.fetch = async (url, init) => (String(url).includes('api.twilio.com') ? (twilioCalls += 1, Response.json({ sid: 'SM1', status: 'queued' })) : realFetch(url, init));
+  try {
+    const response = await worker.fetch(new Request(`${ORIGIN}/api/book/shop-r3v13w`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: 'Z', phone: '806-555-0160', vehicle: 'Civic', service: 'Oil', date: day.date, time: day.slots[0] }) }), env, {});
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).confirmationSent, false);
+    assert.equal(twilioCalls, 0);
+    assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM sms_consent WHERE phone = '+18065550160'").get().n, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

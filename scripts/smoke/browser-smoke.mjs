@@ -21,6 +21,7 @@ import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import https from 'node:https';
+import http from 'node:http';
 import { chromium } from 'playwright';
 import { LOCAL_WRANGLER_CONFIG, WRANGLER_BIN, writeLocalWranglerConfig } from '../dev-worker-local.mjs';
 
@@ -33,11 +34,17 @@ const WORKER_PORT = Number(process.env.SMOKE_WORKER_PORT || 8797);
 const PROXY_PORT = Number(process.env.SMOKE_PROXY_PORT || 8798);
 const WORKER = `http://127.0.0.1:${WORKER_PORT}`;
 const SHOP = 'Smoke Test Garage';
+const PROVIDER_PORT = Number(process.env.SMOKE_PROVIDER_PORT || 8799);
+const PROVIDER = `http://127.0.0.1:${PROVIDER_PORT}`;
+const CHECKOUT_URL = 'https://checkout.stripe.test/c/cs_smoke';
+/** Requests the Worker made to the local Stripe and Twilio stand-ins. */
+const providerCalls = [];
 
 const results = [];
 let smokeWorkerLog = () => '';
 const children = [];
 let server;
+let providerServer;
 let tempWorkDir = '';
 
 function record(name, pass, detail = '') {
@@ -110,7 +117,31 @@ async function startStack() {
   const config = writeLocalWranglerConfig();
   const persist = join(work, 'state');
   run(process.execPath, [WRANGLER_BIN, 'd1', 'migrations', 'apply', 'DB', '--local', '-c', config, '--persist-to', persist], { env: { ...process.env, CI: '1' } });
+  // Local stand-ins for Stripe and Twilio. The Worker only honours
+  // SMOKE_*_API_BASE for loopback addresses (worker/src/provider-base.mjs).
+  const providers = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString()));
+    providerCalls.push({ method: req.method, path: req.url, body, auth: req.headers.authorization || '' });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (req.url.startsWith('/stripe/v1/customers')) return res.end(JSON.stringify({ id: 'cus_smoke' }));
+    if (req.url.startsWith('/stripe/v1/checkout/sessions')) return res.end(JSON.stringify({ id: 'cs_smoke', url: CHECKOUT_URL }));
+    if (/^\/twilio\/Accounts\/[^/]+\/Messages\.json/.test(req.url)) return res.end(JSON.stringify({ sid: 'SMsmoke0001', status: 'queued' }));
+    return res.end(JSON.stringify({ id: 'stub' }));
+  });
+  await new Promise(resolve => providers.listen(PROVIDER_PORT, '127.0.0.1', resolve));
+  providerServer = providers;
   const vars = {
+    SMOKE_STRIPE_API_BASE: `${PROVIDER}/stripe/v1`,
+    SMOKE_TWILIO_API_BASE: `${PROVIDER}/twilio`,
+    STRIPE_SECRET_KEY: 'sk_test_smoke',
+    STRIPE_PRICE_SHOP_MONTHLY: 'price_1SmokeShopMonthly',
+    TWILIO_ACCOUNT_SID: 'ACsmoke0000000000000000000000000000',
+    TWILIO_AUTH_TOKEN: 'smoke-twilio-token',
+    TWILIO_FROM_NUMBER: '+15005550006',
+    // Delivery-status callbacks must be HTTPS; the smoke proxy serves this origin over TLS.
+    TWILIO_WEBHOOK_URL: ORIGIN,
     AUTH_EXPOSE_LOGIN_LINK: '1',
     ALLOWED_ORIGINS: ORIGIN,
     INTEGRATION_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
@@ -376,6 +407,71 @@ async function main() {
       await booking.close();
       if (!text.includes(SHOP) || !/Book appointment/.test(text)) throw new Error(`booking page: ${text.slice(0, 160)}`);
     });
+    await check('admin deletes a draft invoice and archives a paid one, then restores it from Settings', async () => {
+      const seeded = await page.evaluate(() => fetch('/api/entities/invoices', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'smoke-draft-1', number: 'DRAFT-7001', customer: 'Draft Customer', date: '2026-09-10', amount: 40, status: 'sent' }) }).then(r => r.status));
+      if (seeded >= 300) throw new Error(`seeding draft invoice failed: ${seeded}`);
+      await route('invoices');
+      const removal = number => page.waitForResponse(r => r.url().includes(`/entities/invoices/`) && r.request().method() === 'DELETE', { timeout: 20_000 }).then(async r => ({ status: r.status(), body: r.status() === 204 ? null : await r.json() }));
+      // Draft: permanently deleted (204).
+      let prompt = '';
+      page.once('dialog', dialog => { prompt = dialog.message(); dialog.accept(); });
+      const [draft] = await Promise.all([removal('DRAFT-7001'), page.locator('tr:has-text("DRAFT-7001") [data-delete-invoice]').first().click()]);
+      if (draft.status !== 204 || !/permanently deleted/.test(prompt)) throw new Error(`draft delete: ${draft.status} ${prompt}`);
+      // Paid with payments: archived, not deleted.
+      page.once('dialog', dialog => { prompt = dialog.message(); dialog.accept(); });
+      const [paid] = await Promise.all([removal('MIG-5001'), page.locator('tr:has-text("MIG-5001") [data-delete-invoice]').first().click()]);
+      if (paid.status !== 200 || paid.body?.action !== 'archive' || !(paid.body.archived?.payments || []).length) throw new Error(`paid invoice: ${paid.status} ${JSON.stringify(paid.body).slice(0, 200)}`);
+      if (!/Archive MIG-5001/.test(prompt)) throw new Error(`archive prompt: ${prompt}`);
+      await page.waitForTimeout(500);
+      if (/MIG-5001/.test(await main())) throw new Error('archived invoice still listed');
+      const reportStill = await page.evaluate(() => fetch('/api/entities/invoices?archived=only', { credentials: 'include' }).then(r => r.json()));
+      if (!(Array.isArray(reportStill) ? reportStill : reportStill.records || []).some(i => i.number === 'MIG-5001')) throw new Error('archived invoice missing from ?archived=only');
+      await route('settings');
+      await page.click('#open-archived-records');
+      await page.waitForSelector('#archived-records-modal li:has-text("MIG-5001")', { timeout: 15_000 });
+      const [restored] = await Promise.all([
+        page.waitForResponse(r => r.url().includes('/restore') && r.request().method() === 'POST', { timeout: 20_000 }),
+        page.locator('#archived-records-modal li:has-text("MIG-5001") [data-restore-type=invoices]').click(),
+      ]);
+      if (restored.status() !== 200) throw new Error('restore failed');
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.locator('.modal [data-close]').first().click().catch(() => {});
+      await route('invoices');
+      const row = await page.locator('tr:has-text("MIG-5001")').first().innerText();
+      if (!/2 payments/.test(row)) throw new Error(`restored invoice lost its payments: ${row.replace(/\s+/g, ' ').slice(0, 160)}`);
+    });
+    await check('texting needs recorded consent, then sends through Twilio with the shop message', async () => {
+      const result = await page.evaluate(async () => {
+        const call = (path, body) => fetch(`/api/messaging/${path}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(async r => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+        const blocked = await call('send', { to: '+15125550123', body: 'Your car is ready' });
+        const consent = await call('consent', { phone: '+15125550123', status: 'opted_in', confirmed: true });
+        const sent = await call('send', { to: '+15125550123', body: 'Your car is ready' });
+        return { blocked, consent, sent };
+      });
+      if (result.blocked.status !== 409) throw new Error(`send without consent: ${result.blocked.status}`);
+      if (result.consent.status !== 200) throw new Error(`consent: ${result.consent.status} ${JSON.stringify(result.consent.body)}`);
+      if (result.sent.status >= 300) throw new Error(`send: ${result.sent.status} ${JSON.stringify(result.sent.body).slice(0, 200)}`);
+      const twilio = providerCalls.find(c => c.path.includes('/Messages.json'));
+      if (!twilio || twilio.body.To !== '+15125550123' || !/Your car is ready/.test(twilio.body.Body || '') || !/^Basic /.test(twilio.auth)) throw new Error(`Twilio request: ${JSON.stringify(twilio || null).slice(0, 200)}`);
+      // The text went out through the API, so reload for a fresh inbox (the page caches it).
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.waitForSelector('[data-route=messaging]', { timeout: 30_000 });
+      await route('messaging');
+      await page.waitForFunction(() => /Your car is ready/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 15_000 }).catch(() => {});
+      if (!/Your car is ready/.test(await main())) throw new Error('sent text missing from the inbox');
+    });
+    await check('upgrade to paid opens Stripe checkout for the chosen plan', async () => {
+      await route('settings');
+      await page.route('https://checkout.stripe.test/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Stripe checkout (smoke)</h1>' }));
+      await page.click('#upgrade-shop-plan');
+      await page.waitForSelector('#upgrade-plan-form', { timeout: 10_000 });
+      await page.locator('#upgrade-plan-form [name=planId]').selectOption('shop');
+      await Promise.all([page.waitForURL(CHECKOUT_URL, { timeout: 20_000 }), page.locator('#upgrade-plan-form button[type=submit]').click()]);
+      const session = providerCalls.find(c => c.path.startsWith('/stripe/v1/checkout/sessions'));
+      if (!session || session.body.mode !== 'subscription' || session.body['line_items[0][price]'] !== 'price_1SmokeShopMonthly' || !session.body.success_url?.startsWith(ORIGIN)) throw new Error(`Stripe request: ${JSON.stringify(session || null).slice(0, 240)}`);
+      await page.goto(ORIGIN, { waitUntil: 'networkidle' });
+      await page.waitForSelector('[data-route=settings]', { timeout: 30_000 });
+    });
     for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
       await check(`every module renders on ${label} with no errors or sideways scroll`, async () => {
         await page.setViewportSize(viewport);
@@ -410,6 +506,7 @@ main()
   .catch(error => record('smoke harness', false, error?.stack || error))
   .finally(() => {
     server?.close();
+    providerServer?.close();
     // wrangler -> workerd: stop the whole tree, or workerd keeps the port.
     for (const child of children) {
       try {

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { writeSignedConfig } from './windows-signing.mjs';
 
 const editionPath = new URL('../desktop/edition.json', import.meta.url);
 const originalEdition = readFileSync(editionPath);
@@ -19,7 +20,14 @@ try {
   if (!demo) {
     run('npm', ['run', 'build:j2534']);
   }
-  run('npx', ['--no-install', 'electron-builder', '--win', demo ? 'zip' : 'nsis', '--x64', '--publish', 'never', '--config', demo ? 'desktop/builder-demo.json' : 'desktop/builder-offline.json']);
+  // The demo ZIP stays unsigned; the offline installer is signed when CI has signing secrets.
+  let config = demo ? 'desktop/builder-demo.json' : 'desktop/builder-offline.json';
+  if (!demo) {
+    const signed = 'dist/signing/builder-offline.json';
+    console.log(`Windows signing: ${writeSignedConfig(fileURLToPath(new URL(`../${config}`, import.meta.url)), fileURLToPath(new URL(`../${signed}`, import.meta.url)))}`);
+    config = signed;
+  }
+  run('npx', ['--no-install', 'electron-builder', '--win', demo ? 'zip' : 'nsis', '--x64', '--publish', 'never', '--config', config]);
 } finally {
   writeFileSync(editionPath, originalEdition);
 }

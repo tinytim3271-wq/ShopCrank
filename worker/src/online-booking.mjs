@@ -1,6 +1,10 @@
 import { HttpError, json } from './http.mjs';
 import { BookingError, bookAppointment, loadBookingContext, nextAvailability, shopEntitled, validBookingDate } from './scheduling.mjs';
-import { resolveTwilioShopConfig, sendSms } from './integrations/sms.mjs';
+import { resolveTwilioShopConfig, sendSms, withFirstMessageDisclosure } from './integrations/sms.mjs';
+
+function wantsTexts(body) {
+  return body?.smsOptIn === true || body?.smsOptIn === 'yes' || body?.smsOptIn === 'on';
+}
 import { toE164 } from './customer-followups.mjs';
 import { automatedSmsEnabled, onlineBookingEnabled } from './growth-flags.mjs';
 
@@ -46,7 +50,7 @@ function bookingPage({ shopId, shopName, hoursText, services, token }) {
     ? services.map(service => `<option>${escapeHtml(service)}</option>`).join('') + '<option value="">Something else (describe below)</option>'
     : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Book service · ${escapeHtml(shopName)}</title>
-<style>:root{--ink:#14201c;--muted:#68766f;--line:#d9ddd8;--green:#1f654b}*{box-sizing:border-box}body{margin:0;padding:20px;background:#f3f1eb;color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:560px;margin:auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:22px}h1{margin:0 0 4px}p.sub{margin:0 0 16px;color:var(--muted)}label{display:block;margin:12px 0 4px;font-weight:700}input,select,textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:6px;font:inherit}.slots{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.slots button{padding:9px 13px;border:1px solid var(--line);border-radius:6px;background:#fff;font:inherit;cursor:pointer}.slots button.on{background:var(--green);color:#fff;border-color:var(--green)}button.primary{margin-top:18px;width:100%;min-height:48px;border:0;border-radius:6px;background:var(--green);color:#fff;font-weight:800;font-size:16px;cursor:pointer}.error{color:#a63f36}.done{padding:16px;background:#edf5ef;border-radius:8px}</style></head>
+<style>:root{--ink:#14201c;--muted:#68766f;--line:#d9ddd8;--green:#1f654b}*{box-sizing:border-box}body{margin:0;padding:20px;background:#f3f1eb;color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:560px;margin:auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:22px}h1{margin:0 0 4px}p.sub{margin:0 0 16px;color:var(--muted)}label{display:block;margin:12px 0 4px;font-weight:700}input,select,textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:6px;font:inherit}.slots{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.slots button{padding:9px 13px;border:1px solid var(--line);border-radius:6px;background:#fff;font:inherit;cursor:pointer}.slots button.on{background:var(--green);color:#fff;border-color:var(--green)}button.primary{margin-top:18px;width:100%;min-height:48px;border:0;border-radius:6px;background:var(--green);color:#fff;font-weight:800;font-size:16px;cursor:pointer}.error{color:#a63f36}.done{padding:16px;background:#edf5ef;border-radius:8px}label.optin{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:14px;color:var(--muted);margin-top:16px}label.optin input{width:22px;height:22px;flex:none;margin-top:2px}</style></head>
 <body><main><h1>${escapeHtml(shopName)}</h1><p class="sub">Book a service appointment online.${hoursText ? ` Hours: ${escapeHtml(hoursText)}` : ''}</p>
 <form id="book"><label for="name">Your name</label><input id="name" name="customerName" autocomplete="name" required maxlength="120">
 <label for="phone">Mobile number</label><input id="phone" name="phone" type="tel" autocomplete="tel" required maxlength="40">
@@ -55,6 +59,7 @@ function bookingPage({ shopId, shopName, hoursText, services, token }) {
 ${options ? `<label for="service">Service</label><select id="service" name="service">${options}</select>` : ''}
 <label for="notes">${options ? 'Anything else we should know?' : 'What do you need done?'}</label><textarea id="notes" name="notes" rows="3" maxlength="1000" ${options ? '' : 'required'}></textarea>
 <label for="date">Day</label><input id="date" name="date" type="date" required><div class="slots" id="slots"></div>
+<label class="optin"><input type="checkbox" name="smsOptIn" value="yes"> <span>Text me about this appointment and my vehicle service from ${escapeHtml(shopName)}: confirmations, reminders, estimates, status and pickup. Msg frequency varies. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of service. <a href="https://www.shopcrank.com/sms-terms/" target="_blank" rel="noopener">Text terms</a> · <a href="https://www.shopcrank.com/privacy/" target="_blank" rel="noopener">Privacy</a></span></label>
 <p class="error" id="error" hidden></p><button class="primary" type="submit">Book appointment</button></form></main>
 <script nonce="${token}">
 const api=${JSON.stringify(`/api/book/${shopId}`)},form=document.querySelector('#book'),slots=document.querySelector('#slots'),error=document.querySelector('#error');let time='';
@@ -105,10 +110,21 @@ export async function handlePublicBooking(request, env, segments, { hashValue, g
       const { appointment } = await bookAppointment(env, shopId, { ...body, phone }, { source: 'online_booking', createdBy: 'online-booking' });
       let confirmationSent = false;
       try {
-        const consent = await env.DB.prepare('SELECT status FROM sms_consent WHERE shop_id = ? AND phone = ?').bind(shopId, phone).first();
-        const twilio = !automatedSmsEnabled(env) || consent?.status === 'opted_out' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
+        let consent = await env.DB.prepare('SELECT status FROM sms_consent WHERE shop_id = ? AND phone = ?').bind(shopId, phone).first();
+        // Texts need the customer's opt-in: the unchecked box on this form, or consent already on file.
+        // A STOP on file always wins over the box.
+        if (wantsTexts(body) && consent?.status !== 'opted_out') {
+          await env.DB.prepare(`
+            INSERT INTO sms_consent (shop_id, phone, status, source, updated_at, recorded_by)
+            VALUES (?, ?, 'opted_in', 'online_booking_form', ?, NULL)
+            ON CONFLICT(shop_id, phone) DO UPDATE SET status = 'opted_in', source = 'online_booking_form', updated_at = excluded.updated_at
+            WHERE sms_consent.status <> 'opted_out'
+          `).bind(shopId, phone, new Date().toISOString()).run();
+          consent = { status: 'opted_in' };
+        }
+        const twilio = !automatedSmsEnabled(env) || consent?.status !== 'opted_in' ? null : await resolveTwilioShopConfig(env, shopId, getSecret);
         if (twilio?.configured) {
-          const text = `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.`;
+          const text = await withFirstMessageDisclosure(env, shopId, phone, `${context.shopName || shop.name}: you're booked for ${appointment.service} on ${appointment.date} at ${appointment.time}. Reply to this text if you need to change it.`);
           const result = await sendSms(env, { to: phone, body: text }, { config: twilio });
           confirmationSent = true;
           await env.DB.prepare(`

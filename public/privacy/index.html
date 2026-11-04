@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ShopCrank privacy</title>
+    <meta name="description" content="How ShopCrank handles shop and customer data, texting consent, and the services that process it." />
     <link rel="canonical" href="https://www.shopcrank.com/privacy/" />
     <link rel="icon" href="/assets/brand/logo-icon-192.png" type="image/png" />
     <link rel="stylesheet" href="/assets/fonts/fonts.css" />
@@ -21,18 +22,71 @@
       </header>
       <article class="legal">
         <p class="eyebrow">Privacy</p>
-        <h1>How shop data is handled</h1>
-        <p>Last updated September 28, 2026. This page describes the ShopCrank shop application and the data it handles for each subscribing shop.</p>
-        <h2>What the shop stores</h2>
-        <p>ShopCrank keeps the records a repair shop types in: customers, vehicles, repair orders, estimates, invoices, inspections, inventory, employee profiles, time-clock entries, and messages between staff. Sign-in uses a work email and a one-time link. ShopCrank does not ask for or store shop passwords.</p>
-        <h2>Who can see it</h2>
-        <p>Access follows the role on the employee profile. Technicians see the jobs assigned to them. Office and admin roles see customers, invoices, and shop settings. A platform administrator can see subscribing shop accounts for support. Customer card numbers are not stored in ShopCrank; card checkout, when enabled, is completed on the payment processor’s hosted page.</p>
-        <h2>Where it lives</h2>
-        <p>The hosted app runs on Cloudflare. The browser also keeps a local copy so the dispatch board can open when the network blips. Signing out removes the auth session, but local records remain on the device until you clear site data. Diagnostic adapter traffic stays on the shop computer unless you explicitly save a scan to a vehicle record.</p>
-        <h2>What we do not do</h2>
-        <p>We do not sell personal information. We do not use shop records to train a public model. AI suggestions inside the workbench are generated to help the technician on that job and should be checked against current service information.</p>
-        <h2>Questions</h2>
-        <p>Shop owners can correct or remove a customer record from Customers. For account deletion or a privacy request, sign in and contact the shop administrator listed on your employee profile, or write to the address on your subscription receipt.</p>
+        <h1>Privacy policy</h1>
+        <p>Last updated November 3, 2026. ShopCrank is operated by Alderman Enterprises LLC DBA ShopCrank ("ShopCrank", "we", "us"). This policy explains what we collect when a subscribing shop and its staff use ShopCrank, what happens to the records a shop keeps about its own customers, and the choices you have.</p>
+
+        <h2>Two kinds of data</h2>
+        <p><strong>Account data</strong> is about the people who use ShopCrank: the shop owner and staff. We decide how it is used, as described here.</p>
+        <p><strong>Shop records</strong> are what a shop enters or receives in ShopCrank about its own customers: names, phone numbers, email and street addresses, vehicles, repair orders, estimates, invoices, payments, inspections, photos, messages and call summaries. The shop controls these records. We process them on the shop's behalf to run the service, and a customer of a shop should contact that shop first about them.</p>
+
+        <h2>What we collect</h2>
+        <ul>
+          <li><strong>Account details:</strong> name, work email, role, shop name, and the sign-in method (a one-time email link or Google). ShopCrank does not store shop passwords; the offline desktop edition keeps a scrambled password check on that computer only.</li>
+          <li><strong>Shop records:</strong> everything a shop types in, imports, uploads or receives through texting, the AI phone assistant and connected services.</li>
+          <li><strong>Payments:</strong> card details are entered on Stripe's hosted pages and never reach ShopCrank. We keep payment amounts, dates and references.</li>
+          <li><strong>Calls and texts:</strong> when the AI phone assistant answers a call, the call is transcribed so the assistant can respond, and a summary with the caller's number is saved for the shop. Audio is not recorded. Text messages sent and received through ShopCrank are stored with their delivery status.</li>
+          <li><strong>Usage and device data:</strong> pages and features used, errors, browser and device type, IP address, and timestamps, used to keep the service working and improve it. Analytics events are tied to your account.</li>
+          <li><strong>Cookies:</strong> one sign-in cookie that keeps you signed in, plus a short-lived cookie during Google sign-in. We do not use advertising cookies.</li>
+        </ul>
+
+        <h2>How we use it</h2>
+        <ul>
+          <li>To provide ShopCrank: show records, send the texts and emails a shop asks us to send, take card payments, answer calls, sync with services the shop connects, and prepare reports.</li>
+          <li>To secure the service: sign-in, role-based access, fraud and abuse prevention, rate limits, and audit logs.</li>
+          <li>To support you, bill your subscription, and tell you about changes to the service.</li>
+          <li>To understand how ShopCrank is used so we can fix problems and improve it.</li>
+        </ul>
+        <p>We do not sell personal information, and we do not use shop records to train our own or any public AI model.</p>
+
+        <h2>Who we share it with</h2>
+        <p>We share data only with the service providers that run ShopCrank, each limited to what its job needs, and with services a shop chooses to connect.</p>
+        <ul>
+          <li><strong>Cloudflare</strong> — hosting, database, file storage, sign-in email delivery, bot protection, and site analytics.</li>
+          <li><strong>Stripe</strong> — subscription billing and card payments.</li>
+          <li><strong>Twilio</strong> — text messages and phone calls.</li>
+          <li><strong>AgentPhone and xAI</strong> — the AI phone assistant and voice features.</li>
+          <li><strong>Google, Anthropic and Deepgram</strong> — AI features such as the assistant, estimate suggestions, transcription and speech. The text, image or audio needed for a request is sent to the provider to produce the response.</li>
+          <li><strong>PostHog</strong> — product analytics and error tracking.</li>
+          <li><strong>Services a shop connects</strong> — for example QuickBooks, PartsTech or AutoZone. Data flows to them only after the shop connects them, under their own terms.</li>
+        </ul>
+        <p>We may also disclose data when the law requires it, to protect the rights and safety of ShopCrank, its customers or others, or as part of a merger or sale of the business, in which case this policy continues to apply.</p>
+
+        <h2>Text messaging</h2>
+        <p>Shops use ShopCrank to text their own customers about appointments, estimates, repair status, invoices and payments. Shops are responsible for getting each customer's consent before texting them. Message frequency varies with the customer's service. Message and data rates may apply. Reply STOP to stop messages from a shop and HELP for help; STOP replies are recorded and honored automatically. Customers agree to texts by checking an unchecked box on a shop's booking form, by texting the shop first, or by telling staff, who record it before any text is sent; agreeing is never a condition of service. The full program terms are on the <a href="/sms-terms/">text messaging terms</a> page.</p>
+        <p>No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Text messaging opt-in data and consent are not shared with any third party, except the service providers that deliver the messages.</p>
+
+        <h2>How long we keep it</h2>
+        <p>We keep account data and shop records while the shop's subscription is active. After a shop cancels, its records remain available for export for 90 days and are then deleted, except where a longer period is required by law, such as tax and payment records. Archived invoices and payments stay in the shop's reports until the shop's records are deleted. Backups roll off within 30 days.</p>
+
+        <h2>Security</h2>
+        <p>Data is encrypted in transit. Integration keys and tokens are encrypted at rest. Access inside a shop follows each person's role, and only shop owners and admins can delete or archive records. No system is perfectly secure; if a breach affects your data, we will notify you as the law requires.</p>
+
+        <h2>Your choices</h2>
+        <ul>
+          <li>Shop owners and admins can view, correct, export, archive or delete records in ShopCrank.</li>
+          <li>Staff can ask their shop owner to update or remove their profile.</li>
+          <li>A shop's customer who wants their information corrected or deleted should contact that shop. We will help the shop respond.</li>
+          <li>Depending on where you live, including California, you may have rights to know, access, correct or delete personal information and to not be discriminated against for using them. Write to us to make a request; we will verify it and respond within the time the law allows.</li>
+        </ul>
+
+        <h2>Children</h2>
+        <p>ShopCrank is a business tool and is not directed to children under 16. We do not knowingly collect their information.</p>
+
+        <h2>Changes</h2>
+        <p>We will post changes here and update the date at the top. If a change is significant, we will tell shop owners by email or in the app before it takes effect.</p>
+
+        <h2>Contact</h2>
+        <p>Alderman Enterprises LLC DBA ShopCrank. Email <strong>support@shopcrank.com</strong> with privacy questions or requests.</p>
       </article>
       <footer class="site-footer">
         <a href="/features">Back to ShopCrank</a>

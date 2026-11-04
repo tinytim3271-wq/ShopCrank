@@ -15,6 +15,11 @@ import {
   describeLinkedCounts,
   hasLinkedRecords,
   requiresAdminDelete,
+  ARCHIVABLE_TYPES,
+  ARCHIVE_FIELDS,
+  archiveReason,
+  isArchived,
+  removalAction,
 } from '../../../src/modules/record-deletion.js';
 
 function entityRecord(row, type = '') {
@@ -33,13 +38,16 @@ export async function getEntity(env, shopId, type, id) {
   ).bind(shopId, type, id).first(), type);
 }
 
-export async function listEntities(env, shopId, type, { limit = 0, cursor = '' } = {}) {
+export async function listEntities(env, shopId, type, { limit = 0, cursor = '', archived = 'include' } = {}) {
   const boundedLimit = Number.isFinite(Number(limit)) && Number(limit) > 0
     ? Math.min(200, Math.floor(Number(limit)))
     : 0;
   const nextCursor = String(cursor || '').trim();
   const filters = ['shop_id = ?', 'entity_type = ?'];
   const bindValues = [shopId, type];
+  // Archived records stay in the database for reports; list screens ask for them only on purpose.
+  if (archived === 'exclude') filters.push("json_extract(data_json, '$.archivedAt') IS NULL");
+  if (archived === 'only') filters.push("json_extract(data_json, '$.archivedAt') IS NOT NULL");
   if (nextCursor) {
     const [cursorTs, cursorId] = nextCursor.split('|');
     filters.push('(updated_at > ? OR (updated_at = ? AND entity_id > ?))');
@@ -60,15 +68,16 @@ export async function listEntities(env, shopId, type, { limit = 0, cursor = '' }
   };
 }
 
-export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId) {
+export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
   const now = new Date().toISOString();
   const existing = await env.DB.prepare(
-    'SELECT created_at, created_by, updated_at FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
   const record = {
+    ...archiveFieldsForSave(existing, body, context, { create, type, id }),
     ...body,
     id,
     shopId: context.shopId,
@@ -86,6 +95,32 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
   return record;
 }
 
+const ARCHIVE_LABELS = { customers: 'Customer', vehicles: 'Vehicle', orders: 'Work order', invoices: 'Invoice', payments: 'Payment' };
+
+/**
+ * Saves never quietly change an archived record. Creating a record over an
+ * archived one is refused (a reused work-order number or customer name would
+ * otherwise overwrite it); a stale edit keeps the archive fields; only an
+ * owner/admin sending `archivedAt: null` restores it.
+ */
+export function archiveFieldsForSave(existingRow, body, context, { create = false, type = '', id = '' } = {}) {
+  let previous = null;
+  try { previous = existingRow?.data_json ? JSON.parse(existingRow.data_json) : null; } catch { previous = null; }
+  const restoring = body.archivedAt === null;
+  // Archive fields are owned by the archive/restore routes: a save can neither
+  // set them (hiding a record without the admin check) nor change them.
+  for (const field of ARCHIVE_FIELDS) delete body[field];
+  if (!isArchived(previous)) return {};
+  if (create) {
+    throw new HttpError(409, `${ARCHIVE_LABELS[type] || 'Record'} ${previous.name || previous.number || id} is archived. Restore it from Settings → Archived records, or use a different name or number.`);
+  }
+  if (restoring) {
+    if (!canDeleteRecords(context.role)) throw new HttpError(403, 'Only the shop owner or an admin can restore archived records');
+    return {};
+  }
+  return Object.fromEntries(ARCHIVE_FIELDS.filter(field => previous[field] !== undefined).map(field => [field, previous[field]]));
+}
+
 function members(record) {
   return [...new Set((Array.isArray(record?.memberEmails) ? record.memberEmails : [])
     .map(email => String(email).trim().toLowerCase()).filter(Boolean))];
@@ -101,6 +136,7 @@ function listParams(request) {
     limit,
     cursor: String(url.searchParams.get('cursor') || '').trim(),
     conversationId: String(url.searchParams.get('conversationId') || '').trim(),
+    archived: ['only', 'include'].includes(url.searchParams.get('archived')) ? url.searchParams.get('archived') : 'exclude',
   };
 }
 
@@ -239,6 +275,161 @@ export function buildEntityDeleteStatements(env, context, type, id, existing, re
   return statements;
 }
 
+async function listByJsonField(env, shopId, type, field, value) {
+  if (String(value ?? '').trim() === '') return [];
+  const result = await env.DB.prepare(
+    `SELECT entity_id, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND json_extract(data_json, '$.${field}') = ?`,
+  ).bind(shopId, type, String(value)).all();
+  return (result.results || []).map(row => ({ id: row.entity_id, record: entityRecord(row) || {} }));
+}
+
+const REAL_VIN = /^[A-HJ-NPR-Z0-9]{17}$/i;
+
+/** Linked records that decide archive vs delete, looked up in D1 (shape matches relatedForRemoval). */
+export async function relatedFromDb(env, shopId, type, id, record) {
+  if (type === 'invoices') {
+    const number = record.number || id;
+    const byNumber = await listPaymentsByInvoice(env, shopId, number);
+    // Deposits are taken against the work order before the invoice exists.
+    const deposits = record.ro ? (await listByJsonField(env, shopId, 'payments', 'workOrderId', record.ro)).map(item => ({ ...item.record, id: item.id })) : [];
+    const payments = [...new Map([...byNumber, ...deposits].map(payment => [payment.id, payment])).values()];
+    const links = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM customer_document_links WHERE shop_id = ? AND document_type = 'invoice' AND document_id IN (?, ?)",
+    ).bind(shopId, id, number).first().catch(() => ({ n: 0 }));
+    return { payments: payments.map(p => ({ id: p.id, record: p })), documentLinks: Number(links?.n || 0) };
+  }
+  if (type === 'orders') {
+    return {
+      invoices: await listByJsonField(env, shopId, 'invoices', 'ro', id),
+      payments: await listByJsonField(env, shopId, 'payments', 'workOrderId', id),
+    };
+  }
+  if (type === 'vehicles') {
+    const vin = REAL_VIN.test(String(record.vin || '').trim()) ? String(record.vin).trim().toUpperCase() : '';
+    const orders = [...await listByJsonField(env, shopId, 'orders', 'vehicleId', id), ...(vin ? await listByJsonField(env, shopId, 'orders', 'vin', vin) : [])];
+    const invoices = vin ? await listByJsonField(env, shopId, 'invoices', 'vin', vin) : [];
+    for (const order of orders) invoices.push(...await listByJsonField(env, shopId, 'invoices', 'ro', order.id));
+    return { invoices: [...new Map(invoices.map(item => [item.id, item])).values()] };
+  }
+  if (type === 'customers') {
+    const linked = await customerLinkedEntities(env, shopId, record.name);
+    return { invoices: linked.invoices, payments: linked.payments, linked };
+  }
+  return {};
+}
+
+/**
+ * Sets only the archive fields (and updatedAt) inside data_json, so an edit that
+ * lands between reading the record and archiving it is kept.
+ */
+function archiveStatement(env, context, type, id, record, options, extra = {}) {
+  const fields = { archivedAt: options.at, archivedBy: options.actor || '', archiveReason: options.reason || '', ...(options.group ? { archiveGroup: options.group } : {}), updatedAt: options.at, ...extra };
+  const paths = Object.keys(fields).map(key => `'$.${key}', json(?)`).join(', ');
+  return env.DB.prepare(`UPDATE entities SET data_json = json_set(data_json, ${paths}), updated_at = ? WHERE shop_id = ? AND entity_type = ? AND entity_id = ?`)
+    .bind(...Object.values(fields).map(value => JSON.stringify(value)), options.at, context.shopId, type, id);
+}
+
+/**
+ * Remove an archivable record under the shop delete policy: records with money
+ * attached are archived (with the records that belong to them), the rest are
+ * permanently deleted. Returns { action, archived, deleted } with ids per type.
+ */
+export async function removeShopRecord(env, context, type, id, existing, cascade = false) {
+  if (isArchived(existing)) throw new HttpError(409, `${ARCHIVE_LABELS[type] || 'Record'} is already archived`);
+  const related = await relatedFromDb(env, context.shopId, type, id, existing);
+  if (type === 'customers' && hasLinkedRecords(related.linked) && !cascade) {
+    throw new HttpError(409, `${existing.name || 'This customer'} has ${describeLinkedCounts(related.linked)}. Delete them too, or delete those records first.`);
+  }
+  const action = removalAction(type, existing, related);
+  if (action === 'delete') {
+    if (type === 'customers' && hasLinkedRecords(related.linked)) {
+      await env.DB.batch(buildCustomerCascadeStatements(env, context, id, related.linked));
+    } else {
+      await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing, []));
+    }
+    return { action: 'delete' };
+  }
+  const options = { actor: context.email || context.userId || '', at: new Date().toISOString(), reason: archiveReason(type), group: `${type}:${id}` };
+  const statements = [archiveStatement(env, context, type, id, existing, options)];
+  const archived = { [type]: [id] };
+  const deleted = {};
+  const add = (bucket, kind, itemId) => { (bucket[kind] ||= []).push(itemId); };
+  if (type === 'invoices') {
+    for (const payment of related.payments || []) {
+      if (isArchived(payment.record)) continue;
+      statements.push(archiveStatement(env, context, 'payments', payment.id, payment.record, options));
+      add(archived, 'payments', payment.id);
+    }
+  }
+  if (type === 'customers') {
+    // The customer's vehicles and work orders go with them; invoices and payments
+    // stay as they are (they are the financial record); open appointments go away.
+    for (const kind of ['vehicles', 'orders']) {
+      for (const item of related.linked[kind] || []) {
+        if (isArchived(item.record)) continue;
+        statements.push(archiveStatement(env, context, kind, item.id, item.record, options));
+        add(archived, kind, item.id);
+      }
+    }
+    for (const item of related.linked.appointments || []) {
+      statements.push(env.DB.prepare('DELETE FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?').bind(context.shopId, 'appointments', item.id));
+      add(deleted, 'appointments', item.id);
+    }
+  }
+  await env.DB.batch(statements);
+  return { action: 'archive', archived, deleted, reason: options.reason };
+}
+
+/** Roles that can record a customer's approval or refusal on a work order. */
+export const SERVICE_REFUSAL_ROLES = Object.freeze(['owner', 'admin', 'super_admin', 'service_writer']);
+
+/**
+ * Archive a work order because the customer refused the work. Allowed for the
+ * roles that record approvals; the refusal (who, when, note) is kept on the record
+ * and an owner or admin can restore it from Settings -> Archived records.
+ */
+export async function refuseShopOrder(env, context, id, body = {}) {
+  if (!SERVICE_REFUSAL_ROLES.includes(String(context.role || ''))) throw new HttpError(403, 'Only an owner, admin or service writer can record a refused service');
+  const existing = await getEntity(env, context.shopId, 'orders', id);
+  if (!existing) throw new HttpError(404, 'Not found');
+  if (isArchived(existing)) throw new HttpError(409, 'Work order is already archived');
+  if (['completed', 'invoiced'].includes(String(existing.status || ''))) throw new HttpError(409, 'A completed or invoiced work order cannot be refused');
+  const at = new Date().toISOString();
+  const refusal = {
+    refusedAt: at,
+    recordedBy: context.email || context.userId || '',
+    customerName: String(body.customerName || existing.customer || '').trim().slice(0, 100),
+    note: String(body.note || '').trim().slice(0, 500),
+  };
+  const options = { actor: refusal.recordedBy, at, reason: 'Customer refused service', group: `orders:${id}` };
+  await env.DB.batch([archiveStatement(env, context, 'orders', id, existing, options, { serviceRefusal: refusal })]);
+  return { action: 'archive', archived: { orders: [id] }, deleted: {}, reason: options.reason, refusal };
+}
+
+/** Restore a record and everything archived together with it (same archiveGroup). */
+export async function restoreShopRecord(env, context, type, id) {
+  if (!canDeleteRecords(context.role)) throw new HttpError(403, 'Only the shop owner or an admin can restore archived records');
+  const existing = await getEntity(env, context.shopId, type, id);
+  if (!existing) throw new HttpError(404, 'Not found');
+  if (!isArchived(existing)) return { restored: {} };
+  const group = existing.archiveGroup || `${type}:${id}`;
+  const result = await env.DB.prepare(
+    "SELECT entity_type, entity_id, data_json FROM entities WHERE shop_id = ? AND json_extract(data_json, '$.archiveGroup') = ?",
+  ).bind(context.shopId, group).all();
+  const rows = (result.results || []).length ? result.results : [{ entity_type: type, entity_id: id, data_json: JSON.stringify(existing) }];
+  const now = new Date().toISOString();
+  const restored = {};
+  // Remove only the archive fields so edits made since the archive are kept.
+  const removePaths = ARCHIVE_FIELDS.map(field => `'$.${field}'`).join(', ');
+  const statements = rows.map(row => {
+    (restored[row.entity_type] ||= []).push(row.entity_id);
+    return env.DB.prepare(`UPDATE entities SET data_json = json_set(json_remove(data_json, ${removePaths}), '$.updatedAt', ?), updated_at = ? WHERE shop_id = ? AND entity_type = ? AND entity_id = ?`)
+      .bind(now, now, context.shopId, row.entity_type, row.entity_id);
+  });
+  await env.DB.batch(statements);
+  return { restored };
+}
+
 export async function handleEntities(request, env, context, segments) {
   const sourceType = String(segments[1] || '').toLowerCase();
   const type = normalizeEntityType(sourceType);
@@ -257,7 +448,11 @@ export async function handleEntities(request, env, context, segments) {
       records = result.records;
       nextCursor = result.nextCursor;
     } else {
-      const result = await listEntities(env, context.shopId, type, params);
+      let archived = ARCHIVABLE_TYPES.has(type) ? params.archived : 'include';
+      if ((archived === 'only' || (archived === 'include' && !['invoices', 'payments'].includes(type))) && !canDeleteRecords(context.role)) {
+        throw new HttpError(403, 'Only the shop owner or an admin can view archived records');
+      }
+      const result = await listEntities(env, context.shopId, type, { ...params, archived });
       records = paginated ? result.records : result;
       nextCursor = paginated ? result.nextCursor : null;
     }
@@ -281,6 +476,13 @@ export async function handleEntities(request, env, context, segments) {
       if (!conversation || !members(conversation).includes(context.email)) throw new HttpError(404, 'Not found');
     }
     return json(type === 'employees' ? redactEmployee(record, context.role) : record);
+  }
+  if (request.method === 'POST' && id && type === 'orders' && segments.at(-1) === 'refuse') {
+    return json(await refuseShopOrder(env, context, decodeURIComponent(segments.slice(2, -1).join('/')), await requestJson(request)));
+  }
+  if (request.method === 'POST' && id && ARCHIVABLE_TYPES.has(type) && segments.at(-1) === 'restore') {
+    const recordId = decodeURIComponent(segments.slice(2, -1).join('/'));
+    return json(await restoreShopRecord(env, context, type, recordId));
   }
   if (request.method === 'POST' && !id) {
     let body = normalizeEntityPayload(sourceType, await requestJson(request));
@@ -308,7 +510,7 @@ export async function handleEntities(request, env, context, segments) {
       };
     }
     if (type === 'employees') await syncAccessUser(env, context, body);
-    const saved = await putEntity(env, context, type, newId, body);
+    const saved = await putEntity(env, context, type, newId, body, null, context.userId, { create: true });
     return json(saved, 201);
   }
   if (request.method === 'PUT' && id) {
@@ -336,21 +538,11 @@ export async function handleEntities(request, env, context, segments) {
       throw new HttpError(403, 'Not permitted');
     }
     if (requiresAdminDelete(type) && !canDeleteRecords(context.role)) throw new HttpError(403, RECORD_DELETE_DENIED);
-    if (type === 'customers') {
-      const linked = await customerLinkedEntities(env, context.shopId, existing.name);
-      if (hasLinkedRecords(linked)) {
-        const cascade = new URL(request.url).searchParams.get('cascade') === '1';
-        if (!cascade) {
-          throw new HttpError(409, `${existing.name || 'This customer'} has ${describeLinkedCounts(linked)}. Delete them too, or delete those records first.`);
-        }
-        await env.DB.batch(buildCustomerCascadeStatements(env, context, id, linked));
-        return new Response(null, { status: 204 });
-      }
+    if (ARCHIVABLE_TYPES.has(type)) {
+      const result = await removeShopRecord(env, context, type, id, existing, new URL(request.url).searchParams.get('cascade') === '1');
+      return result.action === 'delete' ? new Response(null, { status: 204 }) : json(result);
     }
-    const relatedPayments = type === 'invoices'
-      ? await listPaymentsByInvoice(env, context.shopId, existing.number || existing.id)
-      : [];
-    await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing, relatedPayments));
+    await env.DB.batch(buildEntityDeleteStatements(env, context, type, id, existing, []));
     return new Response(null, { status: 204 });
   }
   throw new HttpError(405, 'Method not allowed');

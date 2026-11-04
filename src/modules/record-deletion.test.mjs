@@ -44,3 +44,43 @@ test('a customer with no history has nothing linked', () => {
   assert.equal(describeLinkedCounts(linked), '');
   assert.equal(hasLinkedRecords(customerLinkedRecords({ name: '' }, { vehicles: [{ customer: '' }] })), false);
 });
+
+import { archivedCopy, invoiceHasActivity, isArchived, relatedForRemoval, removalAction, restoredCopy } from './record-deletion.js';
+
+test('a draft invoice is deleted; a sent, signed or paid one is archived', () => {
+  assert.equal(removalAction('invoices', { number: 'INV-1', status: 'sent' }, {}), 'delete');
+  assert.equal(removalAction('invoices', { number: 'INV-1', status: 'paid' }, {}), 'archive');
+  assert.equal(removalAction('invoices', { number: 'INV-1', signature: { signedAt: '2026-01-01' } }, {}), 'archive');
+  assert.equal(removalAction('invoices', { number: 'INV-1' }, { documentLinks: 1 }), 'archive');
+  assert.equal(invoiceHasActivity({ number: 'INV-1' }, { payments: [{}] }), true);
+});
+
+test('payments always archive; orders, vehicles and customers archive only with money attached', () => {
+  assert.equal(removalAction('payments', {}, {}), 'archive');
+  assert.equal(removalAction('orders', { id: 'RO-1' }, {}), 'delete');
+  assert.equal(removalAction('orders', { id: 'RO-1' }, { invoices: [{}] }), 'archive');
+  assert.equal(removalAction('vehicles', { id: 'v1' }, { invoices: [] }), 'delete');
+  assert.equal(removalAction('customers', { name: 'A' }, { payments: [{}] }), 'archive');
+  assert.equal(removalAction('appointments', {}, {}), 'delete');
+});
+
+test('relatedForRemoval finds invoices for an order, a vehicle and a customer', () => {
+  const collections = {
+    orders: [{ id: 'RO-1', vehicleId: 'v1', customer: 'Ann' }],
+    invoices: [{ number: 'INV-1', ro: 'RO-1', customer: 'Ann' }],
+    payments: [{ invoiceNumber: 'INV-1', amount: 10 }],
+  };
+  assert.equal(relatedForRemoval('orders', { id: 'RO-1' }, collections).invoices.length, 1);
+  assert.equal(relatedForRemoval('vehicles', { id: 'v1' }, collections).invoices.length, 1);
+  assert.equal(relatedForRemoval('invoices', { number: 'INV-1' }, collections).payments.length, 1);
+  assert.equal(relatedForRemoval('customers', { name: 'Ann' }, collections).invoices.length, 1);
+});
+
+test('archive and restore round-trip the archive fields', () => {
+  const archived = archivedCopy({ id: 'x', name: 'A' }, { actor: 'o@x', at: '2026-11-01T00:00:00Z', reason: 'r', group: 'customers:x' });
+  assert.ok(isArchived(archived));
+  assert.equal(archived.archiveGroup, 'customers:x');
+  const restored = restoredCopy(archived);
+  assert.ok(!isArchived(restored));
+  assert.deepEqual(restored, { id: 'x', name: 'A' });
+});

@@ -1,6 +1,8 @@
 {
   "version": 1,
-  "include": ["/api/*"],
+  "include": [
+    "/api/*"
+  ],
   "exclude": [
     "/",
     "/index.html",
@@ -25,9 +27,13 @@
     "/terms/*",
     "/privacy",
     "/privacy/*",
+    "/sms-terms",
+    "/sms-terms/*",
     "/founding",
     "/founding/*",
     "/ambassador",
-    "/ambassador/*"
+    "/ambassador/*",
+    "/robots.txt",
+    "/sitemap.xml"
   ]
 }
