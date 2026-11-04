@@ -42,6 +42,16 @@ export function applyRemovalResult(collections, result, at = new Date().toISOStr
   return true;
 }
 
+export function applyInvoiceRemoval(collections, result, invoice, payments, shouldArchive, at = new Date().toISOString()) {
+  const removal = result?.queued && shouldArchive
+    ? { action: 'archive', archived: { invoices: [invoice.id || invoice.number], payments: payments.map(payment => payment.id || payment.number).filter(Boolean) } }
+    : result;
+  if (applyRemovalResult(collections, removal, at)) return true;
+  collections.payments = collections.payments.filter(payment => payment.invoiceNumber !== invoice.number);
+  collections.invoices = collections.invoices.filter(item => item !== invoice);
+  return false;
+}
+
 /** Everyday lists (Invoices, Payments) leave archived records out. */
 export function withoutArchived(rows = []) {
   return rows.filter(item => !(item && String(item.archivedAt || '').trim()));
