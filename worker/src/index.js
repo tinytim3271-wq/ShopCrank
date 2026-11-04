@@ -941,7 +941,7 @@ async function handleEntities(request, env, context, segments, analytics) {
     }
     const saved = await putEntity(env, context, type, newId, body, null, context.userId,
       type === 'orders' ? { expectedOrderSnapshot: null, create: true } : { create: true });
-    if (type === 'employees') await syncAccessUser(env, context, saved);
+    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
     captureForContext(analytics, context, 'entity_created', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_created', {
       entity_type: type,
@@ -990,7 +990,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       context.userId,
       { requireUnlockedEstimate, expectedOrderSnapshot },
     );
-    if (type === 'employees') await syncAccessUser(env, context, saved);
+    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
     captureForContext(analytics, context, 'entity_updated', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_updated', {
       entity_type: type,

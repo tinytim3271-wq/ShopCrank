@@ -28,28 +28,50 @@ export async function validateAccessUser(env, context, employee) {
  * Upsert the SaaS `users` row for an employee without ever reassigning an
  * existing account to a different shop (cross-tenant steal).
  */
-export async function syncAccessUser(env, context, employee) {
+export async function syncAccessUser(env, context, employee, { employeeSnapshot } = {}) {
   const { email, role, existing } = await validateAccessUser(env, context, employee);
   const now = new Date().toISOString();
   const enabled = employee.active === false ? 0 : 1;
   const name = String(employee.name || email);
+  const snapshotGuard = employeeSnapshot
+    ? ` AND EXISTS (
+        SELECT 1 FROM entities
+        WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ? AND data_json = ?
+      )`
+    : '';
+  const snapshotBinds = employeeSnapshot
+    ? [context.shopId, String(employeeSnapshot.id), JSON.stringify(employeeSnapshot)]
+    : [];
 
   let userId = existing?.id ? String(existing.id) : '';
+  let outcome;
   if (existing) {
-    await env.DB.prepare(`
+    outcome = await env.DB.prepare(`
       UPDATE users
       SET role = ?, name = ?, enabled = ?, updated_at = ?
-      WHERE email = ? COLLATE NOCASE AND shop_id = ?
-    `).bind(role, name, enabled, now, email, context.shopId).run();
+      WHERE email = ? COLLATE NOCASE AND shop_id = ?${snapshotGuard}
+    `).bind(role, name, enabled, now, email, context.shopId, ...snapshotBinds).run();
   } else {
     userId = crypto.randomUUID();
-    await env.DB.prepare(`
-      INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(userId, email, context.shopId, role, name, enabled, now, now).run();
+    const insert = employeeSnapshot
+      ? `
+        INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM entities
+          WHERE shop_id = ? AND entity_type = 'employees' AND entity_id = ? AND data_json = ?
+        )
+      `
+      : `
+        INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+    outcome = await env.DB.prepare(insert)
+      .bind(userId, email, context.shopId, role, name, enabled, now, now, ...snapshotBinds)
+      .run();
   }
 
-  if (!enabled) {
+  if (!enabled && outcome?.meta?.changes) {
     if (!userId) {
       const row = await env.DB.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').bind(email).first();
       userId = row?.id ? String(row.id) : '';

@@ -517,7 +517,7 @@ export async function handleEntities(request, env, context, segments) {
     }
     if (type === 'employees') await validateAccessUser(env, context, body);
     const saved = await putEntity(env, context, type, newId, body, null, context.userId, { create: true });
-    if (type === 'employees') await syncAccessUser(env, context, saved);
+    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
     return json(saved, 201);
   }
   if (request.method === 'PUT' && id) {
@@ -535,7 +535,7 @@ export async function handleEntities(request, env, context, segments) {
     }
     if (type === 'employees') await validateAccessUser(env, context, body);
     const saved = await putEntity(env, context, type, id, body, request.headers.get('If-Match'));
-    if (type === 'employees') await syncAccessUser(env, context, saved);
+    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {
