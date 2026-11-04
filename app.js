@@ -15175,6 +15175,9 @@ Continue?`)) return;
     }
     bindNewOrderDraftAutosave(form);
   }
+  function assistantRows() {
+    return assistantConversation.map((item, index) => assistantMessageMarkup(item, index)).join("");
+  }
   function assistantMessageMarkup(item, index) {
     const actions = assistantActionsHtml(item.actions, index, { escapeHtml, icon, sources: item.sources });
     return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${assistantMediaHtml(item.media, { escapeHtml, icon })}${actions}</article>`;
@@ -15227,7 +15230,7 @@ Continue?`)) return;
   function bindAssistantDraftActions() {
     const list = document.querySelector("#assistant-messages");
     bindAssistantActionButtons(list, { conversation: assistantConversation, apiFetch, toast, saveDraft: saveAssistantDraft, rerender: () => {
-      list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+      list.innerHTML = assistantRows();
       bindAssistantDraftActions();
       bindAssistantMedia(list);
     }, openScreen: ({ screen, tab }) => {
@@ -19134,7 +19137,7 @@ ${line}`.trim();
         return `<section class="ai-result"><div class="ai-result-head"><div><div class="eyebrow">Customer estimates</div><h2>Estimate register</h2><p>Review the customer-facing document or explicitly fill a new work order.</p></div></div><div class="data-panel"><table><thead><tr><th>Estimate</th><th>Customer & vehicle</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5">No saved estimates.</td></tr>`}</tbody></table></div></section>`;
       };
       liveAssistant = function() {
-        const rows = assistantConversation.map(assistantMessageMarkup).join("");
+        const rows = assistantRows();
         const provider = assistantProviderFromSettings();
         const providerLabel2 = assistantProviderLabel(provider);
         return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel2} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Ask about a repair, a record, or the program. It works as you and can research and save records, but never deletes and asks before texting customers or moving money.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for\u2026"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel2}. Missing configuration is reported without a simulated answer.</p></form></section>`;
@@ -19154,7 +19157,7 @@ ${line}`.trim();
         renderAssistantProvider();
         const renderMessages = () => {
           const list = document.querySelector("#assistant-messages");
-          list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+          list.innerHTML = assistantRows();
           list.scrollTop = list.scrollHeight;
           bindAssistantDraftActions();
           bindAssistantMedia(list);
