@@ -122,6 +122,7 @@ import {
   handleTwilioStatusWebhook,
 } from './integration-routes.mjs';
 import { handleCustomerLookup } from './customer-search.mjs';
+import { classifyAppApiCall, registerAppDispatcher } from './assistant/app-api.mjs';
 import { buildDiagnosticAiMessage, normalizeDtcs } from '../../src/modules/diagnostic-ai.js';
 import { chargeTargetSnapshot, recordPayment as recordPaymentToTarget } from './payments.mjs';
 import { importPayments } from './payment-import.mjs';
@@ -1515,7 +1516,7 @@ async function handleAssistant(request, env, context, analytics) {
   const body = await requestJson(request);
   const message = String(body.message || '').trim().slice(0, 4000);
   if (!message) throw new HttpError(400, 'A message is required');
-  const { result, status } = await runAssistantSessionTurn(env, context, body, message);
+  const { result, status } = await runAssistantSessionTurn(env, context, body, message, new URL(request.url).origin);
   if (status !== 200) return json(result, status);
   captureForContext(analytics, context, 'ai_assistant_queried', {
     model: result.model,
@@ -1524,7 +1525,7 @@ async function handleAssistant(request, env, context, analytics) {
   return json(result);
 }
 
-async function runAssistantSessionTurn(env, context, body, message) {
+async function runAssistantSessionTurn(env, context, body, message, origin = '') {
   const requestedSessionId = String(body.sessionId || '').trim();
   if (requestedSessionId && !/^[A-Za-z0-9_-]{8,100}$/.test(requestedSessionId)) {
     throw new HttpError(400, 'sessionId is invalid');
@@ -1540,6 +1541,10 @@ async function runAssistantSessionTurn(env, context, body, message) {
   headers.set('X-ShopCrank-Ai-Session-Id', sessionId);
   headers.set('X-MechPro-Ai-Session-Id', sessionId);
   headers.set('X-ShopCrank-User-Role', String(context.role || 'technician'));
+  // Who the assistant acts as when it calls ShopCrank (set only here, from the verified session).
+  headers.set('X-ShopCrank-User-Email', String(context.email || ''));
+  headers.set('X-ShopCrank-User-Name', encodeURIComponent(String(context.name || '')));
+  if (origin) headers.set('X-ShopCrank-Origin', origin);
   const sessionResponse = await stub.fetch(new Request('https://ai-session.internal/turn', {
     method: 'POST',
     headers,
@@ -1570,7 +1575,7 @@ export async function handleDiagnosticAnalysis(request, env, context, analytics)
     readings: body.readings,
     milOn: typeof body.milOn === 'boolean' ? body.milOn : null,
   });
-  const { result, status } = await runAssistantSessionTurn(env, context, { sessionId: body.sessionId }, message);
+  const { result, status } = await runAssistantSessionTurn(env, context, { sessionId: body.sessionId }, message, new URL(request.url).origin);
   if (status !== 200) return json(result, status);
   await recordDiagnosticAudit(env, context, {
     kind: 'diagnostics.ai_analyze',
@@ -3958,6 +3963,20 @@ async function route(request, env, analytics) {
   const context = await resolveContext(request, env);
   analytics.distinctId = context.userId;
   await requireActiveAccount(context, env);
+  return dispatchAuthenticated(request, env, context, analytics, path, segments);
+}
+
+/**
+ * Every signed-in API route. The Tech Assistant reaches the same handlers through
+ * runAsAssistant, with the user's own context, so role checks are identical; the
+ * assistant guard is checked again here so no handler can be reached around it.
+ */
+async function dispatchAuthenticated(request, env, context, analytics, path, segments) {
+  if (context.viaAssistant) {
+    const body = ['GET', 'HEAD'].includes(request.method) ? null : await request.clone().json().catch(() => null);
+    const verdict = classifyAppApiCall({ method: request.method, path, body });
+    if (verdict.decision !== 'run') throw new HttpError(403, verdict.reason);
+  }
   if (path === '/auth/session') return handleAuthSession(request, context, analytics);
   if (segments[0] === 'customers' && ['search', 'duplicates'].includes(segments[1])) {
     return handleCustomerLookup(request, env, context, segments[1]);
@@ -4205,6 +4224,21 @@ async function proxyPagesRequest(request, env) {
     headers: nextHeaders,
   });
 }
+
+/** The router the Tech Assistant calls: one request, run as the given user's context. */
+async function runAsAssistant(request, env, context) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/^\/api(?=\/|$)/, '') || '/';
+  const segments = path.split('/').filter(Boolean);
+  try {
+    return await dispatchAuthenticated(request, env, { ...context, viaAssistant: true }, { client: null, distinctId: context.userId }, path, segments);
+  } catch (error) {
+    if (error instanceof HttpError) return json({ message: error.message }, error.status);
+    console.error(JSON.stringify({ message: 'assistant API call failed', path, error: String(error?.message || error).slice(0, 300) }));
+    return json({ message: 'That ShopCrank request failed' }, 500);
+  }
+}
+registerAppDispatcher(runAsAssistant);
 
 export default {
   async scheduled(controller, env, executionCtx) {

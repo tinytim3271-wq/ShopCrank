@@ -1561,6 +1561,7 @@ export async function handleGrokToolCall(request, env, context) {
   const callerPhone = cleanText(body.callerPhone || '', 40);
   const persona = normalizePersona(body.persona, PERSONAS.TECH);
   const { executeAssistantTool } = await assistantTools();
+  const { assistantContext } = await import('./assistant/app-api.mjs');
   const result = await executeAssistantTool(env, {
     shopId: context.shopId,
     persona,
@@ -1569,6 +1570,8 @@ export async function handleGrokToolCall(request, env, context) {
     name,
     args,
     callerPhone,
+    // In-app live voice acts as the signed-in user, like the text assistant (confirm-only calls stay off in voice).
+    app: persona === PERSONAS.TECH ? { context: assistantContext(context), origin: new URL(request.url).origin } : null,
   });
   return json({ name, persona, result });
 }

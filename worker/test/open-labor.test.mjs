@@ -153,3 +153,26 @@ test('the labor guide lookup returns Open Labor lines labeled not book time, bef
   assert.match(body.lines[0].notes, /not book time \(estimated, range 2–3.5 h\)/);
   assert.ok(!api.calls.some(call => call.url.host.includes('brave')), 'no web search when Open Labor answered');
 });
+
+test('repair specs come from the matching Open Labor endpoint and are cached', async () => {
+  const { lookupRepairSpecs } = await import('../src/integrations/open-labor.mjs');
+  const urls = [];
+  const fetcher = async url => {
+    urls.push(new URL(url));
+    return Response.json({ data: { make: 'Toyota', model: 'Camry', engines: [{ engine: '2.5L I4', torqueSpecs: [{ job: 'Brake caliper bracket', lbFt: 79, nm: 107, confidence: 'high', notes: null }] }] }, meta: {}, error: null });
+  };
+  const e = env();
+  const first = await lookupRepairSpecs(e, { kind: 'torque', year: '2018', make: 'Toyota', model: 'Camry', job: 'brake caliper bracket' }, { fetcher });
+  assert.equal(urls[0].pathname, '/api/v1/torque-specs');
+  assert.equal(urls[0].searchParams.get('job'), 'brake caliper bracket');
+  assert.equal(first.data.engines[0].torqueSpecs[0].lbFt, 79);
+  assert.ok(!('notes' in first.data.engines[0].torqueSpecs[0]), 'empty fields are dropped');
+  assert.match(first.note, /not OEM/);
+  await lookupRepairSpecs(e, { kind: 'torque', year: '2018', make: 'Toyota', model: 'Camry', job: 'brake caliper bracket' }, { fetcher });
+  assert.equal(urls.length, 1, 'second lookup comes from the cache');
+  await lookupRepairSpecs(e, { kind: 'dtc', code: 'P0420' }, { fetcher });
+  assert.equal(urls[1].pathname, '/api/v1/dtc-codes');
+  assert.equal(urls[1].searchParams.get('code'), 'P0420');
+  assert.match((await lookupRepairSpecs(e, { kind: 'paint' })).error, /kind must be/);
+  assert.match((await lookupRepairSpecs({}, { kind: 'torque' })).error, /not connected/);
+});

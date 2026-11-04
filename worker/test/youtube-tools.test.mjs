@@ -70,7 +70,8 @@ test('searchYouTubeVideos asks for embeddable safe-search videos and returns tit
 
 test('video tools are offered only to the tech assistant on the text channel', () => {
   const names = (persona, role, options) => toolsFor(persona, role, 'anthropic', options).map(tool => tool.name);
-  assert.deepEqual(TEXT_ONLY_TOOL_LIST, VIDEO_TOOLS);
+  assert.deepEqual(TEXT_ONLY_TOOL_LIST.filter(name => VIDEO_TOOLS.includes(name)), VIDEO_TOOLS);
+  assert.deepEqual(TEXT_ONLY_TOOL_LIST.filter(name => !VIDEO_TOOLS.includes(name)), ['open_screen'], 'screen navigation is the only other on-screen tool');
   for (const name of VIDEO_TOOLS) {
     assert.ok(names(PERSONAS.TECH, 'technician', { channel: 'text' }).includes(name));
     assert.ok(!names(PERSONAS.TECH, 'technician').includes(name), 'default channel is voice');
