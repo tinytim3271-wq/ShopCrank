@@ -11,20 +11,42 @@ const savePaths = [
 ];
 
 for (const [name, saveEntity] of savePaths) {
-  test(`${name} rejects invalid employee email and role without persisting an entity`, async () => {
+  test(`${name} rejects invalid employee email and role before POST or PUT persistence`, async () => {
     const DB = createD1();
-    for (const [index, employee] of [
+    const saved = await saveEntity({ DB }, context, 'employees', 'employee-1', {
+      id: 'employee-1',
+      name: 'Shop Technician',
+      email: 'tech@shop.test',
+      role: 'technician',
+      active: true,
+    }, null, context.userId, { create: true });
+
+    for (const [index, invalidEmployee] of [
       { name: 'No Email', email: '  ', role: 'technician', active: true },
       { name: 'Unknown Role', email: 'unknown@shop.test', role: 'manager', active: true },
     ].entries()) {
       await assert.rejects(
-        () => saveEntity({ DB }, context, 'employees', `employee-${index}`, employee, null, context.userId, { create: true }),
+        () => saveEntity({ DB }, context, 'employees', `invalid-${index}`, invalidEmployee, null, context.userId, { create: true }),
+        error => error.status === 400,
+      );
+      await assert.rejects(
+        () => saveEntity(
+          { DB },
+          context,
+          'employees',
+          'employee-1',
+          { ...saved, ...invalidEmployee },
+          saved.updatedAt,
+        ),
         error => error.status === 400,
       );
     }
 
-    assert.equal((await DB.prepare("SELECT COUNT(*) AS count FROM entities WHERE entity_type = 'employees'").first()).count, 0);
-    assert.equal((await DB.prepare('SELECT COUNT(*) AS count FROM users').first()).count, 0);
+    assert.equal((await DB.prepare("SELECT COUNT(*) AS count FROM entities WHERE entity_type = 'employees'").first()).count, 1);
+    assert.equal((await DB.prepare('SELECT COUNT(*) AS count FROM users').first()).count, 1);
+    const employee = await DB.prepare('SELECT data_json FROM entities WHERE entity_type = ? AND entity_id = ?')
+      .bind('employees', 'employee-1').first();
+    assert.deepEqual(JSON.parse(employee.data_json), saved);
   });
 
   test(`${name} commits employee revisions and Access state together`, async () => {

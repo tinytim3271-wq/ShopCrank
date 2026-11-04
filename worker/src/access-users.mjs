@@ -59,7 +59,7 @@ export async function employeeAccessStatements(env, context, employee, serialize
       WHERE user_id = ? AND revoked_at IS NULL AND ${entityGuard}
     `).bind(now, userId, ...guardArgs));
   }
-  return statements;
+  return { statements, email, hasExisting: Boolean(existing) };
 }
 
 /**

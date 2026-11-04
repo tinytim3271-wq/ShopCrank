@@ -542,6 +542,15 @@ export async function putEntity(
   };
   if (type === 'employees') {
     const serializedRecord = JSON.stringify(record);
+    const {
+      statements: accessStatements,
+      email,
+      hasExisting: accessUserExists,
+    } = await employeeAccessStatements(env, context, record, serializedRecord);
+    const accessGuard = accessUserExists
+      ? 'EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?)'
+      : 'NOT EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE)';
+    const accessGuardArgs = accessUserExists ? [email, context.shopId] : [email];
     const entityWrite = create
       ? env.DB.prepare(`
         INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
@@ -550,8 +559,17 @@ export async function putEntity(
       : env.DB.prepare(`
         UPDATE entities SET data_json = ?, updated_at = ?
         WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND updated_at = ? AND data_json = ?
-      `).bind(serializedRecord, updatedAt, context.shopId, type, id, expectedUpdatedAt || existing?.updated_at || '', existing?.data_json || '');
-    const accessStatements = await employeeAccessStatements(env, context, record, serializedRecord);
+          AND ${accessGuard}
+      `).bind(
+        serializedRecord,
+        updatedAt,
+        context.shopId,
+        type,
+        id,
+        expectedUpdatedAt || existing?.updated_at || '',
+        existing?.data_json || '',
+        ...accessGuardArgs,
+      );
     const results = await env.DB.batch([entityWrite, ...accessStatements]);
     if (!results?.[0]?.meta?.changes) {
       throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
