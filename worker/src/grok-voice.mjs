@@ -1302,22 +1302,81 @@ export function buildTwilioVoiceStreamTwiml({ streamUrl, statusCallbackUrl = '',
 </Response>`;
 }
 
+/**
+ * Every auth token that may have signed a voice webhook for this shop: the shop's
+ * own saved token (even when its texting settings are incomplete), the platform
+ * token, and the master account token (numbers that live on the master account).
+ */
+export async function twilioVoiceAuthTokens(env, shopId, getSecret = null) {
+  const tokens = [];
+  if (shopId && typeof getSecret === 'function') {
+    tokens.push(await getSecret(env, shopId, TWILIO_SECRET_NAMES.authToken).catch(() => ''));
+  }
+  const twilio = await resolveTwilioShopConfig(env, shopId, getSecret).catch(() => ({}));
+  tokens.push(twilio?.authToken, env?.TWILIO_AUTH_TOKEN, env?.TWILIO_MASTER_AUTH_TOKEN);
+  return [...new Set(tokens.map(token => String(token || '').trim()).filter(Boolean))];
+}
+
+/**
+ * URLs Twilio may have signed. It signs the webhook URL exactly as configured on
+ * the number, which can differ from what the Worker sees (apex vs www host, or the
+ * TWILIO_WEBHOOK_URL origin behind a proxy). The HMAC still has to match one of them.
+ */
+export function twilioSignedUrlCandidates(requestUrl, env = {}) {
+  const url = new URL(requestUrl);
+  const candidates = [url.toString()];
+  const swapHost = url.hostname.startsWith('www.') ? url.hostname.slice(4) : `www.${url.hostname}`;
+  if (url.hostname.split('.').length >= 2) candidates.push(new URL(`${url.protocol}//${swapHost}${url.pathname}${url.search}`).toString());
+  try {
+    const configured = env?.TWILIO_WEBHOOK_URL ? new URL(env.TWILIO_WEBHOOK_URL) : null;
+    if (configured) candidates.push(new URL(`${url.pathname}${url.search}`, configured.origin).toString());
+  } catch { /* ignore a malformed TWILIO_WEBHOOK_URL */ }
+  return [...new Set(candidates)];
+}
+
 export async function verifyTwilioVoiceRequest(request, env, shopId, params, getSecret) {
-  const twilio = await resolveTwilioShopConfig(env, shopId, getSecret);
-  const authToken = String(twilio.authToken || env?.TWILIO_AUTH_TOKEN || '').trim();
+  const tokens = await twilioVoiceAuthTokens(env, shopId, getSecret);
   // Fail closed: without a valid signature nothing proves the request came from Twilio,
   // and an unsigned "incoming call" would hand out a signed AI stream on the shop's keys.
   // Skipping the check is for local development only, never production.
   const devBypass = env?.DEV_AUTH_BYPASS === '1';
-  if (devBypass && (!authToken || String(env?.TWILIO_VERIFY_VOICE || '1') === '0')) return;
-  if (!authToken) throw new HttpError(503, 'Twilio voice webhook verification is not configured for this shop');
-  const valid = await verifyTwilioWebhookSignature({
-    authToken,
-    url: new URL(request.url).toString(),
-    parameters: params,
-    signature: request.headers.get('X-Twilio-Signature'),
-  });
-  if (!valid) throw new HttpError(401, 'Invalid Twilio webhook signature');
+  if (devBypass && (!tokens.length || String(env?.TWILIO_VERIFY_VOICE || '1') === '0')) return;
+  if (!tokens.length) throw new HttpError(503, 'Twilio voice webhook verification is not configured for this shop');
+  const signature = request.headers.get('X-Twilio-Signature');
+  for (const url of twilioSignedUrlCandidates(request.url, env)) {
+    for (const authToken of tokens) {
+      if (await verifyTwilioWebhookSignature({ authToken, url, parameters: params, signature })) return;
+    }
+  }
+  throw new HttpError(401, 'Invalid Twilio webhook signature');
+}
+
+function toE164(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (/^\+[1-9]\d{7,14}$/.test(String(phone || '').trim())) return String(phone).trim();
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return '';
+}
+
+/**
+ * Where a call goes when the AI cannot take it: the same number the minutes cap
+ * uses (a staff transfer target, else the shop's onboarding phone). The "call
+ * forwarding" phone is left out on purpose: it may forward into this Twilio
+ * number, and dialing it would loop the call.
+ */
+export async function voiceFallbackNumber(env, shopId, calledNumber = '') {
+  const called = toE164(calledNumber);
+  const fallback = toE164(await shopFallbackPhone(env, shopId).catch(() => ''));
+  return fallback && fallback !== called ? fallback : '';
+}
+
+/** TwiML that still answers the call without the AI: ring the shop, or say why no one can. */
+export function voiceFallbackTwiml(fallback, shopName = '') {
+  const body = fallback
+    ? `<Dial timeout="25">${xmlEscape(fallback)}</Dial>`
+    : `<Say>Thanks for calling${shopName ? ` ${xmlEscape(shopName)}` : ''}. No one can take your call right now. Please call back during business hours.</Say>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
 }
 
 export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecret = null } = {}) {
@@ -1326,7 +1385,23 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
 
   const rawBody = await request.text();
   const params = new URLSearchParams(rawBody);
-  await verifyTwilioVoiceRequest(request, env, shopId, params, getSecret);
+  try {
+    await verifyTwilioVoiceRequest(request, env, shopId, params, getSecret);
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    // Never leave a real caller ringing on an error page. The fallback hands out no
+    // AI stream or token, so an unsigned request gains nothing: it only tells Twilio
+    // to ring the shop's own phone, which only a real Twilio call can act on.
+    const fallback = await voiceFallbackNumber(env, shopId, params.get('To') || '').catch(() => '');
+    console.error(JSON.stringify({
+      message: 'Twilio voice webhook not verified; forwarding the call without the AI',
+      shopId, status: error.status, reason: error.message,
+      url: new URL(request.url).toString(), hasSignature: Boolean(request.headers.get('X-Twilio-Signature')),
+      tokens: (await twilioVoiceAuthTokens(env, shopId, getSecret).catch(() => [])).length,
+      forwardedTo: fallback ? 'shop' : 'none',
+    }));
+    return new Response(voiceFallbackTwiml(fallback), { status: 200, headers: { 'Content-Type': 'application/xml; charset=utf-8' } });
+  }
 
   const gate = await phoneGoLiveGate(env, shopId, params.get('From') || '');
   if (gate.gated) {
@@ -1358,7 +1433,11 @@ export async function handleTwilioVoiceIncoming(request, env, shopId, { getSecre
 
   const { apiKey } = await resolveGrokApiKey(env, shopId, getSecret);
   if (!apiKey) {
-    const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Thank you for calling. Our automated service advisor is currently offline. Please leave a message or call back during shop hours.</Say></Response>`;
+    const fallback = await voiceFallbackNumber(env, shopId, params.get('To') || '').catch(() => '');
+    console.error(JSON.stringify({ message: 'AI phone has no xAI key; forwarding the call', shopId, forwardedTo: fallback ? 'shop' : 'none' }));
+    const fallbackTwiml = fallback
+      ? voiceFallbackTwiml(fallback)
+      : `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Thank you for calling. Our automated service advisor is currently offline. Please leave a message or call back during shop hours.</Say></Response>`;
     return new Response(fallbackTwiml, {
       status: 200,
       headers: { 'Content-Type': 'application/xml; charset=utf-8' },
