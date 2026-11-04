@@ -43,7 +43,8 @@ test('system prompt requires detailed, evidence-grounded answers', () => {
   assert.match(MECHPRO_SYSTEM_PROMPT, /detailed/i);
   assert.match(MECHPRO_SYSTEM_PROMPT, /never guess/i);
   assert.match(MECHPRO_SYSTEM_PROMPT, /ask for the missing VIN/i);
-  assert.match(MECHPRO_SYSTEM_PROMPT, /read-only/i);
+  assert.match(MECHPRO_SYSTEM_PROMPT, /unless a tool result in this conversation shows it succeeded/);
+  assert.match(buildAssistantSystemPrompt(undefined, { workspace: true }), /never delete, archive, void/i);
   assert.match(buildAssistantSystemPrompt(), /prepare_estimate_work_order/);
   assert.match(buildAssistantSystemPrompt(), /\$140\.00 per labor hour/);
   assert.match(buildAssistantSystemPrompt(), /\$200 flat fee/);
@@ -531,7 +532,9 @@ test('assistant route falls back to the Workers AI binding when no Anthropic key
   assert.equal(provider.mock.callCount(), 0);
   assert.equal(runs.length, 1);
   assert.equal(runs[0].input.messages[0].role, 'system');
-  assert.match(runs[0].input.messages[0].content, /cannot call tools/);
+  // The included model now gets the same tools as Claude and Gemini.
+  assert.ok(runs[0].input.tools.some(tool => tool.name === 'shopcrank_api'));
+  assert.ok(runs[0].input.tools.some(tool => tool.name === 'search_web'));
   assert.equal(runs[0].input.messages.at(-1).content, 'Explain this open estimate.');
   const usageInsert = DB.calls.find(call => /INSERT INTO ai_usage_events/.test(call.sql));
   assert.ok(usageInsert);
