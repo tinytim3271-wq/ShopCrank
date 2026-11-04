@@ -313,6 +313,7 @@ export async function relatedFromDb(env, shopId, type, id, record) {
     const orders = [...await listByJsonField(env, shopId, 'orders', 'vehicleId', id), ...(vin ? await listByJsonField(env, shopId, 'orders', 'vin', vin) : [])];
     const invoices = await listByJsonField(env, shopId, 'invoices', 'vehicleId', id);
     if (vin) invoices.push(...await listByJsonField(env, shopId, 'invoices', 'vin', vin));
+    const invoices = [...await listByJsonField(env, shopId, 'invoices', 'vehicleId', id), ...(vin ? await listByJsonField(env, shopId, 'invoices', 'vin', vin) : [])];
     for (const order of orders) invoices.push(...await listByJsonField(env, shopId, 'invoices', 'ro', order.id));
     return { invoices: [...new Map(invoices.map(item => [item.id, item])).values()] };
   }

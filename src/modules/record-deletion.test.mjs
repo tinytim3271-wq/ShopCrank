@@ -67,11 +67,14 @@ test('payments always archive; orders, vehicles and customers archive only with 
 test('relatedForRemoval finds invoices for an order, a vehicle and a customer', () => {
   const collections = {
     orders: [{ id: 'RO-1', vehicleId: 'v1', customer: 'Ann' }],
-    invoices: [{ number: 'INV-1', ro: 'RO-1', customer: 'Ann' }],
+    invoices: [{ number: 'INV-1', ro: 'RO-1', customer: 'Ann' }, { number: 'INV-2', vehicleId: 'v2' }],
     payments: [{ invoiceNumber: 'INV-1', amount: 10 }],
   };
   assert.equal(relatedForRemoval('orders', { id: 'RO-1' }, collections).invoices.length, 1);
   assert.equal(relatedForRemoval('vehicles', { id: 'v1' }, collections).invoices.length, 1);
+  const invoiceOnlyLink = relatedForRemoval('vehicles', { id: 'v2' }, collections);
+  assert.equal(invoiceOnlyLink.invoices.length, 1);
+  assert.equal(removalAction('vehicles', { id: 'v2' }, invoiceOnlyLink), 'archive');
   assert.equal(relatedForRemoval('invoices', { number: 'INV-1' }, collections).payments.length, 1);
   assert.equal(relatedForRemoval('customers', { name: 'Ann' }, collections).invoices.length, 1);
 });

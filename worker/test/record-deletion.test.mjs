@@ -107,8 +107,11 @@ test('a work order or vehicle tied to an invoice is archived', async () => {
   await seed(env.DB, 'shop-1', 'invoices', 'INV-3', { number: 'INV-3', ro: 'RO-3', customer: 'Other Customer' });
   await seed(env.DB, 'shop-1', 'orders', 'RO-4', { customer: 'Other Customer', vehicleId: 'v3' });
   await seed(env.DB, 'shop-1', 'invoices', 'INV-4', { number: 'INV-4', ro: 'RO-4', customer: 'Other Customer' });
+  await seed(env.DB, 'shop-1', 'vehicles', 'v4', { customer: 'Other Customer' });
+  await seed(env.DB, 'shop-1', 'invoices', 'INV-5', { number: 'INV-5', vehicleId: 'v4' });
   assert.equal((await (await remove(env, 'admin', 'orders', 'RO-3')).json()).action, 'archive');
   assert.equal((await (await remove(env, 'admin', 'vehicles', 'v3')).json()).action, 'archive');
+  assert.equal((await (await remove(env, 'admin', 'vehicles', 'v4')).json()).action, 'archive');
 });
 
 test('a vehicle linked only by invoice vehicleId is archived', async () => {

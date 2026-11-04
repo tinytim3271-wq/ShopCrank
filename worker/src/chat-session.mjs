@@ -4,6 +4,7 @@ import {
   usageCostsForResult,
 } from './ai.mjs';
 import { HttpError, json, requestJson } from './http.mjs';
+import { assistantContext } from './assistant/app-api.mjs';
 
 const MAX_STORED_MESSAGES = 20;
 
@@ -49,6 +50,17 @@ export class AiChatSession {
     const previousInteractionId = String(
       body.previousInteractionId || body.previous_interaction_id || storedInteractionId || '',
     ).trim() || null;
+    // The assistant reaches the rest of ShopCrank as this user (set by the Worker from the verified session).
+    const app = {
+      context: assistantContext({
+        shopId,
+        userId,
+        role,
+        email: request.headers.get('X-ShopCrank-User-Email') || '',
+        name: decodeURIComponent(request.headers.get('X-ShopCrank-User-Name') || ''),
+      }),
+      origin: request.headers.get('X-ShopCrank-Origin') || '',
+    };
     const result = await runAnthropicTurn(this.env, {
       shopId,
       message,
@@ -59,6 +71,7 @@ export class AiChatSession {
       role,
       userId,
       channel: 'text',
+      app,
     });
     const costs = usageCostsForResult(this.env, result);
     await recordAiUsage(this.env, {
@@ -102,6 +115,7 @@ export class AiChatSession {
       keySource: result.keySource || null,
       ...(result.citations?.length ? { citations: result.citations } : {}),
       ...(result.media?.length ? { media: result.media } : {}),
+      ...(result.sources?.length ? { sources: result.sources } : {}),
       ...(result.accessDenied?.length ? { accessDenied: result.accessDenied } : {}),
       ...(result.notice ? { notice: result.notice } : {}),
     });

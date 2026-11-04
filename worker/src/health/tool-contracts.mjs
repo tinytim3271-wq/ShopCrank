@@ -10,9 +10,18 @@
 // Shapes use a small JSON-Schema subset (type, properties, required, items, enum,
 // anyOf, additionalProperties); see ./schema.mjs.
 
-export const TOOL_CONTRACTS_VERSION = '1.2.0';
+export const TOOL_CONTRACTS_VERSION = '1.3.0';
 
 export const TOOL_CONTRACTS_CHANGELOG = Object.freeze([
+  {
+    version: '1.3.0',
+    date: '2026-11-04',
+    changes: [
+      'Added shopcrank_api: runs a ShopCrank API call as the signed-in user ({ status, ok, data }), or returns { kind: "app_api_confirmation", method, path, body, summary } for the user to confirm. Deleting is always refused.',
+      'Added get_app_help ({ topics }), get_api_reference ({ howTo, entities, otherEndpoints }), open_screen ({ kind: "open_screen", screen, title }, text channel only).',
+      'Added search_web ({ query, provider, results, answer }), read_web_page ({ url, title, text }), lookup_vehicle_recalls (NHTSA) and lookup_repair_specs (Open Labor Project).',
+    ],
+  },
   {
     version: '1.2.0',
     date: '2026-11-03',
@@ -206,6 +215,69 @@ export const TOOL_CONTRACTS = Object.freeze({
     dependencies: [],
     returns: obj({ kind: literal('youtube_player'), videoId: S, title: S, url: S, embedUrl: S, displayedInApp: { type: 'boolean', enum: [true] }, note: S }),
     canary: { ...TECH, channel: 'text', args: { video: 'https://youtu.be/dQw4w9WgXcQ' } },
+  },
+
+  // --- Whole program, internet and repair references (tech assistant) ---------
+  shopcrank_api: {
+    since: '1.3.0',
+    summary: 'A ShopCrank API call made as the signed-in user, or a confirmation card for calls that reach customers, money, access or settings. Never deletes.',
+    dependencies: [],
+    returns: {
+      anyOf: [
+        obj({ status: I, ok: B, data: ANY }, ['status', 'ok']),
+        obj({ kind: literal('app_api_confirmation'), requiresUserReview: B, method: S, path: S, summary: S, reason: S }),
+      ],
+    },
+    canary: null,
+  },
+  get_app_help: {
+    since: '1.3.0',
+    summary: 'Help topics (screen, steps, limits) that match a question, limited to screens the role can open.',
+    dependencies: [],
+    returns: obj({ topics: arr(obj({ title: S, screen: S, summary: S, steps: arr(S), limits: arr(S) })) }, ['topics']),
+    canary: { ...TECH, args: { question: 'create an invoice' } },
+  },
+  get_api_reference: {
+    since: '1.3.0',
+    summary: 'API paths, record types, their fields and this role\'s read/write access.',
+    dependencies: [],
+    returns: obj({ howTo: arr(S), entities: arr(obj({ type: S, read: B, write: B, fields: S })), otherEndpoints: arr(S) }),
+    canary: { ...TECH, args: {} },
+  },
+  search_web: {
+    since: '1.3.0',
+    summary: 'Web search results (title, url, snippet) and, for AI-backed search, a sourced answer.',
+    dependencies: [],
+    returns: obj({ query: S, provider: S, results: arr(obj({ title: S, url: S, snippet: S })), answer: S, note: S }),
+    canary: null,
+  },
+  read_web_page: {
+    since: '1.3.0',
+    summary: 'One public https page as plain text, marked untrusted.',
+    dependencies: [],
+    returns: obj({ url: S, title: S, text: S, truncated: B, note: S }),
+    canary: null,
+  },
+  lookup_vehicle_recalls: {
+    since: '1.3.0',
+    summary: 'NHTSA recalls and top complaint areas for a year/make/model.',
+    dependencies: [],
+    returns: obj({ vehicle: S, recallCount: I, recalls: arr({ type: 'object' }), complaintCount: I, topComplaintAreas: arr({ type: 'object' }), source: S }),
+    canary: null,
+  },
+  lookup_repair_specs: {
+    since: '1.3.0',
+    summary: 'Open Labor Project torque, fluid, trouble-code or battery reference data for a vehicle.',
+    dependencies: [],
+    returns: obj({ kind: S, source: S, note: S, data: ANY }, ['kind', 'source', 'note']),
+    canary: null,
+  },
+  open_screen: {
+    since: '1.3.0',
+    summary: 'Directive for the chat UI to open a ShopCrank screen (text channel only).',
+    dependencies: [],
+    returns: obj({ kind: literal('open_screen'), screen: S, title: S, displayedInApp: { type: 'boolean', enum: [true] }, note: S }),
+    canary: { ...TECH, channel: 'text', args: { screen: 'orders' } },
   },
 
   // --- Accounting (tech assistant, accounting roles) -------------------------
