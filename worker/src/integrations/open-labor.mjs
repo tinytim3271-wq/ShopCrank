@@ -122,8 +122,8 @@ async function cachePut(env, key, value) {
   }
 }
 
-async function callApi(env, params, fetcher) {
-  const url = new URL(API_BASE);
+async function callApi(env, params, fetcher, endpoint = API_BASE) {
+  const url = new URL(endpoint);
   for (const [key, value] of Object.entries(params)) if (value) url.searchParams.set(key, String(value));
   let response;
   try {
@@ -145,7 +145,47 @@ async function callApi(env, params, fetcher) {
   if (!response.ok || !payload) {
     throw new OpenLaborError(payload?.error?.message || `Open Labor Project returned HTTP ${response.status}`);
   }
-  return { engines: Array.isArray(payload.data?.engines) ? payload.data.engines : [] };
+  return { engines: Array.isArray(payload.data?.engines) ? payload.data.engines : [], data: payload.data, meta: payload.meta };
+}
+
+const SPEC_ENDPOINTS = Object.freeze({
+  torque: 'torque-specs',
+  fluids: 'fluid-specs',
+  dtc: 'dtc-codes',
+  battery: 'battery-specs',
+});
+
+function trimLocked(value, depth = 0) {
+  if (depth > 6 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.slice(0, 40).map(item => trimLocked(item, depth + 1));
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined).map(([key, item]) => [key, trimLocked(item, depth + 1)]));
+}
+
+/**
+ * Repair reference data from Open Labor Project: torque specs, fluid types and
+ * capacities, trouble-code meanings, or battery specs for a vehicle.
+ * Cached 30 days like labor times. Values are references, not OEM service data.
+ */
+export async function lookupRepairSpecs(env, { kind, year, make, model, engine = '', job = '', code = '' } = {}, { fetcher = fetch } = {}) {
+  if (!openLaborConfigured(env)) return { error: 'Open Labor Project is not connected (OPEN_LABOR_API_KEY). Use search_web for specs, and say they need verifying.' };
+  const endpoint = SPEC_ENDPOINTS[String(kind || '').toLowerCase()];
+  if (!endpoint) return { error: 'kind must be torque, fluids, dtc or battery.' };
+  const dtcOnly = endpoint === 'dtc-codes' && code && !(year && make && model);
+  if (!dtcOnly && !(year && make && model)) return { error: 'Year, make and model are required.' };
+  const params = dtcOnly ? { code } : { make, model, year, engine, job: endpoint === 'torque-specs' ? job : '', code: endpoint === 'dtc-codes' ? code : '', region: 'US' };
+  const key = `openlabor:${endpoint}:${Object.values(params).map(value => String(value || '').toLowerCase()).join('|')}`;
+  const cached = await cacheGet(env, key);
+  if (cached) return cached;
+  const reply = await callApi(env, params, fetcher, API_BASE.replace('labor-times', endpoint));
+  const result = {
+    kind,
+    source: OPEN_LABOR_SOURCE,
+    note: 'Reference data, not OEM service information: confirm critical values (torque, capacities) in the service manual.',
+    data: trimLocked(reply.data),
+    ...(reply.meta?.freeTier?.message ? { limitedByFreeKey: true } : {}),
+  };
+  if (reply.data) await cachePut(env, key, result);
+  return result;
 }
 
 function vehicleKey({ year, make, model }) {

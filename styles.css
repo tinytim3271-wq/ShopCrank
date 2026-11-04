@@ -348,3 +348,5 @@ input,select,textarea{border-color:#cdd7cf;background:#fff}input:hover,select:ho
   body.printing-record #modal-root :is(tr,label){break-inside:avoid}
 }
 
+.assistant-confirm-card{display:grid;gap:5px;margin-top:9px;padding:11px 12px;border:1px solid #d8b967;border-radius:5px;background:#fff8e6;font-size:11px}.assistant-confirm-card small{color:#6b5b2e}.assistant-confirm-detail{font:600 10px "JetBrains Mono",monospace;color:#6b5b2e;word-break:break-all}.assistant-confirm-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}.assistant-open-screen{margin-top:9px}.assistant-sources{margin-top:8px;font-size:10px}.assistant-sources summary{cursor:pointer;font-weight:700}.assistant-sources ul{margin:6px 0 0;padding-left:18px}.assistant-sources a{word-break:break-word}
+.assistant-confirm-card strong{text-transform:none;letter-spacing:0;font-size:12px;color:#3d3215}
