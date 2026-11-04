@@ -7343,7 +7343,7 @@ button{margin-top:12px;padding:8px 14px}
     }
     if (type === "vehicles") {
       const orderIds = new Set(list("orders").filter((o) => same(o.vehicleId, record.id) || realVin(record.vin) && same(o.vin, record.vin)).map((o) => o.id));
-      return { invoices: list("invoices").filter((i) => orderIds.has(i.ro) || realVin(record.vin) && same(i.vin, record.vin)) };
+      return { invoices: list("invoices").filter((i) => same(i.vehicleId, record.id) || orderIds.has(i.ro) || realVin(record.vin) && same(i.vin, record.vin)) };
     }
     if (type === "customers") {
       const linked = customerLinkedRecords(record, collections);
