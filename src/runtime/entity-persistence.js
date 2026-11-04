@@ -62,7 +62,7 @@ export function applyQueuedEntityMutations(type, remoteRecords, queue) {
     const id = String(body?.id || pathId || '');
     if (!id) continue;
     if (method === 'DELETE') {
-      if (body && body.archivedAt) {
+      if (body && body.archivedAt && ['invoices', 'payments'].includes(type)) {
         const remote = records.get(id);
         const archived = remote && typeof remote === 'object' ? { ...body, ...remote } : body;
         for (const field of ['archivedAt', 'archivedBy', 'archiveReason', 'archiveGroup']) {
