@@ -171,7 +171,7 @@
     "express": "^5.2.1",
     "leaflet": "^1.9.4",
     "obd": "^1.0.0",
-    "posthog-node": "^5.57.2"
+    "posthog-node": "^5.61.1"
   },
   "overrides": {
     "rimraf": "^4.0.1",
