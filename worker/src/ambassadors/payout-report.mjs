@@ -11,7 +11,17 @@ export const AMBASSADOR_PAYOUT_CRON = '0 9 1 * *';
 export const REPORT_SOURCES = Object.freeze(['shopcrank_online', 'ambassador_site', 'ambassador_referral']);
 const OTHER_SOURCE = 'other';
 const DEFAULT_FROM = 'noreply@shopcrank.com';
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isEmailAddress(value) {
+  const at = value.indexOf('@');
+  const lastDot = value.lastIndexOf('.');
+  return value.length <= 254
+    && at > 0
+    && at === value.lastIndexOf('@')
+    && lastDot > at + 1
+    && lastDot < value.length - 1
+    && !/\s/.test(value);
+}
 
 export function formatCents(cents) {
   const value = Number(cents || 0) / 100;
@@ -419,7 +429,7 @@ export async function notifyPayoutReport(env, report) {
   const from = String(env.AMBASSADOR_REPORT_EMAIL_FROM || env.AUTH_EMAIL_FROM || DEFAULT_FROM).trim();
   let status;
   if (typeof env.EMAIL?.send !== 'function') status = 'email_not_configured';
-  else if (!EMAIL_PATTERN.test(to) || !EMAIL_PATTERN.test(from)) status = 'invalid_address';
+  else if (!isEmailAddress(to) || !isEmailAddress(from)) status = 'invalid_address';
   else {
     try {
       await env.EMAIL.send({

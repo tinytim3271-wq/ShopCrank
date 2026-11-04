@@ -34,8 +34,16 @@ export function ambassadorNumber(seq) {
 }
 
 export function randomReferralCode(length = 6) {
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  return [...bytes].map(byte => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join('');
+  const count = new Uint8Array(length).length;
+  const limit = Math.floor(256 / CODE_ALPHABET.length) * CODE_ALPHABET.length;
+  let code = '';
+  while (code.length < count) {
+    const bytes = crypto.getRandomValues(new Uint8Array(count - code.length));
+    for (const byte of bytes) {
+      if (byte < limit) code += CODE_ALPHABET[byte % CODE_ALPHABET.length];
+    }
+  }
+  return code;
 }
 
 export function soldByLabel(ambassador) {
