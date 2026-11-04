@@ -628,6 +628,22 @@
       }
     };
   }
+  function mutationBody(rawBody, method, createMutationId) {
+    let body = null;
+    if (rawBody) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        body = null;
+      }
+    }
+    const isPlainObject = body && typeof body === "object" && !Array.isArray(body);
+    return method === "POST" && isPlainObject && !body.id ? { ...body, id: createMutationId() } : body;
+  }
+  function mutationKey(path, method, body, createMutationId) {
+    if (method !== "POST") return path;
+    return `${path}/${body?.id || createMutationId()}`;
+  }
   function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
     const { queueRecord, ...requestOptions } = options;
     const method = String(options.method || "GET").toUpperCase();
@@ -636,23 +652,13 @@
     const containsSensitiveEndpoint = path === "/agentphone/configure" || path === "/voice/grok/configure";
     const queueable = isEntityMutation && (!OFFLINE_QUEUE_BLOCKED.test(path) || queueArchive) && !CASCADE_DELETE.test(path) && !containsSensitiveEndpoint;
     if (!queueable) return { path, options: requestOptions, queueable: false };
-    let body = null;
-    if (options.body) {
-      try {
-        body = JSON.parse(options.body);
-      } catch {
-        body = null;
-      }
-    }
-    if (method === "POST" && body && typeof body === "object" && !Array.isArray(body) && !body.id) {
-      body = { ...body, id: createMutationId() };
-    }
-    const entityKey = method === "POST" ? body && body.id ? `${path}/${body.id}` : `${path}/${createMutationId()}` : path;
+    const body = mutationBody(options.body, method, createMutationId);
+    const entityKey = mutationKey(path, method, body, createMutationId);
     return {
       path,
       options: { ...requestOptions, method, body: body ? JSON.stringify(body) : void 0 },
       queueable: Boolean(body) || method === "DELETE",
-      queueBody: queueArchive && queueRecord && typeof queueRecord === "object" ? JSON.stringify(queueRecord) : null,
+      queueBody: queueArchive && typeof queueRecord === "object" ? JSON.stringify(queueRecord) : null,
       expectedUpdatedAt: method === "PUT" ? body?.updatedAt : null,
       key: entityKey
     };
@@ -5191,7 +5197,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   }
   function localCustomerMatches(query2, customers2 = [], vehicles = []) {
     if (!shouldSearchCustomers(query2)) return [];
-    return uniqueCustomers(customers2).filter((customer) => matchesName(customer.name, query2)).sort((left, right) => String(left.name).localeCompare(String(right.name))).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
+    return uniqueCustomers(customers2).filter((customer) => !String(customer.archivedAt || "").trim()).filter((customer) => matchesName(customer.name, query2)).sort((left, right) => String(left.name).localeCompare(String(right.name))).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
   }
   function customerContactFields(data = {}, existing = null) {
     const source = data && typeof data === "object" ? data : {};
@@ -5220,7 +5226,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const phoneDigits2 = String(phone || "").replace(/\D/g, "");
     const normalizedEmail = String(email || "").trim().toLocaleLowerCase();
     if (!phoneDigits2 && !normalizedEmail) return [];
-    return uniqueCustomers(customers2).filter((customer) => phoneDigits2 && String(customer.phone || "").replace(/\D/g, "") === phoneDigits2 || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
+    return uniqueCustomers(customers2).filter((customer) => !String(customer.archivedAt || "").trim()).filter((customer) => phoneDigits2 && String(customer.phone || "").replace(/\D/g, "") === phoneDigits2 || normalizedEmail && String(customer.email || "").trim().toLocaleLowerCase() === normalizedEmail).slice(0, CUSTOMER_SEARCH_RESULT_LIMIT).map((customer) => enrichCustomer(customer, vehicles));
   }
   var CUSTOMER_SEARCH_MIN_LENGTH, CUSTOMER_SEARCH_DEBOUNCE_MS, CUSTOMER_SEARCH_RESULT_LIMIT, CONTACT_FIELDS;
   var init_customer_intake = __esm({
@@ -7940,7 +7946,7 @@ button{margin-top:12px;padding:8px 14px}
       const id = String(body?.id || pathId || "");
       if (!id) continue;
       if (method === "DELETE") {
-        if (body && body.archivedAt) {
+        if (body?.archivedAt && ["invoices", "payments"].includes(type)) {
           const remote = records.get(id);
           const archived = remote && typeof remote === "object" ? { ...body, ...remote } : body;
           for (const field2 of ["archivedAt", "archivedBy", "archiveReason", "archiveGroup"]) {
@@ -8808,9 +8814,12 @@ button{margin-top:12px;padding:8px 14px}
 
   // src/modules/work-order-editor.js
   function customersWithSelected(customers2 = [], selected = "") {
-    const records = Array.isArray(customers2) ? customers2 : [];
+    const allRecords = Array.isArray(customers2) ? customers2 : [];
+    const records = allRecords.filter((customer) => !String(customer?.archivedAt || "").trim());
     const selectedName = String(selected || "");
     if (!selectedName || records.some((customer) => customer?.name === selectedName)) return records;
+    const archivedSelection = allRecords.find((customer) => customer?.name === selectedName);
+    if (archivedSelection) return [archivedSelection, ...records];
     return [{ name: selectedName }, ...records];
   }
   function customLaborDraft(id, laborRate) {

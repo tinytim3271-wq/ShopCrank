@@ -56,6 +56,7 @@ test('customer name search is shop scoped, tokenized, bounded, and order indepen
 
   assert.match(statement.sql, /shop_id = \?/);
   assert.match(statement.sql, /LIMIT \?/);
+  assert.match(statement.sql, /json_extract\(data_json, '\$\.archivedAt'\) IS NULL/);
   assert.deepEqual(statement.args.slice(0, 3), ['shop-42', '%gall%', '%isaac%']);
   assert.equal(statement.args.at(-1), 'shop-42');
   assert.equal(results[0].name, 'Isaac Gallardo');
@@ -71,6 +72,7 @@ test('duplicate lookup compares bounded phone or email within the same shop', as
   });
   const statement = env.DB.statements[0];
   assert.equal(statement.args[0], 'shop-7');
+  assert.match(statement.sql, /json_extract\(data_json, '\$\.archivedAt'\) IS NULL/);
   assert.ok(statement.args.includes('5550102000'));
   assert.ok(statement.args.includes('owner@example.com'));
   assert.equal(statement.args.at(-1), 'shop-7');

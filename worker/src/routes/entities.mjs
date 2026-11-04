@@ -7,7 +7,7 @@ import {
   redactEmployee,
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
-import { syncAccessUser, validateAccessUser } from '../access-users.mjs';
+import { nextEmployeeTimestamp, saveEmployeeWithAccess, validateEmployeeAccess } from '../access-users.mjs';
 import {
   CUSTOMER_LINKED_TYPES,
   RECORD_DELETE_DENIED,
@@ -68,23 +68,12 @@ export async function listEntities(env, shopId, type, { limit = 0, cursor = '', 
   };
 }
 
-export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
-  const now = new Date().toISOString();
-  const existing = await env.DB.prepare(
-    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-  ).bind(context.shopId, type, id).first();
-  if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
-    throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-  }
-  const record = {
-    ...archiveFieldsForSave(existing, body, context, { create, type, id }),
-    ...body,
-    id,
-    shopId: context.shopId,
-    createdBy: existing?.created_by || createdBy,
-    createdAt: body.createdAt || existing?.created_at || now,
-    updatedAt: now,
-  };
+/**
+ * Write a record only if it is unchanged since it was read (same data_json), or
+ * insert it if it did not exist. A concurrent edit gets a 409 instead of being
+ * silently overwritten. Shared by both entity writers.
+ */
+export async function writeEntityIfUnchanged(env, context, { type, id, record, existing, now }) {
   const outcome = existing
     ? await env.DB.prepare(`
       UPDATE entities SET data_json = ?, updated_at = ?
@@ -96,6 +85,37 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
   if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   return record;
+}
+
+/**
+ * Reads the stored row and builds the record to save (shop id, creator, archive
+ * fields kept, employee timestamp moved forward). Shared by both entity writers.
+ */
+export async function buildEntitySave(env, context, { type, id, body, expectedUpdatedAt, createdBy, create }) {
+  const now = new Date().toISOString();
+  const input = type === 'employees' ? { ...body, ...validateEmployeeAccess(body) } : body;
+  const existing = await env.DB.prepare(
+    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
+  ).bind(context.shopId, type, id).first();
+  if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
+    throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
+  }
+  const record = {
+    ...archiveFieldsForSave(existing, input, context, { create, type, id }),
+    ...input,
+    id,
+    shopId: context.shopId,
+    createdBy: existing?.created_by || createdBy,
+    createdAt: input.createdAt || existing?.created_at || now,
+    updatedAt: type === 'employees' ? nextEmployeeTimestamp(existing, now) : now,
+  };
+  return { now, existing, record };
+}
+
+export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
+  const { now, existing, record } = await buildEntitySave(env, context, { type, id, body, expectedUpdatedAt, createdBy, create });
+  if (type === 'employees') return saveEmployeeWithAccess(env, context, { id, record, create, existing, expectedUpdatedAt });
+  return writeEntityIfUnchanged(env, context, { type, id, record, existing, now });
 }
 
 const ARCHIVE_LABELS = { customers: 'Customer', vehicles: 'Vehicle', orders: 'Work order', invoices: 'Invoice', payments: 'Payment' };
@@ -311,8 +331,6 @@ export async function relatedFromDb(env, shopId, type, id, record) {
   if (type === 'vehicles') {
     const vin = REAL_VIN.test(String(record.vin || '').trim()) ? String(record.vin).trim().toUpperCase() : '';
     const orders = [...await listByJsonField(env, shopId, 'orders', 'vehicleId', id), ...(vin ? await listByJsonField(env, shopId, 'orders', 'vin', vin) : [])];
-    const invoices = await listByJsonField(env, shopId, 'invoices', 'vehicleId', id);
-    if (vin) invoices.push(...await listByJsonField(env, shopId, 'invoices', 'vin', vin));
     const invoices = [...await listByJsonField(env, shopId, 'invoices', 'vehicleId', id), ...(vin ? await listByJsonField(env, shopId, 'invoices', 'vin', vin) : [])];
     for (const order of orders) invoices.push(...await listByJsonField(env, shopId, 'invoices', 'ro', order.id));
     return { invoices: [...new Map(invoices.map(item => [item.id, item])).values()] };
@@ -515,9 +533,7 @@ export async function handleEntities(request, env, context, segments) {
         senderEmail: context.email,
       };
     }
-    if (type === 'employees') await validateAccessUser(env, context, body);
     const saved = await putEntity(env, context, type, newId, body, null, context.userId, { create: true });
-    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
     return json(saved, 201);
   }
   if (request.method === 'PUT' && id) {
@@ -533,9 +549,8 @@ export async function handleEntities(request, env, context, segments) {
       }
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
-    if (type === 'employees') await validateAccessUser(env, context, body);
-    const saved = await putEntity(env, context, type, id, body, request.headers.get('If-Match'));
-    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
+    const expectedUpdatedAt = request.headers.get('If-Match') || (type === 'employees' ? body.updatedAt : null);
+    const saved = await putEntity(env, context, type, id, body, expectedUpdatedAt);
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {

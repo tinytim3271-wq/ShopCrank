@@ -48,7 +48,7 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
-import { archiveFieldsForSave, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, refuseShopOrder, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
+import { buildEntitySave, writeEntityIfUnchanged, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, refuseShopOrder, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
 import { ARCHIVABLE_TYPES } from '../../src/modules/record-deletion.js';
 import { providerBase } from './provider-base.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
@@ -61,7 +61,7 @@ import {
 } from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
-import { revokeSessionsForUserIds, syncAccessUser, validateAccessUser } from './access-users.mjs';
+import { revokeSessionsForUserIds, saveEmployeeWithAccess } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   FOUNDING_MEMBER_CAP,
@@ -518,22 +518,8 @@ export async function putEntity(
   createdBy = context.userId,
   { requireUnlockedEstimate = false, expectedOrderSnapshot, create = false } = {},
 ) {
-  const now = new Date().toISOString();
-  const existing = await env.DB.prepare(
-    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-  ).bind(context.shopId, type, id).first();
-  if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
-    throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-  }
-  const record = {
-    ...archiveFieldsForSave(existing, body, context, { create, type, id }),
-    ...body,
-    id,
-    shopId: context.shopId,
-    createdBy: existing?.created_by || createdBy,
-    createdAt: body.createdAt || existing?.created_at || now,
-    updatedAt: now,
-  };
+  const { now, existing, record } = await buildEntitySave(env, context, { type, id, body, expectedUpdatedAt, createdBy, create });
+  if (type === 'employees') return saveEmployeeWithAccess(env, context, { id, record, create, existing, expectedUpdatedAt });
   if (requireUnlockedEstimate) {
     // CAS on updated_at inside the same UPDATE as the unlock guard. The early
     // If-Match check above is not atomic with this write, so a concurrent staff
@@ -588,17 +574,7 @@ export async function putEntity(
     if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
     return record;
   }
-  const outcome = existing
-    ? await env.DB.prepare(`
-      UPDATE entities SET data_json = ?, updated_at = ?
-      WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
-    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json).run()
-    : await env.DB.prepare(`
-      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
-    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
-  if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-  return record;
+  return writeEntityIfUnchanged(env, context, { type, id, record, existing, now });
 }
 
 const ESTIMATE_APPROVAL_WRITE_ROLES = new Set(['owner', 'admin', 'service_writer']);
@@ -932,7 +908,6 @@ async function handleEntities(request, env, context, segments, analytics) {
       }
       body = { ...body, body: String(body.body).trim().slice(0, 4000), memberEmails: members(conversation), senderEmail: context.email };
     }
-    if (type === 'employees') await validateAccessUser(env, context, body);
     // Orders must not silently overwrite on POST — intake/new-RO id races
     // previously lost the first work order via ON CONFLICT DO UPDATE.
     const existingOrder = type === 'orders' ? await getEntity(env, context.shopId, type, newId) : null;
@@ -941,7 +916,6 @@ async function handleEntities(request, env, context, segments, analytics) {
     }
     const saved = await putEntity(env, context, type, newId, body, null, context.userId,
       type === 'orders' ? { expectedOrderSnapshot: null, create: true } : { create: true });
-    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
     captureForContext(analytics, context, 'entity_created', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_created', {
       entity_type: type,
@@ -979,18 +953,17 @@ async function handleEntities(request, env, context, segments, analytics) {
       if (!memberEmails.includes(context.email) || memberEmails.length < 2) throw new HttpError(400, 'Group requires the owner and at least one other member');
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
-    if (type === 'employees') await validateAccessUser(env, context, body);
+    const expectedUpdatedAt = request.headers.get('If-Match') || (type === 'employees' ? body.updatedAt : null);
     const saved = await putEntity(
       env,
       context,
       type,
       id,
       body,
-      request.headers.get('If-Match'),
+      expectedUpdatedAt,
       context.userId,
       { requireUnlockedEstimate, expectedOrderSnapshot },
     );
-    if (type === 'employees') await syncAccessUser(env, context, saved, { employeeSnapshot: saved });
     captureForContext(analytics, context, 'entity_updated', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_updated', {
       entity_type: type,
