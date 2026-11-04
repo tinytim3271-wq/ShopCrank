@@ -7373,6 +7373,13 @@ button{margin-top:12px;padding:8px 14px}
     }
     return true;
   }
+  function applyInvoiceRemoval(collections, result, invoice, payments2, shouldArchive, at = (/* @__PURE__ */ new Date()).toISOString()) {
+    const removal = result?.queued && shouldArchive ? { action: "archive", archived: { invoices: [invoice.id || invoice.number], payments: payments2.map((payment) => payment.id || payment.number).filter(Boolean) } } : result;
+    if (applyRemovalResult(collections, removal, at)) return true;
+    collections.payments = collections.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
+    collections.invoices = collections.invoices.filter((item) => item !== invoice);
+    return false;
+  }
   function withoutArchived(rows = []) {
     return rows.filter((item) => !(item && String(item.archivedAt || "").trim()));
   }
@@ -13842,14 +13849,9 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const archives = willArchive("invoices", invoice);
     if (!confirm(archives ? `Archive ${invoice.number}${payments2.length ? " and its payments" : ""}? It was sent, signed or paid, so it is kept for your tax records and can be restored from Settings \u2192 Archived records.` : `Delete ${invoice.number}? It is a draft with no payments, so it will be permanently deleted.`)) return;
     try {
-      const result = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE", queueRecord: archives ? archivedCopy({ ...invoice, id: invoice.id || invoiceRecordKey(invoice) }) : null });
-      if (applyRemovalResult2(result)) toast(`${invoice.number} archived`);
-      else {
-        state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
-        state.invoices = state.invoices.filter((item) => item !== invoice);
-        save();
-        toast("Invoice deleted");
-      }
+      const result = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE", queueRecord: archives ? archivedCopy({ ...invoice, id: invoice.id || invoiceRecordKey(invoice) }) : null }), archived = applyInvoiceRemoval(state, result, invoice, payments2, archives);
+      save();
+      toast(archived ? `${invoice.number} archived` : "Invoice deleted");
       render();
     } catch (error) {
       toast(error.message || "Invoice could not be deleted");
