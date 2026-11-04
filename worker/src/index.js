@@ -48,7 +48,7 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
-import { archiveFieldsForSave, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, refuseShopOrder, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
+import { writeEntityIfUnchanged, archiveFieldsForSave, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, refuseShopOrder, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
 import { ARCHIVABLE_TYPES } from '../../src/modules/record-deletion.js';
 import { providerBase } from './provider-base.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
@@ -61,7 +61,7 @@ import {
 } from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
-import { employeeAccessStatements, revokeSessionsForUserIds, validateEmployeeAccess } from './access-users.mjs';
+import { revokeSessionsForUserIds, saveEmployeeWithAccess, validateEmployeeAccess } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   FOUNDING_MEMBER_CAP,
@@ -541,42 +541,7 @@ export async function putEntity(
     createdAt: body.createdAt || existing?.created_at || now,
     updatedAt,
   };
-  if (type === 'employees') {
-    const serializedRecord = JSON.stringify(record);
-    const {
-      statements: accessStatements,
-      email,
-      hasExisting: accessUserExists,
-    } = await employeeAccessStatements(env, context, record, serializedRecord);
-    const accessGuard = accessUserExists
-      ? 'EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?)'
-      : 'NOT EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE)';
-    const accessGuardArgs = accessUserExists ? [email, context.shopId] : [email];
-    const entityWrite = create
-      ? env.DB.prepare(`
-        INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
-      `).bind(context.shopId, type, id, serializedRecord, record.createdBy, record.createdAt, updatedAt)
-      : env.DB.prepare(`
-        UPDATE entities SET data_json = ?, updated_at = ?
-        WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND updated_at = ? AND data_json = ?
-          AND ${accessGuard}
-      `).bind(
-        serializedRecord,
-        updatedAt,
-        context.shopId,
-        type,
-        id,
-        expectedUpdatedAt || existing?.updated_at || '',
-        existing?.data_json || '',
-        ...accessGuardArgs,
-      );
-    const results = await env.DB.batch([entityWrite, ...accessStatements]);
-    if (!results?.[0]?.meta?.changes) {
-      throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-    }
-    return record;
-  }
+  if (type === 'employees') return saveEmployeeWithAccess(env, context, { id, record, create, existing, expectedUpdatedAt });
   if (requireUnlockedEstimate) {
     // CAS on updated_at inside the same UPDATE as the unlock guard. The early
     // If-Match check above is not atomic with this write, so a concurrent staff
@@ -631,17 +596,7 @@ export async function putEntity(
     if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
     return record;
   }
-  const outcome = existing
-    ? await env.DB.prepare(`
-      UPDATE entities SET data_json = ?, updated_at = ?
-      WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
-    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json).run()
-    : await env.DB.prepare(`
-      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
-    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
-  if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-  return record;
+  return writeEntityIfUnchanged(env, context, { type, id, record, existing, now });
 }
 
 const ESTIMATE_APPROVAL_WRITE_ROLES = new Set(['owner', 'admin', 'service_writer']);

@@ -18,6 +18,20 @@ export function withOptimisticConcurrencyHeaders(options = {}, expectedUpdatedAt
   };
 }
 
+function mutationBody(rawBody, method, createMutationId) {
+  let body = null;
+  if (rawBody) {
+    try { body = JSON.parse(rawBody); } catch { body = null; }
+  }
+  const isPlainObject = body && typeof body === 'object' && !Array.isArray(body);
+  return method === 'POST' && isPlainObject && !body.id ? { ...body, id: createMutationId() } : body;
+}
+
+function mutationKey(path, method, body, createMutationId) {
+  if (method !== 'POST') return path;
+  return `${path}/${body?.id || createMutationId()}`;
+}
+
 export function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
   const { queueRecord, ...requestOptions } = options;
   const method = String(options.method || 'GET').toUpperCase();
@@ -26,23 +40,13 @@ export function prepareEntityMutation(path, options, createMutationId = defaultM
   const containsSensitiveEndpoint = path === '/agentphone/configure' || path === '/voice/grok/configure';
   const queueable = isEntityMutation && (!OFFLINE_QUEUE_BLOCKED.test(path) || queueArchive) && !CASCADE_DELETE.test(path) && !containsSensitiveEndpoint;
   if (!queueable) return { path, options: requestOptions, queueable: false };
-  let body = null;
-  if (options.body) {
-    try { body = JSON.parse(options.body); } catch { body = null; }
-  }
-  if (method === 'POST' && body && typeof body === 'object' && !Array.isArray(body) && !body.id) {
-    body = { ...body, id: createMutationId() };
-  }
-  const entityKey = method === 'POST'
-    ? (body && body.id ? `${path}/${body.id}` : `${path}/${createMutationId()}`)
-    : path;
+  const body = mutationBody(options.body, method, createMutationId);
+  const entityKey = mutationKey(path, method, body, createMutationId);
   return {
     path,
     options: { ...requestOptions, method, body: body ? JSON.stringify(body) : undefined },
     queueable: Boolean(body) || method === 'DELETE',
-    queueBody: queueArchive && queueRecord && typeof queueRecord === 'object'
-      ? JSON.stringify(queueRecord)
-      : null,
+    queueBody: queueArchive && typeof queueRecord === 'object' ? JSON.stringify(queueRecord) : null,
     expectedUpdatedAt: method === 'PUT' ? body?.updatedAt : null,
     key: entityKey,
   };

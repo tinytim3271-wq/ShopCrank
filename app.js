@@ -628,6 +628,22 @@
       }
     };
   }
+  function mutationBody(rawBody, method, createMutationId) {
+    let body = null;
+    if (rawBody) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        body = null;
+      }
+    }
+    const isPlainObject = body && typeof body === "object" && !Array.isArray(body);
+    return method === "POST" && isPlainObject && !body.id ? { ...body, id: createMutationId() } : body;
+  }
+  function mutationKey(path, method, body, createMutationId) {
+    if (method !== "POST") return path;
+    return `${path}/${body?.id || createMutationId()}`;
+  }
   function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
     const { queueRecord, ...requestOptions } = options;
     const method = String(options.method || "GET").toUpperCase();
@@ -636,23 +652,13 @@
     const containsSensitiveEndpoint = path === "/agentphone/configure" || path === "/voice/grok/configure";
     const queueable = isEntityMutation && (!OFFLINE_QUEUE_BLOCKED.test(path) || queueArchive) && !CASCADE_DELETE.test(path) && !containsSensitiveEndpoint;
     if (!queueable) return { path, options: requestOptions, queueable: false };
-    let body = null;
-    if (options.body) {
-      try {
-        body = JSON.parse(options.body);
-      } catch {
-        body = null;
-      }
-    }
-    if (method === "POST" && body && typeof body === "object" && !Array.isArray(body) && !body.id) {
-      body = { ...body, id: createMutationId() };
-    }
-    const entityKey = method === "POST" ? body && body.id ? `${path}/${body.id}` : `${path}/${createMutationId()}` : path;
+    const body = mutationBody(options.body, method, createMutationId);
+    const entityKey = mutationKey(path, method, body, createMutationId);
     return {
       path,
       options: { ...requestOptions, method, body: body ? JSON.stringify(body) : void 0 },
       queueable: Boolean(body) || method === "DELETE",
-      queueBody: queueArchive && queueRecord && typeof queueRecord === "object" ? JSON.stringify(queueRecord) : null,
+      queueBody: queueArchive && typeof queueRecord === "object" ? JSON.stringify(queueRecord) : null,
       expectedUpdatedAt: method === "PUT" ? body?.updatedAt : null,
       key: entityKey
     };
@@ -7940,7 +7946,7 @@ button{margin-top:12px;padding:8px 14px}
       const id = String(body?.id || pathId || "");
       if (!id) continue;
       if (method === "DELETE") {
-        if (body && body.archivedAt) {
+        if (body?.archivedAt) {
           const remote = records.get(id);
           const archived = remote && typeof remote === "object" ? { ...body, ...remote } : body;
           for (const field2 of ["archivedAt", "archivedBy", "archiveReason", "archiveGroup"]) {

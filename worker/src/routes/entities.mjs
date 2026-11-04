@@ -7,7 +7,7 @@ import {
   redactEmployee,
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
-import { employeeAccessStatements, validateEmployeeAccess } from '../access-users.mjs';
+import { saveEmployeeWithAccess, validateEmployeeAccess } from '../access-users.mjs';
 import {
   CUSTOMER_LINKED_TYPES,
   RECORD_DELETE_DENIED,
@@ -68,6 +68,25 @@ export async function listEntities(env, shopId, type, { limit = 0, cursor = '', 
   };
 }
 
+/**
+ * Write a record only if it is unchanged since it was read (same data_json), or
+ * insert it if it did not exist. A concurrent edit gets a 409 instead of being
+ * silently overwritten. Shared by both entity writers.
+ */
+export async function writeEntityIfUnchanged(env, context, { type, id, record, existing, now }) {
+  const outcome = existing
+    ? await env.DB.prepare(`
+      UPDATE entities SET data_json = ?, updated_at = ?
+      WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
+    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json).run()
+    : await env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
+  return record;
+}
+
 export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
   const now = new Date().toISOString();
   if (type === 'employees') {
@@ -92,53 +111,8 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     createdAt: body.createdAt || existing?.created_at || now,
     updatedAt,
   };
-  if (type === 'employees') {
-    const serializedRecord = JSON.stringify(record);
-    const {
-      statements: accessStatements,
-      email,
-      hasExisting: accessUserExists,
-    } = await employeeAccessStatements(env, context, record, serializedRecord);
-    const accessGuard = accessUserExists
-      ? 'EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND shop_id = ?)'
-      : 'NOT EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE)';
-    const accessGuardArgs = accessUserExists ? [email, context.shopId] : [email];
-    const entityWrite = create
-      ? env.DB.prepare(`
-        INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
-      `).bind(context.shopId, type, id, serializedRecord, record.createdBy, record.createdAt, updatedAt)
-      : env.DB.prepare(`
-        UPDATE entities SET data_json = ?, updated_at = ?
-        WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND updated_at = ? AND data_json = ?
-          AND ${accessGuard}
-      `).bind(
-        serializedRecord,
-        updatedAt,
-        context.shopId,
-        type,
-        id,
-        expectedUpdatedAt || existing?.updated_at || '',
-        existing?.data_json || '',
-        ...accessGuardArgs,
-      );
-    const results = await env.DB.batch([entityWrite, ...accessStatements]);
-    if (!results?.[0]?.meta?.changes) {
-      throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-    }
-    return record;
-  }
-  const outcome = existing
-    ? await env.DB.prepare(`
-      UPDATE entities SET data_json = ?, updated_at = ?
-      WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
-    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json).run()
-    : await env.DB.prepare(`
-      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
-    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
-  if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-  return record;
+  if (type === 'employees') return saveEmployeeWithAccess(env, context, { id, record, create, existing, expectedUpdatedAt });
+  return writeEntityIfUnchanged(env, context, { type, id, record, existing, now });
 }
 
 const ARCHIVE_LABELS = { customers: 'Customer', vehicles: 'Vehicle', orders: 'Work order', invoices: 'Invoice', payments: 'Payment' };
