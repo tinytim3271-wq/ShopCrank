@@ -19,6 +19,14 @@ test('customer choices retain an order customer missing from the loaded customer
   assert.equal(customersWithSelected(choices, 'Isaac Gallardo').length, 2);
 });
 
+test('customer choices omit archived customers except for the selected historical customer', () => {
+  const archived = { id: 'customer-archived', name: 'Isaac Gallardo', archivedAt: '2026-10-01T00:00:00.000Z' };
+  const customers = [archived, { id: 'customer-active', name: 'Tebria Ingram' }];
+
+  assert.deepEqual(customersWithSelected(customers).map(customer => customer.id), ['customer-active']);
+  assert.deepEqual(customersWithSelected(customers, 'Isaac Gallardo'), [archived, customers[1]]);
+});
+
 test('custom labor starts empty with a placeholder and typed text is not prefixed', () => {
   const draft = customLaborDraft('labor-1', 140);
   const initial = estimateEditorDescription(draft, 'Labor');

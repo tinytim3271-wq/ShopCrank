@@ -61,7 +61,7 @@ import {
 } from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
-import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
+import { employeeAccessStatements, revokeSessionsForUserIds, validateEmployeeAccess } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   FOUNDING_MEMBER_CAP,
@@ -518,9 +518,16 @@ export async function putEntity(
   { requireUnlockedEstimate = false, expectedOrderSnapshot, create = false } = {},
 ) {
   const now = new Date().toISOString();
+  if (type === 'employees') {
+    body = { ...body, ...validateEmployeeAccess(body) };
+  }
   const existing = await env.DB.prepare(
     'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
+  const previousTimestamp = Date.parse(existing?.updated_at || '');
+  const updatedAt = type === 'employees' && Number.isFinite(previousTimestamp) && Date.parse(now) <= previousTimestamp
+    ? new Date(previousTimestamp + 1).toISOString()
+    : now;
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
@@ -531,8 +538,26 @@ export async function putEntity(
     shopId: context.shopId,
     createdBy: existing?.created_by || createdBy,
     createdAt: body.createdAt || existing?.created_at || now,
-    updatedAt: now,
+    updatedAt,
   };
+  if (type === 'employees') {
+    const serializedRecord = JSON.stringify(record);
+    const entityWrite = create
+      ? env.DB.prepare(`
+        INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+      `).bind(context.shopId, type, id, serializedRecord, record.createdBy, record.createdAt, updatedAt)
+      : env.DB.prepare(`
+        UPDATE entities SET data_json = ?, updated_at = ?
+        WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND updated_at = ? AND data_json = ?
+      `).bind(serializedRecord, updatedAt, context.shopId, type, id, expectedUpdatedAt || existing?.updated_at || '', existing?.data_json || '');
+    const accessStatements = await employeeAccessStatements(env, context, record, serializedRecord);
+    const results = await env.DB.batch([entityWrite, ...accessStatements]);
+    if (!results?.[0]?.meta?.changes) {
+      throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
+    }
+    return record;
+  }
   if (requireUnlockedEstimate) {
     // CAS on updated_at inside the same UPDATE as the unlock guard. The early
     // If-Match check above is not atomic with this write, so a concurrent staff
@@ -928,9 +953,6 @@ async function handleEntities(request, env, context, segments, analytics) {
       }
       body = { ...body, body: String(body.body).trim().slice(0, 4000), memberEmails: members(conversation), senderEmail: context.email };
     }
-    // Sync access before writing the entity so a cross-tenant email conflict
-    // cannot leave an orphan employee row behind.
-    if (type === 'employees') await syncAccessUser(env, context, body);
     // Orders must not silently overwrite on POST — intake/new-RO id races
     // previously lost the first work order via ON CONFLICT DO UPDATE.
     const existingOrder = type === 'orders' ? await getEntity(env, context.shopId, type, newId) : null;
@@ -976,14 +998,14 @@ async function handleEntities(request, env, context, segments, analytics) {
       if (!memberEmails.includes(context.email) || memberEmails.length < 2) throw new HttpError(400, 'Group requires the owner and at least one other member');
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
-    if (type === 'employees') await syncAccessUser(env, context, body);
+    const expectedUpdatedAt = request.headers.get('If-Match') || (type === 'employees' ? body.updatedAt : null);
     const saved = await putEntity(
       env,
       context,
       type,
       id,
       body,
-      request.headers.get('If-Match'),
+      expectedUpdatedAt,
       context.userId,
       { requireUnlockedEstimate, expectedOrderSnapshot },
     );

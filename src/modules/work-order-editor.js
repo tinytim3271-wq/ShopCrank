@@ -1,7 +1,10 @@
 export function customersWithSelected(customers = [], selected = '') {
-  const records = Array.isArray(customers) ? customers : [];
+  const allRecords = Array.isArray(customers) ? customers : [];
+  const records = allRecords.filter(customer => !String(customer?.archivedAt || '').trim());
   const selectedName = String(selected || '');
   if (!selectedName || records.some(customer => customer?.name === selectedName)) return records;
+  const archivedSelection = allRecords.find(customer => customer?.name === selectedName);
+  if (archivedSelection) return [archivedSelection, ...records];
   return [{ name: selectedName }, ...records];
 }
 

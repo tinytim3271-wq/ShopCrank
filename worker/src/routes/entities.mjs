@@ -7,7 +7,7 @@ import {
   redactEmployee,
 } from '../domain.mjs';
 import { HttpError, json, requestJson } from '../http.mjs';
-import { syncAccessUser } from '../access-users.mjs';
+import { employeeAccessStatements, validateEmployeeAccess } from '../access-users.mjs';
 import {
   CUSTOMER_LINKED_TYPES,
   RECORD_DELETE_DENIED,
@@ -70,9 +70,16 @@ export async function listEntities(env, shopId, type, { limit = 0, cursor = '', 
 
 export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
   const now = new Date().toISOString();
+  if (type === 'employees') {
+    body = { ...body, ...validateEmployeeAccess(body) };
+  }
   const existing = await env.DB.prepare(
     'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
+  const previousTimestamp = Date.parse(existing?.updated_at || '');
+  const updatedAt = type === 'employees' && Number.isFinite(previousTimestamp) && Date.parse(now) <= previousTimestamp
+    ? new Date(previousTimestamp + 1).toISOString()
+    : now;
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
@@ -83,8 +90,26 @@ export async function putEntity(env, context, type, id, body, expectedUpdatedAt 
     shopId: context.shopId,
     createdBy: existing?.created_by || createdBy,
     createdAt: body.createdAt || existing?.created_at || now,
-    updatedAt: now,
+    updatedAt,
   };
+  if (type === 'employees') {
+    const serializedRecord = JSON.stringify(record);
+    const entityWrite = create
+      ? env.DB.prepare(`
+        INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+      `).bind(context.shopId, type, id, serializedRecord, record.createdBy, record.createdAt, updatedAt)
+      : env.DB.prepare(`
+        UPDATE entities SET data_json = ?, updated_at = ?
+        WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND updated_at = ? AND data_json = ?
+      `).bind(serializedRecord, updatedAt, context.shopId, type, id, expectedUpdatedAt || existing?.updated_at || '', existing?.data_json || '');
+    const accessStatements = await employeeAccessStatements(env, context, record, serializedRecord);
+    const results = await env.DB.batch([entityWrite, ...accessStatements]);
+    if (!results?.[0]?.meta?.changes) {
+      throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
+    }
+    return record;
+  }
   await env.DB.prepare(`
     INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -509,7 +534,6 @@ export async function handleEntities(request, env, context, segments) {
         senderEmail: context.email,
       };
     }
-    if (type === 'employees') await syncAccessUser(env, context, body);
     const saved = await putEntity(env, context, type, newId, body, null, context.userId, { create: true });
     return json(saved, 201);
   }
@@ -526,8 +550,8 @@ export async function handleEntities(request, env, context, segments) {
       }
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
-    if (type === 'employees') await syncAccessUser(env, context, body);
-    const saved = await putEntity(env, context, type, id, body, request.headers.get('If-Match'));
+    const expectedUpdatedAt = request.headers.get('If-Match') || (type === 'employees' ? body.updatedAt : null);
+    const saved = await putEntity(env, context, type, id, body, expectedUpdatedAt);
     return json(saved);
   }
   if (request.method === 'DELETE' && id) {
