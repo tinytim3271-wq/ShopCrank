@@ -61,7 +61,12 @@ import {
 } from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
-import { employeeAccessStatements, revokeSessionsForUserIds, validateEmployeeAccess } from './access-users.mjs';
+import {
+  employeeAccessStatements,
+  revokeSessionsForUserIds,
+  validateAccessUser,
+  validateEmployeeAccess,
+} from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   FOUNDING_MEMBER_CAP,
@@ -105,7 +110,7 @@ import { refreshDueKnowledgeSources } from './knowledge/web.mjs';
 import { handleOnboardingRoutes, pollPendingA2p } from './onboarding/routes.mjs';
 import { createCustomerDocumentLink, handleCustomerDocument } from './customer-documents.mjs';
 import { agentPhoneCallSummary, saveCallSummary } from './call-summaries.mjs';
-import { handlePhoneUsage, meterPhoneCall, phoneCallDecision, shopFallbackPhone } from './phone-metering.mjs';
+import { findOveragePrice, handlePhoneUsage, meterPhoneCall, phoneCallDecision, shopFallbackPhone } from './phone-metering.mjs';
 import { FOLLOWUP_CRON, runScheduledFollowups, runShopFollowups } from './customer-followups.mjs';
 import { handlePublicBooking } from './online-booking.mjs';
 import { automatedSmsEnabled } from './growth-flags.mjs';
@@ -631,13 +636,16 @@ export async function putEntity(
     if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
     return record;
   }
-  await env.DB.prepare(`
-    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, entity_type, entity_id) DO UPDATE SET
-      data_json = excluded.data_json,
-      updated_at = excluded.updated_at
-  `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  const outcome = existing
+    ? await env.DB.prepare(`
+      UPDATE entities SET data_json = ?, updated_at = ?
+      WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
+    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json).run()
+    : await env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   return record;
 }
 
@@ -972,6 +980,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       }
       body = { ...body, body: String(body.body).trim().slice(0, 4000), memberEmails: members(conversation), senderEmail: context.email };
     }
+    if (type === 'employees') await validateAccessUser(env, context, body);
     // Orders must not silently overwrite on POST — intake/new-RO id races
     // previously lost the first work order via ON CONFLICT DO UPDATE.
     const existingOrder = type === 'orders' ? await getEntity(env, context.shopId, type, newId) : null;
@@ -1018,6 +1027,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
     const expectedUpdatedAt = request.headers.get('If-Match') || (type === 'employees' ? body.updatedAt : null);
+    if (type === 'employees') await validateAccessUser(env, context, body);
     const saved = await putEntity(
       env,
       context,
@@ -3583,6 +3593,9 @@ async function handleBilling(request, env, context, segments) {
         'metadata[saleSource]': checkoutCredit.saleSource,
         'subscription_data[metadata][saleSource]': checkoutCredit.saleSource,
       });
+      // Extra AI phone minutes bill through the plan's metered overage price (no quantity: Stripe meters it).
+      const overagePrice = await findOveragePrice(env, plan.id, interval);
+      if (overagePrice) params.set('line_items[1][price]', overagePrice);
       if (checkoutCredit.ambassador?.id) {
         params.set('metadata[ambassadorId]', checkoutCredit.ambassador.id);
         params.set('subscription_data[metadata][ambassadorId]', checkoutCredit.ambassador.id);

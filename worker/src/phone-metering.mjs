@@ -3,6 +3,7 @@
 // and are billed at the plan's overage rate, unless the shop set a spending cap.
 
 import { HttpError, json } from './http.mjs';
+import { providerBase } from './provider-base.mjs';
 import { planById, subscriptionActive } from './plans.mjs';
 import { getShopSetting, putShopSetting } from './shop-settings-store.mjs';
 import { getOnboarding } from './onboarding/store.mjs';
@@ -172,7 +173,7 @@ export async function reportOverageToStripe(env, shopId, { overageMinutes, callI
     'payload[value]': String(overageMinutes),
     identifier: `ai-phone-${shopId}-${callId}`.slice(0, 100),
   });
-  const response = await fetcher('https://api.stripe.com/v1/billing/meter_events', {
+  const response = await fetcher(`${providerBase(env, 'STRIPE', 'https://api.stripe.com/v1')}/billing/meter_events`, {
     method: 'POST',
     headers: { Authorization: `Basic ${btoa(`${stripeKey}:`)}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
@@ -225,4 +226,37 @@ export async function handlePhoneUsage(request, env, context, { requireRole }) {
     return json(await phoneUsageSummary(env, context.shopId));
   }
   throw new HttpError(405, 'Method not allowed');
+}
+
+/** Stripe lookup key of the metered overage price for a per-minute rate and billing interval. */
+export function overageLookupKey(overageCents, interval = 'monthly') {
+  const cents = Math.round(Number(overageCents) || 0);
+  return `shopcrank_ai_phone_overage_${cents}c_${interval === 'annual' ? 'year' : 'month'}`;
+}
+
+/**
+ * The metered AI phone overage price for a plan, found by lookup key
+ * (scripts/stripe-overage-setup.mjs creates them). Null when overage billing
+ * is not set up: checkout then sells the plan alone, as before.
+ */
+export async function findOveragePrice(env, planId, interval = 'monthly', fetcher = fetch) {
+  const stripeKey = String(env.STRIPE_SECRET_KEY || '').trim();
+  if (!stripeKey || !String(env.STRIPE_AI_PHONE_METER_EVENT || '').trim()) return null;
+  const { overageRateCents } = phoneAllowance(planId);
+  if (!overageRateCents) return null;
+  const lookupKey = overageLookupKey(overageRateCents, interval);
+  const base = providerBase(env, 'STRIPE', 'https://api.stripe.com/v1');
+  try {
+    const authorization = 'Basic ' + btoa(stripeKey + ':');
+    const response = await fetcher(`${base}/prices?active=true&lookup_keys[]=${encodeURIComponent(lookupKey)}`, {
+      headers: { Authorization: authorization },
+    });
+    const payload = await response.json().catch(() => ({}));
+    const price = (payload.data || []).find(item => item.lookup_key === lookupKey && item.recurring?.usage_type === 'metered');
+    if (!price) console.warn(JSON.stringify({ message: 'AI phone overage price not found; checkout continues without it', lookupKey }));
+    return price?.id || null;
+  } catch (error) {
+    console.warn(JSON.stringify({ message: 'AI phone overage price lookup failed', lookupKey, error: String(error?.message || error) }));
+    return null;
+  }
 }
