@@ -48,7 +48,7 @@ import {
   upsertRevrecConfig,
 } from './integrations/revenue-recognition.mjs';
 import { HttpError, json, parseJson, requestJson } from './http.mjs';
-import { writeEntityIfUnchanged, archiveFieldsForSave, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, refuseShopOrder, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
+import { buildEntitySave, writeEntityIfUnchanged, buildCustomerCascadeStatements, buildEntityDeleteStatements, customerLinkedEntities, refuseShopOrder, removeShopRecord, restoreShopRecord } from './routes/entities.mjs';
 import { ARCHIVABLE_TYPES } from '../../src/modules/record-deletion.js';
 import { providerBase } from './provider-base.mjs';
 import { handleFiles as handleFileRoute, isSignatureEvidenceKey, storeUploadedFile } from './routes/files.mjs';
@@ -61,7 +61,7 @@ import {
 } from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
-import { revokeSessionsForUserIds, nextEmployeeTimestamp, saveEmployeeWithAccess, validateEmployeeAccess } from './access-users.mjs';
+import { revokeSessionsForUserIds, saveEmployeeWithAccess } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   FOUNDING_MEMBER_CAP,
@@ -518,24 +518,7 @@ export async function putEntity(
   createdBy = context.userId,
   { requireUnlockedEstimate = false, expectedOrderSnapshot, create = false } = {},
 ) {
-  const now = new Date().toISOString();
-  if (type === 'employees') body = { ...body, ...validateEmployeeAccess(body) };
-  const existing = await env.DB.prepare(
-    'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
-  ).bind(context.shopId, type, id).first();
-  const updatedAt = type === 'employees' ? nextEmployeeTimestamp(existing, now) : now;
-  if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
-    throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
-  }
-  const record = {
-    ...archiveFieldsForSave(existing, body, context, { create, type, id }),
-    ...body,
-    id,
-    shopId: context.shopId,
-    createdBy: existing?.created_by || createdBy,
-    createdAt: body.createdAt || existing?.created_at || now,
-    updatedAt,
-  };
+  const { now, existing, record } = await buildEntitySave(env, context, { type, id, body, expectedUpdatedAt, createdBy, create });
   if (type === 'employees') return saveEmployeeWithAccess(env, context, { id, record, create, existing, expectedUpdatedAt });
   if (requireUnlockedEstimate) {
     // CAS on updated_at inside the same UPDATE as the unlock guard. The early

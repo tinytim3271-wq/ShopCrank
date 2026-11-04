@@ -87,25 +87,33 @@ export async function writeEntityIfUnchanged(env, context, { type, id, record, e
   return record;
 }
 
-export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
+/**
+ * Reads the stored row and builds the record to save (shop id, creator, archive
+ * fields kept, employee timestamp moved forward). Shared by both entity writers.
+ */
+export async function buildEntitySave(env, context, { type, id, body, expectedUpdatedAt, createdBy, create }) {
   const now = new Date().toISOString();
-  if (type === 'employees') body = { ...body, ...validateEmployeeAccess(body) };
+  const input = type === 'employees' ? { ...body, ...validateEmployeeAccess(body) } : body;
   const existing = await env.DB.prepare(
     'SELECT created_at, created_by, updated_at, data_json FROM entities WHERE shop_id = ? AND entity_type = ? AND entity_id = ?',
   ).bind(context.shopId, type, id).first();
-  const updatedAt = type === 'employees' ? nextEmployeeTimestamp(existing, now) : now;
   if (expectedUpdatedAt && existing && existing.updated_at !== expectedUpdatedAt) {
     throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   }
   const record = {
-    ...archiveFieldsForSave(existing, body, context, { create, type, id }),
-    ...body,
+    ...archiveFieldsForSave(existing, input, context, { create, type, id }),
+    ...input,
     id,
     shopId: context.shopId,
     createdBy: existing?.created_by || createdBy,
-    createdAt: body.createdAt || existing?.created_at || now,
-    updatedAt,
+    createdAt: input.createdAt || existing?.created_at || now,
+    updatedAt: type === 'employees' ? nextEmployeeTimestamp(existing, now) : now,
   };
+  return { now, existing, record };
+}
+
+export async function putEntity(env, context, type, id, body, expectedUpdatedAt = null, createdBy = context.userId, { create = false } = {}) {
+  const { now, existing, record } = await buildEntitySave(env, context, { type, id, body, expectedUpdatedAt, createdBy, create });
   if (type === 'employees') return saveEmployeeWithAccess(env, context, { id, record, create, existing, expectedUpdatedAt });
   return writeEntityIfUnchanged(env, context, { type, id, record, existing, now });
 }
