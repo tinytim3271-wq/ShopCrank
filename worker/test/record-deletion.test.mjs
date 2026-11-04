@@ -111,6 +111,15 @@ test('a work order or vehicle tied to an invoice is archived', async () => {
   assert.equal((await (await remove(env, 'admin', 'vehicles', 'v3')).json()).action, 'archive');
 });
 
+test('a vehicle linked only by invoice vehicleId is archived', async () => {
+  const env = await shopWithHistory();
+  await seed(env.DB, 'shop-1', 'invoices', 'INV-vehicle', { number: 'INV-vehicle', vehicleId: 'v3' });
+  const response = await remove(env, 'admin', 'vehicles', 'v3');
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).action, 'archive');
+  assert.ok((await stored(env.DB, 'vehicles', 'v3')).archivedAt);
+});
+
 test('admin deletes a customer with no history', async () => {
   const env = await shopWithHistory();
   assert.equal((await remove(env, 'admin', 'customers', 'c2')).status, 204);
@@ -235,4 +244,41 @@ test('an invoice whose work order has a deposit is archived, deposit included', 
   assert.deepEqual(body.archived.payments, ['dep-9']);
   const invoices = await (await call(env, 'office', 'GET', 'invoices?archived=include')).json();
   assert.ok((Array.isArray(invoices) ? invoices : invoices.records).some(item => item.id === 'INV-9' && item.archivedAt), 'readers can load archived invoices for accounting');
+});
+
+test('a stale employee save cannot reactivate access after the employee is archived', async () => {
+  const env = await shopWithHistory();
+  await seed(env.DB, 'shop-1', 'employees', 'emp-1', {
+    name: 'Archived Tech',
+    email: 'archived-tech@shop.test',
+    role: 'technician',
+    active: false,
+    archivedAt: '2026-11-03T00:00:00.000Z',
+  });
+  await env.DB.prepare(
+    'INSERT INTO users (id, email, shop_id, role, name, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).bind('employee-user', 'archived-tech@shop.test', 'shop-1', 'technician', 'Archived Tech', 0, 'now', 'now').run();
+
+  const saved = await call(env, 'admin', 'PUT', 'employees/emp-1', {
+    id: 'emp-1',
+    name: 'Archived Tech',
+    email: 'archived-tech@shop.test',
+    role: 'technician',
+    active: true,
+  });
+  assert.equal(saved.status, 200);
+  const employee = await stored(env.DB, 'employees', 'emp-1');
+  assert.ok(employee.archivedAt);
+  assert.equal(employee.active, false);
+  assert.equal((await env.DB.prepare('SELECT enabled FROM users WHERE id = ?').bind('employee-user').first()).enabled, 0);
+
+  const attemptedCreate = await call(env, 'admin', 'POST', 'employees', {
+    id: 'emp-1',
+    name: 'Archived Tech',
+    email: 'archived-tech@shop.test',
+    role: 'technician',
+    active: true,
+  });
+  assert.equal(attemptedCreate.status, 409);
+  assert.equal((await env.DB.prepare('SELECT enabled FROM users WHERE id = ?').bind('employee-user').first()).enabled, 0);
 });

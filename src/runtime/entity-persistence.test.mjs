@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyQueuedEntityMutations, persistMutationQueue } from './entity-persistence.js';
+import { applyQueuedEntityMutations, persistMutationQueue, queuePendingEntityMutation } from './entity-persistence.js';
 
 function memoryStorage() {
   const values = new Map();
@@ -52,6 +52,45 @@ test('queued deletes hide records while waiting to sync', () => {
   assert.deepEqual(
     applyQueuedEntityMutations('customers', [{ id: 'customer-1', name: 'Existing' }], queue),
     [],
+  );
+});
+
+test('queued archives remain in remote-list overlays while hard deletes are removed', () => {
+  const archived = { id: 'INV-1', number: 'INV-1', total: 100, archivedAt: '2026-11-04T00:00:00.000Z' };
+  assert.deepEqual(
+    applyQueuedEntityMutations('invoices', [{ id: 'INV-1', number: 'INV-1', total: 125 }], [{
+      path: '/entities/invoices/INV-1',
+      method: 'DELETE',
+      body: JSON.stringify(archived),
+    }]),
+    [{ ...archived, total: 125 }],
+  );
+  assert.deepEqual(
+    applyQueuedEntityMutations('invoices', [{ id: 'INV-1', number: 'INV-1' }], [{
+      path: '/entities/invoices/INV-1',
+      method: 'DELETE',
+    }]),
+    [],
+  );
+});
+
+test('queued archives preserve a pending create before applying the archive', () => {
+  const pending = [{
+    key: '/entities/invoices/INV-1',
+    method: 'POST',
+    path: '/entities/invoices',
+    body: JSON.stringify({ id: 'INV-1', number: 'INV-1' }),
+  }];
+  const result = queuePendingEntityMutation(pending, {
+    key: '/entities/invoices/INV-1',
+    method: 'DELETE',
+    path: '/entities/invoices/INV-1',
+    queueBody: JSON.stringify({ id: 'INV-1', number: 'INV-1', archivedAt: '2026-11-04T00:00:00.000Z' }),
+  }, { id: 'mutation-1', queuedAt: 'now' });
+  assert.deepEqual(result.map(item => item.method), ['POST', 'DELETE']);
+  assert.deepEqual(
+    applyQueuedEntityMutations('invoices', [], result),
+    [{ id: 'INV-1', number: 'INV-1', archivedAt: '2026-11-04T00:00:00.000Z' }],
   );
 });
 

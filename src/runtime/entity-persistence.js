@@ -13,6 +13,32 @@ export function persistMutationQueue(storage, key, queue) {
   return raw;
 }
 
+export function queuePendingEntityMutation(queue, mutation, { id, queuedAt, conflict = false } = {}) {
+  const records = Array.isArray(queue) ? queue : [];
+  const method = String(mutation?.options?.method || mutation?.method || '').toUpperCase();
+  const archive = method === 'DELETE' && Boolean(mutation?.queueBody);
+  const queueKey = archive ? `${mutation.key}:archive` : mutation.key;
+  const existingIndex = records.findIndex(item => item.key === mutation.key);
+  if (!archive && method === 'DELETE' && existingIndex >= 0 && records[existingIndex].method === 'POST') {
+    records.splice(existingIndex, 1);
+    return records;
+  }
+  const item = {
+    id,
+    key: queueKey,
+    path: mutation.path,
+    method,
+    body: mutation.queueBody || mutation.options?.body,
+    expectedUpdatedAt: mutation.expectedUpdatedAt || null,
+    queuedAt,
+    conflict,
+  };
+  const itemIndex = records.findIndex(record => record.key === queueKey);
+  if (itemIndex >= 0) records.splice(itemIndex, 1, item);
+  else records.push(item);
+  return records;
+}
+
 export function applyQueuedEntityMutations(type, remoteRecords, queue) {
   const basePath = entityPath(type);
   const records = new Map(
@@ -35,7 +61,18 @@ export function applyQueuedEntityMutations(type, remoteRecords, queue) {
       : '';
     const id = String(body?.id || pathId || '');
     if (!id) continue;
-    if (method === 'DELETE') records.delete(id);
+    if (method === 'DELETE') {
+      if (body && body.archivedAt) {
+        const remote = records.get(id);
+        const archived = remote && typeof remote === 'object' ? { ...body, ...remote } : body;
+        for (const field of ['archivedAt', 'archivedBy', 'archiveReason', 'archiveGroup']) {
+          if (body[field] !== undefined) archived[field] = body[field];
+        }
+        records.set(id, archived);
+      } else {
+        records.delete(id);
+      }
+    }
     if (method === 'POST' || method === 'PUT') records.set(id, body);
   }
 

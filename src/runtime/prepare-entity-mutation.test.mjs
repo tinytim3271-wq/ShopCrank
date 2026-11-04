@@ -31,6 +31,19 @@ test('DELETE without a body remains queueable', () => {
   assert.equal(result.key, '/entities/orders/RO-1');
 });
 
+test('a queued archive record is kept out of the HTTP request and available to the overlay queue', () => {
+  const queueRecord = { id: 'INV-1', archivedAt: '2026-11-04T00:00:00.000Z' };
+  const result = prepareEntityMutation('/entities/invoices/INV-1', {
+    method: 'DELETE',
+    queueRecord,
+  }, mutationId);
+  assert.equal(result.queueable, true);
+  assert.equal(result.options.body, undefined);
+  assert.equal(result.options.queueRecord, undefined);
+  assert.equal(result.queueBody, JSON.stringify(queueRecord));
+  assert.equal(prepareEntityMutation('/entities/invoices/INV-1', { method: 'DELETE' }).queueable, false);
+});
+
 test('blocked payroll entities are never queued', () => {
   const result = prepareEntityMutation('/entities/payrollentries', {
     method: 'POST',

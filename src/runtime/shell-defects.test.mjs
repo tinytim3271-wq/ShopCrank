@@ -237,7 +237,7 @@ test('deleting a job card pauses autosave and waits for in-flight saves', () => 
   assert.match(legacy, /if \(jobCardDeleting\) return;\s*jobCardDirty = true;/);
   assert.match(legacy, /if \(!canManage \|\| jobCardSaving \|\| jobCardDeleting\) return false;/);
   assert.match(deleteHandler, /jobCardDeleting = true;[\s\S]*setModalAutosave\(null\);[\s\S]*controls\.forEach\(control => \{ control\.disabled = true \}\);/);
-  assert.match(deleteHandler, /if \(jobCardSavePromise\) await jobCardSavePromise;[\s\S]*await apiFetch\(`\/entities\/orders\/\$\{encodeURIComponent\(order\.id\)\}`, \{ method: "DELETE" \}\);/);
+  assert.match(deleteHandler, /if \(jobCardSavePromise\) await jobCardSavePromise;[\s\S]*await apiFetch\(`\/entities\/orders\/\$\{encodeURIComponent\(order\.id\)\}`, \{ method: "DELETE", queueRecord: archives \? archivedCopy\(order\) : null \}\);/);
   assert.match(deleteHandler, /catch \(error\) \{[\s\S]*jobCardDeleting = false;[\s\S]*setModalAutosave\(flushJobCardAutosave\);[\s\S]*if \(jobCardDirty\) \{/);
 });
 

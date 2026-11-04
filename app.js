@@ -629,11 +629,13 @@
     };
   }
   function prepareEntityMutation(path, options, createMutationId = defaultMutationId) {
+    const { queueRecord, ...requestOptions } = options;
     const method = String(options.method || "GET").toUpperCase();
     const isEntityMutation = path.startsWith("/entities/") && ["POST", "PUT", "DELETE"].includes(method);
+    const queueArchive = method === "DELETE" && Boolean(String(queueRecord?.archivedAt || "").trim());
     const containsSensitiveEndpoint = path === "/agentphone/configure" || path === "/voice/grok/configure";
-    const queueable = isEntityMutation && !OFFLINE_QUEUE_BLOCKED.test(path) && !CASCADE_DELETE.test(path) && !containsSensitiveEndpoint;
-    if (!queueable) return { path, options, queueable: false };
+    const queueable = isEntityMutation && (!OFFLINE_QUEUE_BLOCKED.test(path) || queueArchive) && !CASCADE_DELETE.test(path) && !containsSensitiveEndpoint;
+    if (!queueable) return { path, options: requestOptions, queueable: false };
     let body = null;
     if (options.body) {
       try {
@@ -648,8 +650,9 @@
     const entityKey = method === "POST" ? body && body.id ? `${path}/${body.id}` : `${path}/${createMutationId()}` : path;
     return {
       path,
-      options: { ...options, method, body: body ? JSON.stringify(body) : void 0 },
+      options: { ...requestOptions, method, body: body ? JSON.stringify(body) : void 0 },
       queueable: Boolean(body) || method === "DELETE",
+      queueBody: queueArchive && queueRecord && typeof queueRecord === "object" ? JSON.stringify(queueRecord) : null,
       expectedUpdatedAt: method === "PUT" ? body?.updatedAt : null,
       key: entityKey
     };
@@ -7327,6 +7330,9 @@ button{margin-top:12px;padding:8px 14px}
         return "delete";
     }
   }
+  function archivedCopy(record, { actor = "", at = (/* @__PURE__ */ new Date()).toISOString(), reason = "", group = "" } = {}) {
+    return { ...record, archivedAt: at, archivedBy: actor, archiveReason: reason, ...group ? { archiveGroup: group } : {} };
+  }
   function relatedForRemoval(type, record = {}, collections = {}) {
     const list = (key) => Array.isArray(collections[key]) ? collections[key] : [];
     const same = (a, b) => String(a ?? "").trim() !== "" && String(a).trim() === String(b ?? "").trim();
@@ -7343,7 +7349,7 @@ button{margin-top:12px;padding:8px 14px}
     }
     if (type === "vehicles") {
       const orderIds = new Set(list("orders").filter((o) => same(o.vehicleId, record.id) || realVin(record.vin) && same(o.vin, record.vin)).map((o) => o.id));
-      return { invoices: list("invoices").filter((i) => orderIds.has(i.ro) || realVin(record.vin) && same(i.vin, record.vin)) };
+      return { invoices: list("invoices").filter((i) => same(i.vehicleId, record.id) || orderIds.has(i.ro) || realVin(record.vin) && same(i.vin, record.vin)) };
     }
     if (type === "customers") {
       const linked = customerLinkedRecords(record, collections);
@@ -7788,6 +7794,31 @@ button{margin-top:12px;padding:8px 14px}
   function entityPath(type) {
     return `/entities/${type}`;
   }
+  function queuePendingEntityMutation(queue, mutation, { id, queuedAt, conflict = false } = {}) {
+    const records = Array.isArray(queue) ? queue : [];
+    const method = String(mutation?.options?.method || mutation?.method || "").toUpperCase();
+    const archive = method === "DELETE" && Boolean(mutation?.queueBody);
+    const queueKey = archive ? `${mutation.key}:archive` : mutation.key;
+    const existingIndex = records.findIndex((item2) => item2.key === mutation.key);
+    if (!archive && method === "DELETE" && existingIndex >= 0 && records[existingIndex].method === "POST") {
+      records.splice(existingIndex, 1);
+      return records;
+    }
+    const item = {
+      id,
+      key: queueKey,
+      path: mutation.path,
+      method,
+      body: mutation.queueBody || mutation.options?.body,
+      expectedUpdatedAt: mutation.expectedUpdatedAt || null,
+      queuedAt,
+      conflict
+    };
+    const itemIndex = records.findIndex((record) => record.key === queueKey);
+    if (itemIndex >= 0) records.splice(itemIndex, 1, item);
+    else records.push(item);
+    return records;
+  }
   function applyQueuedEntityMutations(type, remoteRecords, queue) {
     const basePath = entityPath(type);
     const records = new Map(
@@ -7806,7 +7837,18 @@ button{margin-top:12px;padding:8px 14px}
       const pathId = path.startsWith(`${basePath}/`) ? decodeURIComponent(path.slice(basePath.length + 1)) : "";
       const id = String(body?.id || pathId || "");
       if (!id) continue;
-      if (method === "DELETE") records.delete(id);
+      if (method === "DELETE") {
+        if (body && body.archivedAt) {
+          const remote = records.get(id);
+          const archived = remote && typeof remote === "object" ? { ...body, ...remote } : body;
+          for (const field2 of ["archivedAt", "archivedBy", "archiveReason", "archiveGroup"]) {
+            if (body[field2] !== void 0) archived[field2] = body[field2];
+          }
+          records.set(id, archived);
+        } else {
+          records.delete(id);
+        }
+      }
       if (method === "POST" || method === "PUT") records.set(id, body);
     }
     return [...records.values()];
@@ -10091,16 +10133,7 @@ button{margin-top:12px;padding:8px 14px}
     return prepareEntityMutation(path, options, mutationId);
   }
   function queueEntityMutation(mutation, conflict = false) {
-    const queue = readMutationQueue(), existingIndex = queue.findIndex((item2) => item2.key === mutation.key);
-    if (mutation.options.method === "DELETE" && existingIndex >= 0 && queue[existingIndex].method === "POST") {
-      queue.splice(existingIndex, 1);
-      writeMutationQueue(queue);
-      return;
-    }
-    const item = { id: mutationId(), key: mutation.key, path: mutation.path, method: mutation.options.method, body: mutation.options.body, expectedUpdatedAt: mutation.expectedUpdatedAt || null, queuedAt: (/* @__PURE__ */ new Date()).toISOString(), conflict };
-    if (existingIndex >= 0) queue.splice(existingIndex, 1, item);
-    else queue.push(item);
-    writeMutationQueue(queue);
+    writeMutationQueue(queuePendingEntityMutation(readMutationQueue(), mutation, { id: mutationId(), queuedAt: (/* @__PURE__ */ new Date()).toISOString(), conflict }));
   }
   async function authorizedApiRequest(path, options = {}) {
     const session = authSession();
@@ -10225,9 +10258,9 @@ button{margin-top:12px;padding:8px 14px}
       return null;
     }
   }
-  async function deleteOrderInApi(id) {
+  async function deleteOrderInApi(id, queueRecord = null) {
     try {
-      await apiFetch(`/entities/orders/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await apiFetch(`/entities/orders/${encodeURIComponent(id)}`, { method: "DELETE", queueRecord });
     } catch (error) {
       console.error("Failed to delete order in API", error);
     }
@@ -12791,7 +12824,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
           state.payrollEntries = state.payrollEntries.filter((line) => line.workOrderId !== id);
           state.jobClockEntries = state.jobClockEntries.filter((line) => line.workOrderId !== id);
         }
-        void deleteOrderInApi(id);
+        void deleteOrderInApi(id, archives ? archivedCopy(x) : null);
         save();
         closeModal();
         toast(archives ? `${id} archived` : `${id} deleted`);
@@ -12959,7 +12992,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const archives = willArchive("vehicles", vehicle);
     if (!confirm(archives ? `Archive ${vehicleLabel3(vehicle)}? It is on an invoiced work order, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${vehicleLabel3(vehicle)}?${history ? ` Its ${history} work order${history === 1 ? "" : "s"} will be kept.` : ""} This cannot be undone.`)) return;
     try {
-      const result = await apiFetch(`/entities/vehicles/${encodeURIComponent(vehicle.id)}`, { method: "DELETE" });
+      const result = await apiFetch(`/entities/vehicles/${encodeURIComponent(vehicle.id)}`, { method: "DELETE", queueRecord: archives ? archivedCopy(vehicle) : null });
       applyRemovalResult2(result);
       state.vehicles = state.vehicles.filter((item) => item !== vehicle);
       save();
@@ -13644,7 +13677,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       const button = form.querySelector("button[type=submit]");
       button.disabled = true;
       try {
-        const result = await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}?cascade=1`, { method: "DELETE" });
+        const result = await apiFetch(`/entities/customers/${encodeURIComponent(customer.id)}?cascade=1`, { method: "DELETE", queueRecord: archives ? archivedCopy(customer) : null });
         closeModal();
         if (applyRemovalResult2(result)) {
           removeCustomerFromState(customer);
@@ -13698,7 +13731,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     const archives = willArchive("invoices", invoice);
     if (!confirm(archives ? `Archive ${invoice.number}${payments2.length ? " and its payments" : ""}? It was sent, signed or paid, so it is kept for your tax records and can be restored from Settings \u2192 Archived records.` : `Delete ${invoice.number}? It is a draft with no payments, so it will be permanently deleted.`)) return;
     try {
-      const result = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE" });
+      const result = await apiFetch(`/entities/invoices/${encodeURIComponent(invoiceRecordKey(invoice))}`, { method: "DELETE", queueRecord: archives ? archivedCopy({ ...invoice, id: invoice.id || invoiceRecordKey(invoice) }) : null });
       if (applyRemovalResult2(result)) toast(`${invoice.number} archived`);
       else {
         state.payments = state.payments.filter((payment) => payment.invoiceNumber !== invoice.number);
@@ -18486,7 +18519,7 @@ ${line}`.trim();
           const archives = willArchive("orders", order);
           if (!confirm(archives ? `Archive ${order.id}? It has an invoice or payment, so it is kept for your records and can be restored from Settings \u2192 Archived records.` : `Delete ${order.id}? This cannot be undone.`)) return;
           try {
-            const result = isOfflineDesktop() ? null : await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            const result = isOfflineDesktop() ? null : await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE", queueRecord: archives ? archivedCopy(order) : null });
             applyRemovalResult2(result);
             state.orders = state.orders.filter((item) => item !== order);
             save();
@@ -18786,7 +18819,7 @@ ${line}`.trim();
           button.disabled = true;
           try {
             if (jobCardSavePromise) await jobCardSavePromise;
-            const result = await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
+            const result = await apiFetch(`/entities/orders/${encodeURIComponent(order.id)}`, { method: "DELETE", queueRecord: archives ? archivedCopy(order) : null });
             jobCardDirty = false;
             const archived = applyRemovalResult2(result);
             state.orders = state.orders.filter((item) => item !== order);

@@ -61,7 +61,7 @@ import {
 } from '../../src/modules/record-deletion.js';
 import { PROGRAMMING_MODES, SECURITY_ACCESS_TOKEN_SCOPES, mintCapabilityToken, procedureSpec, requiresAutoAuthLogin, securityAccessScopeForLevel, signedRepairOrderForKeys, verifyCapabilityToken } from './diagnostics.mjs';
 import { canSendLoginEmail, deliverLoginEmail, handleSendLogin, signInDeliveryFailure } from './login-email.mjs';
-import { revokeSessionsForUserIds, syncAccessUser } from './access-users.mjs';
+import { revokeSessionsForUserIds, syncAccessUser, validateAccessUser } from './access-users.mjs';
 import { applyPendingFoundingClaim, claimBatchOutcome } from './founding.mjs';
 import {
   FOUNDING_MEMBER_CAP,
@@ -587,13 +587,16 @@ export async function putEntity(
     if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
     return record;
   }
-  await env.DB.prepare(`
-    INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, entity_type, entity_id) DO UPDATE SET
-      data_json = excluded.data_json,
-      updated_at = excluded.updated_at
-  `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  const outcome = existing
+    ? await env.DB.prepare(`
+      UPDATE entities SET data_json = ?, updated_at = ?
+      WHERE shop_id = ? AND entity_type = ? AND entity_id = ? AND data_json = ?
+    `).bind(JSON.stringify(record), now, context.shopId, type, id, existing.data_json).run()
+    : await env.DB.prepare(`
+      INSERT INTO entities (shop_id, entity_type, entity_id, data_json, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+    `).bind(context.shopId, type, id, JSON.stringify(record), record.createdBy, record.createdAt, now).run();
+  if (!outcome?.meta?.changes) throw new HttpError(409, 'Record was updated elsewhere. Reload before saving again.');
   return record;
 }
 
@@ -928,9 +931,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       }
       body = { ...body, body: String(body.body).trim().slice(0, 4000), memberEmails: members(conversation), senderEmail: context.email };
     }
-    // Sync access before writing the entity so a cross-tenant email conflict
-    // cannot leave an orphan employee row behind.
-    if (type === 'employees') await syncAccessUser(env, context, body);
+    if (type === 'employees') await validateAccessUser(env, context, body);
     // Orders must not silently overwrite on POST — intake/new-RO id races
     // previously lost the first work order via ON CONFLICT DO UPDATE.
     const existingOrder = type === 'orders' ? await getEntity(env, context.shopId, type, newId) : null;
@@ -939,6 +940,7 @@ async function handleEntities(request, env, context, segments, analytics) {
     }
     const saved = await putEntity(env, context, type, newId, body, null, context.userId,
       type === 'orders' ? { expectedOrderSnapshot: null, create: true } : { create: true });
+    if (type === 'employees') await syncAccessUser(env, context, saved);
     captureForContext(analytics, context, 'entity_created', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_created', {
       entity_type: type,
@@ -976,7 +978,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       if (!memberEmails.includes(context.email) || memberEmails.length < 2) throw new HttpError(400, 'Group requires the owner and at least one other member');
       body = { ...body, memberEmails, creatorEmail: existing.creatorEmail };
     }
-    if (type === 'employees') await syncAccessUser(env, context, body);
+    if (type === 'employees') await validateAccessUser(env, context, body);
     const saved = await putEntity(
       env,
       context,
@@ -987,6 +989,7 @@ async function handleEntities(request, env, context, segments, analytics) {
       context.userId,
       { requireUnlockedEstimate, expectedOrderSnapshot },
     );
+    if (type === 'employees') await syncAccessUser(env, context, saved);
     captureForContext(analytics, context, 'entity_updated', { entity_type: type });
     capturePostHogEvent(env, context, 'entity_updated', {
       entity_type: type,

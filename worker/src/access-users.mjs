@@ -11,24 +11,28 @@ export async function revokeSessionsForUserIds(env, userIds, revokedAt = new Dat
   }
 }
 
+export async function validateAccessUser(env, context, employee) {
+  const email = String(employee.email || '').trim().toLowerCase();
+  const role = String(employee.role || 'technician');
+  if (!email || !SHOP_ROLES.has(role)) throw new HttpError(400, 'Employee email and a valid role are required');
+  const existing = await env.DB.prepare(
+    'SELECT id, shop_id FROM users WHERE email = ? COLLATE NOCASE',
+  ).bind(email).first();
+  if (existing && String(existing.shop_id || '') !== String(context.shopId || '')) {
+    throw new HttpError(409, 'That email already belongs to another shop account');
+  }
+  return { email, role, existing };
+}
+
 /**
  * Upsert the SaaS `users` row for an employee without ever reassigning an
  * existing account to a different shop (cross-tenant steal).
  */
 export async function syncAccessUser(env, context, employee) {
-  const email = String(employee.email || '').trim().toLowerCase();
-  const role = String(employee.role || 'technician');
-  if (!email || !SHOP_ROLES.has(role)) throw new HttpError(400, 'Employee email and a valid role are required');
+  const { email, role, existing } = await validateAccessUser(env, context, employee);
   const now = new Date().toISOString();
   const enabled = employee.active === false ? 0 : 1;
   const name = String(employee.name || email);
-  const existing = await env.DB.prepare(
-    'SELECT id, shop_id FROM users WHERE email = ? COLLATE NOCASE',
-  ).bind(email).first();
-
-  if (existing && String(existing.shop_id || '') !== String(context.shopId || '')) {
-    throw new HttpError(409, 'That email already belongs to another shop account');
-  }
 
   let userId = existing?.id ? String(existing.id) : '';
   if (existing) {
