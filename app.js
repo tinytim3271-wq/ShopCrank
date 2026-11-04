@@ -4039,6 +4039,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     onCancel,
     onConvert,
     onBlocked,
+    onRender,
     decodeVin,
     lookupPlate,
     analyze,
@@ -4049,6 +4050,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const paint = () => {
       host.innerHTML = intakeWizardHtml(current, { users, laborRate, taxRate });
       bind2();
+      onRender?.(host);
     };
     const persist = (reason) => {
       current.savedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -6805,6 +6807,97 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/record-print.js
+  function withPrintBaseStyles(html) {
+    const markup = String(html ?? "");
+    if (markup.includes("data-print-base")) return markup;
+    const style = `<style data-print-base>${PRINT_BASE_CSS}</style>`;
+    if (/<\/head>/i.test(markup)) return markup.replace(/<\/head>/i, `${style}</head>`);
+    if (/<html\b[^>]*>/i.test(markup)) return markup.replace(/<html\b[^>]*>/i, (match) => `${match}<head>${style}</head>`);
+    if (/^\s*<!doctype[^>]*>/i.test(markup)) return markup.replace(/^\s*<!doctype[^>]*>/i, (match) => `${match}${style}`);
+    return `${style}${markup}`;
+  }
+  function modalOffersPrint(modal) {
+    if (!modal?.querySelector) return false;
+    if (modal.matches?.(NON_PRINTABLE_MODALS)) return false;
+    return Boolean(modal.querySelector(".modal-head") && modal.querySelector(".modal-body"));
+  }
+  function modalHeadActions(modal) {
+    const head = modal?.querySelector?.(".modal-head");
+    if (!head) return null;
+    const existing = head.querySelector(":scope > .modal-head-actions");
+    if (existing) return existing;
+    const doc = head.ownerDocument;
+    const holder = doc.createElement("div");
+    holder.className = "modal-head-actions no-print";
+    const close = head.querySelector(":scope > [data-close], :scope > .close");
+    if (close) {
+      close.before(holder);
+      holder.append(close);
+    } else {
+      head.append(holder);
+    }
+    return holder;
+  }
+  function addModalPrintButton(root, { onPrint, iconHtml = "" } = {}) {
+    const modal = root?.querySelector?.(".modal") || null;
+    if (!modalOffersPrint(modal) || modal.querySelector("[data-print-record]")) return null;
+    const holder = modalHeadActions(modal);
+    if (!holder) return null;
+    const button = modal.ownerDocument.createElement("button");
+    button.type = "button";
+    button.className = "secondary modal-print";
+    button.dataset.printRecord = "";
+    button.title = "Print this record";
+    button.innerHTML = `${iconHtml}<span>Print</span>`;
+    holder.prepend(button);
+    modal.dataset.printable = "true";
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onPrint?.(modal);
+    });
+    return button;
+  }
+  function installRecordPrintHooks(win = globalThis) {
+    const doc = win.document;
+    if (!doc || win.__shopcrankRecordPrintHooks) return;
+    win.__shopcrankRecordPrintHooks = true;
+    win.addEventListener("beforeprint", () => {
+      const modal = doc.querySelector('#modal-root .modal[data-printable="true"]');
+      doc.body.classList.toggle("printing-record", Boolean(modal));
+    });
+    win.addEventListener("afterprint", () => doc.body.classList.remove("printing-record"));
+  }
+  function printRecordView(win = globalThis) {
+    try {
+      win.focus?.();
+      win.print();
+    } catch {
+    }
+  }
+  var PRINT_FONT_SIZE, PRINT_BASE_CSS, NON_PRINTABLE_MODALS;
+  var init_record_print = __esm({
+    "src/modules/record-print.js"() {
+      PRINT_FONT_SIZE = "12pt";
+      PRINT_BASE_CSS = [
+        "@media print{",
+        `html,body{font-size:${PRINT_FONT_SIZE}!important;line-height:1.4}`,
+        "body :not(h1):not(h2):not(h3):not(h4){font-size:inherit!important}",
+        "h1{font-size:18pt!important}h2{font-size:15pt!important}h3,h4{font-size:13pt!important}",
+        "table{page-break-inside:auto}tr{page-break-inside:avoid}",
+        "}"
+      ].join("");
+      NON_PRINTABLE_MODALS = [
+        "[data-no-print]",
+        ".global-assistant-modal",
+        "#record-removal-form",
+        "#full-reset-form",
+        "#onboarding-cleanup"
+      ].join(",");
+    }
+  });
+
   // src/modules/print-document.js
   function resolveBaseHref(target) {
     const candidate = String(target?.document?.baseURI || target?.location?.href || "").trim();
@@ -6944,7 +7037,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     const blockedMessage = options.blockedMessage || "Allow pop-ups to print";
     const autoPrint = options.autoPrint !== false;
     const schedule2 = options.schedule || ((fn) => setTimeout(fn, 0));
-    const markup = withBaseHref(html, target);
+    const markup = withBaseHref(withPrintBaseStyles(html), target);
     const blobAvailable = typeof target.Blob === "function" && typeof target.URL?.createObjectURL === "function";
     if (blobAvailable) {
       if (openBlobDocument(target, markup, schedule2, autoPrint)) return true;
@@ -6956,6 +7049,7 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
   var init_print_document = __esm({
     "src/modules/print-document.js"() {
       init_html();
+      init_record_print();
     }
   });
 
@@ -12418,6 +12512,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       if (e.target === root) closeModal();
     };
     document.body.append(root);
+    addModalPrintButton(root, { onPrint: () => printRecordView(window), iconHtml: icon("printer", 14) });
     lucide.createIcons();
     root.querySelectorAll("[data-close]").forEach((x) => {
       if (!x.textContent.trim() && !x.getAttribute("aria-label")) x.setAttribute("aria-label", "Close");
@@ -13919,6 +14014,10 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
       laborRate: Number(profile.laborRate || 165),
       taxRate: Number(state.taxSettings?.rate || 0),
       onSave: saveIntakeDraft,
+      onRender: () => {
+        addModalPrintButton(backdrop, { onPrint: () => printRecordView(window), iconHtml: icon("printer", 14) });
+        lucide.createIcons();
+      },
       onCancel: (current) => {
         saveIntakeDraft(current);
         closeModal();
@@ -17447,6 +17546,7 @@ ${line}`.trim();
       init_filing();
       init_customer_metrics();
       init_settings_panels();
+      init_record_print();
       init_archived_records();
       init_record_deletion();
       init_offline_desktop();
@@ -20109,6 +20209,7 @@ ${admin ? `<div class="finance-kpis" style="margin:12px 0"><article><span>FIT wi
       };
       invoices = withCurrentFinancialRecords(invoices);
       payments = withCurrentFinancialRecords(payments);
+      installRecordPrintHooks(window);
     }
   });
 
