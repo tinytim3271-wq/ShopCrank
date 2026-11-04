@@ -163,3 +163,47 @@ test('configured cross-origin frontend controls checkout defaults, redirects and
     globalThis.fetch = originalFetch;
   }
 });
+
+test('with overage billing set up, checkout adds the plan\'s metered AI phone overage price (no quantity)', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), params: new URLSearchParams(options.body || '') });
+    if (String(url).includes('/prices?')) {
+      const key = new URL(String(url)).searchParams.get('lookup_keys[]');
+      return Response.json({ data: key === 'shopcrank_ai_phone_overage_12c_month' ? [{ id: 'price_overage12m', lookup_key: key, recurring: { usage_type: 'metered' } }] : [] });
+    }
+    return Response.json({ url: 'https://checkout.stripe.test/session' });
+  };
+  try {
+    const env = { ...billingEnv(), STRIPE_AI_PHONE_METER_EVENT: 'ai_phone_minutes' };
+    assert.equal((await worker.fetch(billingRequest('checkout'), env)).status, 200);
+    const lookup = requests.find(item => item.url.includes('/prices?'));
+    assert.equal(new URL(lookup.url).searchParams.get('lookup_keys[]'), 'shopcrank_ai_phone_overage_12c_month', 'Shop plan overage is 12¢/min');
+    const session = requests.find(item => item.url.endsWith('/checkout/sessions')).params;
+    assert.equal(session.get('line_items[0][price]'), 'price_1ABC123xyz');
+    assert.equal(session.get('line_items[1][price]'), 'price_overage12m');
+    assert.equal(session.get('line_items[1][quantity]'), null, 'metered prices take no quantity');
+
+    // Not set up yet (no price with that key): the plan is still sold on its own.
+    requests.length = 0;
+    const annual = await worker.fetch(billingRequest('checkout', { interval: 'annual' }), { ...env, STRIPE_PRICE_SHOP_ANNUAL: 'price_1ANNUALxyz' });
+    assert.equal(annual.status, 200);
+    assert.equal(new URL(requests.find(item => item.url.includes('/prices?')).url).searchParams.get('lookup_keys[]'), 'shopcrank_ai_phone_overage_12c_year');
+    assert.equal(requests.find(item => item.url.endsWith('/checkout/sessions')).params.get('line_items[1][price]'), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('without the meter variable, checkout does not look for an overage price', async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => { urls.push(String(url)); return Response.json({ url: 'https://checkout.stripe.test/session' }); };
+  try {
+    assert.equal((await worker.fetch(billingRequest('checkout'), billingEnv())).status, 200);
+    assert.ok(!urls.some(url => url.includes('/prices')));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

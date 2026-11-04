@@ -155,6 +155,11 @@ AI_ENABLED=1
 # STRIPE_PRICE_FOUNDING_SHOP_ANNUAL=price_...
 # STRIPE_PRICE_FOUNDING_PRO_MONTHLY=price_...
 # STRIPE_PRICE_FOUNDING_PRO_ANNUAL=price_...
+# AI phone minutes over the plan are billed through a Stripe billing meter.
+# `npm run stripe:overage-setup` (Stripe CLI, logged in) creates the meter and
+# the metered prices; then set this so calls report minutes and checkout adds
+# the overage price. Add --apply to put it on existing subscriptions, --live for live mode.
+# STRIPE_AI_PHONE_METER_EVENT=ai_phone_minutes
 
 # YouTube Data API v3 key for the text assistant's video search tool (Google Cloud
 # API key restricted to "YouTube Data API v3"). Unset hides search_youtube_videos.
