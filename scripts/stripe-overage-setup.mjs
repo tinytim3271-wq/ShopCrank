@@ -38,13 +38,15 @@ export function planOverageCents(planId) {
 /** Runs `stripe <args>` and returns parsed JSON; a Stripe error comes back as { error }. */
 export function cliRunner({ live = false } = {}) {
   const exec = args => {
-    if (process.platform !== 'win32') return execFileSync('stripe', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    // The Stripe CLI is a developer tool found on the operator's own PATH (or STRIPE_CLI).
+    const cli = process.env.STRIPE_CLI || (process.platform === 'win32' ? 'stripe.exe' : 'stripe');
+    if (process.platform !== 'win32' || process.env.STRIPE_CLI) return execFileSync(cli, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); // NOSONAR operator-run CLI script
     try {
-      return execFileSync('stripe.exe', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      return execFileSync(cli, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); // NOSONAR operator-run CLI script
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       // npm installs a stripe.cmd shim, which needs cmd.exe: quote every argument.
-      const quoted = args.map(arg => `"${String(arg).replace(/"/g, '""')}"`).join(' ');
+      const quoted = args.map(arg => `"${String(arg).replaceAll('"', '""')}"`).join(' ');
       return execFileSync(`stripe ${quoted}`, { encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
     }
   };
@@ -134,33 +136,46 @@ export function ensurePrices(stripe, meterId, log = console.log) {
   return prices;
 }
 
+/** The overage price a subscription should carry, or null when it has no ShopCrank plan. */
+function overagePriceFor(subscription, prices) {
+  const items = subscription.items?.data || [];
+  const cents = planOverageCents(subscription.metadata?.planId || '');
+  if (!cents) return null;
+  const interval = items.find(item => item.price?.recurring?.usage_type !== 'metered')?.price?.recurring?.interval;
+  return prices[lookupKey(cents, interval === 'year' ? 'year' : 'month')] || null;
+}
+
+function hasOveragePrice(subscription) {
+  return (subscription.items?.data || []).some(item => String(item.price?.lookup_key || '').startsWith(LOOKUP_PREFIX));
+}
+
+function reviewSubscription(stripe, subscription, prices, report, { apply, log }) {
+  report.checked += 1;
+  if (hasOveragePrice(subscription)) return;
+  const planId = subscription.metadata?.planId || '';
+  const priceId = overagePriceFor(subscription, prices);
+  if (!priceId) {
+    report.skipped.push(`${subscription.id} (plan "${planId || 'unknown'}")`);
+    return;
+  }
+  if (!apply) {
+    report.wouldAdd.push(`${subscription.id} → ${priceId}`);
+    return;
+  }
+  check(stripe(['post', '/v1/subscription_items', ...data({ subscription: subscription.id, price: priceId, proration_behavior: 'none' })]), `adding overage to ${subscription.id}`);
+  report.added.push(subscription.id);
+  log(`Added overage to ${subscription.id} (${planId})`);
+}
+
 /** Subscriptions that should carry the overage price and don't; adds it when apply is true. */
 export function attachToSubscriptions(stripe, prices, { apply = false, log = console.log } = {}) {
   const report = { checked: 0, added: [], wouldAdd: [], skipped: [] };
   for (const status of ['active', 'trialing', 'past_due']) {
     let startingAfter = '';
     for (;;) {
-      const page = check(stripe(['get', '/v1/subscriptions', ...data({ status, limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) })]), 'listing subscriptions');
-      for (const subscription of page.data || []) {
-        report.checked += 1;
-        const items = subscription.items?.data || [];
-        if (items.some(item => String(item.price?.lookup_key || '').startsWith(LOOKUP_PREFIX))) continue;
-        const planId = subscription.metadata?.planId || '';
-        const cents = planOverageCents(planId);
-        const interval = items.find(item => item.price?.recurring?.usage_type !== 'metered')?.price?.recurring?.interval || 'month';
-        const priceId = cents ? prices[lookupKey(cents, interval === 'year' ? 'year' : 'month')] : null;
-        if (!priceId) {
-          report.skipped.push(`${subscription.id} (plan "${planId || 'unknown'}")`);
-          continue;
-        }
-        if (!apply) {
-          report.wouldAdd.push(`${subscription.id} → ${priceId}`);
-          continue;
-        }
-        check(stripe(['post', '/v1/subscription_items', ...data({ subscription: subscription.id, price: priceId, proration_behavior: 'none' })]), `adding overage to ${subscription.id}`);
-        report.added.push(subscription.id);
-        log(`Added overage to ${subscription.id} (${planId})`);
-      }
+      const query = { status, limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) };
+      const page = check(stripe(['get', '/v1/subscriptions', ...data(query)]), 'listing subscriptions');
+      for (const subscription of page.data || []) reviewSubscription(stripe, subscription, prices, report, { apply, log });
       if (!page.has_more || !page.data?.length) break;
       startingAfter = page.data.at(-1).id;
     }

@@ -247,8 +247,9 @@ export async function findOveragePrice(env, planId, interval = 'monthly', fetche
   const lookupKey = overageLookupKey(overageRateCents, interval);
   const base = providerBase(env, 'STRIPE', 'https://api.stripe.com/v1');
   try {
+    const authorization = 'Basic ' + btoa(stripeKey + ':');
     const response = await fetcher(`${base}/prices?active=true&lookup_keys[]=${encodeURIComponent(lookupKey)}`, {
-      headers: { Authorization: `Basic ${btoa(`${stripeKey}:`)}` },
+      headers: { Authorization: authorization },
     });
     const payload = await response.json().catch(() => ({}));
     const price = (payload.data || []).find(item => item.lookup_key === lookupKey && item.recurring?.usage_type === 'metered');
