@@ -84,11 +84,11 @@
   "devDependencies": {
     "@capacitor/cli": "^8.6.0",
     "electron": "^45.1.0",
-    "electron-builder": "^26.0.12",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.13.0",
     "playwright": "^1.64.1",
-    "wrangler": "^4.154.0"
+    "wrangler": "^4.156.0"
   },
   "build": {
     "appId": "com.shopcrank.dispatch",
@@ -164,14 +164,14 @@
     }
   },
   "dependencies": {
-    "@capacitor/android": "^8.5.3",
+    "@capacitor/android": "^8.6.0",
     "@capacitor/core": "^8.5.3",
     "@google/genai": "^2.30.0",
     "dompurify": "^3.4.17",
     "express": "^5.2.1",
     "leaflet": "^1.9.4",
     "obd": "^1.0.0",
-    "posthog-node": "^5.57.2"
+    "posthog-node": "^5.61.1"
   },
   "overrides": {
     "rimraf": "^4.0.1",

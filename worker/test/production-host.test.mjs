@@ -86,11 +86,12 @@ test('legacy provider callbacks reach their existing authentication checks', asy
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: '',
     }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
+    // Unverified incoming calls are answered with a plain forward/apology (no AI stream).
     [new Request(`https://${LEGACY_HOST}/api/voice/twilio/incoming/shop-1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: '',
-    }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
+    }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 200],
     [new Request(`https://${LEGACY_HOST}/api/voice/twilio/stream/shop-1`, {
       headers: { Upgrade: 'websocket' },
     }), {}, 401],

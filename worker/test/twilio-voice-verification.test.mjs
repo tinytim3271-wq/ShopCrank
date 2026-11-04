@@ -22,11 +22,29 @@ async function twilioSignature(authToken, url, params) {
 
 const noSecrets = async () => '';
 
-test('an unsigned incoming call is refused when the shop has no Twilio token', async () => {
-  await assert.rejects(
-    handleTwilioVoiceIncoming(incoming(), {}, SHOP, { getSecret: noSecrets }),
-    error => error instanceof HttpError && error.status === 503,
-  );
+test('an unverified incoming call is still answered, without the AI or a stream token', async () => {
+  for (const env of [{}, { TWILIO_AUTH_TOKEN: 'twilio-test-token' }]) {
+    const response = await handleTwilioVoiceIncoming(incoming({ 'X-Twilio-Signature': 'forged' }), env, SHOP, { getSecret: noSecrets });
+    assert.equal(response.status, 200);
+    const twiml = await response.text();
+    assert.match(twiml, /<Response>/);
+    assert.doesNotMatch(twiml, /<Stream|<Connect|wss:/, 'no AI stream is handed out');
+  }
+});
+
+test('a token saved without texting settings still verifies voice calls', async () => {
+  const params = new URLSearchParams({ From: '+18065550199', CallSid: 'CA1' });
+  const url = `https://www.shopcrank.com/api/voice/twilio/incoming/${SHOP}`;
+  const shopToken = async (_env, _shop, name) => (name === 'twilio-auth-token' ? 'shop-only-token' : '');
+  const good = await twilioSignature('shop-only-token', url, params);
+  await assert.doesNotReject(verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': good }), {}, SHOP, params, shopToken));
+});
+
+test('a number configured on the apex host verifies on the www host, and the master token counts', async () => {
+  const params = new URLSearchParams({ From: '+18065550199', CallSid: 'CA2' });
+  const apex = `https://shopcrank.com/api/voice/twilio/incoming/${SHOP}`;
+  const signed = await twilioSignature('master-token', apex, params);
+  await assert.doesNotReject(verifyTwilioVoiceRequest(incoming({ 'X-Twilio-Signature': signed }), { TWILIO_MASTER_AUTH_TOKEN: 'master-token' }, SHOP, params, noSecrets));
 });
 
 test('local development may skip the check only with DEV_AUTH_BYPASS', async () => {
