@@ -175,6 +175,12 @@ AI_ENABLED=1
 # its confidence. Free keys: 7 requests/day, one job per call (answers are cached 30 days).
 # OPEN_LABOR_API_KEY=replace-with-open-labor-key
 
+# Web search for the Tech Assistant (Brave Search API, https://brave.com/search/api/).
+# Without it, search goes through the shop's or platform's Gemini key (Google
+# Search) or Claude key (web search); with none of those the assistant can still
+# read a known link and look up NHTSA recalls.
+# WEB_SEARCH_API_KEY=replace-with-brave-search-key
+
 # Labor web fallback (used only when no MOTOR/ALLDATA/ShopKey provider is connected).
 # Brave Search: https://brave.com/search/api/ — results are labeled "web estimate — not book time".
 # LABOR_WEB_SEARCH_PROVIDER=brave

@@ -5523,6 +5523,108 @@ ${draft.convertError ? `<div class="import-errors" role="alert"><span>Could not 
     }
   });
 
+  // src/modules/assistant-actions.js
+  function isRunnableConfirmation(action) {
+    return Boolean(action) && action.kind === "app_api_confirmation" && METHODS.has(String(action.method || "").toUpperCase()) && SAFE_PATH.test(String(action.path || "")) && !/(^|\/)(auth|ai)(\/|$)/.test(String(action.path || "")) && !String(action.path || "").includes("..");
+  }
+  function safeHttpsUrl(value2) {
+    try {
+      const url = new URL(String(value2 || ""));
+      return url.protocol === "https:" ? url.toString() : "";
+    } catch {
+      return "";
+    }
+  }
+  function assistantActionsHtml(actions = [], messageIndex = 0, { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? ""), icon: icon2 = () => "", sources = [] } = {}) {
+    return assistantSourcesHtml(sources, { escapeHtml: escapeHtml4 }) + (Array.isArray(actions) ? actions : []).map((action, actionIndex) => {
+      const key = `${messageIndex}:${actionIndex}`;
+      if (action?.kind === "estimate_work_order_draft") {
+        return `<button type="button" class="assistant-draft-action" data-assistant-draft="${key}">${icon2("clipboard-plus", 14)} Save estimate & fill work order</button>`;
+      }
+      if (action?.kind === "open_screen" && action.screen) {
+        return `<button type="button" class="secondary assistant-open-screen" data-assistant-screen="${key}">${icon2("arrow-right", 14)} Open ${escapeHtml4(action.title || action.screen)}</button>`;
+      }
+      if (isRunnableConfirmation(action)) {
+        const state2 = action.status === "done" ? `<span class="badge paid">Done</span>` : action.status === "dismissed" ? `<span class="badge">Not done</span>` : `<div class="assistant-confirm-actions"><button type="button" class="primary" data-assistant-confirm="${key}">${icon2("check", 14)} Confirm</button><button type="button" class="secondary" data-assistant-dismiss="${key}">Don't do it</button></div>`;
+        return `<div class="assistant-confirm-card" role="group" aria-label="Needs your confirmation"><strong>${escapeHtml4(action.summary || "Confirm this change")}</strong><span class="assistant-confirm-detail">${escapeHtml4(action.method)} ${escapeHtml4(action.path)}</span>${action.reason ? `<small>${escapeHtml4(action.reason)}</small>` : ""}${action.error ? `<small class="login-error">${escapeHtml4(action.error)}</small>` : ""}${state2}</div>`;
+      }
+      return "";
+    }).join("");
+  }
+  function assistantSourcesHtml(sources = [], { escapeHtml: escapeHtml4 = (value2) => String(value2 ?? "") } = {}) {
+    const links = (Array.isArray(sources) ? sources : []).map((source) => ({ url: safeHttpsUrl(source?.url), title: source?.title })).filter((source) => source.url).slice(0, 8).map((source) => `<li><a href="${escapeHtml4(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml4(source.title || new URL(source.url).hostname)}</a></li>`);
+    return links.length ? `<details class="assistant-sources"><summary>Sources (${links.length})</summary><ul>${links.join("")}</ul></details>` : "";
+  }
+  async function runConfirmedAction(action, apiFetch2) {
+    if (!isRunnableConfirmation(action)) throw new Error("This change cannot be run from here.");
+    const init = { method: String(action.method).toUpperCase() };
+    if (action.body && typeof action.body === "object") init.body = JSON.stringify(action.body);
+    return apiFetch2(action.path, init);
+  }
+  function bindAssistantActionButtons(root, { conversation = [], apiFetch: apiFetch2, toast: toast2 = () => {
+  }, openScreen = () => {
+  }, rerender = () => {
+  }, saveDraft = async () => {
+  } }) {
+    if (!root) return;
+    const getAction = (key) => {
+      const [messageIndex, actionIndex] = String(key || "").split(":").map(Number);
+      return conversation[messageIndex]?.actions?.[actionIndex] || null;
+    };
+    root.querySelectorAll("[data-assistant-draft]").forEach((button) => {
+      button.onclick = async () => {
+        const action = getAction(button.dataset.assistantDraft);
+        if (!action) return;
+        button.disabled = true;
+        try {
+          await saveDraft(action);
+        } catch (error) {
+          button.disabled = false;
+          toast2(error?.message || "The estimate draft could not be saved");
+        }
+      };
+    });
+    root.querySelectorAll("[data-assistant-confirm]").forEach((button) => {
+      button.onclick = async () => {
+        const action = getAction(button.dataset.assistantConfirm);
+        if (!action) return;
+        button.disabled = true;
+        try {
+          await runConfirmedAction(action, apiFetch2);
+          action.status = "done";
+          action.error = "";
+          toast2(action.summary ? `Done: ${action.summary}` : "Done");
+        } catch (error) {
+          action.error = error?.message || "That did not work";
+          toast2(action.error);
+        }
+        rerender();
+      };
+    });
+    root.querySelectorAll("[data-assistant-dismiss]").forEach((button) => {
+      button.onclick = () => {
+        const action = getAction(button.dataset.assistantDismiss);
+        if (!action) return;
+        action.status = "dismissed";
+        rerender();
+      };
+    });
+    root.querySelectorAll("[data-assistant-screen]").forEach((button) => {
+      button.onclick = () => {
+        const action = getAction(button.dataset.assistantScreen);
+        if (action?.screen) openScreen(action);
+      };
+    });
+    globalThis.lucide?.createIcons?.();
+  }
+  var SAFE_PATH, METHODS;
+  var init_assistant_actions = __esm({
+    "src/modules/assistant-actions.js"() {
+      SAFE_PATH = /^\/[A-Za-z0-9/_.~%-]+(\?[A-Za-z0-9=&_.~%+-]*)?$/;
+      METHODS = /* @__PURE__ */ new Set(["POST", "PUT", "PATCH"]);
+    }
+  });
+
   // src/modules/health-check.js
   function badge2(status, escapeHtml4) {
     return `<span class="badge ${STATUS_BADGE2[status] ?? ""}">${escapeHtml4(STATUS_LABEL[status] || status || "")}</span>`;
@@ -15074,7 +15176,7 @@ Continue?`)) return;
     bindNewOrderDraftAutosave(form);
   }
   function assistantMessageMarkup(item, index) {
-    const actions = (item.actions || []).map((action, actionIndex) => action.kind === "estimate_work_order_draft" ? `<button type="button" class="assistant-draft-action" data-assistant-draft="${index}:${actionIndex}">${icon("clipboard-plus", 14)} Save estimate & fill work order</button>` : "").join("");
+    const actions = assistantActionsHtml(item.actions, index, { escapeHtml, icon, sources: item.sources });
     return `<article class="assistant-message ${item.role}"><strong>${item.role === "user" ? "You" : "ShopCrank Assistant"}</strong><p>${escapeHtml(item.content)}</p>${assistantMediaHtml(item.media, { escapeHtml, icon })}${actions}</article>`;
   }
   function assistantProviderLabel(provider = "") {
@@ -15123,20 +15225,17 @@ Continue?`)) return;
     }));
   }
   function bindAssistantDraftActions() {
-    document.querySelectorAll("[data-assistant-draft]").forEach((button) => {
-      button.onclick = async () => {
-        const [messageIndex, actionIndex] = button.dataset.assistantDraft.split(":").map(Number);
-        const action = assistantConversation[messageIndex]?.actions?.[actionIndex];
-        if (!action) return;
-        button.disabled = true;
-        try {
-          await saveAssistantDraft(action);
-        } catch (error) {
-          button.disabled = false;
-          toast(error.message || "The estimate draft could not be saved");
-        }
-      };
-    });
+    const list = document.querySelector("#assistant-messages");
+    bindAssistantActionButtons(list, { conversation: assistantConversation, apiFetch, toast, saveDraft: saveAssistantDraft, rerender: () => {
+      list.innerHTML = assistantConversation.map(assistantMessageMarkup).join("");
+      bindAssistantDraftActions();
+      bindAssistantMedia(list);
+    }, openScreen: ({ screen, tab }) => {
+      if (tab && screen === "shopops") shopOpsTab = tab;
+      if (tab && screen === "ai") aiTab = tab;
+      closeModal();
+      document.querySelector(`#sidebar [data-route="${screen}"]`)?.click();
+    } });
   }
   function invoicePaymentSummary(invoice) {
     return paymentSummary(invoice.amount, state.payments, {
@@ -17531,6 +17630,7 @@ ${line}`.trim();
       init_customer_intake();
       init_vehicle_key_license();
       init_assistant_media();
+      init_assistant_actions();
       init_health_check();
       init_ambassadors();
       init_sms_inbox();
@@ -19037,7 +19137,7 @@ ${line}`.trim();
         const rows = assistantConversation.map(assistantMessageMarkup).join("");
         const provider = assistantProviderFromSettings();
         const providerLabel2 = assistantProviderLabel(provider);
-        return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel2} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Speak or type the customer, vehicle, complaint, parts, labor hours and source, and exclusions. ShopCrank prepares both records for review; it never auto-submits the work order.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for\u2026"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel2}. Missing configuration is reported without a simulated answer.</p></form></section>`;
+        return `<section class="ai-panel live-assistant"><div class="statement-head"><div><div class="eyebrow" id="assistant-provider-header">${providerLabel2} + Deepgram call assistant</div><h2>Talk through the job</h2><p>Ask about a repair, a record, or the program. It works as you and can research and save records, but never deletes and asks before texting customers or moving money.</p></div>${icon("audio-lines", 20)}</div><div class="assistant-messages" id="assistant-messages">${rows || `<div class="assistant-empty">Ask the assistant to prepare an estimate and work order from the call.</div>`}</div><form class="assistant-form" id="assistant-form"><textarea name="message" rows="2" maxlength="4000" placeholder="Create an estimate and work order for\u2026"></textarea><div class="assistant-actions"><button class="secondary" type="button" id="assistant-mic" title="Record with Deepgram">${icon("mic", 15)} <span>Record</span></button><button class="icon-button" type="button" id="assistant-stop" title="Stop speaking">${icon("volume-x", 15)}</button><button class="primary" type="submit">${icon("send", 14)} Ask assistant</button></div><p class="assistant-provider-note" id="assistant-provider-note">Voice transcription requires Deepgram. Estimate drafting uses ${providerLabel2}. Missing configuration is reported without a simulated answer.</p></form></section>`;
       };
       bindLiveAssistant = function() {
         const form = document.querySelector("#assistant-form");
@@ -19059,8 +19159,8 @@ ${line}`.trim();
           bindAssistantDraftActions();
           bindAssistantMedia(list);
         };
-        const append = (role, content, actions = [], media = []) => {
-          assistantConversation.push({ role, content, actions, media });
+        const append = (role, content, actions = [], media = [], sources = []) => {
+          assistantConversation.push({ role, content, actions, media, sources });
           renderMessages();
         };
         form.onsubmit = async (event) => {
@@ -19078,7 +19178,7 @@ ${line}`.trim();
             assistantActiveProvider = String(result.provider || assistantActiveProvider || "gemini").trim().toLowerCase();
             renderAssistantProvider();
             const answer = result.message || "The assistant did not return an answer.";
-            append("assistant", answer, result.actions || [], result.media || []);
+            append("assistant", answer, result.actions || [], result.media || [], result.sources || []);
             if (!assistantPaused && "speechSynthesis" in window) {
               speechSynthesis.cancel();
               speechSynthesis.speak(new SpeechSynthesisUtterance(speakableText(answer)));
