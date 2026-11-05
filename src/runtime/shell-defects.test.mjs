@@ -11,6 +11,8 @@ import * as Filing from '../modules/filing/index.js';
 import { toLocalIsoDate } from '../shared/dates.js';
 import { escapeHtml } from '../shared/html.js';
 import { combinedSalesTaxRate, normalizeJurisdictions } from '../modules/filing/jurisdictions.js';
+import { applyInvoiceRemoval } from '../modules/archived-records.js';
+import { relatedForRemoval } from '../modules/record-deletion.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
@@ -90,6 +92,34 @@ test('invoice editor roundtrips date-only values without UTC drift', () => {
   assert.equal(dateValue('2026-10-31'), '2026-10-31');
   assert.equal(dateValue('2026-02-30'), '');
   assert.equal(dateValue('2024-02-29'), '2024-02-29');
+});
+
+test('queued invoice archives retain and mark the invoice and work-order-linked deposits', async () => {
+  const invoice = { id: 'invoice-1', number: 'INV-1', ro: 'RO-1', status: 'paid' };
+  const payment = { id: 'payment-1', workOrderId: invoice.ro };
+  const state = { invoices: [invoice], payments: [payment] };
+  const messages = [];
+  const deleteInvoiceRecord = vm.runInNewContext(`${functionSource('async function deleteInvoiceRecord(')}; deleteInvoiceRecord`, {
+    state,
+    userCanDeleteRecords: () => true,
+    invoiceRecordKey: item => item.id || item.number,
+    relatedForRemoval,
+    removalCollections: () => ({ payments: state.payments }),
+    willArchive: () => true,
+    confirm: () => true,
+    apiFetch: async () => ({ queued: true }),
+    archivedCopy: record => record,
+    applyInvoiceRemoval: (records, result, item, linkedPayments, archives) => applyInvoiceRemoval(records, result, item, linkedPayments, archives, 'queued-at'),
+    save() {},
+    toast: message => messages.push(message),
+    render() {},
+  });
+
+  await deleteInvoiceRecord(invoice.id);
+
+  assert.equal(state.invoices[0].archivedAt, 'queued-at');
+  assert.equal(state.payments[0].archivedAt, 'queued-at');
+  assert.deepEqual(messages, ['INV-1 archived']);
 });
 
 test('tax reports keep migrated recognition dates while payment history keeps CSV receipt dates', () => {

@@ -74,6 +74,20 @@ test('queued archives remain in remote-list overlays while hard deletes are remo
   );
 });
 
+test('queued operational archives stay hidden from active-list overlays', () => {
+  for (const type of ['orders', 'vehicles']) {
+    const id = `${type}-1`;
+    assert.deepEqual(
+      applyQueuedEntityMutations(type, [{ id, archivedAt: '2026-11-04T00:00:00.000Z' }], [{
+        path: `/entities/${type}/${id}`,
+        method: 'DELETE',
+        body: JSON.stringify({ id, archivedAt: '2026-11-04T00:00:00.000Z' }),
+      }]),
+      [],
+    );
+  }
+});
+
 test('queued archives preserve a pending create before applying the archive', () => {
   const pending = [{
     key: '/entities/invoices/INV-1',

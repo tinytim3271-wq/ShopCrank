@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyRemovalResult, archivedRecordLabel, withoutArchived } from './archived-records.js';
+import { applyInvoiceRemoval, applyRemovalResult, archivedRecordLabel, withoutArchived } from './archived-records.js';
 
 test('an archive response removes the archived and deleted records from the lists', () => {
   const state = { invoices: [{ id: 'i1', number: 'INV-1' }, { id: 'i2', number: 'INV-2' }], payments: [{ id: 'p1' }, { id: 'p2' }], appointments: [{ id: 'a1' }] };
@@ -20,6 +20,15 @@ test('a permanent delete (204, no body) leaves the lists for the caller to updat
   assert.equal(applyRemovalResult(state, null), false);
   assert.equal(applyRemovalResult(state, { queued: true }), false);
   assert.equal(state.invoices.length, 1);
+});
+
+test('a queued invoice archive marks its invoice and linked payments', () => {
+  const invoice = { id: 'i1', number: 'INV-1' };
+  const payment = { id: 'p1', invoiceNumber: invoice.number };
+  const state = { invoices: [invoice], payments: [payment] };
+  assert.equal(applyInvoiceRemoval(state, { queued: true }, invoice, [payment], true, 'queued-at'), true);
+  assert.equal(state.invoices[0].archivedAt, 'queued-at');
+  assert.equal(state.payments[0].archivedAt, 'queued-at');
 });
 
 test('labels read well for each type', () => {
