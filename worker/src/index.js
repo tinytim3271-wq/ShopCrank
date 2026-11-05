@@ -141,6 +141,7 @@ import { redactSensitive } from './redact.mjs';
 import { HEALTH_CHECK_CRON, handleHealthCheckAdmin, runScheduledHealthCheck } from './health/health-check.mjs';
 import { applyAttribution, attributeMembership, normalizeReferralCode, resolveAttribution } from './ambassadors/store.mjs';
 import { recordInvoiceCommission } from './ambassadors/commissions.mjs';
+import { endPaidCoverage, grantAdminCoverage, resumeSuspendedCoverage } from './ambassadors/coverage.mjs';
 import { AMBASSADOR_PAYOUT_CRON, runScheduledAmbassadorPayouts } from './ambassadors/payout-report.mjs';
 import { handleAmbassadorAdmin, handleAmbassadorPublic } from './ambassadors/routes.mjs';
 
@@ -2425,6 +2426,7 @@ async function handleAdmin(request, env, context, segments, analytics) {
           current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
       `).bind(shopId, planId, subscriptionStatus, subscriptionExpiresAt, nowIso),
     ]);
+    if (subscriptionStatus === 'active') await grantAdminCoverage(env, shopId, nowIso);
     const credit = await applyAttribution(env, shopId, {
       ambassador: attribution.ambassador,
       saleSource: attribution.saleSource,
@@ -2484,6 +2486,8 @@ async function handleAdmin(request, env, context, segments, analytics) {
       'UPDATE accounts SET suspended = ?, updated_at = ? WHERE shop_id = ?',
     ).bind(body.suspended ? 1 : 0, now, target).run();
     if (!result.meta.changes) throw new HttpError(404, 'Customer account not found');
+    if (body.suspended) await endPaidCoverage(env, target, now, { reason: 'suspension' });
+    else await resumeSuspendedCoverage(env, target, now);
     await env.DB.prepare('UPDATE users SET enabled = ?, updated_at = ? WHERE shop_id = ?').bind(body.suspended ? 0 : 1, now, target).run();
     if (body.suspended) {
       const userRows = await env.DB.prepare('SELECT id FROM users WHERE shop_id = ?').bind(target).all();
@@ -2552,6 +2556,12 @@ async function handleAdmin(request, env, context, segments, analytics) {
       ON CONFLICT(shop_id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status,
         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
     `).bind(target, planId, subscriptionStatus, subscriptionExpiresAt, nowIso, nowIso).run();
+    if (subscriptionStatus === 'active') {
+      await grantAdminCoverage(env, target, nowIso);
+      if (Number(account.suspended) === 1) {
+        await endPaidCoverage(env, target, nowIso, { reason: 'suspension', sources: ['admin'] });
+      }
+    } else await endPaidCoverage(env, target, nowIso, { reason: 'membership_change' });
     let credit = null;
     if (attribution) {
       credit = await applyAttribution(env, target, {
@@ -3629,7 +3639,15 @@ async function handleBilling(request, env, context, segments) {
       const subscriptionEvent = ['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted'].includes(event.type);
       const checkoutEvent = event.type === 'checkout.session.completed';
       const paymentFailed = event.type === 'invoice.payment_failed';
-      if (subscriptionEvent || checkoutEvent || paymentFailed) {
+      const eventCreated = Number(event.created);
+      const latestBillingEvent = subscriptionEvent && Number.isFinite(eventCreated) && eventCreated > 0
+        ? await env.DB.prepare(`
+          SELECT MAX(CAST(json_extract(event_json, '$.created') AS INTEGER)) AS latest_created
+          FROM billing_events WHERE shop_id = ?
+        `).bind(shopId).first()
+        : null;
+      const staleSubscriptionEvent = Number(latestBillingEvent?.latest_created || 0) > eventCreated;
+      if ((subscriptionEvent || checkoutEvent || paymentFailed) && !staleSubscriptionEvent) {
         const existing = await env.DB.prepare(
           'SELECT plan_id, stripe_subscription_id, current_period_end, current_period_start FROM subscriptions WHERE shop_id = ?',
         ).bind(shopId).first();
@@ -3681,6 +3699,12 @@ async function handleBilling(request, env, context, segments) {
         `).bind(
           shopId, subscriptionId || null, planId, status, periodEnd, periodStart, nowIso, nowIso,
         ).run();
+        // Paid coverage comes only from invoice.paid with a positive membership
+        // line (recordInvoiceCommission). A membership that stops being active
+        // ends whatever is still running; moving onto Stripe billing ends the
+        // admin grant, so only paid Stripe invoices cover it from here on.
+        if (status !== 'active') await endPaidCoverage(env, shopId, nowIso, { reason: 'membership_change' });
+        else await endPaidCoverage(env, shopId, nowIso, { reason: 'billing_switch', sources: ['admin'] });
         capturePostHogEvent(env, { shopId, userId: `billing-webhook:${shopId}` }, 'subscription_status_changed', {
           plan_id: planId,
           subscription_status: status,
