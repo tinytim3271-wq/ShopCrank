@@ -3635,7 +3635,15 @@ async function handleBilling(request, env, context, segments) {
       const subscriptionEvent = ['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted'].includes(event.type);
       const checkoutEvent = event.type === 'checkout.session.completed';
       const paymentFailed = event.type === 'invoice.payment_failed';
-      if (subscriptionEvent || checkoutEvent || paymentFailed) {
+      const eventCreated = Number(event.created);
+      const latestBillingEvent = subscriptionEvent && Number.isFinite(eventCreated) && eventCreated > 0
+        ? await env.DB.prepare(`
+          SELECT MAX(CAST(json_extract(event_json, '$.created') AS INTEGER)) AS latest_created
+          FROM billing_events WHERE shop_id = ?
+        `).bind(shopId).first()
+        : null;
+      const staleSubscriptionEvent = Number(latestBillingEvent?.latest_created || 0) > eventCreated;
+      if ((subscriptionEvent || checkoutEvent || paymentFailed) && !staleSubscriptionEvent) {
         const existing = await env.DB.prepare(
           'SELECT plan_id, stripe_subscription_id, current_period_end, current_period_start FROM subscriptions WHERE shop_id = ?',
         ).bind(shopId).first();

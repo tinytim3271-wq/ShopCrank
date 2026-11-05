@@ -40,38 +40,48 @@ export async function endPaidCoverage(env, shopId, at = new Date(), { reason = '
   const sourceFilter = sources?.length ? ` AND source IN (${sources.map(() => '?').join(', ')})` : '';
   return env.DB.prepare(`
     UPDATE ambassador_paid_coverage
-    SET paid_through = ends_at,
+    SET paid_through = CASE WHEN cut_reason = 'suspension' THEN paid_through ELSE ends_at END,
         cut_reason = ?,
-        ends_at = CASE WHEN starts_at > ? THEN starts_at ELSE ? END
-    WHERE shop_id = ? AND (ends_at IS NULL OR (ends_at > ? AND ends_at > starts_at))${sourceFilter}
-  `).bind(reason, when, when, shopId, when, ...(sources || [])).run();
+        ends_at = CASE WHEN cut_reason = 'suspension' THEN ends_at
+          WHEN starts_at > ? THEN starts_at ELSE ? END
+    WHERE shop_id = ? AND (
+      ends_at IS NULL OR (ends_at > ? AND ends_at > starts_at)
+      OR (cut_reason = 'suspension' AND ? != 'suspension')
+    )${sourceFilter}
+  `).bind(reason, when, when, shopId, when, reason, ...(sources || [])).run();
 }
 
 /** Lifting a suspension re-opens what it cut, through the original paid-through date. Idempotent. */
 export async function resumeSuspendedCoverage(env, shopId, at = new Date()) {
   const when = iso(at);
   const now = new Date().toISOString();
-  const [reopened, inserted] = await env.DB.batch([
+  const interrupted = await env.DB.prepare(`
+    SELECT starts_at, paid_through, source
+    FROM ambassador_paid_coverage
+    WHERE shop_id = ? AND source IN ('stripe_invoice', 'admin')
+      AND cut_reason = 'suspension' AND starts_at < ?
+      AND (paid_through IS NULL OR paid_through > ?)
+    ORDER BY starts_at
+  `).bind(shopId, when, when).all();
+  const statements = [
     // Intervals that had not started yet come back whole.
     env.DB.prepare(`
       UPDATE ambassador_paid_coverage SET ends_at = paid_through, paid_through = NULL, cut_reason = NULL
       WHERE shop_id = ? AND source IN ('stripe_invoice', 'admin') AND cut_reason = 'suspension' AND starts_at >= ?
     `).bind(shopId, when),
-    // Intervals the suspension interrupted resume from now to their paid-through date.
-    env.DB.prepare(`
+    // Preserve each interrupted interval's source and paid-through boundary.
+    ...(interrupted.results || []).map((row, index) => env.DB.prepare(`
       INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
-      SELECT shop_id, ?, CASE WHEN SUM(paid_through IS NULL) > 0 THEN NULL ELSE MAX(paid_through) END, MAX(source), ?
-      FROM ambassador_paid_coverage
-      WHERE shop_id = ? AND source IN ('stripe_invoice', 'admin') AND cut_reason = 'suspension' AND starts_at < ? AND (paid_through IS NULL OR paid_through > ?)
-      GROUP BY shop_id
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(shop_id, starts_at) DO NOTHING
-    `).bind(when, now, shopId, when, when),
+    `).bind(shopId, new Date(Date.parse(when) + index).toISOString(), row.paid_through, row.source, now)),
     env.DB.prepare(`
       UPDATE ambassador_paid_coverage SET cut_reason = 'suspension_resumed'
       WHERE shop_id = ? AND cut_reason = 'suspension'
     `).bind(shopId),
-  ]);
-  return { resumed: Number(reopened?.meta?.changes || 0) + Number(inserted?.meta?.changes || 0) };
+  ];
+  const results = await env.DB.batch(statements);
+  return { resumed: results.reduce((sum, result) => sum + Number(result?.meta?.changes || 0), 0) };
 }
 
 /**
@@ -80,13 +90,17 @@ export async function resumeSuspendedCoverage(env, shopId, at = new Date()) {
  */
 export async function grantAdminCoverage(env, shopId, at = new Date()) {
   const when = iso(at);
+  const account = await env.DB.prepare('SELECT suspended FROM accounts WHERE shop_id = ?').bind(shopId).first();
   const running = await env.DB.prepare(`
     SELECT 1 FROM ambassador_paid_coverage
     WHERE shop_id = ? AND source = 'admin' AND starts_at <= ? AND (ends_at IS NULL OR ends_at > ?)
     LIMIT 1
   `).bind(shopId, when, when).first();
   if (running) return { recorded: false };
-  await recordPaidCoverage(env, shopId, when, null, { source: 'admin' });
+  await recordPaidCoverage(env, shopId, when, null, {
+    source: 'admin',
+    cutReason: Number(account?.suspended) === 1 ? 'suspension' : null,
+  });
   return { recorded: true };
 }
 
