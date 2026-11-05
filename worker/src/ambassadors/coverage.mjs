@@ -30,19 +30,51 @@ export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, {
 }
 
 /**
- * Record a paid interval as excluded (stored already cut), so a later replay
- * of the same invoice, even under a new webhook event ID, cannot turn it into
- * coverage or a commission. An existing interval for the same start is cut.
+ * Record a rejected paid interval as excluded (stored already cut), so a later
+ * replay of the same invoice, even under a new webhook event ID, cannot turn it
+ * into coverage or a commission. An interval already stored for that start is
+ * left exactly as it is: an earlier, genuinely paid period is never erased.
  */
 export async function excludePaidCoverage(env, shopId, startsAt, endsAt = null, { reason = 'suspension', source = 'stripe_invoice' } = {}) {
   return env.DB.prepare(`
     INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, paid_through, cut_reason, source, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, starts_at) DO UPDATE SET
-      paid_through = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL THEN ambassador_paid_coverage.ends_at ELSE ambassador_paid_coverage.paid_through END,
-      cut_reason = COALESCE(ambassador_paid_coverage.cut_reason, excluded.cut_reason),
-      ends_at = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL THEN ambassador_paid_coverage.starts_at ELSE ambassador_paid_coverage.ends_at END
+    ON CONFLICT(shop_id, starts_at) DO NOTHING
   `).bind(shopId, iso(startsAt), iso(startsAt), isoOrNull(endsAt), reason, source, new Date().toISOString()).run();
+}
+
+/** Open a suspension period (idempotent while one is already open). */
+export async function startSuspension(env, shopId, at = new Date()) {
+  const when = iso(at);
+  return env.DB.prepare(`
+    INSERT INTO ambassador_suspension_periods (shop_id, started_at, ended_at)
+    SELECT ?, ?, NULL
+    WHERE NOT EXISTS (SELECT 1 FROM ambassador_suspension_periods WHERE shop_id = ? AND ended_at IS NULL)
+  `).bind(shopId, when, shopId).run();
+}
+
+/** Close the open suspension period, if any. */
+export async function endSuspension(env, shopId, at = new Date()) {
+  return env.DB.prepare(`
+    UPDATE ambassador_suspension_periods SET ended_at = ? WHERE shop_id = ? AND ended_at IS NULL
+  `).bind(iso(at), shopId).run();
+}
+
+/** True when `at` falls inside one of the shop's suspension periods. */
+export async function suspendedAt(env, shopId, at) {
+  const when = iso(at);
+  const row = await env.DB.prepare(`
+    SELECT 1 FROM ambassador_suspension_periods
+    WHERE shop_id = ? AND started_at <= ? AND (ended_at IS NULL OR ended_at > ?)
+    LIMIT 1
+  `).bind(shopId, when, when).first();
+  return Boolean(row);
+}
+
+/** When Stripe says the invoice was paid (falls back to its creation time). */
+export function invoicePaidAt(invoice) {
+  const seconds = Number(invoice?.status_transitions?.paid_at || invoice?.created || 0);
+  return seconds > 0 ? new Date(seconds * 1000) : new Date();
 }
 
 /** True when the interval starting at `startsAt` was cut or excluded; it never earns again. */

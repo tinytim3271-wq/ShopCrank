@@ -994,3 +994,57 @@ test('an invoice rejected during suspension stays excluded when Stripe resends i
   } } });
   assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'replay-shop' AND (ends_at IS NULL OR ends_at > starts_at)").get().n, 1, 'the next real invoice earns again');
 });
+
+test('a payment made during a suspension earns nothing even when its webhook arrives after the restore', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'late-hook', { soldByAmbassadorId: amb.id });
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('late-hook');
+  await call('POST', '/admin/accounts/late-hook/status', { suspended: true });
+  await call('POST', '/admin/accounts/late-hook/status', { suspended: false });
+  const day = 86400000;
+  DB.sqlite.prepare("UPDATE ambassador_suspension_periods SET started_at = ?, ended_at = ? WHERE shop_id = 'late-hook'")
+    .run(new Date(Date.now() - 2 * day).toISOString(), new Date(Date.now() - day).toISOString());
+  const paidDuring = Math.floor((Date.now() - 1.5 * day) / 1000);
+  const paidAfter = Math.floor((Date.now() - 0.5 * day) / 1000);
+  const invoice = (id, paidAt, start) => ({ id: `evt_${id}`, type: 'invoice.paid', data: { object: {
+    id: `in_${id}`, metadata: { shopId: 'late-hook' }, amount_paid: 13900,
+    status_transitions: { paid_at: paidAt }, lines: { data: [membershipLine(start, 13900)] },
+  } } });
+
+  await signedWebhook(env, invoice('during', paidDuring, paidDuring));
+  const live = () => DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'late-hook' AND (ends_at IS NULL OR ends_at > starts_at)").get().n;
+  assert.equal(live(), 0, 'paid while suspended, delivered after the restore: no coverage');
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_commissions WHERE shop_id = 'late-hook'").get().n, 0);
+
+  await signedWebhook(env, invoice('after', paidAfter, paidAfter));
+  assert.equal(live(), 1, 'a payment made after the restore earns normally');
+});
+
+test('replaying an old paid invoice during a suspension never erases that paid period', async () => {
+  const { call, DB, env } = setup();
+  await createShop(call, 'old-paid');
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('old-paid');
+  const day = 86400000;
+  const start = Math.floor((Date.now() - 40 * day) / 1000);
+  const end = new Date(Date.now() - 10 * day).toISOString();
+  DB.sqlite.prepare("INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at) VALUES ('old-paid', ?, ?, 'stripe_invoice', ?)")
+    .run(new Date(start * 1000).toISOString(), end, new Date(start * 1000).toISOString());
+
+  await call('POST', '/admin/accounts/old-paid/status', { suspended: true });
+  await signedWebhook(env, { id: 'evt_old_replay', type: 'invoice.paid', data: { object: {
+    id: 'in_old', metadata: { shopId: 'old-paid' }, amount_paid: 13900,
+    status_transitions: { paid_at: start }, lines: { data: [membershipLine(start, 13900)] },
+  } } });
+  const row = DB.sqlite.prepare("SELECT ends_at, cut_reason FROM ambassador_paid_coverage WHERE shop_id = 'old-paid'").get();
+  assert.deepEqual({ ...row }, { ends_at: end, cut_reason: null }, 'the completed paid interval is untouched');
+});
+
+test('suspension periods backfill currently suspended accounts', () => {
+  const before = readdirSync(new URL('../migrations/', import.meta.url)).filter(name => name.endsWith('.sql') && name < '0024').sort();
+  const DB = createD1(before);
+  DB.sqlite.prepare("INSERT INTO accounts (shop_id, shop_name, owner_email, owner_name, suspended, created_at, updated_at, created_by) VALUES ('held', 'Held', 'h@shops.test', 'Owner', 1, '2026-01-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'admin'), ('open', 'Open', 'o@shops.test', 'Owner', 0, '2026-01-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'admin')").run();
+  DB.sqlite.exec(readFileSync(new URL('../migrations/0024_ambassador_suspension_periods.sql', import.meta.url), 'utf8'));
+  const rows = DB.sqlite.prepare('SELECT shop_id, started_at, ended_at FROM ambassador_suspension_periods').all().map(row => ({ ...row }));
+  assert.deepEqual(rows, [{ shop_id: 'held', started_at: '2026-02-02T00:00:00.000Z', ended_at: null }]);
+});

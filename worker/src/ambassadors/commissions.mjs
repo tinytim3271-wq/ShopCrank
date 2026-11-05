@@ -5,7 +5,7 @@
 // Cancelled, past-due, trialing, and suspended accounts accrue nothing.
 
 import { HttpError } from '../http.mjs';
-import { coverageExcluded, excludePaidCoverage, invoiceMembershipPeriod, recordPaidCoverage } from './coverage.mjs';
+import { coverageExcluded, excludePaidCoverage, invoiceMembershipPeriod, invoicePaidAt, recordPaidCoverage, suspendedAt } from './coverage.mjs';
 
 export const COMMISSION_TIERS = Object.freeze(['solo', 'shop', 'shop_pro', 'enterprise']);
 export const TIER_LABELS = Object.freeze({ solo: 'Solo', shop: 'Shop', shop_pro: 'Shop Pro', enterprise: 'Enterprise' });
@@ -206,7 +206,9 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
   // A suspended shop earns nothing for this payment, now or after a restore.
   // Store the rejection durably: Stripe can resend the same invoice under a
   // new event ID after the shop is restored, and it must still earn nothing.
-  if (Number(subscription?.account_suspended) === 1) {
+  // A payment made during a suspension is rejected even when its webhook only
+  // arrives after the restore: check when it was paid, not just the account now.
+  if (Number(subscription?.account_suspended) === 1 || await suspendedAt(env, shopId, invoicePaidAt(invoice))) {
     await excludePaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { reason: 'suspension' });
     return { recorded: false, reason: 'account_suspended' };
   }
