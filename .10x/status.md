@@ -25,6 +25,6 @@ lint ✓ · 275 front-end/license tests ✓ · 281 Worker tests ✓ · config/J2
 
 ## Domain cutover (Oct 21, 2026)
 - Canonical host is `https://www.shopcrank.com`; the apex `shopcrank.com` serves the same site.
-- The pre-cutover host `www.yourcarguy806.com` (and its apex) now 301s every URL to the canonical host, path and query preserved.
+- ShopCrank runs on `www.shopcrank.com` only. The pre-cutover host no longer redirects here; it now serves the owner's auto-repair business website (2026-11-05). `scripts/no-former-host.test.mjs` keeps it out of code and config.
 - The privacy and terms pages no longer name a legacy shop; they describe the ShopCrank product generically.
 - `ALLOWED_ORIGINS` and `SUPPORT_EMAIL_*` no longer reference the legacy domain.

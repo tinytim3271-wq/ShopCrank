@@ -6,32 +6,27 @@ import {
   COPYABLE_SECRET_ENV,
   apexDnsRecords,
   CloudflareApiError,
-  LEGACY_ZONE,
   PAGES_PROJECT,
   SUPPORT_EMAIL,
   WORKER_NAME,
   createCloudflareClient,
-  desiredLegacyWorkerRoutes,
   desiredState,
   desiredWorkerRoutes,
-  detachLegacyWorkerDomains,
   ensureDnsRecords,
   ensureSupportForwarding,
   googleOAuthRemaining,
   isAlreadyConfiguredError,
   isDesiredApiRoute,
-  isLegacyApiRoute,
-  isLegacyHostRoute,
-  isLegacyWildcardRoute,
+  isForeignShopcrankBinding,
+  isShopcrankHostname,
+  isShopcrankZone,
+  releaseForeignBindings,
+  SHOPCRANK_SERVICES,
   isWholeHostnameRoute,
-  legacyDnsRecords,
-  legacyRoutesToCreate,
   parseArgs,
   provisionShopcrankCom,
-  restoreWorkerDomains,
   routesToCreate,
   secretCopyPlan,
-  shouldDeleteLegacyRoute,
   shouldDeleteWorkerRoute,
 } from './provision-shopcrank-com.mjs';
 
@@ -137,67 +132,39 @@ test('Google OAuth remaining step is console-only', () => {
   assert.match(remaining.message, /Google Cloud/);
 });
 
-test('the legacy zone is retired to a whole-host Worker route', () => {
-  assert.equal(LEGACY_ZONE, 'yourcarguy806.com');
-  assert.deepEqual(desiredLegacyWorkerRoutes(), [
-    'www.yourcarguy806.com/*',
-    'yourcarguy806.com/*',
-  ]);
-  assert.equal(isLegacyApiRoute('www.yourcarguy806.com/api/*'), true);
-  assert.equal(isLegacyApiRoute('yourcarguy806.com/api/*'), true);
-  assert.equal(isLegacyApiRoute('www.shopcrank.com/api/*'), false);
-  assert.equal(isLegacyHostRoute('www.yourcarguy806.com/*'), true);
-  assert.equal(isLegacyHostRoute('yourcarguy806.com/*'), true);
-  assert.equal(isLegacyHostRoute('www.yourcarguy806.com/api/*'), false);
-  assert.equal(isLegacyWildcardRoute('*.yourcarguy806.com/*'), true);
-  assert.equal(isLegacyWildcardRoute('*.yourcarguy806.com'), true);
-  assert.equal(isLegacyWildcardRoute('www.yourcarguy806.com/api/*'), false);
+test('only shopcrank.com, .net and .io hosts count as ShopCrank domains', () => {
+  for (const host of ['www.shopcrank.com', 'shopcrank.com', 'shopcrank.io', 'api.shopcrank.net', '*.shopcrank.com']) {
+    assert.equal(isShopcrankHostname(host), true, host);
+  }
+  for (const host of ['www.other-business.example', 'notshopcrank.com', 'shopcrank.com.evil.test', 'shopcrank.org', '']) {
+    assert.equal(isShopcrankHostname(host), false, host);
+  }
+  assert.equal(isShopcrankZone('shopcrank.com'), true);
+  assert.equal(isShopcrankZone('www.shopcrank.com'), false);
+  assert.equal(isShopcrankZone('other-business.example'), false);
 });
 
-test('the legacy wildcard Pages route is deleted and the whole host is re-pointed at the Worker', () => {
-  assert.equal(shouldDeleteLegacyRoute({ pattern: '*.yourcarguy806.com/*', script: 'shopcrank-dispatch' }), true);
-  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.yourcarguy806.com/*', script: 'shopcrank-api' }), false);
-  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.yourcarguy806.com/*', script: 'mechpro-api' }), true);
-  // The /api/* route is replaced by the whole-host route.
-  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' }), true);
-  assert.equal(shouldDeleteLegacyRoute({ pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' }), false);
+test('a ShopCrank Worker or Pages binding on another domain is foreign; other services are left alone', () => {
+  assert.deepEqual([...SHOPCRANK_SERVICES], ['shopcrank-api', 'mechpro-api', 'shopcrank-dispatch']);
+  assert.equal(isForeignShopcrankBinding({ hostname: 'www.other-business.example', service: 'shopcrank-api' }), true);
+  assert.equal(isForeignShopcrankBinding({ hostname: '*.other-business.example', service: 'shopcrank-dispatch' }), true);
+  assert.equal(isForeignShopcrankBinding({ hostname: 'other-business.example', service: 'mechpro-api' }), true);
+  assert.equal(isForeignShopcrankBinding({ hostname: 'www.shopcrank.com', service: 'shopcrank-api' }), false);
+  assert.equal(isForeignShopcrankBinding({ hostname: 'shopcrank-dispatch.pages.dev', service: 'shopcrank-dispatch' }), false);
+  assert.equal(isForeignShopcrankBinding({ hostname: 'shopcrank-api.acct.workers.dev', service: 'shopcrank-api' }), false);
+  // Another site's Worker on another domain is not ShopCrank's to remove.
+  assert.equal(isForeignShopcrankBinding({ hostname: 'www.other-business.example', service: 'other-site' }), false);
+  assert.equal(isForeignShopcrankBinding({ hostname: 'www.other-business.example', service: null }), false);
 });
 
-test('legacyRoutesToCreate adds the missing whole-host bindings only', () => {
-  assert.deepEqual(
-    legacyRoutesToCreate([{ pattern: 'www.yourcarguy806.com/*', script: 'shopcrank-api' }]),
-    ['yourcarguy806.com/*'],
-  );
-  assert.deepEqual(
-    legacyRoutesToCreate([
-      { pattern: 'www.yourcarguy806.com/*', script: 'shopcrank-api' },
-      { pattern: 'yourcarguy806.com/*', script: 'shopcrank-api' },
-    ]),
-    [],
-  );
-  // An /api/* route does not count as the whole-host route.
-  assert.deepEqual(
-    legacyRoutesToCreate([{ pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' }]),
-    ['www.yourcarguy806.com/*', 'yourcarguy806.com/*'],
-  );
-});
-
-test('desired state records the legacy cutover and the ShopCrank support address', () => {
+test('desired state keeps ShopCrank on its own domains and records the support address', () => {
   const state = desiredState();
-  assert.equal(state.legacyZone, 'yourcarguy806.com');
+  assert.equal('legacyZone' in state, false);
+  assert.equal('legacyWorkerRoutes' in state, false);
+  assert.ok(state.pagesDomains.every((name) => isShopcrankHostname(name)));
   assert.equal(state.supportEmail, 'support@shopcrank.com');
   assert.equal(SUPPORT_EMAIL, 'support@shopcrank.com');
-  assert.ok(!state.workerRoutes.some((pattern) => pattern.includes('yourcarguy806')));
-});
-
-test('legacyDnsRecords restores both legacy hostnames as proxied A records', () => {
-  const records = legacyDnsRecords();
-  assert.equal(records.length, 2);
-  assert.deepEqual(records.map((record) => record.name).toSorted(), ['www.yourcarguy806.com', 'yourcarguy806.com']);
-  for (const record of records) {
-    assert.equal(record.type, 'A');
-    assert.equal(record.proxied, true);
-  }
+  assert.ok(state.workerRoutes.every((pattern) => isShopcrankHostname(pattern.split('/')[0])));
 });
 
 test('apexDnsRecords points the apex at the Pages project with a CNAME', () => {
@@ -212,7 +179,7 @@ test('apexDnsRecords points the apex at the Pages project with a CNAME', () => {
 
 test('ensureDnsRecords creates missing records and leaves matching ones alone', async () => {
   const calls = [];
-  const existing = [{ id: 'rec-1', type: 'A', name: 'yourcarguy806.com', content: '104.21.17.176', proxied: true }];
+  const existing = [{ id: 'rec-1', type: 'A', name: 'records.example', content: '104.21.17.176', proxied: true }];
   const client = createCloudflareClient({
     apiToken: 'token',
     fetchImpl: async (url, init = {}) => {
@@ -235,14 +202,14 @@ test('ensureDnsRecords creates missing records and leaves matching ones alone', 
   const result = await ensureDnsRecords(client, {
     zoneId: 'zone-1',
     records: [
-      { type: 'A', name: 'yourcarguy806.com', content: '104.21.17.176', proxied: true },
-      { type: 'A', name: 'www.yourcarguy806.com', content: '104.21.17.188', proxied: true },
+      { type: 'A', name: 'records.example', content: '104.21.17.176', proxied: true },
+      { type: 'A', name: 'www.records.example', content: '104.21.17.188', proxied: true },
     ],
   });
 
   assert.equal(result.action, 'updated');
   // The matching record is left alone; only the missing one is created.
-  assert.deepEqual(result.created, [{ type: 'A', name: 'www.yourcarguy806.com', content: '104.21.17.188' }]);
+  assert.deepEqual(result.created, [{ type: 'A', name: 'www.records.example', content: '104.21.17.188' }]);
   assert.deepEqual(result.updated, []);
   assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
   assert.equal(calls.filter((call) => call.method === 'PUT').length, 0);
@@ -406,43 +373,6 @@ test('ensureSupportForwarding waits for a registered destination to be verified'
   assert.equal(result.action, 'pending');
   assert.equal(result.destinationId, 'address-1');
   assert.equal(calls.some((call) => call.path.endsWith('/email/routing/rules')), false);
-});
-
-test('detachLegacyWorkerDomains restores earlier deletions if a later detach fails', async () => {
-  const calls = [];
-  const client = createCloudflareClient({
-    apiToken: 'token',
-    fetchImpl: async (url, init = {}) => {
-      const method = init.method || 'GET';
-      const path = new URL(url).pathname.replace('/client/v4', '');
-      calls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined });
-      if (method === 'GET' && path.endsWith('/workers/domains')) {
-        return jsonResponse(200, {
-          success: true,
-          result: [
-            { id: 'domain-1', hostname: 'yourcarguy806.com', service: 'mechpro-api' },
-            { id: 'domain-2', hostname: 'www.yourcarguy806.com', service: 'mechpro-api' },
-          ],
-        });
-      }
-      if (method === 'DELETE' && path.endsWith('/domain-1')) {
-        return jsonResponse(200, { success: true, result: null });
-      }
-      if (method === 'DELETE' && path.endsWith('/domain-2')) {
-        return jsonResponse(500, { success: false, errors: [{ message: 'delete failed' }] });
-      }
-      if (method === 'PUT' && path.endsWith('/workers/domains')) {
-        return jsonResponse(200, { success: true, result: { id: 'restored-1' } });
-      }
-      return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
-    },
-  });
-
-  await assert.rejects(
-    () => detachLegacyWorkerDomains(client, { accountId: 'acct-1' }),
-    /delete failed/,
-  );
-  assert.ok(calls.some((call) => call.method === 'PUT' && call.body.hostname === 'yourcarguy806.com'));
 });
 
 function jsonResponse(status, body) {
@@ -659,19 +589,22 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
   assert.equal(WORKER_NAME, 'shopcrank-api');
 });
 
-test('provisionShopcrankCom retires the legacy zone and forwards support mail', async () => {
+test('provisionShopcrankCom releases ShopCrank from other domains without touching their DNS or mail', async () => {
   const calls = [];
-  let failPagesRead = false;
-  let failLegacyDnsCreate = false;
   const store = {
     zones: [
       { id: 'zone-1', name: 'shopcrank.com', status: 'active' },
-      { id: 'zone-legacy', name: 'yourcarguy806.com', status: 'active' },
+      { id: 'zone-other', name: 'other-business.example', status: 'active' },
     ],
-    pagesDomains: [],
+    pagesDomains: [
+      { name: 'www.shopcrank.com', status: 'active' },
+      { name: 'shopcrank.com', status: 'active' },
+      { name: 'www.other-business.example', status: 'active' },
+    ],
     workerDomains: [
-      { id: 'dom-legacy-www', hostname: 'www.yourcarguy806.com', service: 'mechpro-api' },
-      { id: 'dom-legacy-apex', hostname: 'yourcarguy806.com', service: 'mechpro-api' },
+      { id: 'dom-other-www', hostname: 'www.other-business.example', service: 'mechpro-api' },
+      { id: 'dom-other-apex', hostname: 'other-business.example', service: 'shopcrank-api' },
+      { id: 'dom-other-site', hostname: 'shop.other-business.example', service: 'other-site' },
     ],
     routes: {
       'zone-1': [
@@ -680,16 +613,16 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
         { id: 'rt-dl', pattern: 'www.shopcrank.com/downloads/*', script: 'shopcrank-api' },
         { id: 'rt-dl2', pattern: 'shopcrank.com/downloads/*', script: 'shopcrank-api' },
       ],
-      'zone-legacy': [
-        { id: 'rt-legacy-www', pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' },
-        { id: 'rt-legacy-wild', pattern: '*.yourcarguy806.com/*', script: 'shopcrank-dispatch' },
+      'zone-other': [
+        { id: 'rt-other-www', pattern: 'www.other-business.example/*', script: 'shopcrank-api' },
+        { id: 'rt-other-apex', pattern: 'other-business.example/*', script: 'shopcrank-api' },
+        { id: 'rt-other-wild', pattern: '*.other-business.example/*', script: 'shopcrank-dispatch' },
+        { id: 'rt-other-blog', pattern: 'www.other-business.example/blog/*', script: 'other-site' },
       ],
     },
     mailRules: [],
-    dnsRecords: [],
     apexDnsRecords: [],
     r2: [],
-    secrets: { 'mechpro-api': [], 'shopcrank-api': [] },
     routing: { enabled: true, status: 'ready' },
     sending: [{ name: 'shopcrank.com', enabled: true }],
     addresses: [],
@@ -699,40 +632,33 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     const method = init.method || 'GET';
     const parsed = new URL(url);
     const path = parsed.pathname.replace('/client/v4', '');
-    calls.push({
-      method,
-      path,
-      query: Object.fromEntries(parsed.searchParams),
-      body: init.body ? JSON.parse(init.body) : undefined,
-    });
+    calls.push({ method, path, query: Object.fromEntries(parsed.searchParams), body: init.body ? JSON.parse(init.body) : undefined });
 
     if (method === 'GET' && path === '/zones') {
       const name = parsed.searchParams.get('name');
       return jsonResponse(200, { success: true, result: store.zones.filter((zone) => !name || zone.name === name) });
     }
-    if (method === 'GET' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
-      if (failPagesRead) return jsonResponse(500, { success: false, errors: [{ message: 'Pages unavailable' }] });
+    const pagesBase = '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains';
+    if (method === 'GET' && path === pagesBase) {
       return jsonResponse(200, { success: true, result: store.pagesDomains });
     }
-    if (method === 'POST' && path === '/accounts/acct-1/pages/projects/shopcrank-dispatch/domains') {
+    if (method === 'POST' && path === pagesBase) {
       const domain = { name: JSON.parse(init.body).name, status: 'active' };
       store.pagesDomains.push(domain);
       return jsonResponse(200, { success: true, result: domain });
+    }
+    if (method === 'DELETE' && path.startsWith(`${pagesBase}/`)) {
+      const name = decodeURIComponent(path.slice(pagesBase.length + 1));
+      store.pagesDomains = store.pagesDomains.filter((domain) => domain.name !== name);
+      return jsonResponse(200, { success: true, result: null });
     }
     if (method === 'GET' && path === '/accounts/acct-1/workers/domains') {
       return jsonResponse(200, { success: true, result: store.workerDomains });
     }
     if (method === 'DELETE' && path.startsWith('/accounts/acct-1/workers/domains/')) {
       const id = path.split('/').at(-1);
-      const removed = store.workerDomains.find((domain) => domain.id === id);
       store.workerDomains = store.workerDomains.filter((domain) => domain.id !== id);
-      store.dnsRecords = store.dnsRecords.filter((record) => record.name !== removed?.hostname);
       return jsonResponse(200, { success: true, result: null });
-    }
-    if (method === 'PUT' && path === '/accounts/acct-1/workers/domains') {
-      const domain = { id: `restored-${store.workerDomains.length}`, ...JSON.parse(init.body) };
-      store.workerDomains.push(domain);
-      return jsonResponse(200, { success: true, result: domain });
     }
     const routeMatch = path.match(/^\/zones\/([^/]+)\/workers\/routes$/);
     if (method === 'GET' && routeMatch) {
@@ -740,8 +666,7 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     }
     const routeDelete = path.match(/^\/zones\/([^/]+)\/workers\/routes\/([^/]+)$/);
     if (method === 'DELETE' && routeDelete) {
-      const list = store.routes[routeDelete[1]] || [];
-      store.routes[routeDelete[1]] = list.filter((route) => route.id !== routeDelete[2]);
+      store.routes[routeDelete[1]] = (store.routes[routeDelete[1]] || []).filter((route) => route.id !== routeDelete[2]);
       return jsonResponse(200, { success: true, result: null });
     }
     if (method === 'POST' && routeMatch) {
@@ -783,21 +708,9 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       return jsonResponse(200, { success: true, result: store.mailRules });
     }
     if (method === 'POST' && path === '/zones/zone-1/email/routing/rules') {
-      const body = JSON.parse(init.body);
-      const rule = { id: 'rule-1', ...body };
+      const rule = { id: 'rule-1', ...JSON.parse(init.body) };
       store.mailRules.push(rule);
       return jsonResponse(200, { success: true, result: rule });
-    }
-    if (method === 'GET' && path === '/zones/zone-legacy/dns_records') {
-      return jsonResponse(200, { success: true, result: store.dnsRecords });
-    }
-    if (method === 'POST' && path === '/zones/zone-legacy/dns_records') {
-      if (failLegacyDnsCreate) {
-        return jsonResponse(500, { success: false, errors: [{ message: 'DNS restoration failed' }] });
-      }
-      const record = { id: `dns-${store.dnsRecords.length}`, ...JSON.parse(init.body) };
-      store.dnsRecords.push(record);
-      return jsonResponse(200, { success: true, result: record });
     }
     if (method === 'GET' && path === '/zones/zone-1/dns_records') {
       return jsonResponse(200, { success: true, result: store.apexDnsRecords });
@@ -807,41 +720,49 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
       store.apexDnsRecords.push(record);
       return jsonResponse(200, { success: true, result: record });
     }
-    if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/mechpro-api/secrets') {
-      return jsonResponse(200, { success: true, result: [] });
-    }
-    if (method === 'GET' && path === '/accounts/acct-1/workers/scripts/shopcrank-api/secrets') {
+    if (method === 'GET' && /^\/accounts\/acct-1\/workers\/scripts\/(mechpro|shopcrank)-api\/secrets$/.test(path)) {
       return jsonResponse(200, { success: true, result: [] });
     }
     return jsonResponse(404, { success: false, errors: [{ message: `unhandled ${method} ${path}` }] });
   };
 
   const client = createCloudflareClient({ apiToken: 'token', fetchImpl });
-  const report = await provisionShopcrankCom({
+  const run = () => provisionShopcrankCom({
     client,
     accountId: 'acct-1',
     env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
     logger: { info() {} },
   });
+  const report = await run();
 
   assert.equal(report.ok, true);
-  // The legacy custom domains are detached from the old Worker.
+  const released = report.steps.releaseForeign;
+  assert.equal(released.action, 'released');
+  assert.deepEqual(released.pagesDomains, ['www.other-business.example']);
   assert.deepEqual(
-    report.steps.legacyWorkerDomains.detached.map((item) => item.hostname).toSorted(),
-    ['www.yourcarguy806.com', 'yourcarguy806.com'],
+    released.workerDomains.map((item) => item.hostname).toSorted(),
+    ['other-business.example', 'www.other-business.example'],
   );
-  // The wildcard Pages route is dropped and the whole host points at the Worker.
   assert.deepEqual(
-    report.steps.legacyWorkerRoutes.deleted.toSorted((a, b) => a.pattern.localeCompare(b.pattern)),
-    [
-      { pattern: '*.yourcarguy806.com/*', script: 'shopcrank-dispatch' },
-      { pattern: 'www.yourcarguy806.com/api/*', script: 'shopcrank-api' },
-    ],
+    released.workerRoutes.map((item) => item.pattern).toSorted(),
+    ['*.other-business.example/*', 'other-business.example/*', 'www.other-business.example/*'],
   );
-  assert.ok(!report.steps.legacyWorkerRoutes.routes.some((route) => route.pattern === '*.yourcarguy806.com/*'));
-  assert.ok(report.steps.legacyWorkerRoutes.routes.some(
-    (route) => route.pattern === 'www.yourcarguy806.com/*' && route.script === 'shopcrank-api',
-  ));
+  // ShopCrank keeps its own domains and routes.
+  assert.deepEqual(store.pagesDomains.map((domain) => domain.name).toSorted(), ['shopcrank.com', 'www.shopcrank.com']);
+  assert.equal(store.routes['zone-1'].length, 4);
+  // The other domain keeps everything that is not ShopCrank's.
+  assert.deepEqual(store.routes['zone-other'].map((route) => route.id), ['rt-other-blog']);
+  assert.deepEqual(store.workerDomains.map((domain) => domain.hostname), ['shop.other-business.example']);
+  // No legacy steps remain.
+  for (const step of ['legacyZone', 'legacyWorkerRoutes', 'legacyWorkerDomains', 'legacyDns']) {
+    assert.equal(step in report.steps, false, step);
+  }
+  // Nothing is ever written to the other zone's DNS or mail, and nothing is created there.
+  const touchesOtherZone = (call) => call.path.startsWith('/zones/zone-other/') && !call.path.includes('/workers/routes');
+  assert.equal(calls.some(touchesOtherZone), false);
+  assert.equal(calls.some((call) => call.method === 'POST' && call.path.startsWith('/zones/zone-other/')), false);
+  assert.equal(calls.some((call) => call.method === 'PUT' && call.path === '/accounts/acct-1/workers/domains'), false);
+
   // Support mail is forwarded to the configured mailbox.
   assert.equal(report.steps.supportMail.action, 'created');
   assert.equal(report.steps.supportMail.address, 'support@shopcrank.com');
@@ -854,92 +775,28 @@ test('provisionShopcrankCom retires the legacy zone and forwards support mail', 
     && call.path === '/accounts/acct-1/email/routing/addresses'
     && call.body.email === 'support@shopcrank.com');
   assert.ok(supportRuleCreated < supportAddressRegistered);
-  // The legacy DNS records are restored so the redirect is reachable.
-  assert.equal(report.steps.legacyDns.action, 'updated');
-  assert.deepEqual(
-    store.dnsRecords.map((record) => record.name).toSorted(),
-    ['www.yourcarguy806.com', 'yourcarguy806.com'],
-  );
-  // The canonical apex resolves too.
+  // The canonical apex resolves.
   assert.equal(report.steps.apexDns.action, 'updated');
   assert.deepEqual(store.apexDnsRecords.map((record) => record.name), ['shopcrank.com']);
-  const legacyZoneLookup = calls.findIndex((call) => call.method === 'GET'
-    && call.path === '/zones' && call.query.name === LEGACY_ZONE);
-  const legacyDnsPreflight = calls.findIndex((call) => call.method === 'GET'
-    && call.path === '/zones/zone-legacy/dns_records');
-  const firstLegacyDetach = calls.findIndex((call) => call.method === 'DELETE'
-    && call.path.startsWith('/accounts/acct-1/workers/domains/'));
-  assert.ok(legacyZoneLookup < firstLegacyDetach);
-  assert.ok(legacyDnsPreflight < firstLegacyDetach);
 
-  store.workerDomains.push(
-    { id: 'dom-legacy-www-retry', hostname: 'www.yourcarguy806.com', service: 'mechpro-api' },
-    { id: 'dom-legacy-apex-retry', hostname: 'yourcarguy806.com', service: 'mechpro-api' },
-  );
-  const deletesBeforeFailedPreflight = calls.filter((call) => call.method === 'DELETE'
-    && call.path.startsWith('/accounts/acct-1/workers/domains/')).length;
-  failPagesRead = true;
-  const guarded = await provisionShopcrankCom({
-    client,
-    accountId: 'acct-1',
-    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
-    logger: { info() {} },
-  });
-  assert.equal(guarded.steps.legacyWorkerDomains.action, 'skipped');
-  assert.equal(
-    calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/accounts/acct-1/workers/domains/')).length,
-    deletesBeforeFailedPreflight,
-  );
+  // Running it again is a no-op for the release step.
+  const again = await run();
+  assert.equal(again.ok, true);
+  assert.equal(again.steps.releaseForeign.action, 'none');
+});
 
-  failPagesRead = false;
-  store.pagesDomains.forEach((domain) => { domain.status = 'pending'; });
-  const deletesBeforePendingPages = calls.filter((call) => call.method === 'DELETE'
-    && call.path.startsWith('/accounts/acct-1/workers/domains/')).length;
-  const pendingPages = await provisionShopcrankCom({
-    client,
-    accountId: 'acct-1',
-    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
-    logger: { info() {} },
+test('releaseForeignBindings reports failure instead of half-claiming success', async () => {
+  const client = createCloudflareClient({
+    apiToken: 'token',
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method || 'GET';
+      const path = new URL(url).pathname.replace('/client/v4', '');
+      if (method === 'GET' && path.endsWith('/pages/projects/shopcrank-dispatch/domains')) {
+        return jsonResponse(200, { success: true, result: [{ name: 'www.other-business.example' }] });
+      }
+      if (method === 'DELETE') return jsonResponse(500, { success: false, errors: [{ message: 'delete failed' }] });
+      return jsonResponse(200, { success: true, result: [] });
+    },
   });
-  assert.equal(pendingPages.steps.legacyWorkerDomains.action, 'skipped');
-  assert.deepEqual(
-    pendingPages.remaining.find((item) => item.kind === 'pages_domain_activation')?.domains?.toSorted(),
-    ['shopcrank.com', 'www.shopcrank.com'],
-  );
-  assert.equal(
-    calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/accounts/acct-1/workers/domains/')).length,
-    deletesBeforePendingPages,
-  );
-
-  store.pagesDomains.forEach((domain) => { domain.status = 'active'; });
-  store.zones.find((zone) => zone.id === 'zone-1').status = 'pending';
-  const deletesBeforePendingZone = calls.filter((call) => call.method === 'DELETE'
-    && call.path.startsWith('/accounts/acct-1/workers/domains/')).length;
-  const pendingZone = await provisionShopcrankCom({
-    client,
-    accountId: 'acct-1',
-    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
-    logger: { info() {} },
-  });
-  assert.equal(pendingZone.steps.legacyWorkerDomains.action, 'skipped');
-  assert.ok(pendingZone.remaining.some((item) => item.kind === 'canonical_zone_activation'));
-  assert.equal(
-    calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/accounts/acct-1/workers/domains/')).length,
-    deletesBeforePendingZone,
-  );
-
-  store.zones.find((zone) => zone.id === 'zone-1').status = 'active';
-  failLegacyDnsCreate = true;
-  const rolledBack = await provisionShopcrankCom({
-    client,
-    accountId: 'acct-1',
-    env: { SUPPORT_EMAIL_FORWARD_TO: 'ops@example.test' },
-    logger: { info() {} },
-  });
-  assert.equal(rolledBack.steps.legacyDns.ok, false);
-  assert.equal(rolledBack.steps.legacyRollback.ok, true);
-  assert.deepEqual(
-    store.workerDomains.map((domain) => domain.hostname).toSorted(),
-    ['www.yourcarguy806.com', 'yourcarguy806.com'],
-  );
+  await assert.rejects(() => releaseForeignBindings(client, { accountId: 'acct-1' }), /delete failed/);
 });

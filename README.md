@@ -330,14 +330,13 @@ has the old MechPro bucket names, and copies GitHub-available secrets from
 Cloudflare; names that exist only on `mechpro-api` still need `wrangler secret
 put` unless the same values are in the environment.
 
-It also finishes the cutover away from the pre-cutover host
-`www.yourcarguy806.com`: the old `mechpro-api` custom domains are detached,
-the legacy zone's wildcard Pages route is dropped, and the whole old host is
-re-pointed at `shopcrank-api`, which answers every legacy URL with a 301 to
-`https://www.shopcrank.com`. Detaching a Worker custom domain deletes that
-hostname's DNS record, so the script restores the legacy records and the
-`shopcrank.com` apex CNAME afterwards — without them the redirects are
-unreachable and the apex answers "DNS points to prohibited IP".
+ShopCrank is served on ShopCrank domains (`shopcrank.com`, `.net`, `.io`)
+only. The script releases any custom domain on `shopcrank-dispatch`, Worker
+custom domain, or Worker route on another zone that runs `shopcrank-api`,
+`mechpro-api`, or `shopcrank-dispatch`. It never edits DNS records or Email
+Routing in other zones; those belong to whoever owns that domain. The
+`shopcrank.com` apex stays a proxied CNAME to the Pages project — an A record
+to a Cloudflare address is rejected with "DNS points to prohibited IP".
 
 Set `SUPPORT_EMAIL_FORWARD_TO` to the mailbox that should receive
 `support@shopcrank.com`; the script adds the Email Routing rule that forwards
