@@ -2556,8 +2556,12 @@ async function handleAdmin(request, env, context, segments, analytics) {
       ON CONFLICT(shop_id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status,
         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
     `).bind(target, planId, subscriptionStatus, subscriptionExpiresAt, nowIso, nowIso).run();
-    if (subscriptionStatus === 'active') await grantAdminCoverage(env, target, nowIso);
-    else await endPaidCoverage(env, target, nowIso, { reason: 'membership_change' });
+    if (subscriptionStatus === 'active') {
+      await grantAdminCoverage(env, target, nowIso);
+      if (Number(account.suspended) === 1) {
+        await endPaidCoverage(env, target, nowIso, { reason: 'suspension', sources: ['admin'] });
+      }
+    } else await endPaidCoverage(env, target, nowIso, { reason: 'membership_change' });
     let credit = null;
     if (attribution) {
       credit = await applyAttribution(env, target, {
