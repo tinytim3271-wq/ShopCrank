@@ -141,7 +141,7 @@ import { redactSensitive } from './redact.mjs';
 import { HEALTH_CHECK_CRON, handleHealthCheckAdmin, runScheduledHealthCheck } from './health/health-check.mjs';
 import { applyAttribution, attributeMembership, normalizeReferralCode, resolveAttribution } from './ambassadors/store.mjs';
 import { recordInvoiceCommission } from './ambassadors/commissions.mjs';
-import { endPaidCoverage, endSuspension, grantAdminCoverage, startSuspension } from './ambassadors/coverage.mjs';
+import { endPaidCoverage, grantAdminCoverage, suspensionStatements } from './ambassadors/coverage.mjs';
 import { AMBASSADOR_PAYOUT_CRON, runScheduledAmbassadorPayouts } from './ambassadors/payout-report.mjs';
 import { handleAmbassadorAdmin, handleAmbassadorPublic } from './ambassadors/routes.mjs';
 
@@ -2482,18 +2482,14 @@ async function handleAdmin(request, env, context, segments, analytics) {
     const body = await requestJson(request);
     if (!validShopId(target) || typeof body.suspended !== 'boolean') throw new HttpError(400, 'A valid shop ID and suspended status are required');
     const now = new Date().toISOString();
-    const result = await env.DB.prepare(
-      'UPDATE accounts SET suspended = ?, updated_at = ? WHERE shop_id = ?',
-    ).bind(body.suspended ? 1 : 0, now, target).run();
-    if (!result.meta.changes) throw new HttpError(404, 'Customer account not found');
     // Suspension ends paid coverage for good; restoring the account brings none
     // back (the next paid invoice or admin activation starts new coverage).
-    if (body.suspended) {
-      await startSuspension(env, target, now);
-      await endPaidCoverage(env, target, now, { reason: 'suspension' });
-    } else {
-      await endSuspension(env, target, now);
-    }
+    // The flag, suspension history and coverage cutoff commit together.
+    const [result] = await env.DB.batch([
+      env.DB.prepare('UPDATE accounts SET suspended = ?, updated_at = ? WHERE shop_id = ?').bind(body.suspended ? 1 : 0, now, target),
+      ...suspensionStatements(env, target, body.suspended, now),
+    ]);
+    if (!result.meta.changes) throw new HttpError(404, 'Customer account not found');
     await env.DB.prepare('UPDATE users SET enabled = ?, updated_at = ? WHERE shop_id = ?').bind(body.suspended ? 0 : 1, now, target).run();
     if (body.suspended) {
       const userRows = await env.DB.prepare('SELECT id FROM users WHERE shop_id = ?').bind(target).all();

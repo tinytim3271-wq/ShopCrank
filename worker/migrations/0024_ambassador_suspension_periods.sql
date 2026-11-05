@@ -8,9 +8,10 @@ CREATE TABLE IF NOT EXISTS ambassador_suspension_periods (
   PRIMARY KEY (shop_id, started_at)
 );
 
--- Accounts already suspended when this ships. Their real start is unknown, so
--- use their last account change (never later than now).
+-- Accounts already suspended when this ships. Their real start is unknown and
+-- updated_at moves on unrelated changes, so use the earliest safe bound: when
+-- the account was created. Any payment since then is treated as suspended.
 INSERT OR IGNORE INTO ambassador_suspension_periods (shop_id, started_at, ended_at)
-SELECT shop_id, COALESCE(updated_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), NULL
+SELECT shop_id, COALESCE(created_at, updated_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), NULL
 FROM accounts
 WHERE suspended = 1;

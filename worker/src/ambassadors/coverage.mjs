@@ -43,21 +43,28 @@ export async function excludePaidCoverage(env, shopId, startsAt, endsAt = null, 
   `).bind(shopId, iso(startsAt), iso(startsAt), isoOrNull(endsAt), reason, source, new Date().toISOString()).run();
 }
 
-/** Open a suspension period (idempotent while one is already open). */
-export async function startSuspension(env, shopId, at = new Date()) {
+/**
+ * The writes that suspend or restore a shop, for one atomic D1 batch: the
+ * caller's account flag update goes first, then the suspension history and
+ * (when suspending) the coverage cutoff. Run together, overlapping suspend and
+ * restore requests can never leave the flag and the open period disagreeing.
+ */
+export function suspensionStatements(env, shopId, suspended, at = new Date()) {
   const when = iso(at);
-  return env.DB.prepare(`
-    INSERT INTO ambassador_suspension_periods (shop_id, started_at, ended_at)
-    SELECT ?, ?, NULL
-    WHERE NOT EXISTS (SELECT 1 FROM ambassador_suspension_periods WHERE shop_id = ? AND ended_at IS NULL)
-  `).bind(shopId, when, shopId).run();
-}
-
-/** Close the open suspension period, if any. */
-export async function endSuspension(env, shopId, at = new Date()) {
-  return env.DB.prepare(`
-    UPDATE ambassador_suspension_periods SET ended_at = ? WHERE shop_id = ? AND ended_at IS NULL
-  `).bind(iso(at), shopId).run();
+  if (!suspended) {
+    return [env.DB.prepare(`
+      UPDATE ambassador_suspension_periods SET ended_at = ? WHERE shop_id = ? AND ended_at IS NULL
+    `).bind(when, shopId)];
+  }
+  return [
+    env.DB.prepare(`
+      INSERT INTO ambassador_suspension_periods (shop_id, started_at, ended_at)
+      SELECT ?, ?, NULL
+      WHERE EXISTS (SELECT 1 FROM accounts WHERE shop_id = ? AND suspended = 1)
+        AND NOT EXISTS (SELECT 1 FROM ambassador_suspension_periods WHERE shop_id = ? AND ended_at IS NULL)
+    `).bind(shopId, when, shopId, shopId),
+    endPaidCoverageStatement(env, shopId, when, { reason: 'suspension' }),
+  ];
 }
 
 /** True when `at` falls inside one of the shop's suspension periods. */
@@ -89,7 +96,7 @@ export async function coverageExcluded(env, shopId, startsAt) {
  * Cut every interval still running at `at` (and retire later ones) so the
  * time after `at` is unpaid. `sources` limits which evidence is cut.
  */
-export async function endPaidCoverage(env, shopId, at = new Date(), { reason = 'membership_change', sources = null } = {}) {
+export function endPaidCoverageStatement(env, shopId, at = new Date(), { reason = 'membership_change', sources = null } = {}) {
   const when = iso(at);
   const sourceFilter = sources?.length ? ` AND source IN (${sources.map(() => '?').join(', ')})` : '';
   return env.DB.prepare(`
@@ -102,7 +109,11 @@ export async function endPaidCoverage(env, shopId, at = new Date(), { reason = '
       ends_at IS NULL OR (ends_at > ? AND ends_at > starts_at)
       OR (cut_reason = 'suspension' AND ? != 'suspension')
     )${sourceFilter}
-  `).bind(reason, when, when, shopId, when, reason, ...(sources || [])).run();
+  `).bind(reason, when, when, shopId, when, reason, ...(sources || []));
+}
+
+export async function endPaidCoverage(env, shopId, at = new Date(), options = {}) {
+  return endPaidCoverageStatement(env, shopId, at, options).run();
 }
 
 /**

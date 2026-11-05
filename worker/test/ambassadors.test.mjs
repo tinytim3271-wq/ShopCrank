@@ -1046,5 +1046,21 @@ test('suspension periods backfill currently suspended accounts', () => {
   DB.sqlite.prepare("INSERT INTO accounts (shop_id, shop_name, owner_email, owner_name, suspended, created_at, updated_at, created_by) VALUES ('held', 'Held', 'h@shops.test', 'Owner', 1, '2026-01-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'admin'), ('open', 'Open', 'o@shops.test', 'Owner', 0, '2026-01-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'admin')").run();
   DB.sqlite.exec(readFileSync(new URL('../migrations/0024_ambassador_suspension_periods.sql', import.meta.url), 'utf8'));
   const rows = DB.sqlite.prepare('SELECT shop_id, started_at, ended_at FROM ambassador_suspension_periods').all().map(row => ({ ...row }));
-  assert.deepEqual(rows, [{ shop_id: 'held', started_at: '2026-02-02T00:00:00.000Z', ended_at: null }]);
+  assert.deepEqual(rows, [{ shop_id: 'held', started_at: '2026-01-01T00:00:00.000Z', ended_at: null }], 'starts at account creation, not a later account update');
+});
+
+test('overlapping suspend and restore requests leave the account flag and suspension history in step', async () => {
+  const { call, DB } = setup();
+  await createShop(call, 'race-shop');
+  for (let round = 0; round < 5; round += 1) {
+    await Promise.all([
+      call('POST', '/admin/accounts/race-shop/status', { suspended: true }),
+      call('POST', '/admin/accounts/race-shop/status', { suspended: false }),
+    ]);
+    const suspended = DB.sqlite.prepare("SELECT suspended FROM accounts WHERE shop_id = 'race-shop'").get().suspended;
+    const open = DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_suspension_periods WHERE shop_id = 'race-shop' AND ended_at IS NULL").get().n;
+    assert.equal(open, suspended, `round ${round}: an open suspension exists exactly when the account is suspended`);
+  }
+  assert.equal((await call('POST', '/admin/accounts/no-such-shop/status', { suspended: true })).status, 404);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_suspension_periods WHERE shop_id = 'no-such-shop'").get().n, 0);
 });
