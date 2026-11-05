@@ -3646,10 +3646,33 @@ async function handleBilling(request, env, context, segments) {
           FROM billing_events WHERE shop_id = ?
         `).bind(shopId).first()
         : null;
-      const staleSubscriptionEvent = Number(latestBillingEvent?.latest_created || 0) > eventCreated;
+      const latestSubscriptionEvent = subscriptionEvent && Number.isFinite(eventCreated) && eventCreated > 0
+        ? await env.DB.prepare(`
+          SELECT MAX(CAST(json_extract(event_json, '$.created') AS INTEGER)) AS latest_created
+          FROM billing_events
+          WHERE shop_id = ?
+            AND event_type IN ('customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted')
+        `).bind(shopId).first()
+        : null;
+      const existingForStaleEvent = subscriptionEvent
+        && Number(latestBillingEvent?.latest_created || 0) > eventCreated
+        ? await env.DB.prepare(
+          'SELECT plan_id, stripe_subscription_id, status, current_period_end, current_period_start FROM subscriptions WHERE shop_id = ?',
+        ).bind(shopId).first()
+        : null;
+      const eventPeriodEnd = Number(object.current_period_end || 0);
+      const eventPeriodStart = Number(object.current_period_start || 0);
+      const staleEventAdvancesSubscription = String(object.status || 'active') === 'active'
+        && (
+          existingForStaleEvent?.status !== 'active'
+          || (eventPeriodStart > 0 && eventPeriodStart > Date.parse(existingForStaleEvent?.current_period_start || '') / 1000)
+          || (eventPeriodEnd > 0 && eventPeriodEnd > Date.parse(existingForStaleEvent?.current_period_end || '') / 1000)
+        );
+      const staleSubscriptionEvent = Number(latestSubscriptionEvent?.latest_created || 0) > eventCreated
+        || (Number(latestBillingEvent?.latest_created || 0) > eventCreated && !staleEventAdvancesSubscription);
       if ((subscriptionEvent || checkoutEvent || paymentFailed) && !staleSubscriptionEvent) {
-        const existing = await env.DB.prepare(
-          'SELECT plan_id, stripe_subscription_id, current_period_end, current_period_start FROM subscriptions WHERE shop_id = ?',
+        const existing = existingForStaleEvent || await env.DB.prepare(
+          'SELECT plan_id, stripe_subscription_id, status, current_period_end, current_period_start FROM subscriptions WHERE shop_id = ?',
         ).bind(shopId).first();
         const planId = String(object.metadata?.planId || existing?.plan_id || 'shop');
         const rawStatus = paymentFailed ? 'past_due'

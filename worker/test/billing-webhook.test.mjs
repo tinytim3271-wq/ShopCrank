@@ -45,6 +45,14 @@ function billingDb({ failSubscriptionWrite = false, failAttributionOnce = false,
               if (/SELECT id FROM billing_events/.test(sql)) {
                 return state.events.has(args[0]) ? { id: args[0] } : null;
               }
+              if (/SELECT MAX\(CAST\(json_extract\(event_json/.test(sql)) {
+                const events = [...state.events.values()].filter(event => (
+                  !/event_type IN/.test(sql)
+                  || ['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted'].includes(event.event_type)
+                ));
+                const latestCreated = Math.max(0, ...events.map(event => Number(JSON.parse(event.event_json).created) || 0));
+                return { latest_created: latestCreated || null };
+              }
               if (/SELECT plan_id, stripe_subscription_id/.test(sql)) return state.subscription;
               if (/SELECT shop_id, sold_by_ambassador_id/.test(sql)) {
                 if (failAttributionOnce && !state.attributionFailed) {
@@ -72,7 +80,7 @@ function billingDb({ failSubscriptionWrite = false, failAttributionOnce = false,
               } else if (/UPDATE accounts SET subscription_status/.test(sql)) {
                 state.accountWrites.push(args);
               } else if (/INSERT OR IGNORE INTO billing_events/.test(sql)) {
-                state.events.set(args[0], { id: args[0] });
+                state.events.set(args[0], { id: args[0], event_type: args[2], event_json: args[3] });
               }
               return { success: true, meta: { changes: 1 } };
             },
@@ -85,6 +93,68 @@ function billingDb({ failSubscriptionWrite = false, failAttributionOnce = false,
     },
   };
   return { DB, state };
+}
+
+for (const scenario of [
+  {
+    name: 'activation',
+    subscription: {
+      plan_id: 'shop',
+      stripe_subscription_id: 'sub-1',
+      status: 'trialing',
+      current_period_start: null,
+      current_period_end: null,
+    },
+    currentPeriodStart: 1_800_000_000,
+    currentPeriodEnd: 1_802_592_000,
+  },
+  {
+    name: 'renewal',
+    subscription: {
+      plan_id: 'shop',
+      stripe_subscription_id: 'sub-1',
+      status: 'active',
+      current_period_start: '2027-01-01T00:00:00.000Z',
+      current_period_end: '2027-02-01T00:00:00.000Z',
+    },
+    currentPeriodStart: 1_802_592_000,
+    currentPeriodEnd: 1_805_270_400,
+  },
+]) {
+  test(`invoice-first delivery does not block an older subscription ${scenario.name} update`, async () => {
+    const { DB, state } = billingDb({ subscription: scenario.subscription });
+    const env = { DB, STRIPE_BILLING_WEBHOOK_SECRET: secret };
+    const invoiceEvent = {
+      id: `evt-invoice-first-${scenario.name}`,
+      type: 'invoice.paid',
+      created: 200,
+      data: { object: {
+        id: `in-invoice-first-${scenario.name}`,
+        amount_paid: 100,
+        subscription: 'sub-1',
+        customer: 'cus-1',
+        metadata: { shopId: 'shop-1' },
+      } },
+    };
+    const subscriptionEvent = {
+      id: `evt-subscription-later-${scenario.name}`,
+      type: 'customer.subscription.updated',
+      created: 199,
+      data: { object: {
+        id: 'sub-1',
+        status: 'active',
+        current_period_start: scenario.currentPeriodStart,
+        current_period_end: scenario.currentPeriodEnd,
+        metadata: { shopId: 'shop-1', planId: 'shop' },
+      } },
+    };
+
+    assert.equal((await worker.fetch(await signedRequest(invoiceEvent), env)).status, 202);
+    assert.equal((await worker.fetch(await signedRequest(subscriptionEvent), env)).status, 202);
+    assert.equal(state.subscription.status, 'active');
+    assert.equal(state.subscription.current_period_start, new Date(scenario.currentPeriodStart * 1000).toISOString());
+    assert.equal(state.subscription.current_period_end, new Date(scenario.currentPeriodEnd * 1000).toISOString());
+  });
 }
 
 test('failed billing updates remain retryable because the event is not marked complete first', async () => {
