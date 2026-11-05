@@ -55,14 +55,14 @@ export async function resumeSuspendedCoverage(env, shopId, at = new Date()) {
     // Intervals that had not started yet come back whole.
     env.DB.prepare(`
       UPDATE ambassador_paid_coverage SET ends_at = paid_through, paid_through = NULL, cut_reason = NULL
-      WHERE shop_id = ? AND cut_reason = 'suspension' AND starts_at >= ?
+      WHERE shop_id = ? AND source IN ('stripe_invoice', 'admin') AND cut_reason = 'suspension' AND starts_at >= ?
     `).bind(shopId, when),
     // Intervals the suspension interrupted resume from now to their paid-through date.
     env.DB.prepare(`
       INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
       SELECT shop_id, ?, CASE WHEN SUM(paid_through IS NULL) > 0 THEN NULL ELSE MAX(paid_through) END, MAX(source), ?
       FROM ambassador_paid_coverage
-      WHERE shop_id = ? AND cut_reason = 'suspension' AND starts_at < ? AND (paid_through IS NULL OR paid_through > ?)
+      WHERE shop_id = ? AND source IN ('stripe_invoice', 'admin') AND cut_reason = 'suspension' AND starts_at < ? AND (paid_through IS NULL OR paid_through > ?)
       GROUP BY shop_id
       ON CONFLICT(shop_id, starts_at) DO NOTHING
     `).bind(when, now, shopId, when, when),

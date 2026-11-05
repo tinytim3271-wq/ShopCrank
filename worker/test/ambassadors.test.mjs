@@ -868,10 +868,19 @@ test('suspension cuts coverage and lifting it restores exactly the paid-through 
 test('a fully discounted Stripe membership gets no coverage back from a suspension round trip', async () => {
   const { call, DB } = setup();
   await createShop(call, 'free-stripe', { accountMode: 'trialing' });
-  DB.sqlite.prepare("UPDATE subscriptions SET status = 'active', stripe_subscription_id = 'sub_free', current_period_end = ? WHERE shop_id = 'free-stripe'").run(new Date(Date.now() + 20 * 86400000).toISOString());
+  const paidThrough = new Date(Date.now() + 20 * 86400000).toISOString();
+  DB.sqlite.prepare("UPDATE subscriptions SET status = 'active', stripe_subscription_id = 'sub_free', current_period_end = ? WHERE shop_id = 'free-stripe'").run(paidThrough);
+  const startedAt = new Date(Date.now() - 10 * 86400000).toISOString();
+  DB.sqlite.prepare("INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at) VALUES ('free-stripe', ?, ?, 'migration', ?)").run(startedAt, paidThrough, startedAt);
   await call('POST', '/admin/accounts/free-stripe/status', { suspended: true });
+  const restoredAt = new Date().toISOString();
   await call('POST', '/admin/accounts/free-stripe/status', { suspended: false });
-  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'free-stripe'").get().n, 0);
+  const coverage = DB.sqlite.prepare("SELECT starts_at, ends_at, paid_through, cut_reason, source FROM ambassador_paid_coverage WHERE shop_id = 'free-stripe'").get();
+  assert.ok(coverage.ends_at <= restoredAt, 'the unverified period remains cut through restoration');
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'free-stripe'").get().n, 1, 'no restored interval is inserted');
+  assert.equal(coverage.paid_through, paidThrough);
+  assert.equal(coverage.cut_reason, 'suspension_resumed');
+  assert.equal(coverage.source, 'migration');
 });
 
 test('admin grants are explicit and retry-safe, and trial or Stripe billing ends them', async () => {
