@@ -141,7 +141,7 @@ import { redactSensitive } from './redact.mjs';
 import { HEALTH_CHECK_CRON, handleHealthCheckAdmin, runScheduledHealthCheck } from './health/health-check.mjs';
 import { applyAttribution, attributeMembership, normalizeReferralCode, resolveAttribution } from './ambassadors/store.mjs';
 import { recordInvoiceCommission } from './ambassadors/commissions.mjs';
-import { endPaidCoverage, grantAdminCoverage, resumeSuspendedCoverage } from './ambassadors/coverage.mjs';
+import { endPaidCoverage, grantAdminCoverage, suspensionStatements } from './ambassadors/coverage.mjs';
 import { AMBASSADOR_PAYOUT_CRON, runScheduledAmbassadorPayouts } from './ambassadors/payout-report.mjs';
 import { handleAmbassadorAdmin, handleAmbassadorPublic } from './ambassadors/routes.mjs';
 
@@ -2482,12 +2482,14 @@ async function handleAdmin(request, env, context, segments, analytics) {
     const body = await requestJson(request);
     if (!validShopId(target) || typeof body.suspended !== 'boolean') throw new HttpError(400, 'A valid shop ID and suspended status are required');
     const now = new Date().toISOString();
-    const result = await env.DB.prepare(
-      'UPDATE accounts SET suspended = ?, updated_at = ? WHERE shop_id = ?',
-    ).bind(body.suspended ? 1 : 0, now, target).run();
+    // Suspension ends paid coverage for good; restoring the account brings none
+    // back (the next paid invoice or admin activation starts new coverage).
+    // The flag, suspension history and coverage cutoff commit together.
+    const [result] = await env.DB.batch([
+      env.DB.prepare('UPDATE accounts SET suspended = ?, updated_at = ? WHERE shop_id = ?').bind(body.suspended ? 1 : 0, now, target),
+      ...suspensionStatements(env, target, body.suspended, now),
+    ]);
     if (!result.meta.changes) throw new HttpError(404, 'Customer account not found');
-    if (body.suspended) await endPaidCoverage(env, target, now, { reason: 'suspension' });
-    else await resumeSuspendedCoverage(env, target, now);
     await env.DB.prepare('UPDATE users SET enabled = ?, updated_at = ? WHERE shop_id = ?').bind(body.suspended ? 0 : 1, now, target).run();
     if (body.suspended) {
       const userRows = await env.DB.prepare('SELECT id FROM users WHERE shop_id = ?').bind(target).all();
@@ -2556,12 +2558,8 @@ async function handleAdmin(request, env, context, segments, analytics) {
       ON CONFLICT(shop_id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status,
         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
     `).bind(target, planId, subscriptionStatus, subscriptionExpiresAt, nowIso, nowIso).run();
-    if (subscriptionStatus === 'active') {
-      await grantAdminCoverage(env, target, nowIso);
-      if (Number(account.suspended) === 1) {
-        await endPaidCoverage(env, target, nowIso, { reason: 'suspension', sources: ['admin'] });
-      }
-    } else await endPaidCoverage(env, target, nowIso, { reason: 'membership_change' });
+    if (subscriptionStatus === 'active') await grantAdminCoverage(env, target, nowIso);
+    else await endPaidCoverage(env, target, nowIso, { reason: 'membership_change' });
     let credit = null;
     if (attribution) {
       credit = await applyAttribution(env, target, {

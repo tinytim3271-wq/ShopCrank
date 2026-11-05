@@ -5,37 +5,98 @@
 //   - an explicit admin grant of an active, admin-paid membership (admin)
 // Nothing else (subscription status, Checkout, billing periods) creates it.
 //
-// Ending coverage never deletes evidence: the interval is cut at the moment it
-// stops and remembers where it would have ended (paid_through) and why
-// (cut_reason). Lifting a suspension re-opens exactly what the suspension cut,
-// up to the original paid-through date, so a suspended stretch is never paid.
+// Ending coverage cuts the interval at that moment and records where it would
+// have ended (paid_through) and why (cut_reason), for audit only. Nothing ever
+// re-opens a cut interval: lifting a suspension restores no coverage, and the
+// shop earns again only from its next paid invoice or a new admin activation.
+// A suspended shop gets no new coverage at all. This can under-credit the rest
+// of a month after a restore, but it never pays for unpaid or suspended time.
 
 import { FOUNDING_PLANS, PUBLIC_PLANS } from '../plans.mjs';
 
 const iso = value => (value instanceof Date ? value : new Date(value)).toISOString();
 const isoOrNull = value => (value ? iso(value) : null);
 
-export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, { source = 'stripe_invoice', cutReason = null } = {}) {
-  const start = iso(startsAt);
-  const end = isoOrNull(endsAt);
-  // A cut row is stored already ended (zero length) and keeps its paid-through date.
-  const [storedEnd, paidThrough] = cutReason ? [start, end] : [end, null];
+export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, { source = 'stripe_invoice' } = {}) {
+  // A cut interval stays cut: a repeated or late write cannot re-open it.
+  return env.DB.prepare(`
+    INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(shop_id, starts_at) DO UPDATE SET
+      ends_at = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL
+        THEN COALESCE(excluded.ends_at, ambassador_paid_coverage.ends_at) ELSE ambassador_paid_coverage.ends_at END,
+      source = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL THEN excluded.source ELSE ambassador_paid_coverage.source END
+  `).bind(shopId, iso(startsAt), isoOrNull(endsAt), source, new Date().toISOString()).run();
+}
+
+/**
+ * Record a rejected paid interval as excluded (stored already cut), so a later
+ * replay of the same invoice, even under a new webhook event ID, cannot turn it
+ * into coverage or a commission. An interval already stored for that start is
+ * left exactly as it is: an earlier, genuinely paid period is never erased.
+ */
+export async function excludePaidCoverage(env, shopId, startsAt, endsAt = null, { reason = 'suspension', source = 'stripe_invoice' } = {}) {
   return env.DB.prepare(`
     INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, paid_through, cut_reason, source, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shop_id, starts_at) DO UPDATE SET
-      ends_at = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL AND excluded.cut_reason IS NULL
-        THEN COALESCE(excluded.ends_at, ambassador_paid_coverage.ends_at) ELSE ambassador_paid_coverage.ends_at END,
-      paid_through = COALESCE(ambassador_paid_coverage.paid_through, excluded.paid_through),
-      source = excluded.source
-  `).bind(shopId, start, storedEnd, paidThrough, cutReason, source, new Date().toISOString()).run();
+    ON CONFLICT(shop_id, starts_at) DO NOTHING
+  `).bind(shopId, iso(startsAt), iso(startsAt), isoOrNull(endsAt), reason, source, new Date().toISOString()).run();
+}
+
+/**
+ * The writes that suspend or restore a shop, for one atomic D1 batch: the
+ * caller's account flag update goes first, then the suspension history and
+ * (when suspending) the coverage cutoff. Run together, overlapping suspend and
+ * restore requests can never leave the flag and the open period disagreeing.
+ */
+export function suspensionStatements(env, shopId, suspended, at = new Date()) {
+  const when = iso(at);
+  if (!suspended) {
+    return [env.DB.prepare(`
+      UPDATE ambassador_suspension_periods SET ended_at = ? WHERE shop_id = ? AND ended_at IS NULL
+    `).bind(when, shopId)];
+  }
+  return [
+    env.DB.prepare(`
+      INSERT INTO ambassador_suspension_periods (shop_id, started_at, ended_at)
+      SELECT ?, ?, NULL
+      WHERE EXISTS (SELECT 1 FROM accounts WHERE shop_id = ? AND suspended = 1)
+        AND NOT EXISTS (SELECT 1 FROM ambassador_suspension_periods WHERE shop_id = ? AND ended_at IS NULL)
+    `).bind(shopId, when, shopId, shopId),
+    endPaidCoverageStatement(env, shopId, when, { reason: 'suspension' }),
+  ];
+}
+
+/** True when `at` falls inside one of the shop's suspension periods. */
+export async function suspendedAt(env, shopId, at) {
+  const when = iso(at);
+  const row = await env.DB.prepare(`
+    SELECT 1 FROM ambassador_suspension_periods
+    WHERE shop_id = ? AND started_at <= ? AND (ended_at IS NULL OR ended_at > ?)
+    LIMIT 1
+  `).bind(shopId, when, when).first();
+  return Boolean(row);
+}
+
+/** When Stripe says the invoice was paid (falls back to its creation time). */
+export function invoicePaidAt(invoice) {
+  const seconds = Number(invoice?.status_transitions?.paid_at || invoice?.created || 0);
+  return seconds > 0 ? new Date(seconds * 1000) : new Date();
+}
+
+/** True when the interval starting at `startsAt` was cut or excluded; it never earns again. */
+export async function coverageExcluded(env, shopId, startsAt) {
+  const row = await env.DB.prepare(`
+    SELECT 1 FROM ambassador_paid_coverage WHERE shop_id = ? AND starts_at = ? AND cut_reason IS NOT NULL
+  `).bind(shopId, iso(startsAt)).first();
+  return Boolean(row);
 }
 
 /**
  * Cut every interval still running at `at` (and retire later ones) so the
  * time after `at` is unpaid. `sources` limits which evidence is cut.
  */
-export async function endPaidCoverage(env, shopId, at = new Date(), { reason = 'membership_change', sources = null } = {}) {
+export function endPaidCoverageStatement(env, shopId, at = new Date(), { reason = 'membership_change', sources = null } = {}) {
   const when = iso(at);
   const sourceFilter = sources?.length ? ` AND source IN (${sources.map(() => '?').join(', ')})` : '';
   return env.DB.prepare(`
@@ -48,59 +109,30 @@ export async function endPaidCoverage(env, shopId, at = new Date(), { reason = '
       ends_at IS NULL OR (ends_at > ? AND ends_at > starts_at)
       OR (cut_reason = 'suspension' AND ? != 'suspension')
     )${sourceFilter}
-  `).bind(reason, when, when, shopId, when, reason, ...(sources || [])).run();
+  `).bind(reason, when, when, shopId, when, reason, ...(sources || []));
 }
 
-/** Lifting a suspension re-opens what it cut, through the original paid-through date. Idempotent. */
-export async function resumeSuspendedCoverage(env, shopId, at = new Date()) {
-  const when = iso(at);
-  const now = new Date().toISOString();
-  const interrupted = await env.DB.prepare(`
-    SELECT starts_at, paid_through, source
-    FROM ambassador_paid_coverage
-    WHERE shop_id = ? AND source IN ('stripe_invoice', 'admin')
-      AND cut_reason = 'suspension' AND starts_at < ?
-      AND (paid_through IS NULL OR paid_through > ?)
-    ORDER BY starts_at
-  `).bind(shopId, when, when).all();
-  const statements = [
-    // Intervals that had not started yet come back whole.
-    env.DB.prepare(`
-      UPDATE ambassador_paid_coverage SET ends_at = paid_through, paid_through = NULL, cut_reason = NULL
-      WHERE shop_id = ? AND source IN ('stripe_invoice', 'admin') AND cut_reason = 'suspension' AND starts_at >= ?
-    `).bind(shopId, when),
-    // Preserve each interrupted interval's source and paid-through boundary.
-    ...(interrupted.results || []).map((row, index) => env.DB.prepare(`
-      INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(shop_id, starts_at) DO NOTHING
-    `).bind(shopId, new Date(Date.parse(when) + index).toISOString(), row.paid_through, row.source, now)),
-    env.DB.prepare(`
-      UPDATE ambassador_paid_coverage SET cut_reason = 'suspension_resumed'
-      WHERE shop_id = ? AND cut_reason = 'suspension'
-    `).bind(shopId),
-  ];
-  const results = await env.DB.batch(statements);
-  return { resumed: results.reduce((sum, result) => sum + Number(result?.meta?.changes || 0), 0) };
+export async function endPaidCoverage(env, shopId, at = new Date(), options = {}) {
+  return endPaidCoverageStatement(env, shopId, at, options).run();
 }
 
 /**
  * An admin activated a paid membership by hand: open-ended admin coverage from
  * `at`. Idempotent, so a retry after a failed write repairs missing coverage.
+ * A suspended account gets none.
  */
 export async function grantAdminCoverage(env, shopId, at = new Date()) {
   const when = iso(at);
   const account = await env.DB.prepare('SELECT suspended FROM accounts WHERE shop_id = ?').bind(shopId).first();
+  // A suspended account gets none; activate it again after restoring it.
+  if (Number(account?.suspended) === 1) return { recorded: false, reason: 'account_suspended' };
   const running = await env.DB.prepare(`
     SELECT 1 FROM ambassador_paid_coverage
     WHERE shop_id = ? AND source = 'admin' AND starts_at <= ? AND (ends_at IS NULL OR ends_at > ?)
     LIMIT 1
   `).bind(shopId, when, when).first();
   if (running) return { recorded: false };
-  await recordPaidCoverage(env, shopId, when, null, {
-    source: 'admin',
-    cutReason: Number(account?.suspended) === 1 ? 'suspension' : null,
-  });
+  await recordPaidCoverage(env, shopId, when, null, { source: 'admin' });
   return { recorded: true };
 }
 

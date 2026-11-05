@@ -5,7 +5,7 @@
 // Cancelled, past-due, trialing, and suspended accounts accrue nothing.
 
 import { HttpError } from '../http.mjs';
-import { invoiceMembershipPeriod, recordPaidCoverage } from './coverage.mjs';
+import { coverageExcluded, excludePaidCoverage, invoiceMembershipPeriod, invoicePaidAt, recordPaidCoverage, suspendedAt } from './coverage.mjs';
 
 export const COMMISSION_TIERS = Object.freeze(['solo', 'shop', 'shop_pro', 'enterprise']);
 export const TIER_LABELS = Object.freeze({ solo: 'Solo', shop: 'Shop', shop_pro: 'Shop Pro', enterprise: 'Enterprise' });
@@ -203,15 +203,19 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
     LEFT JOIN accounts acct ON acct.shop_id = s.shop_id
     WHERE s.shop_id = ?
   `).bind(shopId).first();
-  // Keep the payment evidence whatever the cached status says; a suspended
-  // shop's paid time is stored already cut and comes back when it is restored.
-  const suspended = Number(subscription?.account_suspended) === 1;
-  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, {
-    source: 'stripe_invoice',
-    cutReason: suspended ? 'suspension' : null,
-  });
+  // A suspended shop earns nothing for this payment, now or after a restore.
+  // Store the rejection durably: Stripe can resend the same invoice under a
+  // new event ID after the shop is restored, and it must still earn nothing.
+  // A payment made during a suspension is rejected even when its webhook only
+  // arrives after the restore: check when it was paid, not just the account now.
+  if (Number(subscription?.account_suspended) === 1 || await suspendedAt(env, shopId, invoicePaidAt(invoice))) {
+    await excludePaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { reason: 'suspension' });
+    return { recorded: false, reason: 'account_suspended' };
+  }
+  if (await coverageExcluded(env, shopId, servicePeriod.start)) return { recorded: false, reason: 'excluded_period' };
+  // Keep the payment evidence even if the cached status has not caught up yet.
+  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { source: 'stripe_invoice' });
   if (subscription?.subscription_status !== 'active') return { recorded: false, reason: 'membership_not_active' };
-  if (suspended) return { recorded: false, reason: 'account_suspended' };
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };
