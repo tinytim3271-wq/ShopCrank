@@ -184,8 +184,18 @@ jobs:
           Invoke-DemoSmokeTest $exe "USB Demo"
           if (!(Test-Path (Join-Path $demo "ShopCrank Demo Data"))) { throw "Drive-local profile missing" }
           # Run again after relocating the entire folder, as when the drive letter changes.
+          # Electron helper processes can outlive the main one for a moment and keep
+          # the folder locked, so stop anything still running from it and retry.
           $moved = Join-Path $env:RUNNER_TEMP "Moved USB Demo"
-          Move-Item $demo $moved
+          for ($attempt = 1; $attempt -le 10; $attempt++) {
+            Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($demo) } | Stop-Process -Force -ErrorAction SilentlyContinue
+            try { Move-Item $demo $moved -ErrorAction Stop; break }
+            catch {
+              if ($attempt -eq 10) { throw }
+              Write-Host "Demo folder still in use (attempt $attempt); retrying"
+              Start-Sleep -Seconds 3
+            }
+          }
           Invoke-DemoSmokeTest (Join-Path $moved "ShopCrank Demo.exe") "Relocated USB Demo"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

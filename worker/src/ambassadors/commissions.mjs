@@ -5,6 +5,7 @@
 // Cancelled, past-due, trialing, and suspended accounts accrue nothing.
 
 import { HttpError } from '../http.mjs';
+import { invoiceMembershipPeriod, recordPaidCoverage } from './coverage.mjs';
 
 export const COMMISSION_TIERS = Object.freeze(['solo', 'shop', 'shop_pro', 'enterprise']);
 export const TIER_LABELS = Object.freeze({ solo: 'Solo', shop: 'Shop', shop_pro: 'Shop Pro', enterprise: 'Enterprise' });
@@ -125,6 +126,12 @@ const ELIGIBLE_SQL = `
     AND COALESCE(acct.suspended, 0) = 0
     AND (s.current_period_end IS NULL OR s.current_period_end >= ?)
     AND (s.attributed_at IS NULL OR s.attributed_at < ?)
+    AND EXISTS (
+      SELECT 1 FROM ambassador_paid_coverage paid
+      WHERE paid.shop_id = s.shop_id
+        AND paid.starts_at < ?
+        AND (paid.ends_at IS NULL OR (paid.ends_at > ? AND paid.ends_at > paid.starts_at))
+    )
 `;
 
 /**
@@ -136,7 +143,7 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   if (!allowClosingPeriod && await periodClosed(env, period)) return { period, created: 0, eligible: 0, frozen: true };
   if (allowClosingPeriod && await reportExists(env, period)) return { period, created: 0, eligible: 0, frozen: true };
   const { start, end } = periodBounds(period);
-  const eligible = await env.DB.prepare(`${ELIGIBLE_SQL}`).bind(start, end).all();
+  const eligible = await env.DB.prepare(`${ELIGIBLE_SQL}`).bind(start, end, end, start).all();
   const now = new Date().toISOString();
   const rows = eligible.results || [];
   if (!rows.length) return { period, created: 0, eligible: 0, frozen: await periodClosed(env, period) };
@@ -160,11 +167,6 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   return { period, created, eligible: rows.length, frozen: await periodClosed(env, period) };
 }
 
-function invoicePeriodStart(invoice) {
-  const seconds = Number(invoice?.period_start || invoice?.lines?.data?.[0]?.period?.start || invoice?.created || 0);
-  return seconds > 0 ? new Date(seconds * 1000) : new Date();
-}
-
 async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
   const stripeSubscriptionId = typeof invoice?.subscription === 'string'
     ? invoice.subscription
@@ -186,7 +188,10 @@ async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
 /** Stripe invoice.paid: accrue the month the invoice covers if it charged money. */
 export async function recordInvoiceCommission(env, shopId, invoice) {
   if (!(Number(invoice?.amount_paid) > 0)) return { recorded: false, reason: 'zero_amount' };
+  // Any real payment restores billing access, even one that earns no commission.
   await reconcilePaidInvoiceSubscription(env, shopId, invoice);
+  const servicePeriod = invoiceMembershipPeriod(invoice, env);
+  if (!servicePeriod) return { recorded: false, reason: 'no_paid_membership_line' };
   const subscription = await env.DB.prepare(`
     SELECT s.plan_id, s.sale_source, s.status AS subscription_status,
            s.sold_by_ambassador_id AS ambassador_id, a.status AS ambassador_status,
@@ -198,12 +203,19 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
     LEFT JOIN accounts acct ON acct.shop_id = s.shop_id
     WHERE s.shop_id = ?
   `).bind(shopId).first();
+  // Keep the payment evidence whatever the cached status says; a suspended
+  // shop's paid time is stored already cut and comes back when it is restored.
+  const suspended = Number(subscription?.account_suspended) === 1;
+  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, {
+    source: 'stripe_invoice',
+    cutReason: suspended ? 'suspension' : null,
+  });
   if (subscription?.subscription_status !== 'active') return { recorded: false, reason: 'membership_not_active' };
-  if (Number(subscription.account_suspended) === 1) return { recorded: false, reason: 'account_suspended' };
+  if (suspended) return { recorded: false, reason: 'account_suspended' };
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };
-  const earningPeriod = periodOf(invoicePeriodStart(invoice));
+  const earningPeriod = periodOf(servicePeriod.start);
   let period = await openPeriodFor(env, earningPeriod);
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const result = await env.DB.prepare(`
