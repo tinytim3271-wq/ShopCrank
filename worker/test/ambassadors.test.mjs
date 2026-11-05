@@ -990,35 +990,108 @@ test('billing changes revoke pending suspension restores without cutting other s
   assert.ok(restoredStripe[0].starts_at >= restoredAt);
 });
 
-test('stale subscription events cannot cut newer invoice-backed coverage', async () => {
+test('out-of-order paid invoices reconcile activation and renewal without stale subscription regressions', async () => {
   const { call, DB, env } = setup();
-  await createShop(call, 'out-of-order-coverage', { accountMode: 'trialing' });
-  DB.sqlite.prepare(`
-    UPDATE subscriptions SET status = 'active', stripe_subscription_id = 'sub_ordered'
-    WHERE shop_id = 'out-of-order-coverage'
-  `).run();
-  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('out-of-order-coverage');
-  const start = Math.floor(Date.now() / 1000) - 86400;
+  await createShop(call, 'out-of-order-activation', { accountMode: 'trialing' });
+  await createShop(call, 'out-of-order-renewal');
+  DB.sqlite.prepare("UPDATE subscriptions SET stripe_subscription_id = 'sub_activation' WHERE shop_id = 'out-of-order-activation'").run();
+  const now = Math.floor(Date.now() / 1000);
+  const activationStart = now - 86400;
+  const activationEnd = now + 30 * 86400;
   await signedWebhook(env, {
-    id: 'evt_newer_invoice', type: 'invoice.paid', created: 300,
+    id: 'evt_activation_invoice', type: 'invoice.paid', created: 300,
     data: { object: {
-      id: 'in_newer_invoice', metadata: { shopId: 'out-of-order-coverage' }, amount_paid: 13900,
-      lines: { data: [membershipLine(start, 13900)] },
+      id: 'in_activation_invoice', subscription: 'sub_activation',
+      metadata: { shopId: 'out-of-order-activation' }, amount_paid: 13900,
+      lines: { data: [membershipLine(activationStart, 13900, { period: { start: activationStart, end: activationEnd } })] },
     } },
   });
   await signedWebhook(env, {
-    id: 'evt_older_subscription', type: 'customer.subscription.updated', created: 200,
+    id: 'evt_older_activation', type: 'customer.subscription.updated', created: 200,
     data: { object: {
-      id: 'sub_ordered', status: 'incomplete', current_period_start: start - 30 * 86400,
-      metadata: { shopId: 'out-of-order-coverage', planId: 'shop' },
+      id: 'sub_activation', status: 'trialing', current_period_start: activationStart - 30 * 86400,
+      current_period_end: activationStart, metadata: { shopId: 'out-of-order-activation', planId: 'shop' },
     } },
   });
 
-  assert.equal(subscription(DB, 'out-of-order-coverage').status, 'active');
-  assert.equal(DB.sqlite.prepare(`
-    SELECT COUNT(*) AS n FROM ambassador_paid_coverage
-    WHERE shop_id = 'out-of-order-coverage' AND source = 'stripe_invoice' AND cut_reason IS NULL
-  `).get().n, 1);
+  const renewalStart = now - 86400;
+  const renewalEnd = now + 90 * 86400;
+  DB.sqlite.prepare(`
+    UPDATE subscriptions SET stripe_subscription_id = 'sub_renewal', current_period_start = ?, current_period_end = ?
+    WHERE shop_id = 'out-of-order-renewal'
+  `).run(new Date((now - 60 * 86400) * 1000).toISOString(), new Date((now - 1) * 1000).toISOString());
+  await signedWebhook(env, {
+    id: 'evt_renewal_invoice', type: 'invoice.paid', created: 500,
+    data: { object: {
+      id: 'in_renewal_invoice', subscription: 'sub_renewal',
+      metadata: { shopId: 'out-of-order-renewal' }, amount_paid: 13900,
+      lines: { data: [membershipLine(renewalStart, 13900, { period: { start: renewalStart, end: renewalEnd } })] },
+    } },
+  });
+  await signedWebhook(env, {
+    id: 'evt_older_renewal', type: 'customer.subscription.updated', created: 400,
+    data: { object: {
+      id: 'sub_renewal', status: 'incomplete', current_period_start: renewalStart - 30 * 86400,
+      current_period_end: renewalStart, metadata: { shopId: 'out-of-order-renewal', planId: 'shop' },
+    } },
+  });
+
+  assert.equal(subscription(DB, 'out-of-order-activation').status, 'active');
+  assert.equal(subscription(DB, 'out-of-order-activation').current_period_end, new Date(activationEnd * 1000).toISOString());
+  assert.equal(DB.sqlite.prepare('SELECT subscription_status FROM accounts WHERE shop_id = ?').get('out-of-order-activation').subscription_status, 'active');
+  assert.equal(DB.sqlite.prepare('SELECT subscription_expires_at FROM accounts WHERE shop_id = ?').get('out-of-order-activation').subscription_expires_at, new Date(activationEnd * 1000).toISOString());
+  assert.equal(subscription(DB, 'out-of-order-renewal').status, 'active');
+  assert.equal(subscription(DB, 'out-of-order-renewal').current_period_end, new Date(renewalEnd * 1000).toISOString());
+  assert.equal(DB.sqlite.prepare('SELECT subscription_expires_at FROM accounts WHERE shop_id = ?').get('out-of-order-renewal').subscription_expires_at, new Date(renewalEnd * 1000).toISOString());
+});
+
+test('a paid invoice restores migration coverage only from the suspension restoration boundary', async () => {
+  const { call, DB, env } = setup();
+  const ambassador = await createAmbassador(call);
+  await createShop(call, 'migration-invoice-resume', { soldByAmbassadorId: ambassador.id });
+  const now = Math.floor(Date.now() / 1000);
+  const serviceStart = now - 300 * 86400;
+  const serviceEnd = now + 90 * 86400;
+  const serviceStartIso = new Date(serviceStart * 1000).toISOString();
+  const serviceEndIso = new Date(serviceEnd * 1000).toISOString();
+  DB.sqlite.prepare('UPDATE subscriptions SET stripe_subscription_id = ?, current_period_start = ?, current_period_end = ? WHERE shop_id = ?')
+    .run('sub-migration-resume', serviceStartIso, serviceEndIso, 'migration-invoice-resume');
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('migration-invoice-resume');
+  DB.sqlite.prepare(`
+    INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, source, created_at)
+    VALUES (?, ?, ?, 'migration', ?)
+  `).run('migration-invoice-resume', serviceStartIso, serviceEndIso, serviceStartIso);
+
+  await call('POST', '/admin/accounts/migration-invoice-resume/status', { suspended: true });
+  await new Promise(resolve => setTimeout(resolve, 5));
+  await call('POST', '/admin/accounts/migration-invoice-resume/status', { suspended: false });
+  const migrationCoverage = DB.sqlite.prepare(`
+    SELECT starts_at, ends_at, paid_through, cut_reason, restored_at, source
+    FROM ambassador_paid_coverage WHERE shop_id = ? AND source = 'migration'
+  `).get('migration-invoice-resume');
+  assert.equal(migrationCoverage.cut_reason, 'suspension_resumed');
+  assert.equal(migrationCoverage.paid_through, serviceEndIso);
+  assert.ok(migrationCoverage.restored_at > migrationCoverage.ends_at, JSON.stringify(migrationCoverage));
+
+  await signedWebhook(env, { id: 'evt_migration_resume_paid', type: 'invoice.paid', data: { object: {
+    id: 'in_migration_resume_paid', subscription: 'sub-migration-resume',
+    metadata: { shopId: 'migration-invoice-resume' }, amount_paid: 13900,
+    lines: { data: [membershipLine(serviceStart, 13900, { period: { start: serviceStart, end: serviceEnd } })] },
+  } } });
+
+  const restoredCoverage = DB.sqlite.prepare(`
+    SELECT starts_at, ends_at, source FROM ambassador_paid_coverage
+    WHERE shop_id = ? AND starts_at = ?
+  `).get('migration-invoice-resume', migrationCoverage.restored_at);
+  assert.deepEqual({ ...restoredCoverage }, {
+    starts_at: migrationCoverage.restored_at,
+    ends_at: serviceEndIso,
+    source: 'stripe_invoice',
+  });
+  assert.ok(migrationCoverage.ends_at < restoredCoverage.starts_at, 'the suspended gap remains uncovered');
+  const futurePeriod = shiftPeriod(periodOf(new Date()), 1);
+  const ledger = await generateCommissionLedger(env, futurePeriod);
+  assert.equal(ledger.eligible, 1, 'verified paid coverage includes later months in the annual term');
 });
 
 test('invoice.paid keeps payment evidence before activation, reads ID-only lines, and still restores billing', async () => {

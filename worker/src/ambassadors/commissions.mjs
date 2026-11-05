@@ -167,19 +167,33 @@ export async function generateCommissionLedger(env, period, { accruedVia = 'cron
   return { period, created, eligible: rows.length, frozen: await periodClosed(env, period) };
 }
 
-async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
+async function reconcilePaidInvoiceSubscription(env, shopId, invoice, servicePeriod) {
   const stripeSubscriptionId = typeof invoice?.subscription === 'string'
     ? invoice.subscription
     : invoice?.subscription?.id || invoice?.parent?.subscription_details?.subscription || '';
   if (!stripeSubscriptionId) return;
   const now = new Date().toISOString();
+  const periodStart = servicePeriod?.start?.toISOString() || null;
+  const periodEnd = servicePeriod?.end?.toISOString() || null;
+  const eligibleStatuses = servicePeriod
+    ? "'active', 'trialing', 'past_due', 'unpaid', 'incomplete'"
+    : "'past_due', 'unpaid', 'incomplete'";
   const result = await env.DB.prepare(`
-    UPDATE subscriptions SET status = 'active', updated_at = ?
-    WHERE shop_id = ? AND stripe_subscription_id = ? AND status IN ('past_due', 'unpaid', 'incomplete')
-  `).bind(now, shopId, stripeSubscriptionId).run();
+    UPDATE subscriptions SET status = 'active', updated_at = ?,
+      current_period_start = CASE WHEN ? IS NOT NULL AND (current_period_start IS NULL OR current_period_start < ?) THEN ? ELSE current_period_start END,
+      current_period_end = CASE WHEN ? IS NOT NULL AND (current_period_end IS NULL OR current_period_end < ?) THEN ? ELSE current_period_end END
+    WHERE shop_id = ? AND stripe_subscription_id = ? AND status IN (${eligibleStatuses})
+  `).bind(
+    now, periodStart, periodStart, periodStart, periodEnd, periodEnd, periodEnd,
+    shopId, stripeSubscriptionId,
+  ).run();
   if (Number(result?.meta?.changes || 0) > 0) {
     await env.DB.batch([
-      env.DB.prepare('UPDATE accounts SET subscription_status = ?, updated_at = ? WHERE shop_id = ?').bind('active', now, shopId),
+      env.DB.prepare(`
+        UPDATE accounts SET subscription_status = 'active',
+          subscription_expires_at = CASE WHEN ? IS NOT NULL AND (subscription_expires_at IS NULL OR subscription_expires_at < ?) THEN ? ELSE subscription_expires_at END,
+          updated_at = ? WHERE shop_id = ?
+      `).bind(periodEnd, periodEnd, periodEnd, now, shopId),
       env.DB.prepare('UPDATE shops SET billing_status = ?, updated_at = ? WHERE id = ?').bind('active', now, shopId),
     ]);
   }
@@ -188,9 +202,9 @@ async function reconcilePaidInvoiceSubscription(env, shopId, invoice) {
 /** Stripe invoice.paid: accrue the month the invoice covers if it charged money. */
 export async function recordInvoiceCommission(env, shopId, invoice) {
   if (!(Number(invoice?.amount_paid) > 0)) return { recorded: false, reason: 'zero_amount' };
-  // Any real payment restores billing access, even one that earns no commission.
-  await reconcilePaidInvoiceSubscription(env, shopId, invoice);
   const servicePeriod = invoiceMembershipPeriod(invoice, env);
+  // Any real payment restores billing access, even one that earns no commission.
+  await reconcilePaidInvoiceSubscription(env, shopId, invoice, servicePeriod);
   if (!servicePeriod) return { recorded: false, reason: 'no_paid_membership_line' };
   const subscription = await env.DB.prepare(`
     SELECT s.plan_id, s.sale_source, s.status AS subscription_status,

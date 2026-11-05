@@ -18,11 +18,38 @@ const isoOrNull = value => (value ? iso(value) : null);
 export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, { source = 'stripe_invoice', cutReason = null } = {}) {
   const start = iso(startsAt);
   const end = isoOrNull(endsAt);
+  if (!cutReason && source === 'stripe_invoice') {
+    const interruptedMigration = await env.DB.prepare(`
+      SELECT restored_at FROM ambassador_paid_coverage
+      WHERE shop_id = ? AND starts_at = ? AND source = 'migration' AND cut_reason = 'suspension_resumed'
+    `).bind(shopId, start).first();
+    if (interruptedMigration) {
+      const restoredAt = interruptedMigration.restored_at || start;
+      if (end && end > restoredAt) {
+        return env.DB.prepare(`
+          INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, paid_through, cut_reason, restored_at, source, created_at)
+          VALUES (?, ?, ?, NULL, NULL, NULL, 'stripe_invoice', ?)
+          ON CONFLICT(shop_id, starts_at) DO UPDATE SET
+            ends_at = CASE WHEN ambassador_paid_coverage.source = 'admin' THEN ambassador_paid_coverage.ends_at
+              WHEN ambassador_paid_coverage.cut_reason IS NOT NULL THEN excluded.ends_at
+              WHEN ambassador_paid_coverage.ends_at IS NULL THEN NULL
+              WHEN excluded.ends_at IS NULL THEN ambassador_paid_coverage.ends_at
+              WHEN excluded.ends_at > ambassador_paid_coverage.ends_at THEN excluded.ends_at
+              ELSE ambassador_paid_coverage.ends_at END,
+            paid_through = CASE WHEN ambassador_paid_coverage.source = 'admin' THEN ambassador_paid_coverage.paid_through ELSE NULL END,
+            cut_reason = CASE WHEN ambassador_paid_coverage.source = 'admin' THEN ambassador_paid_coverage.cut_reason ELSE NULL END,
+            restored_at = CASE WHEN ambassador_paid_coverage.source = 'admin' THEN ambassador_paid_coverage.restored_at ELSE NULL END,
+            source = CASE WHEN ambassador_paid_coverage.source = 'admin' THEN ambassador_paid_coverage.source ELSE excluded.source END
+        `).bind(shopId, restoredAt, end, new Date().toISOString()).run();
+      }
+      return { meta: { changes: 0 } };
+    }
+  }
   // A cut row is stored already ended (zero length) and keeps its paid-through date.
   const [storedEnd, paidThrough] = cutReason ? [start, end] : [end, null];
   return env.DB.prepare(`
-    INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, paid_through, cut_reason, source, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, paid_through, cut_reason, restored_at, source, created_at)
+    VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
     ON CONFLICT(shop_id, starts_at) DO UPDATE SET
       ends_at = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL AND excluded.cut_reason IS NULL
         THEN COALESCE(excluded.ends_at, ambassador_paid_coverage.ends_at) ELSE ambassador_paid_coverage.ends_at END,
@@ -76,9 +103,11 @@ export async function resumeSuspendedCoverage(env, shopId, at = new Date()) {
       ON CONFLICT(shop_id, starts_at) DO NOTHING
     `).bind(shopId, new Date(Date.parse(when) + index).toISOString(), row.paid_through, row.source, now)),
     env.DB.prepare(`
-      UPDATE ambassador_paid_coverage SET cut_reason = 'suspension_resumed'
+      UPDATE ambassador_paid_coverage
+      SET cut_reason = 'suspension_resumed',
+          restored_at = CASE WHEN source = 'migration' AND starts_at < ? THEN ? ELSE restored_at END
       WHERE shop_id = ? AND cut_reason = 'suspension'
-    `).bind(shopId),
+    `).bind(when, when, shopId),
   ];
   const results = await env.DB.batch(statements);
   return { resumed: results.reduce((sum, result) => sum + Number(result?.meta?.changes || 0), 0) };

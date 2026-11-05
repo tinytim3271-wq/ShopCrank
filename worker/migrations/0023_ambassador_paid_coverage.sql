@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS ambassador_paid_coverage (
   ends_at TEXT,
   paid_through TEXT,
   cut_reason TEXT,
+  restored_at TEXT,
   source TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (shop_id, starts_at)
