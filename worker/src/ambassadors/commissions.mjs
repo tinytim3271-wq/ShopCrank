@@ -203,15 +203,11 @@ export async function recordInvoiceCommission(env, shopId, invoice) {
     LEFT JOIN accounts acct ON acct.shop_id = s.shop_id
     WHERE s.shop_id = ?
   `).bind(shopId).first();
-  // Keep the payment evidence whatever the cached status says; a suspended
-  // shop's paid time is stored already cut and comes back when it is restored.
-  const suspended = Number(subscription?.account_suspended) === 1;
-  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, {
-    source: 'stripe_invoice',
-    cutReason: suspended ? 'suspension' : null,
-  });
+  // A suspended shop earns nothing for this payment, now or after a restore.
+  if (Number(subscription?.account_suspended) === 1) return { recorded: false, reason: 'account_suspended' };
+  // Keep the payment evidence even if the cached status has not caught up yet.
+  await recordPaidCoverage(env, shopId, servicePeriod.start, servicePeriod.end, { source: 'stripe_invoice' });
   if (subscription?.subscription_status !== 'active') return { recorded: false, reason: 'membership_not_active' };
-  if (suspended) return { recorded: false, reason: 'account_suspended' };
   if (!subscription?.ambassador_id) return { recorded: false, reason: 'no_ambassador' };
   if (subscription.ambassador_status !== 'approved') return { recorded: false, reason: 'ambassador_not_approved' };
   if (subscription.monthly_cents === null || subscription.monthly_cents === undefined) return { recorded: false, reason: 'no_rate' };
