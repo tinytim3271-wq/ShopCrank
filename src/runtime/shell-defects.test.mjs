@@ -12,6 +12,7 @@ import { toLocalIsoDate } from '../shared/dates.js';
 import { escapeHtml } from '../shared/html.js';
 import { combinedSalesTaxRate, normalizeJurisdictions } from '../modules/filing/jurisdictions.js';
 import { applyInvoiceRemoval } from '../modules/archived-records.js';
+import { relatedForRemoval } from '../modules/record-deletion.js';
 
 // The shell (src/runtime/legacy.js) is one large module, so these checks read
 // its source. Each one describes a defect that was found in a live shop.
@@ -93,15 +94,17 @@ test('invoice editor roundtrips date-only values without UTC drift', () => {
   assert.equal(dateValue('2024-02-29'), '2024-02-29');
 });
 
-test('queued invoice archives retain and mark the invoice and its payments', async () => {
-  const invoice = { id: 'invoice-1', number: 'INV-1', status: 'paid' };
-  const payment = { id: 'payment-1', invoiceNumber: invoice.number };
+test('queued invoice archives retain and mark the invoice and work-order-linked deposits', async () => {
+  const invoice = { id: 'invoice-1', number: 'INV-1', ro: 'RO-1', status: 'paid' };
+  const payment = { id: 'payment-1', workOrderId: invoice.ro };
   const state = { invoices: [invoice], payments: [payment] };
   const messages = [];
   const deleteInvoiceRecord = vm.runInNewContext(`${functionSource('async function deleteInvoiceRecord(')}; deleteInvoiceRecord`, {
     state,
     userCanDeleteRecords: () => true,
     invoiceRecordKey: item => item.id || item.number,
+    relatedForRemoval,
+    removalCollections: () => ({ payments: state.payments }),
     willArchive: () => true,
     confirm: () => true,
     apiFetch: async () => ({ queued: true }),

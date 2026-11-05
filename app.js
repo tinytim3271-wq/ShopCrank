@@ -13845,7 +13845,7 @@ AI workflow: ${aiResult.diagnostics.causes[0]?.cause || "Inspection required"}`.
     }
     const invoice = state.invoices.find((item) => invoiceRecordKey(item) === key);
     if (!invoice) return;
-    const payments2 = state.payments.filter((payment) => payment.invoiceNumber === invoice.number);
+    const payments2 = relatedForRemoval("invoices", invoice, removalCollections()).payments;
     const archives = willArchive("invoices", invoice);
     if (!confirm(archives ? `Archive ${invoice.number}${payments2.length ? " and its payments" : ""}? It was sent, signed or paid, so it is kept for your tax records and can be restored from Settings \u2192 Archived records.` : `Delete ${invoice.number}? It is a draft with no payments, so it will be permanently deleted.`)) return;
     try {
