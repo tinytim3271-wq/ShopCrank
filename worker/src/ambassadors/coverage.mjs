@@ -30,6 +30,30 @@ export async function recordPaidCoverage(env, shopId, startsAt, endsAt = null, {
 }
 
 /**
+ * Record a paid interval as excluded (stored already cut), so a later replay
+ * of the same invoice, even under a new webhook event ID, cannot turn it into
+ * coverage or a commission. An existing interval for the same start is cut.
+ */
+export async function excludePaidCoverage(env, shopId, startsAt, endsAt = null, { reason = 'suspension', source = 'stripe_invoice' } = {}) {
+  return env.DB.prepare(`
+    INSERT INTO ambassador_paid_coverage (shop_id, starts_at, ends_at, paid_through, cut_reason, source, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(shop_id, starts_at) DO UPDATE SET
+      paid_through = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL THEN ambassador_paid_coverage.ends_at ELSE ambassador_paid_coverage.paid_through END,
+      cut_reason = COALESCE(ambassador_paid_coverage.cut_reason, excluded.cut_reason),
+      ends_at = CASE WHEN ambassador_paid_coverage.cut_reason IS NULL THEN ambassador_paid_coverage.starts_at ELSE ambassador_paid_coverage.ends_at END
+  `).bind(shopId, iso(startsAt), iso(startsAt), isoOrNull(endsAt), reason, source, new Date().toISOString()).run();
+}
+
+/** True when the interval starting at `startsAt` was cut or excluded; it never earns again. */
+export async function coverageExcluded(env, shopId, startsAt) {
+  const row = await env.DB.prepare(`
+    SELECT 1 FROM ambassador_paid_coverage WHERE shop_id = ? AND starts_at = ? AND cut_reason IS NOT NULL
+  `).bind(shopId, iso(startsAt)).first();
+  return Boolean(row);
+}
+
+/**
  * Cut every interval still running at `at` (and retire later ones) so the
  * time after `at` is unpaid. `sources` limits which evidence is cut.
  */

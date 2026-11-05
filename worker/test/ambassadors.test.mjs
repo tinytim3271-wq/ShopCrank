@@ -968,3 +968,29 @@ test('invoice.paid keeps payment evidence before activation, reads ID-only lines
   assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'usage-only'").get().n, 0, 'an unknown ID-only usage line is not a membership fee');
   assert.equal(subscription(DB, 'usage-only').status, 'active', 'the payment still restores billing access');
 });
+
+test('an invoice rejected during suspension stays excluded when Stripe resends it after the restore', async () => {
+  const { call, DB, env } = setup();
+  const amb = await createAmbassador(call);
+  await createShop(call, 'replay-shop', { soldByAmbassadorId: amb.id });
+  DB.sqlite.prepare('DELETE FROM ambassador_paid_coverage WHERE shop_id = ?').run('replay-shop');
+  const start = Math.floor(Date.now() / 1000) - 3600;
+  const paid = id => ({ id, type: 'invoice.paid', data: { object: {
+    id: 'in_replayed', metadata: { shopId: 'replay-shop' }, amount_paid: 13900, lines: { data: [membershipLine(start, 13900)] },
+  } } });
+
+  await call('POST', '/admin/accounts/replay-shop/status', { suspended: true });
+  await signedWebhook(env, paid('evt_during_suspension'));
+  await call('POST', '/admin/accounts/replay-shop/status', { suspended: false });
+  await signedWebhook(env, paid('evt_replay_after_restore'));
+
+  const live = DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'replay-shop' AND (ends_at IS NULL OR ends_at > starts_at)").get().n;
+  assert.equal(live, 0, 'the replayed invoice adds no coverage');
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_commissions WHERE shop_id = 'replay-shop'").get().n, 0, 'and no commission');
+
+  const nextStart = start + 31 * 86400;
+  await signedWebhook(env, { id: 'evt_next_invoice', type: 'invoice.paid', data: { object: {
+    id: 'in_next', metadata: { shopId: 'replay-shop' }, amount_paid: 13900, lines: { data: [membershipLine(nextStart, 13900)] },
+  } } });
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM ambassador_paid_coverage WHERE shop_id = 'replay-shop' AND (ends_at IS NULL OR ends_at > starts_at)").get().n, 1, 'the next real invoice earns again');
+});
