@@ -12,8 +12,6 @@ import {
   DEFAULT_AUTH_EMAIL_FROM,
   DEFAULT_PAGES_ORIGIN,
   HEALTHZ_SERVICE,
-  LEGACY_APEX_HOST,
-  LEGACY_HOST,
 } from '../src/production-host.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -55,21 +53,26 @@ test('apex shopcrank.com redirects to www for API and Pages paths', async () => 
   assert.equal(site.headers.get('location'), `${CANONICAL_ORIGIN}/login`);
 });
 
-test('the pre-cutover host redirects to the canonical host, keeping path and query', async () => {
-  for (const host of [LEGACY_HOST, LEGACY_APEX_HOST]) {
-    const response = await worker.fetch(new Request(`https://${host}/api/auth/session?returnTo=%2Fapp`), {});
-    assert.equal(response.status, 301, `${host} should redirect`);
-    assert.equal(response.headers.get('location'), `${CANONICAL_ORIGIN}/api/auth/session?returnTo=%2Fapp`);
+test('ShopCrank no longer redirects any other domain to itself', async (t) => {
+  // The old shared host now belongs to a different site; the Worker must not
+  // claim it or any other non-ShopCrank host with a redirect.
+  t.mock.method(globalThis, 'fetch', async () => new Response('<!doctype html>', { status: 200 }));
+  for (const url of [
+    'https://www.other-business.example/api/healthz',
+    'https://other-business.example/pricing/',
+  ]) {
+    const response = await worker.fetch(new Request(url), {});
+    const location = response.headers.get('location') || '';
+    assert.equal(response.status, 200, url);
+    assert.equal(location.includes(CANONICAL_HOST), false, url);
   }
-
-  const page = await worker.fetch(new Request(`https://${LEGACY_HOST}/pricing/`), {});
-  assert.equal(page.status, 301);
-  assert.equal(page.headers.get('location'), `${CANONICAL_ORIGIN}/pricing/`);
+  const source = readFileSync(join(root, 'worker/src/production-host.mjs'), 'utf8');
+  assert.doesNotMatch(source, /LEGACY_HOST|legacyToCanonicalRedirect/);
 });
 
-test('legacy Stripe webhook POSTs reach signature validation instead of redirecting', async () => {
+test('apex Stripe webhook POSTs reach signature validation instead of redirecting', async () => {
   const response = await worker.fetch(new Request(
-    `https://${LEGACY_HOST}/api/payments/webhook/shop-1`,
+    `https://${APEX_HOST}/api/payments/webhook/shop-1`,
     { method: 'POST', body: '{}' },
   ), {});
 
@@ -77,28 +80,28 @@ test('legacy Stripe webhook POSTs reach signature validation instead of redirect
   assert.equal(response.headers.get('location'), null);
 });
 
-test('legacy provider callbacks reach their existing authentication checks', async () => {
+test('apex provider callbacks reach their existing authentication checks', async () => {
   const requests = [
-    [new Request(`https://${LEGACY_HOST}/api/billing/webhook`, { method: 'POST', body: '{}' }), {}, 400],
-    [new Request(`https://${LEGACY_HOST}/api/agentphone/webhook/shop-1`, { method: 'POST', body: '{}' }), {}, 400],
-    [new Request(`https://${LEGACY_HOST}/api/messaging/twilio/webhook/shop-1`, {
+    [new Request(`https://${APEX_HOST}/api/billing/webhook`, { method: 'POST', body: '{}' }), {}, 400],
+    [new Request(`https://${APEX_HOST}/api/agentphone/webhook/shop-1`, { method: 'POST', body: '{}' }), {}, 400],
+    [new Request(`https://${APEX_HOST}/api/messaging/twilio/webhook/shop-1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: '',
     }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 401],
     // Unverified incoming calls are answered with a plain forward/apology (no AI stream).
-    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/incoming/shop-1`, {
+    [new Request(`https://${APEX_HOST}/api/voice/twilio/incoming/shop-1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: '',
     }), { TWILIO_AUTH_TOKEN: 'test-twilio-token' }, 200],
-    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/stream/shop-1`, {
+    [new Request(`https://${APEX_HOST}/api/voice/twilio/stream/shop-1`, {
       headers: { Upgrade: 'websocket' },
     }), {}, 401],
-    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/stream/shop-1/not-a-token`, {
+    [new Request(`https://${APEX_HOST}/api/voice/twilio/stream/shop-1/not-a-token`, {
       headers: { Upgrade: 'websocket' },
     }), {}, 401],
-    [new Request(`https://${LEGACY_HOST}/api/voice/twilio/status/shop-1`, {
+    [new Request(`https://${APEX_HOST}/api/voice/twilio/status/shop-1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: '',
@@ -112,14 +115,14 @@ test('legacy provider callbacks reach their existing authentication checks', asy
   }
 });
 
-test('legacy Twilio voice callbacks return a stream URL on the legacy host', async () => {
+test('apex Twilio voice callbacks return a stream URL on the host they hit', async () => {
   const body = new URLSearchParams({
     From: '+18065550123',
     To: '+18065550999',
     CallSid: 'CA1234567890abcdef',
   });
   const response = await worker.fetch(new Request(
-    `https://${LEGACY_HOST}/api/voice/twilio/incoming/shop-1`,
+    `https://${APEX_HOST}/api/voice/twilio/incoming/shop-1`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -135,7 +138,7 @@ test('legacy Twilio voice callbacks return a stream URL on the legacy host', asy
   assert.equal(response.headers.get('location'), null);
   assert.match(
     await response.text(),
-    /<Stream url="wss:\/\/www\.yourcarguy806\.com\/api\/voice\/twilio\/stream\/shop-1\/[^"?/]+"/,
+    /<Stream url="wss:\/\/shopcrank\.com\/api\/voice\/twilio\/stream\/shop-1\/[^"?/]+"/,
   );
 });
 

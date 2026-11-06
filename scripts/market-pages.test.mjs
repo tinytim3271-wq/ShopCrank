@@ -15,7 +15,7 @@ test('marketing pages and the app shell advertise www.shopcrank.com', () => {
   assert.match(shell, /https:\/\/www\.shopcrank\.com\//);
   assert.match(shell, /connect-src[^"]*https:\/\/api\.x\.ai/);
   assert.match(shell, /connect-src[^"]*wss:\/\/api\.x\.ai/);
-  assert.doesNotMatch(shell, /yourcarguy806|MechPro dispatch board/);
+  assert.doesNotMatch(shell, /MechPro dispatch board/);
   for (const href of ['/features/', '/pricing/', '/login/', '/signup/']) {
     const page = readFileSync(new URL(`../public${href}index.html`, import.meta.url), 'utf8');
     assert.match(page, new RegExp(`https://www\\.shopcrank\\.com${href.replaceAll('/', '\\/')}`));
@@ -24,7 +24,7 @@ test('marketing pages and the app shell advertise www.shopcrank.com', () => {
 
 test('the legal pages are generic and name no legacy shop or host', () => {
   for (const [name, page] of [['privacy', privacy], ['terms', terms]]) {
-    assert.doesNotMatch(page, /Your Car Guy|yourcarguy806|MechPro/i, `${name} names a legacy brand`);
+    assert.doesNotMatch(page, /Your Car Guy|MechPro/i, `${name} names a legacy brand`);
     assert.match(page, new RegExp('https://www\\.shopcrank\\.com/' + name + '/'), `${name} canonical URL`);
   }
   assert.match(privacy, /subscribing shop/);

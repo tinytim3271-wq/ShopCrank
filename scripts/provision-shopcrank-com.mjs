@@ -17,9 +17,6 @@ import {
   CANONICAL_HOST,
   CANONICAL_ORIGIN,
   DEFAULT_AUTH_EMAIL_FROM,
-  LEGACY_APEX_HOST,
-  LEGACY_HOST,
-  LEGACY_HOSTS,
 } from '../worker/src/production-host.mjs';
 
 export const PAGES_PROJECT = 'shopcrank-dispatch';
@@ -31,8 +28,6 @@ export const AUTH_FROM = DEFAULT_AUTH_EMAIL_FROM;
 export const GOOGLE_JS_ORIGIN = CANONICAL_ORIGIN;
 export const GOOGLE_REDIRECT_URI = `${CANONICAL_ORIGIN}/api/auth/google/callback`;
 export const SUPPORT_EMAIL = 'support@shopcrank.com';
-/** The legacy zone still serves the old host; it is retired by this script. */
-export const LEGACY_ZONE = LEGACY_APEX_HOST;
 
 export const COPYABLE_SECRET_ENV = Object.freeze({
   GOOGLE_CLIENT_ID: 'GOOGLE_CLIENT_ID',
@@ -105,8 +100,6 @@ export function desiredState() {
     worker: WORKER_NAME,
     legacyWorker: LEGACY_WORKER_NAME,
     workerRoutes: desiredWorkerRoutes(),
-    legacyZone: LEGACY_ZONE,
-    legacyWorkerRoutes: desiredLegacyWorkerRoutes(),
     r2Buckets: [...R2_BUCKETS],
     legacyR2Buckets: [...LEGACY_R2_BUCKETS],
     emailFrom: AUTH_FROM,
@@ -130,58 +123,6 @@ export function desiredWorkerRoutes() {
 
 export function shopcrankHosts() {
   return [CANONICAL_HOST, APEX_HOST];
-}
-
-/**
- * Routes the legacy zone should end up with. The whole old host points at the
- * Worker, which answers every legacy URL with a 301 to the canonical host —
- * sign-in links, bookmarked pages, and old installer links all land on the
- * right place. The old wildcard Pages route is dropped, because a Pages
- * route would serve the site on the old host instead of redirecting.
- */
-export function desiredLegacyWorkerRoutes() {
-  return [
-    `${LEGACY_HOST}/*`,
-    `${LEGACY_APEX_HOST}/*`,
-  ];
-}
-
-export function isLegacyApiRoute(pattern) {
-  const { host, path } = parseRoutePattern(pattern);
-  return LEGACY_HOSTS.includes(host) && path === '/api/*';
-}
-
-export function isLegacyWildcardRoute(pattern) {
-  const { host, path } = parseRoutePattern(pattern);
-  const bare = host.replace(/^\*\./, '');
-  return host.startsWith('*.') && LEGACY_HOSTS.includes(bare)
-    && (path === '' || path === '/*' || path === '/');
-}
-
-/** True for the whole-host route the Worker answers redirects on. */
-export function isLegacyHostRoute(pattern) {
-  const { host, path } = parseRoutePattern(pattern);
-  return LEGACY_HOSTS.includes(host) && (path === '' || path === '/*' || path === '/');
-}
-
-/**
- * The old host's wildcard Pages route has to go, and /api/* has to be
- * replaced by a whole-host route so the Worker can redirect every path.
- */
-export function shouldDeleteLegacyRoute(route) {
-  if (isLegacyWildcardRoute(route?.pattern)) return true;
-  if (isLegacyHostRoute(route?.pattern)) return route?.script !== WORKER_NAME;
-  if (isLegacyApiRoute(route?.pattern)) return true;
-  return false;
-}
-
-export function legacyRoutesToCreate(existing = []) {
-  const have = new Set(
-    existing
-      .filter((route) => isLegacyHostRoute(route.pattern) && route.script === WORKER_NAME)
-      .map((route) => normalizeRoutePattern(route.pattern)),
-  );
-  return desiredLegacyWorkerRoutes().filter((pattern) => !have.has(normalizeRoutePattern(pattern)));
 }
 
 function normalizeRoutePattern(pattern) {
@@ -394,17 +335,6 @@ async function listPaged(client, path, { query = {}, resultKey } = {}) {
   return items;
 }
 
-/**
- * Finds the legacy zone on this account. It is optional: a fresh account may
- * never have had the old host, in which case the cutover steps are skipped.
- */
-export async function findLegacyZone(client, { accountId, zoneName = LEGACY_ZONE }) {
-  const existing = await listPaged(client, '/zones', { query: { name: zoneName, 'account.id': accountId } });
-  const zone = existing.find((item) => item.name === zoneName);
-  if (!zone) return { action: 'skipped', reason: `zone ${zoneName} is not on this account` };
-  return { action: 'exists', zoneId: zone.id, name: zone.name, status: zone.status };
-}
-
 export async function ensureZone(client, { accountId, zoneName = APEX_HOST }) {
   const existing = await listPaged(client, '/zones', { query: { name: zoneName, 'account.id': accountId } });
   const onAccount = existing.find((zone) => zone.name === zoneName);
@@ -556,18 +486,6 @@ export async function ensureDnsRecords(client, { zoneId, records = [] }) {
 }
 
 /**
- * The legacy host's records. The zone is proxied on Cloudflare's anycast
- * addresses, so a proxied A record to the zone's own address is enough for
- * the Worker route to answer.
- */
-export function legacyDnsRecords() {
-  return [
-    { type: 'A', name: LEGACY_APEX_HOST, content: '104.21.17.176', proxied: true },
-    { type: 'A', name: LEGACY_HOST, content: '104.21.17.188', proxied: true },
-  ];
-}
-
-/**
  * The canonical apex. Pages owns www.shopcrank.com; shopcrank.com points at
  * the same Pages project with a proxied CNAME, so the apex reaches the site.
  * An A record to a Cloudflare address is rejected with "DNS points to
@@ -591,83 +509,74 @@ export async function detachWholeHostWorkerDomains(client, { accountId, hosts = 
 }
 
 /**
- * The legacy host is still bound as a whole-hostname Worker custom domain on
- * the old Worker. That binding outranks the zone routes, so it has to be
- * detached before the host can be retired; the zone /api/* route then serves
- * the Worker's legacy->canonical redirect.
+ * Everything that serves ShopCrank on Cloudflare. ShopCrank is only served on
+ * its own domains, so any binding of these to another domain is released.
  */
-export async function detachLegacyWorkerDomains(client, { accountId, hosts = LEGACY_HOSTS }) {
-  const records = await listPaged(client, `/accounts/${accountId}/workers/domains`);
-  const detached = [];
-  try {
-    for (const domain of records) {
-      if (!hosts.includes(domain.hostname)) continue;
-      await client.request('DELETE', `/accounts/${accountId}/workers/domains/${domain.id}`);
-      detached.push(domain);
-    }
-  } catch (error) {
-    try {
-      await restoreWorkerDomains(client, { accountId, domains: detached });
-    } catch (rollbackError) {
-      error.message = `${error.message}; failed to restore detached legacy domains: ${rollbackError.message}`;
-    }
-    throw error;
-  }
-  return {
-    action: detached.length ? 'detached' : 'none',
-    detached: detached.map(({ hostname, service, id }) => ({ hostname, service, id })),
-    detachedDomains: detached,
-  };
+export const SHOPCRANK_SERVICES = Object.freeze([WORKER_NAME, LEGACY_WORKER_NAME, PAGES_PROJECT]);
+
+const SHOPCRANK_ZONE = /^shopcrank\.(com|net|io)$/i;
+
+function bareHostname(hostname) {
+  return String(hostname || '').trim().toLowerCase().replace(/^\*\.?/, '').replace(/\.$/, '');
 }
 
-export async function restoreWorkerDomains(client, { accountId, domains = [] }) {
-  const path = `/accounts/${accountId}/workers/domains`;
-  const restored = [];
-  for (const domain of domains) {
-    const body = {
-      hostname: domain.hostname,
-      service: domain.service,
-      ...(domain.environment && { environment: domain.environment }),
-    };
-    if (domain.zone_id) body.zone_id = domain.zone_id;
-    const result = await client.request('PUT', path, { body });
-    restored.push({
-      hostname: domain.hostname,
-      service: domain.service,
-      alreadyConfigured: Boolean(result.alreadyConfigured),
-    });
-  }
-  return { action: restored.length ? 'restored' : 'none', restored };
+/** True for shopcrank.com/.net/.io and their subdomains. */
+export function isShopcrankHostname(hostname) {
+  const host = bareHostname(hostname);
+  return SHOPCRANK_ZONE.test(host) || /\.shopcrank\.(com|net|io)$/i.test(host);
+}
+
+export function isShopcrankZone(name) {
+  return SHOPCRANK_ZONE.test(bareHostname(name));
+}
+
+/** A ShopCrank Worker/Pages binding that sits on someone else's domain. */
+export function isForeignShopcrankBinding({ hostname, service } = {}) {
+  if (!SHOPCRANK_SERVICES.includes(String(service || ''))) return false;
+  const host = bareHostname(hostname);
+  if (!host || host.endsWith('.pages.dev') || host.endsWith('.workers.dev')) return false;
+  return !isShopcrankHostname(host);
 }
 
 /**
- * Retires the legacy zone: drop the wildcard Pages route so the old host
- * stops serving the marketing site, and keep /api/* on the current Worker so
- * the legacy->canonical redirect can answer API calls on the old host.
+ * Releases ShopCrank from every domain that is not a ShopCrank domain: custom
+ * domains on the ShopCrank Pages project, Worker custom domains, and Worker
+ * routes on other zones that run a ShopCrank script. It makes no direct DNS
+ * requests in those zones, but deleting a Worker custom domain also removes
+ * its Cloudflare-managed DNS record. Recreate the destination site's DNS
+ * record during handoff. Email Routing in those zones is untouched.
  */
-export async function ensureLegacyWorkerRoutes(client, { zoneId, worker = WORKER_NAME }) {
-  const path = `/zones/${zoneId}/workers/routes`;
-  const existing = asList((await client.request('GET', path)).result);
-  const deleted = [];
-  for (const route of existing) {
-    if (!shouldDeleteLegacyRoute(route)) continue;
-    await client.request('DELETE', `${path}/${route.id}`);
-    deleted.push({ pattern: route.pattern, script: route.script });
+export async function releaseForeignBindings(client, { accountId, project = PAGES_PROJECT }) {
+  const released = { pagesDomains: [], workerDomains: [], workerRoutes: [] };
+
+  const pagesPath = `/accounts/${accountId}/pages/projects/${project}/domains`;
+  for (const domain of asList((await client.request('GET', pagesPath)).result)) {
+    const name = domain?.name || domain;
+    if (!isForeignShopcrankBinding({ hostname: name, service: project })) continue;
+    await client.request('DELETE', `${pagesPath}/${encodeURIComponent(name)}`);
+    released.pagesDomains.push(name);
   }
-  const remaining = existing.filter((route) => !deleted.some((item) => item.pattern === route.pattern && item.script === route.script));
-  const created = [];
-  for (const pattern of legacyRoutesToCreate(remaining)) {
-    const payload = await client.request('POST', path, { body: { pattern, script: worker } });
-    created.push({ pattern, alreadyConfigured: Boolean(payload.alreadyConfigured) });
+
+  for (const domain of await listPaged(client, `/accounts/${accountId}/workers/domains`)) {
+    if (!isForeignShopcrankBinding(domain)) continue;
+    await client.request('DELETE', `/accounts/${accountId}/workers/domains/${domain.id}`);
+    released.workerDomains.push({ hostname: domain.hostname, service: domain.service });
   }
-  const finalRoutes = asList((await client.request('GET', path)).result)
-    .filter((route) => isLegacyHostRoute(route.pattern) || isLegacyApiRoute(route.pattern) || isLegacyWildcardRoute(route.pattern));
-  return {
-    action: created.length || deleted.length ? 'updated' : 'exists',
-    routes: finalRoutes.map((route) => ({ pattern: route.pattern, script: route.script })),
-    created: created.map((item) => item.pattern),
-    deleted,
-  };
+
+  const zones = await listPaged(client, '/zones', { query: { 'account.id': accountId } });
+  for (const zone of zones) {
+    if (isShopcrankZone(zone.name)) continue;
+    const path = `/zones/${zone.id}/workers/routes`;
+    for (const route of asList((await client.request('GET', path)).result)) {
+      const binding = { hostname: parseRoutePattern(route.pattern).host, service: route.script };
+      if (!isForeignShopcrankBinding(binding)) continue;
+      await client.request('DELETE', `${path}/${route.id}`);
+      released.workerRoutes.push({ zone: zone.name, pattern: route.pattern, script: route.script });
+    }
+  }
+
+  const count = released.pagesDomains.length + released.workerDomains.length + released.workerRoutes.length;
+  return { action: count ? 'released' : 'none', ...released };
 }
 
 async function ensureSupportNotificationAddress(client, { accountId, address }) {
@@ -696,9 +605,8 @@ async function ensureSupportNotificationAddress(client, { accountId, address }) 
 }
 
 /**
- * Points the support address at a real destination. The legacy zone routed
- * mail to the old owner's Gmail address; the ShopCrank zone needs the same
- * forwarding so support@shopcrank.com reaches a human.
+ * Points the support address at a real destination so
+ * support@shopcrank.com reaches a human.
  */
 export async function ensureSupportForwarding(client, { accountId, zoneId, address = SUPPORT_EMAIL, forwardTo }) {
   if (!forwardTo) {
@@ -971,15 +879,12 @@ export async function provisionShopcrankCom({
   }
 
   const zoneId = zoneStep.zoneId;
-  report.steps.legacyZone = await cfTry('legacyZone', () => findLegacyZone(client, { accountId }));
-  logger.info?.(`[provision] legacyZone: ${report.steps.legacyZone.ok
-    ? report.steps.legacyZone.action || 'ok'
-    : report.steps.legacyZone.error}`);
   const supportForward = String(env.SUPPORT_EMAIL_FORWARD_TO || '').trim();
   const steps = {
     pages: () => ensurePagesDomains(client, { accountId }),
     workerDomains: () => detachWholeHostWorkerDomains(client, { accountId }),
     workerRoutes: () => ensureWorkerRoutes(client, { zoneId }),
+    releaseForeign: () => releaseForeignBindings(client, { accountId }),
     apexDns: () => ensureDnsRecords(client, { zoneId, records: apexDnsRecords() }),
     r2: () => ensureR2Buckets(client, { accountId }),
     email: () => enableEmail(client, { accountId, zoneId }),
@@ -992,99 +897,6 @@ export async function provisionShopcrankCom({
     report.steps[name] = result;
     if (!result.ok) report.ok = false;
     logger.info?.(`[provision] ${name}: ${result.ok ? result.action || 'ok' : result.error}`);
-  }
-
-  const legacyZone = report.steps.legacyZone;
-  const canonicalPrerequisites = ['pages', 'workerRoutes', 'apexDns'];
-  const failedPrerequisite = canonicalPrerequisites.find((name) => !report.steps[name]?.ok);
-  const pendingPagesDomains = report.desired.pagesDomains.filter((name) => (
-    report.steps.pages?.domains?.find((domain) => domain.name === name)?.status !== 'active'
-  ));
-  const skipLegacyCutover = (reason) => {
-    report.steps.legacyWorkerRoutes = { ok: true, action: 'skipped', reason };
-    report.steps.legacyWorkerDomains = { ok: true, action: 'skipped', reason };
-    report.steps.legacyDns = { ok: true, action: 'skipped', reason };
-    for (const name of ['legacyWorkerRoutes', 'legacyWorkerDomains', 'legacyDns']) {
-      logger.info?.(`[provision] ${name}: skipped (${reason})`);
-    }
-  };
-
-  if (!legacyZone.ok) {
-    report.ok = false;
-    skipLegacyCutover(`legacy zone discovery failed: ${legacyZone.error}`);
-  } else if (!legacyZone.zoneId) {
-    skipLegacyCutover(`legacy zone ${LEGACY_ZONE} not on this account`);
-  } else if (legacyZone.status && legacyZone.status !== 'active') {
-    skipLegacyCutover(`legacy zone ${LEGACY_ZONE} is not active`);
-    report.remaining.push({
-      kind: 'legacy_zone',
-      message: `Activate the ${LEGACY_ZONE} zone before detaching its Worker custom domains.`,
-      status: legacyZone.status,
-    });
-  } else if (failedPrerequisite) {
-    skipLegacyCutover(`canonical prerequisite ${failedPrerequisite} failed`);
-  } else if (zoneStep.status !== 'active') {
-    skipLegacyCutover(`canonical zone ${APEX_HOST} is not active`);
-    report.remaining.push({
-      kind: 'canonical_zone_activation',
-      message: `Activate the ${APEX_HOST} zone before retiring the legacy host.`,
-      status: zoneStep.status,
-    });
-  } else if (pendingPagesDomains.length) {
-    skipLegacyCutover(`canonical Pages domains are not active: ${pendingPagesDomains.join(', ')}`);
-    report.remaining.push({
-      kind: 'pages_domain_activation',
-      message: `Wait for the required Pages domains to become active before retiring the legacy host.`,
-      domains: pendingPagesDomains,
-    });
-  } else {
-    const legacyZoneId = legacyZone.zoneId;
-    const dnsPreflight = await cfTry('legacyDnsPreflight', async () => ({
-      records: (await listPaged(client, `/zones/${legacyZoneId}/dns_records`)).length,
-    }));
-    report.steps.legacyDnsPreflight = dnsPreflight;
-    if (!dnsPreflight.ok) {
-      report.ok = false;
-      skipLegacyCutover(`legacy DNS preflight failed: ${dnsPreflight.error}`);
-    } else {
-      const legacyRoutes = await cfTry('legacyWorkerRoutes', () => ensureLegacyWorkerRoutes(client, {
-        zoneId: legacyZoneId,
-      }));
-      report.steps.legacyWorkerRoutes = legacyRoutes;
-      logger.info?.(`[provision] legacyWorkerRoutes: ${legacyRoutes.ok ? legacyRoutes.action || 'ok' : legacyRoutes.error}`);
-      if (!legacyRoutes.ok) {
-        report.ok = false;
-        skipLegacyCutover(`legacy Worker routes failed: ${legacyRoutes.error}`);
-      } else {
-        const legacyDomains = await cfTry('legacyWorkerDomains', () => detachLegacyWorkerDomains(client, { accountId }));
-        report.steps.legacyWorkerDomains = legacyDomains;
-        logger.info?.(`[provision] legacyWorkerDomains: ${legacyDomains.ok ? legacyDomains.action || 'ok' : legacyDomains.error}`);
-        if (!legacyDomains.ok) {
-          report.ok = false;
-          report.steps.legacyDns = { ok: true, action: 'skipped', reason: 'legacy domain detachment failed' };
-        } else {
-          // Detaching the old custom domain removes its DNS record. Restore the
-          // records only after the destination Worker route is ready.
-          const legacyDns = await cfTry('legacyDns', () => ensureDnsRecords(client, {
-            zoneId: legacyZoneId,
-            records: legacyDnsRecords(),
-          }));
-          report.steps.legacyDns = legacyDns;
-          logger.info?.(`[provision] legacyDns: ${legacyDns.ok ? legacyDns.action || 'ok' : legacyDns.error}`);
-          if (!legacyDns.ok) {
-            report.ok = false;
-            if (legacyDomains.detachedDomains?.length) {
-              const rollback = await cfTry('legacyRollback', () => restoreWorkerDomains(client, {
-                accountId,
-                domains: legacyDomains.detachedDomains,
-              }));
-              report.steps.legacyRollback = rollback;
-              logger.info?.(`[provision] legacyRollback: ${rollback.ok ? rollback.action || 'ok' : rollback.error}`);
-            }
-          }
-        }
-      }
-    }
   }
 
   if (report.steps.email?.destination && !report.steps.email.destination.verified) {
@@ -1169,10 +981,12 @@ Attaches Pages ${PAGES_PROJECT} as ${CANONICAL_HOST}, Worker ${WORKER_NAME} as
 ${desiredWorkerRoutes().join(' and ')} only, enables Email Sending for
 ${APEX_HOST}, and copies GitHub-available secrets onto ${WORKER_NAME}.
 
-It also finishes the cutover away from the legacy host: the old
-${LEGACY_ZONE} custom domains are detached from ${LEGACY_WORKER_NAME} and its
-wildcard Pages route is dropped, so ${LEGACY_HOST} and ${LEGACY_APEX_HOST}
-stop serving the site and only redirect to ${CANONICAL_HOST}.
+ShopCrank is served on its own domains only. Any custom domain on
+${PAGES_PROJECT}, Worker custom domain, or Worker route on another zone that
+runs ${SHOPCRANK_SERVICES.join(', ')} is released. Deleting a Worker custom
+domain also removes its Cloudflare-managed DNS record; create the replacement
+DNS record for the destination site during handoff. No direct DNS requests or
+email changes are made in other zones.
 `;
 
 export async function main(argv = process.argv.slice(2), env = process.env, { fetchImpl, logger = console } = {}) {
