@@ -634,3 +634,13 @@ test('the sign-in form has the element that shows "check your email"', () => {
 test('an email sign-in started in the desktop app asks the server for the Open ShopCrank handoff', () => {
   assert.match(legacy, /JSON\.stringify\(\{ email, returnTo: "\/", return_to: "\/", turnstileToken, \.\.\.\(isDesktopApp \? \{ desktop: true \} : \{\}\) \}\)/);
 });
+
+test('the job card step list is styled (no doubled list numbers, words on their own lines)', () => {
+  const styles = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../styles.css'), 'utf8');
+  assert.match(legacy, /<ol class="job-progress"><li class="done"><span>1<\/span><b>Estimate<\/b><small>/);
+  assert.match(styles, /\.job-progress\{list-style:none;[^}]*display:grid/);
+  assert.match(styles, /\.job-progress li\{display:grid;grid-template-columns:auto minmax\(0,1fr\)/);
+  assert.match(styles, /\.job-progress li>small\{/);
+  assert.match(styles, /\.job-progress li\.done>span\{/);
+  assert.match(styles, /\.job-progress li\.current\{/);
+});
