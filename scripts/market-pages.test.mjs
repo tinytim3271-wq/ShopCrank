@@ -79,3 +79,19 @@ test('robots.txt and sitemap.xml are real files the Pages site serves', async ()
   for (const path of locs) assert.ok(existsSync(new URL(`../public/${path}index.html`, import.meta.url)), `sitemap lists /${path} but public/${path}index.html is missing`);
   for (const file of ['/robots.txt', '/sitemap.xml']) assert.ok(routes.exclude.includes(file), `${file} must bypass the Worker so the static file is served, not the app`);
 });
+
+test('link previews use the 1200x630 PNG card on the home, pricing, features and signup pages', () => {
+  const card = 'https://www.shopcrank.com/graphics/shopcrank-og-card-1200x630.png';
+  const pages = { home: '../index.html', pricing: '../public/pricing/index.html', features: '../public/features/index.html', signup: '../public/signup/index.html' };
+  for (const [name, path] of Object.entries(pages)) {
+    const page = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.ok(page.includes(`<meta property="og:image" content="${card}" />`), `${name} og:image`);
+    assert.ok(page.includes(`<meta name="twitter:image" content="${card}" />`), `${name} twitter:image`);
+    assert.match(page, /<meta name="twitter:card" content="summary_large_image" \/>/, `${name} twitter:card`);
+    assert.doesNotMatch(page, /og-card\.svg/, `${name} still points at the SVG card`);
+  }
+  // SVG previews don't render on Facebook, iMessage, X or LinkedIn: the card must be a real PNG.
+  const png = readFileSync(new URL('../public/graphics/shopcrank-og-card-1200x630.png', import.meta.url));
+  assert.equal(png.subarray(1, 4).toString('latin1'), 'PNG');
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1200, 630]);
+});
