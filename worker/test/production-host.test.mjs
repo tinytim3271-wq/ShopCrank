@@ -53,16 +53,17 @@ test('apex shopcrank.com redirects to www for API and Pages paths', async () => 
   assert.equal(site.headers.get('location'), `${CANONICAL_ORIGIN}/login`);
 });
 
-test('ShopCrank no longer redirects any other domain to itself', async () => {
+test('ShopCrank no longer redirects any other domain to itself', async (t) => {
   // The old shared host now belongs to a different site; the Worker must not
   // claim it or any other non-ShopCrank host with a redirect.
+  t.mock.method(globalThis, 'fetch', async () => new Response('<!doctype html>', { status: 200 }));
   for (const url of [
     'https://www.other-business.example/api/healthz',
     'https://other-business.example/pricing/',
   ]) {
     const response = await worker.fetch(new Request(url), {});
     const location = response.headers.get('location') || '';
-    assert.notEqual(response.status, 301, url);
+    assert.equal(response.status, 200, url);
     assert.equal(location.includes(CANONICAL_HOST), false, url);
   }
   const source = readFileSync(join(root, 'worker/src/production-host.mjs'), 'utf8');
