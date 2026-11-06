@@ -589,7 +589,7 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
   assert.equal(WORKER_NAME, 'shopcrank-api');
 });
 
-test('provisionShopcrankCom releases ShopCrank from other domains without touching their DNS or mail', async () => {
+test('provisionShopcrankCom releases foreign domains and models Worker-managed DNS deletion', async () => {
   const calls = [];
   const store = {
     zones: [
@@ -606,6 +606,13 @@ test('provisionShopcrankCom releases ShopCrank from other domains without touchi
       { id: 'dom-other-apex', hostname: 'other-business.example', service: 'shopcrank-api' },
       { id: 'dom-other-site', hostname: 'shop.other-business.example', service: 'other-site' },
     ],
+    dnsRecords: {
+      'zone-other': [
+        { id: 'dns-other-www', name: 'www.other-business.example', workerDomainId: 'dom-other-www' },
+        { id: 'dns-other-apex', name: 'other-business.example', workerDomainId: 'dom-other-apex' },
+        { id: 'dns-other-mail', name: 'mail.other-business.example' },
+      ],
+    },
     routes: {
       'zone-1': [
         { id: 'rt-www', pattern: 'www.shopcrank.com/api/*', script: 'shopcrank-api' },
@@ -658,6 +665,8 @@ test('provisionShopcrankCom releases ShopCrank from other domains without touchi
     if (method === 'DELETE' && path.startsWith('/accounts/acct-1/workers/domains/')) {
       const id = path.split('/').at(-1);
       store.workerDomains = store.workerDomains.filter((domain) => domain.id !== id);
+      store.dnsRecords['zone-other'] = store.dnsRecords['zone-other']
+        .filter((record) => record.workerDomainId !== id);
       return jsonResponse(200, { success: true, result: null });
     }
     const routeMatch = path.match(/^\/zones\/([^/]+)\/workers\/routes$/);
@@ -757,11 +766,13 @@ test('provisionShopcrankCom releases ShopCrank from other domains without touchi
   for (const step of ['legacyZone', 'legacyWorkerRoutes', 'legacyWorkerDomains', 'legacyDns']) {
     assert.equal(step in report.steps, false, step);
   }
-  // Nothing is ever written to the other zone's DNS or mail, and nothing is created there.
+  // No direct DNS or mail requests are made in the other zone.
   const touchesOtherZone = (call) => call.path.startsWith('/zones/zone-other/') && !call.path.includes('/workers/routes');
   assert.equal(calls.some(touchesOtherZone), false);
   assert.equal(calls.some((call) => call.method === 'POST' && call.path.startsWith('/zones/zone-other/')), false);
   assert.equal(calls.some((call) => call.method === 'PUT' && call.path === '/accounts/acct-1/workers/domains'), false);
+  // Cloudflare removes DNS records managed by deleted Worker custom domains; unrelated records remain.
+  assert.deepEqual(store.dnsRecords['zone-other'].map((record) => record.name), ['mail.other-business.example']);
 
   // Support mail is forwarded to the configured mailbox.
   assert.equal(report.steps.supportMail.action, 'created');

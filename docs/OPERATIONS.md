@@ -90,9 +90,12 @@ Fresh cloud shops start with Texas's 6.25% state-only rate until local jurisdict
 - `npm run provision:shopcrank-com` is idempotent. Besides attaching ShopCrank's
   own domains, it releases any custom domain on `shopcrank-dispatch`, Worker
   custom domain, or Worker route on another zone that runs `shopcrank-api`,
-  `mechpro-api`, or `shopcrank-dispatch`. It never edits DNS records or Email
-  Routing in other zones. **DNS edit requires an API token** — a Wrangler OAuth
-  login cannot write DNS, so run it from the Actions job or a machine with the token.
+  `mechpro-api`, or `shopcrank-dispatch`. Deleting a Worker custom domain also
+  removes its Cloudflare-managed DNS record. During handoff, create the
+  replacement DNS record for the destination site; the script makes no direct
+  DNS requests and does not change Email Routing in other zones. **DNS edit
+  requires an API token** — a Wrangler OAuth login cannot write DNS, so run it
+  from the Actions job or a machine with the token.
 - The `shopcrank.com` apex is a proxied CNAME to `shopcrank-dispatch.pages.dev`.
   An A record to a Cloudflare address is rejected with "DNS points to
   prohibited IP", so keep it a CNAME.

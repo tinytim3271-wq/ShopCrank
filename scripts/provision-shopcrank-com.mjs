@@ -541,9 +541,10 @@ export function isForeignShopcrankBinding({ hostname, service } = {}) {
 /**
  * Releases ShopCrank from every domain that is not a ShopCrank domain: custom
  * domains on the ShopCrank Pages project, Worker custom domains, and Worker
- * routes on other zones that run a ShopCrank script. It never touches DNS
- * records or Email Routing in those zones; they belong to whoever owns the
- * domain now.
+ * routes on other zones that run a ShopCrank script. It makes no direct DNS
+ * requests in those zones, but deleting a Worker custom domain also removes
+ * its Cloudflare-managed DNS record. Recreate the destination site's DNS
+ * record during handoff. Email Routing in those zones is untouched.
  */
 export async function releaseForeignBindings(client, { accountId, project = PAGES_PROJECT }) {
   const released = { pagesDomains: [], workerDomains: [], workerRoutes: [] };
@@ -982,8 +983,10 @@ ${APEX_HOST}, and copies GitHub-available secrets onto ${WORKER_NAME}.
 
 ShopCrank is served on its own domains only. Any custom domain on
 ${PAGES_PROJECT}, Worker custom domain, or Worker route on another zone that
-runs ${SHOPCRANK_SERVICES.join(', ')} is released. DNS and email in other
-zones are never touched.
+runs ${SHOPCRANK_SERVICES.join(', ')} is released. Deleting a Worker custom
+domain also removes its Cloudflare-managed DNS record; create the replacement
+DNS record for the destination site during handoff. No direct DNS requests or
+email changes are made in other zones.
 `;
 
 export async function main(argv = process.argv.slice(2), env = process.env, { fetchImpl, logger = console } = {}) {

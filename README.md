@@ -333,8 +333,10 @@ put` unless the same values are in the environment.
 ShopCrank is served on ShopCrank domains (`shopcrank.com`, `.net`, `.io`)
 only. The script releases any custom domain on `shopcrank-dispatch`, Worker
 custom domain, or Worker route on another zone that runs `shopcrank-api`,
-`mechpro-api`, or `shopcrank-dispatch`. It never edits DNS records or Email
-Routing in other zones; those belong to whoever owns that domain. The
+`mechpro-api`, or `shopcrank-dispatch`. Deleting a Worker custom domain also
+removes its Cloudflare-managed DNS record; during handoff, create the
+replacement DNS record for the destination site. The script makes no direct
+DNS requests and does not change Email Routing in other zones. The
 `shopcrank.com` apex stays a proxied CNAME to the Pages project — an A record
 to a Cloudflare address is rejected with "DNS points to prohibited IP".
 
