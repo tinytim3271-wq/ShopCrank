@@ -8,7 +8,6 @@ import {
   DESKTOP_AUTH_SCHEME,
   HEALTHZ_SERVICE,
   apexToWwwRedirect,
-  legacyToCanonicalRedirect,
 } from './production-host.mjs';
 import {
   ENTITY_TYPES,
@@ -4266,7 +4265,6 @@ export default {
         || crypto.randomUUID(),
     };
     try {
-      const legacyRedirect = legacyToCanonicalRedirect(request);
       const requestUrl = new URL(request.url);
       // Providers do not follow redirects reliably (Twilio never follows one on a
       // WebSocket upgrade), so their callbacks are answered on whatever host they hit.
@@ -4278,7 +4276,6 @@ export default {
         && request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
         && /^\/api\/voice\/twilio\/stream\/[^/]+(?:\/[^/]+)?$/.test(requestUrl.pathname)
       );
-      if (legacyRedirect && !providerCallback) return legacyRedirect;
       const apexRedirect = apexToWwwRedirect(request);
       if (apexRedirect && !providerCallback) return apexRedirect;
       if (!isApiRequest(request)) {

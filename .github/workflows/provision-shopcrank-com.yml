@@ -2,6 +2,12 @@ name: Provision shopcrank.com
 
 on:
   workflow_dispatch:
+    inputs:
+      authorize_provision:
+        description: Authorize changes to the production Cloudflare account
+        required: true
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'scripts/provision-shopcrank-com.mjs'
@@ -40,7 +46,10 @@ jobs:
 
   provision:
     needs: test
-    if: vars.CLOUDFLARE_DEPLOY_ENABLED != 'false'
+    if: >-
+      vars.CLOUDFLARE_DEPLOY_ENABLED != 'false' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.authorize_provision))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

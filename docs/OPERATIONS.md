@@ -72,7 +72,7 @@ Fresh cloud shops start with Texas's 6.25% state-only rate until local jurisdict
 - Mitigate fast (rollback or feature toggle), then document root cause and follow-up tasks.
 
 ## Google OAuth cutover
-- OAuth Web client lives in GCP project `com-yourcarguy806-mechpr-fc4af` (project number `451228968006`).
+- OAuth Web client lives in GCP project number `451228968006`. Its project ID still carries the pre-cutover name because Google project IDs cannot be renamed; find it in the console by number.
 - Client id (public): `451228968006-ebcekb6k5etif5qnp43n7hiroo0td6vd.apps.googleusercontent.com`
 - Authorized JavaScript origin: `https://www.shopcrank.com`
 - Authorized redirect URI: `https://www.shopcrank.com/api/auth/google/callback`
@@ -82,20 +82,30 @@ Fresh cloud shops start with Texas's 6.25% state-only rate until local jurisdict
 - Status: registered. The live Worker redirects to
   `https://www.shopcrank.com/api/auth/google/callback` and Google accepts it.
 
-## Legacy host cutover (`www.yourcarguy806.com`)
-- The pre-cutover host now 301s every URL to `https://www.shopcrank.com`. The
-  legacy zone's wildcard Pages route is gone and the whole host points at
-  `shopcrank-api`, which answers with the redirect.
-- `npm run provision:shopcrank-com` is idempotent and reapplies this state: it
-  detaches the old `mechpro-api` custom domains, drops the wildcard Pages
-  route, re-points the legacy host at `shopcrank-api`, and restores the legacy
-  DNS records. **DNS edit requires an API token** — a Wrangler OAuth login
-  cannot write DNS, so run it from the Actions job or a machine with the token.
-- Detaching a Worker custom domain deletes that hostname's DNS record. If the
-  legacy host stops resolving, re-run the script; it recreates the records.
+## Domains: ShopCrank only on ShopCrank domains
+- ShopCrank is served on `www.shopcrank.com` (apex `shopcrank.com` 301s to www).
+  The host it shipped under before the cutover was handed back to the owner's
+  auto-repair business website on 2026-11-05 and no longer redirects here.
+  `scripts/no-former-host.test.mjs` fails CI if code or config points at it again.
+- `npm run provision:shopcrank-com` is idempotent. Besides attaching ShopCrank's
+  own domains, it releases any custom domain on `shopcrank-dispatch`, Worker
+  custom domain, or Worker route on another zone that runs `shopcrank-api`,
+  `mechpro-api`, or `shopcrank-dispatch`. Deleting a Worker custom domain also
+  removes its Cloudflare-managed DNS record. During handoff, create the
+  replacement DNS record for the destination site; the script makes no direct
+  DNS requests and does not change Email Routing in other zones. **DNS edit
+  requires an API token** — a Wrangler OAuth login cannot write DNS, so run it
+  from the Actions job or a machine with the token.
 - The `shopcrank.com` apex is a proxied CNAME to `shopcrank-dispatch.pages.dev`.
   An A record to a Cloudflare address is rejected with "DNS points to
   prohibited IP", so keep it a CNAME.
+- Provider callbacks must use `https://www.shopcrank.com`. In Stripe's
+  dashboard, update each payment webhook endpoint URL to the canonical host;
+  re-saving ShopCrank's Stripe keys does not update Stripe's endpoint URL.
+  If an endpoint is recreated, save its new signing secret in ShopCrank.
+  Re-save AgentPhone settings from `www.shopcrank.com` to update its webhook,
+  and update any old-host callbacks in the Twilio dashboard. Google OAuth
+  authorized origins and redirect URIs should list ShopCrank hosts only.
 - `support@shopcrank.com` needs an Email Routing forward rule. Set
   `SUPPORT_EMAIL_FORWARD_TO` before running the script; otherwise the support
   ticket is stored in D1 but no email is sent.
