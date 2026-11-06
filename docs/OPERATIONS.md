@@ -96,12 +96,13 @@ Fresh cloud shops start with Texas's 6.25% state-only rate until local jurisdict
 - The `shopcrank.com` apex is a proxied CNAME to `shopcrank-dispatch.pages.dev`.
   An A record to a Cloudflare address is rejected with "DNS points to
   prohibited IP", so keep it a CNAME.
-- Provider callbacks must use `https://www.shopcrank.com`. Stripe payment
-  webhooks and AgentPhone webhooks are saved with the host the shop owner was
-  on when they connected them, so re-save those settings from
-  `www.shopcrank.com` and check the Stripe, Twilio, and AgentPhone dashboards
-  for callback URLs on any other host. Google OAuth authorized origins and
-  redirect URIs should list ShopCrank hosts only.
+- Provider callbacks must use `https://www.shopcrank.com`. In Stripe's
+  dashboard, update each payment webhook endpoint URL to the canonical host;
+  re-saving ShopCrank's Stripe keys does not update Stripe's endpoint URL.
+  If an endpoint is recreated, save its new signing secret in ShopCrank.
+  Re-save AgentPhone settings from `www.shopcrank.com` to update its webhook,
+  and update any old-host callbacks in the Twilio dashboard. Google OAuth
+  authorized origins and redirect URIs should list ShopCrank hosts only.
 - `support@shopcrank.com` needs an Email Routing forward rule. Set
   `SUPPORT_EMAIL_FORWARD_TO` before running the script; otherwise the support
   ticket is stored in D1 but no email is sent.
