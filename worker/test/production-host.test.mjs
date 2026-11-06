@@ -56,16 +56,19 @@ test('apex shopcrank.com redirects to www for API and Pages paths', async () => 
 test('ShopCrank no longer redirects any other domain to itself', async (t) => {
   // The old shared host now belongs to a different site; the Worker must not
   // claim it or any other non-ShopCrank host with a redirect.
-  t.mock.method(globalThis, 'fetch', async () => new Response('<!doctype html>', { status: 200 }));
-  for (const url of [
-    'https://www.other-business.example/api/healthz',
-    'https://other-business.example/pricing/',
-  ]) {
-    const response = await worker.fetch(new Request(url), {});
-    const location = response.headers.get('location') || '';
-    assert.equal(response.status, 200, url);
-    assert.equal(location.includes(CANONICAL_HOST), false, url);
-  }
+  const pagesFetch = t.mock.method(globalThis, 'fetch', async (request) => {
+    assert.equal(request.url, `${DEFAULT_PAGES_ORIGIN}/pricing/`);
+    return new Response('Pages fixture', { status: 200 });
+  });
+  const api = await worker.fetch(new Request('https://www.other-business.example/api/healthz'), {});
+  const apiLocation = api.headers.get('location') || '';
+  assert.notEqual(api.status, 301);
+  assert.equal(apiLocation.includes(CANONICAL_HOST), false);
+
+  const site = await worker.fetch(new Request('https://other-business.example/pricing/'), {});
+  assert.equal(site.status, 200);
+  assert.equal(await site.text(), 'Pages fixture');
+  assert.equal(pagesFetch.mock.callCount(), 1);
   const source = readFileSync(join(root, 'worker/src/production-host.mjs'), 'utf8');
   assert.doesNotMatch(source, /LEGACY_HOST|legacyToCanonicalRedirect/);
 });

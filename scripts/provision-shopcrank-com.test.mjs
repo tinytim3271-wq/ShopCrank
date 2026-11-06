@@ -589,7 +589,7 @@ test('provisionShopcrankCom attaches Pages www, /api and /downloads routes, emai
   assert.equal(WORKER_NAME, 'shopcrank-api');
 });
 
-test('provisionShopcrankCom releases ShopCrank from other domains without touching their DNS or mail', async () => {
+test('provisionShopcrankCom releases foreign bindings and models Worker-domain DNS deletion', async () => {
   const calls = [];
   const store = {
     zones: [
@@ -622,6 +622,11 @@ test('provisionShopcrankCom releases ShopCrank from other domains without touchi
     },
     mailRules: [],
     apexDnsRecords: [],
+    foreignDnsRecords: [
+      { id: 'dns-other-www', name: 'www.other-business.example', type: 'A', content: '192.0.2.1' },
+      { id: 'dns-other-apex', name: 'other-business.example', type: 'A', content: '192.0.2.2' },
+      { id: 'dns-other-shop', name: 'shop.other-business.example', type: 'A', content: '192.0.2.3' },
+    ],
     r2: [],
     routing: { enabled: true, status: 'ready' },
     sending: [{ name: 'shopcrank.com', enabled: true }],
@@ -657,7 +662,11 @@ test('provisionShopcrankCom releases ShopCrank from other domains without touchi
     }
     if (method === 'DELETE' && path.startsWith('/accounts/acct-1/workers/domains/')) {
       const id = path.split('/').at(-1);
+      const domain = store.workerDomains.find((item) => item.id === id);
       store.workerDomains = store.workerDomains.filter((domain) => domain.id !== id);
+      if (domain) {
+        store.foreignDnsRecords = store.foreignDnsRecords.filter((record) => record.name !== domain.hostname);
+      }
       return jsonResponse(200, { success: true, result: null });
     }
     const routeMatch = path.match(/^\/zones\/([^/]+)\/workers\/routes$/);
@@ -753,11 +762,13 @@ test('provisionShopcrankCom releases ShopCrank from other domains without touchi
   // The other domain keeps everything that is not ShopCrank's.
   assert.deepEqual(store.routes['zone-other'].map((route) => route.id), ['rt-other-blog']);
   assert.deepEqual(store.workerDomains.map((domain) => domain.hostname), ['shop.other-business.example']);
+  assert.deepEqual(store.foreignDnsRecords.map((record) => record.name), ['shop.other-business.example']);
   // No legacy steps remain.
   for (const step of ['legacyZone', 'legacyWorkerRoutes', 'legacyWorkerDomains', 'legacyDns']) {
     assert.equal(step in report.steps, false, step);
   }
-  // Nothing is ever written to the other zone's DNS or mail, and nothing is created there.
+  // No DNS API request is made; Cloudflare's Worker-domain deletion side effect
+  // removes those managed records while unrelated DNS and mail remain untouched.
   const touchesOtherZone = (call) => call.path.startsWith('/zones/zone-other/') && !call.path.includes('/workers/routes');
   assert.equal(calls.some(touchesOtherZone), false);
   assert.equal(calls.some((call) => call.method === 'POST' && call.path.startsWith('/zones/zone-other/')), false);

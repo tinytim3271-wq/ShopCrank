@@ -541,9 +541,10 @@ export function isForeignShopcrankBinding({ hostname, service } = {}) {
 /**
  * Releases ShopCrank from every domain that is not a ShopCrank domain: custom
  * domains on the ShopCrank Pages project, Worker custom domains, and Worker
- * routes on other zones that run a ShopCrank script. It never touches DNS
- * records or Email Routing in those zones; they belong to whoever owns the
- * domain now.
+ * routes on other zones that run a ShopCrank script. It makes no DNS API
+ * requests, but Cloudflare deletes a managed DNS record when a Worker custom
+ * domain is detached. Recreate that record pointing at the replacement host
+ * during handoff.
  */
 export async function releaseForeignBindings(client, { accountId, project = PAGES_PROJECT }) {
   const released = { pagesDomains: [], workerDomains: [], workerRoutes: [] };
@@ -898,6 +899,15 @@ export async function provisionShopcrankCom({
     logger.info?.(`[provision] ${name}: ${result.ok ? result.action || 'ok' : result.error}`);
   }
 
+  if (report.steps.releaseForeign?.workerDomains?.length) {
+    const hostnames = report.steps.releaseForeign.workerDomains.map(({ hostname }) => hostname);
+    report.remaining.push({
+      kind: 'worker_domain_dns',
+      message: `Detaching Worker custom domains deletes their Cloudflare-managed DNS records (${hostnames.join(', ')}). Recreate each hostname's DNS record pointing at its replacement host during handoff.`,
+      hostnames,
+    });
+  }
+
   if (report.steps.email?.destination && !report.steps.email.destination.verified) {
     report.remaining.push({
       kind: 'email_from',
@@ -982,8 +992,10 @@ ${APEX_HOST}, and copies GitHub-available secrets onto ${WORKER_NAME}.
 
 ShopCrank is served on its own domains only. Any custom domain on
 ${PAGES_PROJECT}, Worker custom domain, or Worker route on another zone that
-runs ${SHOPCRANK_SERVICES.join(', ')} is released. DNS and email in other
-zones are never touched.
+runs ${SHOPCRANK_SERVICES.join(', ')} is released. The script makes no DNS API
+requests in other zones, but detaching a Worker custom domain causes Cloudflare
+to delete its managed DNS record. Recreate that record pointing at the
+replacement host during handoff. Email Routing in other zones is not changed.
 `;
 
 export async function main(argv = process.argv.slice(2), env = process.env, { fetchImpl, logger = console } = {}) {

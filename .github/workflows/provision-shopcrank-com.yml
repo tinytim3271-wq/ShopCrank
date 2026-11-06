@@ -40,7 +40,10 @@ jobs:
 
   provision:
     needs: test
-    if: vars.CLOUDFLARE_DEPLOY_ENABLED != 'false'
+    if: >-
+      vars.CLOUDFLARE_DEPLOY_ENABLED != 'false' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
